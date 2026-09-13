@@ -5645,21 +5645,29 @@ def _three_stage_spec() -> BuildSpec:
     column, leaving nowhere legal to land.  ``copper-ingot`` sorts ahead of both
     ``iron-ingot`` and ``gear`` on its lane, so each bridged item moves one
     column east and column 0 stays clear.
+
+    This is a synthetic flow fixture built from real catalog machine and sorter
+    geometry, not a recipe-valid factory.  The consumers are single chemical
+    plants: under the seated/flanked direct-insertion admission, a row of
+    assembler consumers collides with its own flanked drain attachments and
+    correctly has no eligible relation at all (at count 4 or count 1), which
+    would leave this fixture with zero candidates.  One chemical plant per
+    stage leaves both canonical seated bridges clear.
     """
     return BuildSpec(
         groups=(
             MachineGroup(
                 recipe_id="iron-ingot",
                 machine_item_id="arc-smelter",
-                count=4,
+                count=1,
                 proliferator_mode=ProliferatorMode.NONE,
                 inputs_per_machine={"iron-ore": Fraction(1)},
                 outputs_per_machine={"iron-ingot": Fraction(1)},
             ),
             MachineGroup(
                 recipe_id="gear",
-                machine_item_id="assembling-machine-2",
-                count=4,
+                machine_item_id="chemical-plant",
+                count=1,
                 proliferator_mode=ProliferatorMode.NONE,
                 inputs_per_machine={
                     "iron-ingot": Fraction(1),
@@ -5669,8 +5677,8 @@ def _three_stage_spec() -> BuildSpec:
             ),
             MachineGroup(
                 recipe_id="electric-motor",
-                machine_item_id="assembling-machine-2",
-                count=4,
+                machine_item_id="chemical-plant",
+                count=1,
                 proliferator_mode=ProliferatorMode.NONE,
                 inputs_per_machine={
                     "gear": Fraction(1),
@@ -5679,8 +5687,8 @@ def _three_stage_spec() -> BuildSpec:
                 outputs_per_machine={"electric-motor": Fraction(1)},
             ),
         ),
-        external_inputs={"iron-ore": Fraction(4), "copper-ingot": Fraction(8)},
-        outputs={"electric-motor": Fraction(4)},
+        external_inputs={"iron-ore": Fraction(1), "copper-ingot": Fraction(2)},
+        outputs={"electric-motor": Fraction(1)},
         belt_item_id="conveyor-belt-2",
         belt_items_per_second=Fraction(12),
         label="three-stage",
