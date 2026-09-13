@@ -6,13 +6,15 @@ from fractions import Fraction
 
 import pytest
 
-from flab2bp.dsp import catalog, colliders
+from flab2bp.dsp import catalog, colliders, planet
 from flab2bp.layout.base import PlacedBuilding
 from flab2bp.layout.routing_domain import (
     _DEFAULT_BELT_RULES,
     _Canvas,
     _canvas_span,
+    _crossing_ban_cells,
     _crossing_ban_levels,
+    _crossing_ban_tiles,
     _junction_ban_offsets,
     _junction_site_is_clear,
     _make_grid,
@@ -225,3 +227,130 @@ def test_prepared_stack_bans_match_complete_physical_stacks(obstacle_z: int) -> 
             assert ((x, y, level) not in banned) == _junction_site_is_clear(
                 (obstacle,), x, y, level
             )
+
+
+def _pasted_probe_hits(machine: PlacedBuilding, x: int, y: int, level: int, *, arc: float) -> bool:
+    """Whether a belt at ``(x, y, level)`` hits ``machine`` at this tile spacing.
+
+    The projection's own question, asked directly: the belt probe against the
+    machine's target boxes, with columns and rows ``arc`` apart instead of the
+    flat :data:`colliders.GRID_ARC` the lattice draws itself on.
+    """
+    centre_x = machine.x + (machine.width - 1) // 2
+    centre_y = machine.y + (machine.height - 1) // 2
+    placed = colliders.Placed(machine.model_index, 0.0, 0.0, 0.0, machine.yaw)
+    boxes = colliders.target_boxes(placed, *colliders.flat_pose(0.0, 0.0, 0.0, machine.yaw))
+    probe = colliders.belt_probe(x - centre_x, y - centre_y, level, arc)
+    return any(
+        colliders.sphere_box_overlap(probe, colliders.BELT_PROBE_RADIUS, box) for box in boxes
+    )
+
+
+def test_particle_collider_denies_the_column_a_paste_pushes_into_it() -> None:
+    """Model 69's collider clears a flat neighbour and not a pasted one.
+
+    Its envelope reaches 5.85 world units west of its anchor; a 9-tile footprint
+    reaches 5.65, and the next tile west stands at 6.28 flat -- clear by 0.20.
+    The equatorial band's most poleward row spaces that tile at 5.51 instead,
+    inside the collider, and `game.belt_collide` refuses the layout.  The lattice
+    has to deny the cell for the same reason and at the same reach.
+    """
+    machine = catalog.building(2310)
+    obstacle = PlacedBuilding(
+        machine.item_id,
+        machine.model_index,
+        10,
+        10,
+        width=machine.width,
+        height=machine.height,
+    )
+    arc = planet.tightest_column_arc(planet.widest_band().area_segments)
+    assert arc < colliders.GRID_ARC
+
+    canvas = _Canvas(belt_rules=_rules(Fraction(12)))
+    canvas.add(obstacle, solid=True)
+
+    # the column the paste pushes into the collider, and the one past it
+    assert _pasted_probe_hits(obstacle, 9, 10, 1, arc=arc)
+    assert not _pasted_probe_hits(obstacle, 8, 10, 1, arc=arc)
+    assert not canvas.free((9, 10, 1))
+    assert canvas.free((8, 10, 1))
+
+    # flat, that same cell clears -- which is the bug, not the rule
+    assert not _pasted_probe_hits(obstacle, 9, 10, 1, arc=colliders.GRID_ARC)
+
+    # the footprint keeps the band it always had, and nothing above it is taken
+    top = _crossing_ban_levels(obstacle)[-1]
+    assert not canvas.free((10, 10, top))
+    assert canvas.free((10, 10, top + 1))
+    assert canvas.free((9, 10, top + 1))
+
+    # `solid` is the packing question and stays the footprint
+    assert (9, 10) not in canvas.solid
+    assert (10, 10) in canvas.solid
+
+
+def test_a_machine_whose_collider_fits_its_footprint_bans_nothing_extra() -> None:
+    """An Assembling Machine keeps its neighbouring belt, at both spacings.
+
+    It covers 3 tiles and its collider is 3.82 units, so a belt one tile out
+    clears by 0.37 flat and by 0.06 at the band's tightest -- which is why the
+    corpus is full of belts flanking these and why the rule must not widen them.
+    """
+    machine = catalog.building(2304)
+    obstacle = PlacedBuilding(
+        machine.item_id,
+        machine.model_index,
+        10,
+        10,
+        width=machine.width,
+        height=machine.height,
+    )
+    assert (
+        _crossing_ban_tiles(obstacle.model_index, obstacle.yaw, obstacle.width, obstacle.height)
+        == ()
+    )
+
+    canvas = _Canvas(belt_rules=_rules(Fraction(12)))
+    canvas.add(obstacle, solid=True)
+    cells = set(_crossing_ban_cells(obstacle))
+    assert {(x, y) for x, y, _level in cells} == {(x, y) for x, y, _z in obstacle.tiles()}
+    arc = planet.tightest_column_arc(planet.widest_band().area_segments)
+    for x, y in ((9, 10), (13, 10), (10, 9), (10, 13)):
+        assert not _pasted_probe_hits(obstacle, x, y, 0, arc=arc)
+        assert canvas.free((x, y, 0))
+
+
+def test_every_banned_tile_is_one_the_pasted_probe_actually_reaches() -> None:
+    """The rule bans what the projection refuses, and nothing else.
+
+    Over every catalog model with a build collider, at every yaw the layout
+    uses: the tiles `_crossing_ban_tiles` adds outside the footprint are exactly
+    the tiles whose belt probe touches the collider at the band's tightest
+    spacing and does not at any tile the rule leaves free.
+    """
+    arc = planet.tightest_column_arc(planet.widest_band().area_segments)
+    checked = 0
+    for item_id in sorted(catalog._load()):
+        info = catalog.building(item_id)
+        if not info.model_index or not colliders.build_colliders(info.model_index):
+            continue
+        for yaw in (0.0, 90.0, 180.0, 270.0):
+            width, height = catalog.oriented_footprint(item_id, yaw)
+            obstacle = PlacedBuilding(
+                item_id, info.model_index, 0, 0, width=width, height=height, yaw=yaw
+            )
+            extra = set(_crossing_ban_tiles(info.model_index, yaw, width, height))
+            footprint = {(x, y) for x, y, _z in obstacle.tiles()}
+            levels = _crossing_ban_levels(obstacle)
+            reach = colliders.belt_keepout_reach(info.model_index, arc)
+            for x in range(-reach, width + reach):
+                for y in range(-reach, height + reach):
+                    if (x, y) in footprint:
+                        continue
+                    hits = any(
+                        _pasted_probe_hits(obstacle, x, y, level, arc=arc) for level in levels
+                    )
+                    assert ((x, y) in extra) is hits, (item_id, yaw, x, y)
+            checked += 1
+    assert checked == 4 * 61

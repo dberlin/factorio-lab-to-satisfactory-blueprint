@@ -163,8 +163,9 @@ class TemplateConstructor(ReusingConstructor):
                 raise TransportRefusal("PHYSICAL_ACCESS_CONFLICT", "fixed link has a cycle")
         blocked = {cell for cell, owner in self.canvas.blocked.items() if owner not in fixed_belts}
         blocked.update(self.canvas.guard)
-        for (x, y), levels in self.canvas.belt_ban.items():
-            blocked.update((x, y, z) for z in levels)
+        for bans in (self.canvas.belt_ban, self.canvas.belt_keepout):
+            for (x, y), levels in bans.items():
+                blocked.update((x, y, z) for z in levels)
         for x, y in self.canvas.keep_out:
             blocked.update((x, y, z) for z in range(self.canvas.levels))
         blocked.update(
@@ -200,6 +201,7 @@ class TemplateConstructor(ReusingConstructor):
             if self._owns_blocked_endpoint(endpoint)
             and endpoint.cell not in self.canvas.guard
             and endpoint.cell[2] not in self.canvas.belt_ban.get(endpoint.cell[:2], ())
+            and endpoint.cell[2] not in self.canvas.belt_keepout.get(endpoint.cell[:2], ())
             and endpoint.cell[:2] not in self.canvas.keep_out
             and self.canvas.reserved.get(endpoint.cell, endpoint.cell) == endpoint.cell
         )
