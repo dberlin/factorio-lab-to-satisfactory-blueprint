@@ -7,9 +7,9 @@
 Two instruments, deliberately, because each lies in a way the other does not:
 
 * ``--cprofile`` attributes wall time to functions, and inflates every Python
-  call it observes -- which in an A* inner loop is most of the work.  Its
+  call it observes -- which in a geometric search inner loop is most of the work.  Its
   numbers are RATIOS, not seconds.
-* the default is a wrapper-based tally: it patches ``_route_all``, ``_astar``,
+* the default is a wrapper-based tally: it patches ``_route_all``, ``_geometric_search``,
   ``_commit_paths``, ``_make_grid`` and ``_Grid.refresh_history`` with timing
   shims and counts calls, expansions (from the shared budget's decrements) and
   rip-up rounds.  A shim per call is nothing against a search; the inner loop
@@ -179,8 +179,8 @@ class Tally:
         self.expansions = 0
         self.rounds = 0
         self.passes = 0
-        self.astar_none = 0
-        self.astar_hit = 0
+        self.search_none = 0
+        self.search_hit = 0
         self.path_cells = 0
         #: One row per search: (expansions, seconds, path length or -1).
         self.calls: list[tuple[int, float, int]] = []
@@ -195,7 +195,7 @@ class Tally:
 
 def install(tally: Tally) -> Callable[[], None]:
     """Patch the module's routing entry points with timing shims."""
-    orig_astar = routing_domain._astar
+    orig_geometric_search = routing_domain._geometric_search
     orig_route_all = routing_domain._route_all
     orig_commit = routing_domain._commit_paths
     orig_make_grid = routing_domain._make_grid
@@ -204,7 +204,7 @@ def install(tally: Tally) -> Callable[[], None]:
     orig_merge = routing_domain._merge_frontier
     orig_last_mile = last_mile.solve_cluster
 
-    def astar(
+    def geometric_search(
         canvas: routing_domain._Canvas,
         starts: list[Cell],
         goals: set[Cell],
@@ -223,7 +223,7 @@ def install(tally: Tally) -> Callable[[], None]:
         extra_edges: dict[int, tuple[tuple[int, float], ...]] | None = None,
     ) -> routing_domain._PathSearchResult:
         t0 = time.perf_counter()
-        out = orig_astar(
+        out = orig_geometric_search(
             canvas,
             starts,
             goals,
@@ -241,12 +241,12 @@ def install(tally: Tally) -> Callable[[], None]:
             extra_edges=extra_edges,
         )
         dt = time.perf_counter() - t0
-        tally.add("astar", dt)
+        tally.add("geometric_search", dt)
         tally.expansions += out.expansions
         if out.path is None:
-            tally.astar_none += 1
+            tally.search_none += 1
         else:
-            tally.astar_hit += 1
+            tally.search_hit += 1
             tally.path_cells += len(out.path)
         tally.calls.append((out.expansions, dt, -1 if out.path is None else len(out.path)))
         return out
@@ -476,7 +476,7 @@ def install(tally: Tally) -> Callable[[], None]:
         timed("validate", [(validate, "validate")]),
     ]
 
-    routing_domain._astar = astar
+    routing_domain._geometric_search = geometric_search
     routing_domain._route_all = route_all
     routing_domain._commit_paths = commit
     routing_domain._make_grid = make_grid
@@ -486,7 +486,7 @@ def install(tally: Tally) -> Callable[[], None]:
     last_mile.solve_cluster = timed_last_mile
 
     def restore() -> None:
-        routing_domain._astar = orig_astar
+        routing_domain._geometric_search = orig_geometric_search
         routing_domain._route_all = orig_route_all
         routing_domain._commit_paths = orig_commit
         routing_domain._make_grid = orig_make_grid
@@ -649,7 +649,7 @@ def main() -> int:
             profile_path.parent.mkdir(parents=True, exist_ok=True)
             prof.dump_stats(str(profile_path))
         routing = tally.t.get("route_all", 0.0)
-        inner = tally.t.get("astar", 0.0)
+        inner = tally.t.get("geometric_search", 0.0)
         if args.json:
             print(
                 json.dumps(
@@ -673,12 +673,12 @@ def main() -> int:
                         "verdict": verdict,
                         "wall_s": wall,
                         "route_all_s": routing,
-                        "astar_s": inner,
-                        "astar_routing_share": inner / max(routing, 1e-9),
-                        "astar_wall_share": inner / max(wall, 1e-9),
+                        "geometric_search_s": inner,
+                        "geometric_search_routing_share": inner / max(routing, 1e-9),
+                        "geometric_search_wall_share": inner / max(wall, 1e-9),
                         "expansions": tally.expansions,
-                        "hits": tally.astar_hit,
-                        "misses": tally.astar_none,
+                        "hits": tally.search_hit,
+                        "misses": tally.search_none,
                         "phases": {
                             key: {"s": tally.t[key], "n": tally.n[key]}
                             for key in PHASES
@@ -703,7 +703,7 @@ def main() -> int:
         )
         print(f"    _route_all total {routing:.2f}s ({100 * routing / wall:.0f}% of wall)")
         for key in (
-            "astar",
+            "geometric_search",
             "commit_paths",
             "make_grid",
             "refresh_history",
@@ -719,7 +719,7 @@ def main() -> int:
         other = routing - sum(
             tally.t.get(k, 0.0)
             for k in (
-                "astar",
+                "geometric_search",
                 "commit_paths",
                 "make_grid",
                 "refresh_history",
@@ -739,7 +739,7 @@ def main() -> int:
         if tally.prepare_calls:
             print("      prepare per call: " + ", ".join(f"{s:.2f}" for s in tally.prepare_calls))
         print(
-            f"    A*: {tally.astar_hit} found / {tally.astar_none} none, "
+            f"    Geometric search: {tally.search_hit} found / {tally.search_none} none, "
             f"{tally.expansions:,} expansions, "
             f"{tally.path_cells:,} path cells"
         )

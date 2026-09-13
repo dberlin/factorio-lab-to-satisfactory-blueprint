@@ -90,7 +90,6 @@ from flab2bp.layout.routing_domain import (
     CoaterSupplyPort,
     DirectInsertId,
     Strip,
-    _astar,
     _bridge,
     _Canvas,
     _canvas_span,
@@ -98,6 +97,7 @@ from flab2bp.layout.routing_domain import (
     _connect_short_cuts,
     _dests,
     _emit_strip,
+    _geometric_search,
     _Grid,
     _join_shard_islands,
     _make_grid,
@@ -1816,7 +1816,7 @@ def test_external_route_order_control_is_non_exhaustive_and_emits_no_no_good(
     monkeypatch.setattr(routing_domain, "_straight_to_edge", order_sensitive_path)
     monkeypatch.setattr(
         routing_domain,
-        "_astar",
+        "_geometric_search",
         lambda *_args, **_kwargs: _PathSearchResult(
             None,
             RouteFailureKind.SEALED_POCKET,
@@ -11584,9 +11584,9 @@ class TestABuildingDeniesOnlyTheBandUnderItsCollider:
         )
 
     def test_the_flat_grid_agrees_with_free_about_that_cell(self) -> None:
-        """The grid is what A* searches, so a grid that disagrees is the bug.
+        """The grid is what the geometric search searches, so a grid that disagrees is the bug.
 
-        Documented in ``_make_grid``: when the two disagreed the other way, A*
+        Documented in ``_make_grid``: when the two disagreed the other way, the geometric search
         returned paths ``_commit_paths`` then refused, and the net was dropped
         round after round with nothing learning anything.
         """
@@ -11819,7 +11819,7 @@ class TestPortAccessIsReservedForEveryRole:
         This is the shape the corpus refusals are made of: an output lane's
         east-end port, whose one access cell is walled north and south by its
         own siblings' claims and west by its lane, so a single cell east is the
-        entire route out.  Without holding it, a passing net takes it and A*
+        entire route out.  Without holding it, a passing net takes it and the geometric search
         gets a start it can expand and a heap that empties -- which reads in the
         counters exactly like congestion and cannot be negotiated away, because
         nothing owns three of the four walls.
@@ -11977,7 +11977,7 @@ def test_boundary_goal_search_reaches_exit_without_exhausting_expansion_budget()
     grid = _make_grid(canvas, bounds, (-42, -42, 42, 42), {})
     budget = {"left": 1024}
 
-    result = _astar(canvas, [(0, 0, 0)], boundary, {}, 0.0, bounds, budget, grid=grid)
+    result = _geometric_search(canvas, [(0, 0, 0)], boundary, {}, 0.0, bounds, budget, grid=grid)
 
     assert result.path is not None
     assert result.path[0] == (0, 0, 0)
@@ -12762,12 +12762,12 @@ class TestPowerClaimsItsGroundBeforeRouting:
         )
         routing_domain._CorridorReservations(canvas).hold({demand: corridor})
         canvas.routing_ports = frozenset((key,))
-        before = routing_domain._astar(canvas, [exit_cell], {access}, {}, 0.0, bounds)
+        before = routing_domain._geometric_search(canvas, [exit_cell], {access}, {}, 0.0, bounds)
         assert before.path == (exit_cell, access)
 
         sites = _power_plan(canvas, (5, 5, 5, 5), policy=BandPolicy("portable"))
 
-        after = routing_domain._astar(canvas, [exit_cell], {access}, {}, 0.0, bounds)
+        after = routing_domain._geometric_search(canvas, [exit_cell], {access}, {}, 0.0, bounds)
         assert after.path == before.path
         assert routing_domain._buildings_are_powered(
             (junction.make_splitter(5, 5),),
@@ -14033,7 +14033,7 @@ class TestThroughTrafficLeavesTheGround:
     """Three altitudes exist, and wiring the whole block on one CUTS it.
 
     Only machines are solid at every level, so a belt at z=0 leaves z=1 and z=2
-    open above it -- but a plain step costs 1 and a ramp costs 3, so A* had no
+    open above it -- but a plain step costs 1 and a ramp costs 3, so the geometric search had no
     reason to climb and never did unless it was already blocked.  Every net
     therefore wired on one plane, and a route crossing that plane walled off
     whatever was behind it: ramping over a belt needs two free tiles of run each
@@ -14055,7 +14055,7 @@ class TestThroughTrafficLeavesTheGround:
         bounds = (-2, -2, 200, 20)
 
         def levels_used(distance: int) -> set[int]:
-            path = _astar(
+            path = _geometric_search(
                 canvas,
                 [(0, 0, 0)],
                 {(distance, 0, 0)},
@@ -14403,7 +14403,7 @@ class TestAMergeArrivesAtItsOwnDestination:
 
     It REFUSED merges the router had aimed at.  ``_merge_frontier`` offers the
     free cells beside a ``dst_group`` sibling's path as goals -- sharing a
-    destination tile is what makes a sibling, and items never enter it -- so A*
+    destination tile is what makes a sibling, and items never enter it -- so the geometric search
     ends the path there and this function threw it away whenever the sibling's
     belt was labelled with the OTHER item of a mixed lane.  That is every one of
     the seven unlinked paths on ``universe-matrix/max-proliferation`` at budget
@@ -14749,14 +14749,14 @@ class TestABranchLeavesFromItsOwnSource:
 class TestDetailedRoutingDiagnostics:
     @pytest.fixture
     def _without_the_last_mile_pass(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Pin the bounded cluster search off for ONE test that scripts `_astar`.
+        """Pin the bounded cluster search off for ONE test that scripts `_geometric_search`.
 
         Opt-in rather than autouse, and that distinction is the point.  The
-        tests wearing it model exactly ONE routing round: each scripts `_astar`
+        tests wearing it model exactly ONE routing round: each scripts `_geometric_search`
         with a finite sequence, or counts the searches the round and its
         crossing repair make, or asserts on the observations one search
         recorded.  The last-mile pass is a second stage that runs AFTER that
-        round and makes `_astar` calls of its own, so leaving it on makes those
+        round and makes `_geometric_search` calls of its own, so leaving it on makes those
         scripts wrong for a reason that has nothing to do with what they
         assert.
 
@@ -14847,7 +14847,7 @@ class TestDetailedRoutingDiagnostics:
                 0,
             )
 
-        monkeypatch.setattr("flab2bp.layout.routing_domain._astar", inspect_starts)
+        monkeypatch.setattr("flab2bp.layout.routing_domain._geometric_search", inspect_starts)
         monkeypatch.setattr("flab2bp.layout.routing_domain.RRR_MAX", 1)
         monkeypatch.setattr("flab2bp.layout.routing_domain._REPAIR_PASSES", 0)
 
@@ -14930,7 +14930,7 @@ class TestDetailedRoutingDiagnostics:
         bounds = (-2, -2, 2, 2)
         canvas.limit = bounds
 
-        result = _astar(
+        result = _geometric_search(
             canvas,
             [],
             {(1, 0, 0)},
@@ -14943,14 +14943,14 @@ class TestDetailedRoutingDiagnostics:
         assert result.kind is RouteFailureKind.DYNAMIC_ACCESS
         assert result.expansions == 0
 
-    def test_astar_opens_only_the_explicitly_owned_guarded_start(self) -> None:
+    def test_geometric_search_opens_only_the_explicitly_owned_guarded_start(self) -> None:
         canvas = _Canvas(limit=(-2, -2, 4, 2))
         start = (0, 0, 0)
         foreign_guard = (1, 0, 0)
         canvas.guard.update((start, foreign_guard))
         bounds = (-2, -2, 4, 2)
 
-        refused = _astar(
+        refused = _geometric_search(
             canvas,
             [start],
             {(3, 0, 0)},
@@ -14958,7 +14958,7 @@ class TestDetailedRoutingDiagnostics:
             1.0,
             bounds,
         )
-        routed = _astar(
+        routed = _geometric_search(
             canvas,
             [start],
             {(3, 0, 0)},
@@ -14973,12 +14973,12 @@ class TestDetailedRoutingDiagnostics:
         assert routed.path[0] == start
         assert foreign_guard not in routed.path
 
-    def test_astar_excludes_a_prior_commit_collision_cell(self) -> None:
+    def test_geometric_search_excludes_a_prior_commit_collision_cell(self) -> None:
         bounds = (-2, -2, 4, 2)
         canvas = _Canvas(limit=bounds)
         rejected = (1, 0, 0)
 
-        result = _astar(
+        result = _geometric_search(
             canvas,
             [(0, 0, 0)],
             {(3, 0, 0)},
@@ -15006,7 +15006,7 @@ class TestDetailedRoutingDiagnostics:
         open_grid = replace(grid, occ=bytearray(grid.base), hist=None)
         blame: dict[tuple[int, int, int], float] = {}
 
-        result = _astar(
+        result = _geometric_search(
             canvas,
             [(0, 0, 0)],
             {(3, 3, 0)},
@@ -15053,7 +15053,7 @@ class TestDetailedRoutingDiagnostics:
             )
         )
 
-        def scripted_astar(
+        def scripted_geometric_search(
             _canvas: _Canvas,
             _starts: list[Cell],
             goals: set[Cell],
@@ -15065,7 +15065,9 @@ class TestDetailedRoutingDiagnostics:
                 assert goals == set()
             return result
 
-        monkeypatch.setattr("flab2bp.layout.routing_domain._astar", scripted_astar)
+        monkeypatch.setattr(
+            "flab2bp.layout.routing_domain._geometric_search", scripted_geometric_search
+        )
         monkeypatch.setattr("flab2bp.layout.routing_domain.RRR_MAX", 1)
         monkeypatch.setattr("flab2bp.layout.routing_domain._REPAIR_PASSES", 0)
         monkeypatch.setattr(
@@ -15110,7 +15112,7 @@ class TestDetailedRoutingDiagnostics:
             )
         )
 
-        def scripted_astar(
+        def scripted_geometric_search(
             _canvas: _Canvas,
             starts: Sequence[Cell],
             _goals: set[Cell],
@@ -15122,7 +15124,9 @@ class TestDetailedRoutingDiagnostics:
                 assert starts == []
             return result
 
-        monkeypatch.setattr("flab2bp.layout.routing_domain._astar", scripted_astar)
+        monkeypatch.setattr(
+            "flab2bp.layout.routing_domain._geometric_search", scripted_geometric_search
+        )
         monkeypatch.setattr("flab2bp.layout.routing_domain.RRR_MAX", 1)
         monkeypatch.setattr("flab2bp.layout.routing_domain._REPAIR_PASSES", 0)
         monkeypatch.setattr(
@@ -15508,7 +15512,7 @@ class TestDetailedRoutingDiagnostics:
         ]
         wall = (5, 5, 0)
 
-        def scripted_astar(
+        def scripted_geometric_search(
             _canvas: _Canvas,
             starts: Sequence[Cell],
             *_args: object,
@@ -15521,7 +15525,9 @@ class TestDetailedRoutingDiagnostics:
                 return _PathSearchResult(None, RouteFailureKind.SEALED_POCKET, (wall,), 1)
             return _PathSearchResult((wall,), None, (), 1)
 
-        monkeypatch.setattr("flab2bp.layout.routing_domain._astar", scripted_astar)
+        monkeypatch.setattr(
+            "flab2bp.layout.routing_domain._geometric_search", scripted_geometric_search
+        )
         monkeypatch.setattr("flab2bp.layout.routing_domain.RRR_MAX", 1)
         monkeypatch.setattr("flab2bp.layout.routing_domain._REPAIR_PASSES", 0)
         monkeypatch.setattr(
@@ -15552,7 +15558,7 @@ class TestDetailedRoutingDiagnostics:
         first_wall = (5, 4, 0)
         second_wall = (5, 5, 0)
 
-        def scripted_astar(
+        def scripted_geometric_search(
             _canvas: _Canvas,
             starts: Sequence[Cell],
             *_args: object,
@@ -15565,7 +15571,9 @@ class TestDetailedRoutingDiagnostics:
                 )
             return _PathSearchResult((first_wall if source_y == -4 else second_wall,), None, (), 1)
 
-        monkeypatch.setattr("flab2bp.layout.routing_domain._astar", scripted_astar)
+        monkeypatch.setattr(
+            "flab2bp.layout.routing_domain._geometric_search", scripted_geometric_search
+        )
         monkeypatch.setattr("flab2bp.layout.routing_domain.RRR_MAX", 1)
         monkeypatch.setattr("flab2bp.layout.routing_domain._REPAIR_PASSES", 0)
         monkeypatch.setattr(
@@ -15592,7 +15600,7 @@ class TestDetailedRoutingDiagnostics:
         ]
         seen: list[str] = []
 
-        def scripted_astar(
+        def scripted_geometric_search(
             _canvas: _Canvas,
             starts: Sequence[Cell],
             goals: Collection[Cell],
@@ -15603,7 +15611,9 @@ class TestDetailedRoutingDiagnostics:
             seen.append(label)
             return _PathSearchResult((min(starts), min(goals)), None, (), 1)
 
-        monkeypatch.setattr("flab2bp.layout.routing_domain._astar", scripted_astar)
+        monkeypatch.setattr(
+            "flab2bp.layout.routing_domain._geometric_search", scripted_geometric_search
+        )
         monkeypatch.setattr(
             "flab2bp.layout.routing_domain._commit_paths",
             lambda *_args, **_kwargs: (),
@@ -15624,7 +15634,7 @@ class TestAFailedSearchNamesTheWallThatCutIt:
     identically zero here.  Every round would otherwise re-run the same nets in
     the same order against a uniformly, uselessly dearer map.
 
-    The recoverable signal is the wall.  When A*'s heap empties -- the one
+    The recoverable signal is the wall.  When the geometric search's heap empties -- the one
     ending that proves no path exists, as against a spent cap, budget or clock
     -- the settled set is the reachable pocket and the committed cells touching
     it are what cut this net off.
@@ -15650,7 +15660,7 @@ class TestAFailedSearchNamesTheWallThatCutIt:
     def test_a_sealed_pocket_charges_the_committed_cell(self) -> None:
         canvas, bounds = self._boxed_in()
         blame: dict[tuple[int, int, int], float] = {}
-        result = _astar(
+        result = _geometric_search(
             canvas,
             [(0, 0, 0)],
             {(30, 30, 0)},
@@ -15673,7 +15683,7 @@ class TestAFailedSearchNamesTheWallThatCutIt:
         canvas.limit = (-40, -40, 40, 40)
         canvas.blocked[0, -1, 0] = _TENTATIVE
         blame: dict[tuple[int, int, int], float] = {}
-        result = _astar(
+        result = _geometric_search(
             canvas,
             [(0, 0, 0)],
             {(4, 0, 0)},
@@ -15693,7 +15703,7 @@ class TestAFailedSearchNamesTheWallThatCutIt:
         negotiation term becomes noise."""
         canvas, bounds = self._boxed_in()
         blame: dict[tuple[int, int, int], float] = {}
-        result = _astar(
+        result = _geometric_search(
             canvas,
             [(0, 0, 0)],
             {(30, 30, 0)},
@@ -15725,7 +15735,7 @@ class TestAFailedSearchNamesTheWallThatCutIt:
             for lvl in range(canvas.levels):
                 canvas.blocked[x, 0, lvl] = 0
         blame: dict[tuple[int, int, int], float] = {}
-        result = _astar(
+        result = _geometric_search(
             canvas,
             [(0, 0, 0)],
             {(150, 30, 0)},
@@ -15748,7 +15758,7 @@ class TestAFailedSearchNamesTheWallThatCutIt:
                 canvas.blocked[cell] = _TENTATIVE
                 owner[cell] = 7
 
-        result = _astar(
+        result = _geometric_search(
             canvas,
             [(20, 80, 0)],
             {(140, 80, 0)},
@@ -15766,7 +15776,7 @@ class TestAFailedSearchNamesTheWallThatCutIt:
 
 
 class TestTheFlatGridIsTheSameSearch:
-    """``_astar`` runs on flat integer cell indices, and neither the index nor
+    """``_geometric_search`` runs on flat integer cell indices, and neither the index nor
     the caller-supplied grid may change what it finds.
 
     The whole point of ``_Grid`` is that it is an ENCODING of the canvas, not a
@@ -15824,9 +15834,9 @@ class TestTheFlatGridIsTheSameSearch:
     def test_a_caller_grid_finds_the_identical_path(self) -> None:
         canvas, bounds = self._maze()
         canvas.routing_ports = frozenset({(10, 3, 0)})
-        alone = _astar(canvas, [(0, 0, 0)], {(20, 0, 0)}, {}, 1.0, bounds).path
+        alone = _geometric_search(canvas, [(0, 0, 0)], {(20, 0, 0)}, {}, 1.0, bounds).path
         grid = _make_grid(canvas, bounds, _canvas_span(canvas, bounds), {})
-        shared = _astar(
+        shared = _geometric_search(
             canvas,
             [(0, 0, 0)],
             {(20, 0, 0)},
@@ -15854,7 +15864,7 @@ class TestTheFlatGridIsTheSameSearch:
             _canvas_span(canvas, (0, 0, 4, 4)),
             {},
         )
-        got = _astar(
+        got = _geometric_search(
             canvas,
             [(0, 0, 0)],
             {(20, 0, 0)},
@@ -15866,7 +15876,7 @@ class TestTheFlatGridIsTheSameSearch:
             None,
             stale,
         ).path
-        expected = _astar(canvas, [(0, 0, 0)], {(20, 0, 0)}, {}, 1.0, bounds).path
+        expected = _geometric_search(canvas, [(0, 0, 0)], {(20, 0, 0)}, {}, 1.0, bounds).path
         assert got == expected
 
     def test_block_and_restore_return_the_cell_to_what_it_was(self) -> None:
@@ -16091,7 +16101,7 @@ class TestAPortKnowsItsOwnAltitude:
     BELOW it, which is solid lane belt.
 
     The drop therefore reported no free neighbour, no access cell could be
-    held, and A* was handed an EMPTY START SET -- a search that expands zero
+    held, and the geometric search was handed an EMPTY START SET -- a search that expands zero
     nodes, registers no congestion, and so cannot be priced by any amount of
     rip-up or negotiation.  It was measured as 422 of 600 route failures and
     read as a routing problem for a long time; it was never one.
@@ -16105,7 +16115,7 @@ class TestAPortKnowsItsOwnAltitude:
 
 
 class TestTheRoutingGridAgreesWithTheCanvas:
-    """A* searches ``_make_grid``'s flat array, and it must refuse what ``free`` does.
+    """The geometric search runs on ``_make_grid``'s flat array and must refuse what ``free`` does.
 
     ``_Canvas.free`` refuses a cell in a belt addon's ``belt_ban`` band and a
     cell in a junction's ``guard``.  ``_make_grid`` flattened ``blocked``,
@@ -16144,7 +16154,7 @@ class TestTheRoutingGridAgreesWithTheCanvas:
         ]
         assert not disagree, (
             "the router searches a grid that disagrees with `_Canvas.free` at "
-            f"{disagree}; every such cell is a path A* will return and "
+            f"{disagree}; every such cell is a path the geometric search will return and "
             "`_commit_paths` will then throw the whole net away for"
         )
 
@@ -20355,11 +20365,11 @@ def test_restored_corridor_remains_routable_only_by_its_owner() -> None:
     reservations.restore_role(port, corridor)
 
     canvas.routing_ports = frozenset((port,))
-    owned = _astar(canvas, [(0, 0, 0)], {corridor.access}, {}, 0.0, bounds, grid=grid)
+    owned = _geometric_search(canvas, [(0, 0, 0)], {corridor.access}, {}, 0.0, bounds, grid=grid)
     assert owned.path == ((0, 0, 0), (1, 0, 0), (2, 0, 0))
 
     canvas.routing_ports = frozenset()
-    foreign = _astar(canvas, [(0, 0, 0)], {corridor.access}, {}, 0.0, bounds, grid=grid)
+    foreign = _geometric_search(canvas, [(0, 0, 0)], {corridor.access}, {}, 0.0, bounds, grid=grid)
     assert foreign.path is None
     assert foreign.kind is RouteFailureKind.SEALED_POCKET
 
@@ -23161,7 +23171,7 @@ def test_a_pack_that_never_routed_is_reported_as_a_port_seating_defect() -> None
     """`PACKER defect` is reserved for a pack the router actually ran on.
 
     R2 §3 measured the old message on `universe-matrix/output-products`: five
-    packs, ZERO A* expansions, every failure a preparation-time STATIC_ACCESS --
+    packs, ZERO geometric search work, every failure a preparation-time STATIC_ACCESS --
     and a refusal naming the packer, which is exactly what sent that research to
     the wrong file.
     """
@@ -24621,7 +24631,7 @@ def test_held_endpoint_probe_restores_permissions_and_reservations_on_deadline(
     def expired_probe(*_args: object, **_kwargs: object) -> routing_domain._PathSearchResult:
         raise routing_domain._PreparationDeadline
 
-    monkeypatch.setattr(routing_domain, "_astar", expired_probe)
+    monkeypatch.setattr(routing_domain, "_geometric_search", expired_probe)
     with pytest.raises(routing_domain._PreparationDeadline):
         _reserve_port_access(
             canvas,
@@ -24752,7 +24762,7 @@ def test_port_access_cancellation_inside_candidate_scan_restores_canvas(
         stopped = True
         return routing_domain._PathSearchResult(((2, 3, 0),), None, (), 1)
 
-    monkeypatch.setattr(routing_domain, "_astar", stop_after_search)
+    monkeypatch.setattr(routing_domain, "_geometric_search", stop_after_search)
     with pytest.raises(routing_domain._PreparationDeadline):
         routing_domain._reserve_port_access(
             canvas,

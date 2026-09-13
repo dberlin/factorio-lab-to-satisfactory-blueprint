@@ -7,16 +7,16 @@ from flab2bp.layout.route_feedback import RouteFailureKind
 from scripts import route_profile
 
 
-def _run_profiled_astar(
+def _run_profiled_geometric_search(
     monkeypatch: pytest.MonkeyPatch,
     result: routing_domain._PathSearchResult,
 ) -> tuple[routing_domain._PathSearchResult, route_profile.Tally]:
-    monkeypatch.setattr(routing_domain, "_astar", lambda *args, **kwargs: result)
+    monkeypatch.setattr(routing_domain, "_geometric_search", lambda *args, **kwargs: result)
     tally = route_profile.Tally()
     restore = route_profile.install(tally)
     canvas = object.__new__(routing_domain._Canvas)
     try:
-        returned = routing_domain._astar(canvas, [], set(), {}, 0.0, (0, 0, 0, 0))
+        returned = routing_domain._geometric_search(canvas, [], set(), {}, 0.0, (0, 0, 0, 0))
     finally:
         restore()
     return returned, tally
@@ -30,11 +30,11 @@ def test_install_records_successful_path_result(monkeypatch: pytest.MonkeyPatch)
         expansions=7,
     )
 
-    returned, tally = _run_profiled_astar(monkeypatch, result)
+    returned, tally = _run_profiled_geometric_search(monkeypatch, result)
 
     assert returned is result
-    assert tally.astar_hit == 1
-    assert tally.astar_none == 0
+    assert tally.search_hit == 1
+    assert tally.search_none == 0
     assert tally.path_cells == 1
     assert tally.expansions == 7
 
@@ -47,11 +47,11 @@ def test_install_records_failed_path_result(monkeypatch: pytest.MonkeyPatch) -> 
         expansions=11,
     )
 
-    returned, tally = _run_profiled_astar(monkeypatch, result)
+    returned, tally = _run_profiled_geometric_search(monkeypatch, result)
 
     assert returned is result
-    assert tally.astar_hit == 0
-    assert tally.astar_none == 1
+    assert tally.search_hit == 0
+    assert tally.search_none == 1
     assert tally.path_cells == 0
     assert tally.expansions == 11
 

@@ -116,7 +116,7 @@ class GeometricWorld:
                 )
             )
             # Coater passage follows the original grid's explicit addon excusal.
-            # Other unlinked graph-rescue cases remain the ordinary A*'s domain.
+            # Other unlinked graph-rescue cases remain the ordinary geometric search's domain.
             if building.item_id == catalog.SPRAY_COATER_ID:
                 continue
             transform = (

@@ -199,14 +199,14 @@ def test_partial_finish_emits_surviving_route_without_settlement(
         "iron-ore",
         net_id=NetId(2, 3, "iron-ore", NetRole.INTERNAL, 1),
     )
-    original = routing_domain._astar
+    original = routing_domain._geometric_search
 
     def search(*args, **kwargs):
         if (0, 6, 0) in args[0].routing_ports:
             return routing_domain._PathSearchResult(None, RouteFailureKind.DYNAMIC_ACCESS, (), 0)
         return original(*args, **kwargs)
 
-    monkeypatch.setattr(routing_domain, "_astar", search)
+    monkeypatch.setattr(routing_domain, "_geometric_search", search)
     monkeypatch.setattr(routing_domain, "RRR_MAX", 1)
     monkeypatch.setattr(routing_domain.last_mile, "B_MAX_STRANDED", 0)
 
@@ -241,7 +241,7 @@ def test_budget_exit_materializes_selected_partial_without_settlement(
         "iron-ore",
         net_id=NetId(2, 3, "iron-ore", NetRole.INTERNAL, 1),
     )
-    original = routing_domain._astar
+    original = routing_domain._geometric_search
     expired = False
     now = monotonic()
 
@@ -255,7 +255,7 @@ def test_budget_exit_materializes_selected_partial_without_settlement(
     def settle(_workspace, _owners):
         pytest.fail("an expired partial cannot invoke full settlement")
 
-    monkeypatch.setattr(routing_domain, "_astar", search)
+    monkeypatch.setattr(routing_domain, "_geometric_search", search)
     monkeypatch.setattr(routing_domain.time, "monotonic", lambda: now + 2.0 if expired else now)
     result = routing_domain._route_all(
         canvas,
@@ -750,7 +750,7 @@ def test_contextual_refusal_moves_existing_tap_after_upstream_restaking(
             net_id=NetId(0, 2, "iron-ore", NetRole.INTERNAL, 1),
         ),
     ]
-    original = routing_domain._astar
+    original = routing_domain._geometric_search
     initial = iter(
         (
             tuple((x, 0, 0) for x in range(8)),
@@ -765,7 +765,7 @@ def test_contextual_refusal_moves_existing_tap_after_upstream_restaking(
             return routing_domain._PathSearchResult(path, None, (), 0)
         return original(*args, **kwargs)
 
-    monkeypatch.setattr(routing_domain, "_astar", search)
+    monkeypatch.setattr(routing_domain, "_geometric_search", search)
     candidates = []
     stopped = RouteSettlementCancelled("alternative-observed")
 
@@ -807,7 +807,7 @@ def test_earlier_partial_incumbent_cannot_inherit_later_refused_workspace(
         "iron-ore",
         net_id=NetId(2, 3, "iron-ore", NetRole.INTERNAL, 1),
     )
-    original = routing_domain._astar
+    original = routing_domain._geometric_search
     missed = False
 
     def search(*args, **kwargs):
@@ -817,7 +817,7 @@ def test_earlier_partial_incumbent_cannot_inherit_later_refused_workspace(
             return routing_domain._PathSearchResult(None, RouteFailureKind.DYNAMIC_ACCESS, (), 0)
         return original(*args, **kwargs)
 
-    monkeypatch.setattr(routing_domain, "_astar", search)
+    monkeypatch.setattr(routing_domain, "_geometric_search", search)
     monkeypatch.setattr(routing_domain, "_REPAIR_PASSES", 0)
     monkeypatch.setattr(routing_domain.last_mile, "B_MAX_STRANDED", 0)
     monkeypatch.setattr(routing_domain, "RRR_MAX", 2)

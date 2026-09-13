@@ -123,7 +123,7 @@ LADDER_WALL_SHARE = 0.4
 #:
 #: Rung 0 used to run on the caller's own clock because its reservation was
 #: the local-only oracle and cost almost nothing.  With trunk goals it runs
-#: an A* per option per demand, so an unbounded rung 0 could spend the wall
+#: a geometric search per option per demand, so an unbounded rung 0 could spend the wall
 #: `_route_all` needs and refuse on BUDGET the cuts a cheaper oracle would
 #: have wired -- the same trade `LADDER_WALL_SHARE` exists for one rung up.
 #: On its own expiry rung 0 is RE-JUDGED with the local-only oracle
@@ -802,7 +802,7 @@ def _free_doorstep(canvas: _Canvas, cell: Cell) -> frozenset[Cell]:
     Filtering through :meth:`_Canvas.free` is also what keeps every goal inside
     the reservation's ``bounds``: `free` refuses any cell outside
     ``canvas.limit``, and `pack_with_access` passes that same ``canvas.limit``
-    as ``bounds``.  `_astar` exempts only its START cells from the box, so a
+    as ``bounds``.  `_geometric_search` exempts only its START cells from the box, so a
     goal outside it would be silently unreachable and would convict a demand
     for geometry it does not have.
     """
@@ -846,7 +846,7 @@ def _trunk_goals(
     ONE of them" rather than all of them.  That is a necessary condition, not
     a sufficient one: it can still admit a rung the router then refuses, but
     it can no longer admit a rung on which a lane head is sealed away from
-    every partner it has.  Probing per partner would multiply the A* count by
+    every partner it has.  Probing per partner would multiply the geometric search count by
     the fan-out for a claim the router re-checks anyway.
 
     Return endpoint ownership alongside geometry. A goal touching another
@@ -1069,7 +1069,7 @@ def _top_up_partial(
     which is the consistency worth having, and `pack_with_access` computes it as
     None today because no composed demand answers `reaches_boundary`.  The day
     the v2 gate's lever 1 gives the composer real boundary ports, `probed`
-    becomes True here too: this call would build a grid and run an A* per
+    becomes True here too: this call would build a grid and run a geometric search per
     option, and it would stop being the cheap unprobed pass the wall budget
     assumes.  Re-measure the rung cost on that day.
     """
@@ -1140,7 +1140,7 @@ def pack_with_access(
     preamble; a ladder multiplies that by its rungs.  The FIRST rung is what a
     ladderless composer would have done and runs on ``deadline`` itself -- all
     but its RESERVATION, which is capped at :data:`RESERVE_WALL_SHARE` because
-    the trunk goals turned that reservation into an A* per option per demand,
+    the trunk goals turned that reservation into a geometric search per option per demand,
     and which degrades to the local-only oracle on the caller's full clock
     rather than refusing when that cap bites.  Every rung after the first is
     speculative and is funded out of :data:`LADDER_WALL_SHARE` of the wall left

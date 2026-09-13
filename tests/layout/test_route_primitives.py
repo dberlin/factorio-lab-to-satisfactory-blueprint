@@ -28,7 +28,7 @@ def test_locked_save_routes_and_emits_real_parallel_height_connector() -> None:
     edges = primitives.edges(
         canvas, grid, [start], {goal}, forbidden=(), active_paths={}, deadline=None
     )
-    result = routing_domain._astar(
+    result = routing_domain._geometric_search(
         canvas,
         [start],
         {goal},

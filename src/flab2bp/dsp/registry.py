@@ -1198,7 +1198,7 @@ LINT_EXCEPTIONS: tuple[LintException, ...] = (
     ),
     LintException(
         "flab2bp.layout.routing_domain",
-        "_astar",
+        "_geometric_search",
         30.0,
         "`1 << 30` as an infinity sentinel for the heuristic; not degrees",
     ),
@@ -1255,7 +1255,7 @@ LINT_EXCEPTIONS: tuple[LintException, ...] = (
         "depth_pressure_blocks",
         30.0,
         "`1 << 30` as an infinity sentinel on the depth profile's edges; not "
-        "the sorter skew angle.  Same shape as `freeform._astar`'s.",
+        "the sorter skew angle.  Same shape as `routing_domain._geometric_search`'s.",
     ),
     LintException(
         "flab2bp.layout.hierarchy.strategy",

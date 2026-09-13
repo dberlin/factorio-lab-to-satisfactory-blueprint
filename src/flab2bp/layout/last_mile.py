@@ -7,7 +7,7 @@ net or two still unrouted it has proved nothing: the pack is discarded and the
 only thing that survives is decaying feedback.  This module is the missing
 proof.  Given the handful of nets that failed and the nets their blame walls
 accuse, it searches JOINTLY over all of them -- conflict-based search, with the
-router's own A* at the low level -- and returns one of exactly three answers:
+router's own geometric search at the low level -- and returns one of exactly three answers:
 a disjoint routing for every cluster net, a closed tree that proves there is
 none, or "a bound fired and nothing is claimed".
 
@@ -63,7 +63,7 @@ B_MAX_CONSTRAINTS = 64
 #: Share of the routing pass's remaining expansion budget one run may spend.
 B_CBS_EXPANSION_SHARE = 0.25
 
-#: Bound on the number of low-level A* expansions one CBS run may spend.
+#: Bound on the low-level geometric search work one CBS run may spend.
 B_LOW_LEVEL_EXPANSIONS = 50_000
 
 #: Remaining wall seconds below which the pass declines to start.  MEASURED,
@@ -371,7 +371,7 @@ class ClusterResult:
 class ClusterEnvironment:
     """Everything the search may do, as callables owned by the caller.
 
-    ``search(index, forbidden)`` must run the caller's own A* for one net with
+    ``search(index, forbidden)`` must run the caller's own geometric search for one net with
     the caller's own ends, its own rejected-commit cells UNIONED with
     ``forbidden``, and the cluster's paths absent from the grid.  The search
     never touches a canvas itself; the caller owns every mutation.
@@ -580,7 +580,7 @@ class ClusterCapture:
     budget_left: int
     budget_floor: int
     deadline_remaining: float | None
-    #: The REST of what the caller's ``search`` hands its A*, per net.  A
+    #: The REST of what the caller's ``search`` hands its geometric search, per net.  A
     #: replay that omits these is not the same search: an owned start is a
     #: junction-guard cell the low level makes PASSABLE, so dropping it moves
     #: the path, and a rejected-commit cell is subtracted from the same flags.

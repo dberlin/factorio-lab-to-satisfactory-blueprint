@@ -31,18 +31,20 @@ def test_wall_above_old_ceiling_is_crossed_at_level_four() -> None:
     for y in range(3):
         for level in range(4):
             canvas.blocked[(2, y, level)] = 0
-    result = routing_domain._astar(canvas, [(0, 1, 0)], {(4, 1, 0)}, {}, 1.0, (0, 0, 4, 2))
+    result = routing_domain._geometric_search(
+        canvas, [(0, 1, 0)], {(4, 1, 0)}, {}, 1.0, (0, 0, 4, 2)
+    )
     assert result.path is not None
     assert (2, 1, 4) in result.path
     assert all(0 <= cell[2] <= 4 for cell in result.path)
 
 
 def test_empty_xy_shaft_requires_vertical_unlock() -> None:
-    unlocked = routing_domain._astar(
+    unlocked = routing_domain._geometric_search(
         _canvas(4, True), [(0, 0, 0)], {(0, 0, 4)}, {}, 1.0, (0, 0, 0, 0)
     )
     assert unlocked.path == tuple((0, 0, level) for level in range(5))
-    locked = routing_domain._astar(
+    locked = routing_domain._geometric_search(
         _canvas(4, False), [(0, 0, 0)], {(0, 0, 4)}, {}, 1.0, (0, 0, 0, 0)
     )
     assert locked.path is None
@@ -50,7 +52,7 @@ def test_empty_xy_shaft_requires_vertical_unlock() -> None:
 
 
 def test_locked_technology_keeps_two_tile_ramps() -> None:
-    result = routing_domain._astar(
+    result = routing_domain._geometric_search(
         _canvas(1, False), [(0, 0, 0)], {(2, 0, 1)}, {}, 1.0, (0, 0, 2, 0)
     )
     assert result.path == ((0, 0, 0), (1, 0, 0), (2, 0, 1))
@@ -58,7 +60,9 @@ def test_locked_technology_keeps_two_tile_ramps() -> None:
 
 @pytest.mark.parametrize("goal", [(0, 0, -1), (0, 0, 5)])
 def test_goal_outside_save_ceiling_never_wraps(goal: Cell) -> None:
-    result = routing_domain._astar(_canvas(4, True), [(0, 0, 0)], {goal}, {}, 1.0, (0, 0, 1, 1))
+    result = routing_domain._geometric_search(
+        _canvas(4, True), [(0, 0, 0)], {goal}, {}, 1.0, (0, 0, 1, 1)
+    )
     assert result.path is None
     assert result.expansions == 0
 
@@ -72,11 +76,11 @@ def test_sparse_connector_is_direct_and_landing_still_must_be_free() -> None:
     edges: dict[int, tuple[tuple[int, float], ...]] = {
         grid.index(start): ((grid.index(goal), 2.0),)
     }
-    result = routing_domain._astar(
+    result = routing_domain._geometric_search(
         canvas, [start], {goal}, {}, 1.0, box, grid=grid, extra_edges=edges
     )
     assert result.path == (start, goal)
-    blocked = routing_domain._astar(
+    blocked = routing_domain._geometric_search(
         canvas, [start], {goal}, {}, 1.0, box, grid=grid, forbidden=(goal,), extra_edges=edges
     )
     assert blocked.path is None
@@ -92,7 +96,7 @@ def test_sparse_connectors_spend_the_same_work_reported_to_the_shared_budget() -
     }
     for allowance in (1, 20_000):
         budget = {"left": allowance}
-        result = routing_domain._astar(
+        result = routing_domain._geometric_search(
             canvas, [start], {goal}, {}, 1.0, box, budget, grid=grid, extra_edges=edges
         )
         assert result.expansions <= allowance
@@ -144,7 +148,9 @@ def test_reverse_search_preserves_forward_ramp_clearance(blocked_via: bool) -> N
     canvas.blocked[(1, 0, 1)] = 0
     if blocked_via:
         canvas.blocked[(1, 0, 0)] = 0
-    result = routing_domain._astar(canvas, [(0, 0, 0)], {(2, 0, 1)}, {}, 1.0, (0, 0, 2, 0))
+    result = routing_domain._geometric_search(
+        canvas, [(0, 0, 0)], {(2, 0, 1)}, {}, 1.0, (0, 0, 2, 0)
+    )
     if blocked_via:
         assert result.path is None
         assert result.kind is RouteFailureKind.SEALED_POCKET
@@ -156,17 +162,21 @@ def test_reverse_search_keeps_entry_ring_exception_at_source_only() -> None:
     canvas = _canvas(1, False)
     canvas.limit = (-1, 0, 1, 0)
     canvas.blocked[(0, 0, 1)] = 0
-    result = routing_domain._astar(canvas, [(-1, 0, 0)], {(1, 0, 1)}, {}, 1.0, (0, 0, 1, 0))
+    result = routing_domain._geometric_search(
+        canvas, [(-1, 0, 0)], {(1, 0, 1)}, {}, 1.0, (0, 0, 1, 0)
+    )
     assert result.path == ((-1, 0, 0), (0, 0, 0), (1, 0, 1))
     canvas.blocked[(-1, 0, 0)] = 0
-    refused = routing_domain._astar(canvas, [(-1, 0, 0)], {(1, 0, 1)}, {}, 1.0, (0, 0, 1, 0))
+    refused = routing_domain._geometric_search(
+        canvas, [(-1, 0, 0)], {(1, 0, 1)}, {}, 1.0, (0, 0, 1, 0)
+    )
     assert refused.path is None
 
 
 def test_reverse_search_cannot_use_another_seed_as_a_forbidden_ramp_via() -> None:
     canvas = _canvas(1, False)
     canvas.limit = (0, 0, 2, 0)
-    result = routing_domain._astar(
+    result = routing_domain._geometric_search(
         canvas,
         [(0, 0, 0), (1, 0, 0)],
         {(2, 0, 1)},
@@ -247,7 +257,9 @@ def test_scheduler_restores_source_after_contextual_ordinary_refusal(
     start, goal = (0, 1, 0), (0, 1, 1)
     tap = (-3, 1, 0)
     search, primitives = _scheduler(canvas, bounds)
-    ordinary = routing_domain._astar(canvas, [start], {goal}, history, 1.0, bounds, grid=grid)
+    ordinary = routing_domain._geometric_search(
+        canvas, [start], {goal}, history, 1.0, bounds, grid=grid
+    )
     assert ordinary.path is not None
     checked = []
     original = routing_domain._Canvas.projected_buildings_are_clear
@@ -305,7 +317,9 @@ def test_capped_ordinary_search_still_uses_new_connector_edges(
     grid = routing_domain._make_grid(canvas, bounds, (-4, -4, 4, 4), history)
     search, primitives = _scheduler(canvas, bounds)
     start, goal = (0, 1, 0), (0, 1, 1)
-    ordinary = routing_domain._astar(canvas, [start], {goal}, history, 1.0, bounds, grid=grid)
+    ordinary = routing_domain._geometric_search(
+        canvas, [start], {goal}, history, 1.0, bounds, grid=grid
+    )
     assert ordinary.kind is RouteFailureKind.BUDGET
     assert ordinary.expansions == routing_domain._MAX_EXPANSIONS
     result = search([start], {goal}, {}, history, 1.0, {"left": 20}, {}, grid)
@@ -419,7 +433,7 @@ def test_cost_plateau_reaches_goal_before_shared_quota_exhaustion() -> None:
     canvas = _canvas(0, False)
     bounds = (0, 0, 100, 80)
     grid = routing_domain._make_grid(canvas, bounds, (-3, -3, 103, 83), {})
-    result = routing_domain._astar(
+    result = routing_domain._geometric_search(
         canvas, [(0, 0, 0)], {(100, 80, 0)}, {}, 1.0, bounds, {"left": 1000}, grid=grid
     )
     assert result.path is not None

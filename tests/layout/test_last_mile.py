@@ -8,7 +8,7 @@ from fractions import Fraction
 from flab2bp.layout import last_mile, routing_domain
 from flab2bp.layout.route_feedback import RouteFailureKind
 from flab2bp.layout.route_primitives import RoutePrimitives
-from flab2bp.layout.routing_domain import _astar, _Canvas, _PathSearchResult
+from flab2bp.layout.routing_domain import _Canvas, _geometric_search, _PathSearchResult
 
 Cell = tuple[int, int, int]
 
@@ -404,12 +404,12 @@ def _grid_environment(
     budget: dict[str, int] | None = None,
     max_nodes: int = last_mile.B_MAX_CBS_NODES,
 ) -> last_mile.ClusterEnvironment:
-    """A CBS environment whose low level is the real router's A*."""
+    """A CBS environment whose low level is the real router's the geometric search."""
     left = {"left": 1 << 30} if budget is None else budget
 
     def search(index: int, constraints: frozenset[Cell]) -> _PathSearchResult:
         starts, goals = ends[index]
-        return _astar(
+        return _geometric_search(
             canvas,
             list(starts),
             set(goals),
@@ -705,7 +705,7 @@ def test_cbs_replans_disjoint_paths_that_share_a_connector_body() -> None:
             if index == 0
             else {}
         )
-        found = _astar(
+        found = _geometric_search(
             canvas,
             starts,
             goals,

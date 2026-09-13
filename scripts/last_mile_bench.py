@@ -29,7 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from route_records import CanvasSnapshot, ClusterCase, snapshot_grid
 
 from flab2bp.layout import last_mile  # noqa: E402
-from flab2bp.layout.routing_domain import _astar, _Grid, _PathSearchResult  # noqa: E402
+from flab2bp.layout.routing_domain import _geometric_search, _Grid, _PathSearchResult  # noqa: E402
 
 
 def _environment(
@@ -49,7 +49,7 @@ def _environment(
             max(0, budget["left"] - floor),
         )
         private = {"left": allowance}
-        found = _astar(
+        found = _geometric_search(
             canvas,
             list(starts),
             set(goals),

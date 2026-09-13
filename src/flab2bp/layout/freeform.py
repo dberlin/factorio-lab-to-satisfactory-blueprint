@@ -261,7 +261,7 @@ _PACK_SHARE = 0.35
 #:
 #: Sized well above what the clock can actually spend, and that margin is not
 #: slack, it is the whole point.  One shared `_ROUTING_BUDGET` was tried and it
-#: measured four cells WORSE: A* had just got 2.1x faster, so 2M expansions went
+#: measured four cells WORSE: the geometric search had just got 2.1x faster, so 2M expansions went
 #: from more than a 15s ceiling could reach to less, the second candidate height
 #: exhausted it, and every height after that got nothing.  A budget that binds
 #: before the clock does not bound the runaway the clock already bounds; it just
@@ -4230,7 +4230,7 @@ def _port_seating_refusal(attempts: Sequence[PackAttempt]) -> str | None:
     """The refusal for a sweep whose router never ran, or ``None``.
 
     Every retained attempt failed at PREPARATION with static access only and
-    expanded zero A* nodes: `_build` substitutes a synthetic STRANDED result and
+    expanded zero search nodes: `_build` substitutes a synthetic STRANDED result and
     skips routing entirely when `prepared.preparation_failures` is non-empty, so
     "the packer produced packs its own router cannot wire" is false twice over --
     nothing was routed and the packer is blameless.  Measured on all three

@@ -619,7 +619,7 @@ def test_trunk_goals_point_each_lane_head_at_its_partners_doorstep(
     the reservation is given: `_free_doorstep` admits a neighbour only through
     `_Canvas.free`, which refuses anything outside `canvas.limit` -- and
     `pack_with_access` passes that same `canvas.limit` as `bounds`.  A goal
-    outside `bounds` would be silently unreachable in `_astar` (only START
+    outside `bounds` would be silently unreachable in `_geometric_search` (only START
     cells are exempt from the box), turning a geometry question into a false
     `missing`.
     """
@@ -664,7 +664,8 @@ def test_trunk_goals_point_each_lane_head_at_its_partners_doorstep(
     assert all(packing.canvas.free(cell) for cell in goals[departure])
     x0, y0, x1, y1 = packing.canvas.limit
     assert all(x0 <= x <= x1 and y0 <= y <= y1 for cells in goals.values() for x, y, _z in cells), (
-        "a goal outside `bounds` is unreachable in `_astar` and would refuse for the wrong reason"
+        "a goal outside `bounds` is unreachable in `_geometric_search` and would refuse "
+        "for the wrong reason"
     )
 
 
@@ -727,7 +728,7 @@ def test_a_lane_head_whose_every_partner_is_walled_in_raises_no_goal(
 def test_a_sealed_lane_head_is_put_in_missing_by_the_trunk_probe(
     two_solved_blocks: TwoSolvedBlocks,
 ):
-    """REAL GEOMETRY: the payload of the whole lever, on the real A* and matcher.
+    """REAL GEOMETRY: the payload of the whole lever, on the real the geometric search and matcher.
 
     Nothing is monkeypatched here.  A ring of walls at Chebyshev distance 2
     around one lane head leaves its own four neighbours -- and therefore its

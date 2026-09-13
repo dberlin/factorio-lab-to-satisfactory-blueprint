@@ -29,7 +29,7 @@ def test_ramp_via_alias_does_not_lower_the_route_start() -> None:
         if (x, 0, level) not in free
     )
 
-    result = routing_domain._astar(canvas, [start], {goal}, {}, 1.0, bounds)
+    result = routing_domain._geometric_search(canvas, [start], {goal}, {}, 1.0, bounds)
 
     assert result.path is not None
     profile = routing_domain._altitude_profile(result.path, ramped=canvas.ramped)
@@ -189,7 +189,7 @@ def test_goal_pocket_reports_incoming_ramp_via_owner_within_budget() -> None:
     canvas.blocked[via] = routing_domain._TENTATIVE
     budget = {"left": 1024}
 
-    result = routing_domain._astar(
+    result = routing_domain._geometric_search(
         canvas, [start], {goal}, {}, 1.0, bounds, budget, blocking_owners={via: 7}
     )
 
@@ -199,7 +199,7 @@ def test_goal_pocket_reports_incoming_ramp_via_owner_within_budget() -> None:
     assert budget["left"] == 1024 - result.expansions
 
     del canvas.blocked[via]
-    opened = routing_domain._astar(canvas, [start], {goal}, {}, 1.0, bounds)
+    opened = routing_domain._geometric_search(canvas, [start], {goal}, {}, 1.0, bounds)
     assert opened.path is not None
     assert opened.path[0] == start
     assert opened.path[-1] == goal
@@ -212,7 +212,7 @@ def test_unequal_goal_history_preserves_the_cheapest_destination() -> None:
     history = {near: 100.0, cheap: 4.0}
     grid = routing_domain._make_grid(canvas, bounds, bounds, history)
 
-    result = routing_domain._astar(
+    result = routing_domain._geometric_search(
         canvas, [(0, 0, 0)], {near, cheap}, history, 1.0, bounds, grid=grid
     )
 
@@ -227,7 +227,9 @@ def test_detailed_search_charges_shared_budget_without_exceeding_its_cap(
         limit=bounds, belt_rules=replace(_BELT_RULES, max_z=Fraction(0))
     )
     budget = {"left": 3}
-    exhausted = routing_domain._astar(canvas, [(0, 0, 0)], {(7, 0, 0)}, {}, 1.0, bounds, budget)
+    exhausted = routing_domain._geometric_search(
+        canvas, [(0, 0, 0)], {(7, 0, 0)}, {}, 1.0, bounds, budget
+    )
     assert exhausted.path is None
     assert exhausted.kind is RouteFailureKind.BUDGET
     assert 0 < exhausted.expansions <= 3
@@ -235,7 +237,9 @@ def test_detailed_search_charges_shared_budget_without_exceeding_its_cap(
 
     monkeypatch.setattr(routing_domain, "_MAX_EXPANSIONS", 2)
     shared = {"left": 1000}
-    capped = routing_domain._astar(canvas, [(0, 0, 0)], {(7, 0, 0)}, {}, 1.0, bounds, shared)
+    capped = routing_domain._geometric_search(
+        canvas, [(0, 0, 0)], {(7, 0, 0)}, {}, 1.0, bounds, shared
+    )
     assert capped.path is None
     assert capped.kind is RouteFailureKind.BUDGET
     assert 0 < capped.expansions <= 2
@@ -247,7 +251,7 @@ def test_expired_detailed_search_does_not_spend_shared_budget() -> None:
     canvas = routing_domain._Canvas(limit=bounds)
     budget = {"left": 1000}
 
-    result = routing_domain._astar(
+    result = routing_domain._geometric_search(
         canvas, [(0, 0, 0)], {(7, 0, 0)}, {}, 1.0, bounds, budget, deadline=0.0
     )
 
@@ -266,7 +270,9 @@ def test_search_from_unpadded_corner_does_not_wrap_into_other_columns() -> None:
     box = (0, 0, 1, 1)
     grid = routing_domain._make_grid(canvas, box, box, {})
 
-    result = routing_domain._astar(canvas, [(0, 0, 0)], {(1, 1, 0)}, {}, 1.0, box, grid=grid)
+    result = routing_domain._geometric_search(
+        canvas, [(0, 0, 0)], {(1, 1, 0)}, {}, 1.0, box, grid=grid
+    )
 
     assert result.path is None
     assert result.kind is RouteFailureKind.SEALED_POCKET

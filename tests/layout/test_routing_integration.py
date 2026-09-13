@@ -574,7 +574,7 @@ def test_cluster_provider_hands_its_new_tap_to_the_dropped_sibling(
         )
         for index, destination in enumerate(destinations)
     ]
-    search = domain._astar
+    search = domain._geometric_search
     initial_queries = 2
 
     def bounded_initial_queries(*args, **kwargs):
@@ -593,7 +593,7 @@ def test_cluster_provider_hands_its_new_tap_to_the_dropped_sibling(
     # Simulate bounded first-pass queries, not fabricated paths. The real
     # cluster search must preserve its blocked-root safeguard, then supply
     # the excluded sibling through the provider's newly established dock.
-    monkeypatch.setattr(domain, "_astar", bounded_initial_queries)
+    monkeypatch.setattr(domain, "_geometric_search", bounded_initial_queries)
     monkeypatch.setattr(domain, "_REPAIR_PASSES", 0)
     monkeypatch.setattr(domain, "RRR_MAX", 1)
     monkeypatch.setattr(domain, "_SINGLE_ROUND_NETS", 2)
@@ -670,7 +670,7 @@ def test_repair_moves_a_route_blocking_only_the_future_splitter(
             for index, destination in enumerate(destinations)
         ],
     ]
-    search = domain._astar
+    search = domain._geometric_search
     search_signature = signature(search)
 
     def bounded_family_queries(*args, **kwargs):
@@ -692,7 +692,7 @@ def test_repair_moves_a_route_blocking_only_the_future_splitter(
     # Bound only family queries that still treat that foreign body cell as
     # occupied. Repair's crossing view and every query after displacement
     # use the real search budget, independent of call order.
-    monkeypatch.setattr(domain, "_astar", bounded_family_queries)
+    monkeypatch.setattr(domain, "_geometric_search", bounded_family_queries)
     monkeypatch.setattr(domain, "_SINGLE_ROUND_NETS", 3)
     monkeypatch.setattr(domain, "RRR_MAX", 1)
     monkeypatch.setattr(domain.last_mile, "B_MAX_STRANDED", 0)
@@ -795,7 +795,7 @@ def test_repair_reselects_source_after_displacing_its_provider(
         )
         for index, destination in enumerate(destinations)
     ]
-    search = domain._astar
+    search = domain._geometric_search
     queries = 0
 
     def provider_crossing_query(*args, **kwargs):
@@ -821,7 +821,7 @@ def test_repair_reselects_source_after_displacing_its_provider(
 
     # A bounded primary query leaves a sibling behind. Its crossing witness
     # attaches to the provider it must displace, so that source must be reselected.
-    monkeypatch.setattr(domain, "_astar", provider_crossing_query)
+    monkeypatch.setattr(domain, "_geometric_search", provider_crossing_query)
     monkeypatch.setattr(domain, "_SINGLE_ROUND_NETS", 2)
     monkeypatch.setattr(domain, "RRR_MAX", 1)
     monkeypatch.setattr(domain, "_REPAIR_PASSES", 1)

@@ -87,7 +87,7 @@ def capture(
         candidate_policies=(policy,),
     ).candidates[0]
 
-    orig = routing_domain._astar
+    orig = routing_domain._geometric_search
     cases: list[RouteCase] = []
     seen = 0
 
@@ -160,7 +160,7 @@ def capture(
             )
         return out_path
 
-    routing_domain._astar = spy
+    routing_domain._geometric_search = spy
     try:
         freeform.FreeformLayout(
             band_policy=BandPolicy("portable"),
@@ -170,9 +170,9 @@ def capture(
     except NoValidLayout:
         pass
     finally:
-        routing_domain._astar = orig
+        routing_domain._geometric_search = orig
     out.write_bytes(pickle.dumps(cases, protocol=5))
-    # `_astar` returns a `_PathSearchResult`, whose `path` is the tuple of cells.
+    # `_geometric_search` returns a `_PathSearchResult`, whose `path` is the tuple of cells.
     lens = [0 if c.result.path is None else len(c.result.path) for c in cases]
     print(
         f"captured {len(cases)} of {seen} searches -> {out} "
@@ -191,7 +191,7 @@ def capture_clusters(
 ) -> None:
     """Snapshot every last-mile invocation of one real cell run.
 
-    The hook is `last_mile.CAPTURE` rather than `_astar`, because the stranded
+    The hook is `last_mile.CAPTURE` rather than `_geometric_search`, because the stranded
     state Phase B cares about only exists at the moment `_route_all` would give
     up, and that is the one call that sees it.
     """
@@ -297,7 +297,7 @@ def bench(path: Path, rounds: int, check: bool) -> int:
                 if query.deadline_remaining is None
                 else time.monotonic() + query.deadline_remaining
             )
-            result = routing_domain._astar(
+            result = routing_domain._geometric_search(
                 canvas,
                 list(query.starts),
                 query.goals,

@@ -149,7 +149,9 @@ def _only_first_net(monkeypatch: pytest.MonkeyPatch) -> None:
             return routing._PathSearchResult(None, RouteFailureKind.DYNAMIC_ACCESS, (), 0)
         return proceed()
 
-    monkeypatch.setattr(routing, "_astar", _intercept_canvas(routing._astar, search))
+    monkeypatch.setattr(
+        routing, "_geometric_search", _intercept_canvas(routing._geometric_search, search)
+    )
     monkeypatch.setattr(routing, "_REPAIR_PASSES", 0)
     monkeypatch.setattr(routing, "RRR_MAX", 1)
     monkeypatch.setattr(last_mile, "B_MAX_STRANDED", 0)
@@ -193,7 +195,9 @@ def test_candidate_projection_cancellation_returns_budget_with_search_work(
     def interrupt(*_args: object, **_kwargs: object) -> Never:
         raise routing._PreparationDeadline
 
-    monkeypatch.setattr(routing, "_astar", _intercept_canvas(routing._astar, searched))
+    monkeypatch.setattr(
+        routing, "_geometric_search", _intercept_canvas(routing._geometric_search, searched)
+    )
     monkeypatch.setattr(canvas.junction_projection, "allows_buildings", interrupt)
     result = _run(canvas, nets, budget={"left": 20_000})
     assert result.status is DetailedRouteStatus.BUDGET
@@ -334,7 +338,9 @@ def test_changed_selection_cannot_adopt_earlier_success(
                 hints[0] = (7, 7, 0)
         return failed
 
-    monkeypatch.setattr(routing, "_astar", _intercept_canvas(routing._astar, searched))
+    monkeypatch.setattr(
+        routing, "_geometric_search", _intercept_canvas(routing._geometric_search, searched)
+    )
     _observe_commit(monkeypatch, commit)
     result = _run(canvas, nets, budget={"left": 20_000})
     assert commits == 2
@@ -479,7 +485,9 @@ def test_cluster_projection_cancellation_debits_private_work_and_retains_prior_s
         entry_budget = budget["left"]
         return original_solver(problem, environment)
 
-    monkeypatch.setattr(routing, "_astar", _intercept_canvas(routing._astar, search))
+    monkeypatch.setattr(
+        routing, "_geometric_search", _intercept_canvas(routing._geometric_search, search)
+    )
     monkeypatch.setattr(canvas.junction_projection, "allows_buildings", project)
     monkeypatch.setattr(routing, "_REPAIR_PASSES", 0)
     monkeypatch.setattr(routing, "RRR_MAX", 1)

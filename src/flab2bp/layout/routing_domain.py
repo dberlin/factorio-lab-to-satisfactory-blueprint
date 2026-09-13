@@ -108,7 +108,7 @@ if TYPE_CHECKING:
 #: column its eastern neighbour's input heads open onto -- one channel serving
 #: two faces.  ``add_no_overlap_2d`` is satisfied, the pack is legal and tight,
 #: and two ports fight over one cell; the loser is handed an EMPTY start or goal
-#: set and A* reports dynamic access loss having expanded nothing.  That is not
+#: set and the geometric search reports dynamic access loss having expanded nothing.  That is not
 #: congestion and no amount of rip-up can price it away, which is why more solver
 #: time made this WORSE: a tighter pack is a pack with more faces pressed
 #: together.
@@ -132,7 +132,7 @@ WEST_CHANNEL = 1
 # vertically adjacent strips is one row tall, a strip's machine band blocks every
 # level, so that row is the only east-west way past a strip and one belt fills
 # it.  Widening it to two measured WORSE -- 59/72 clean at 4s against 60/72 --
-# because a row costs height on every strip in the pack, the canvas grows, A*
+# because a row costs height on every strip in the pack, the canvas grows, the geometric search
 # slows, and the sweep reaches fewer candidate heights inside the same deadline.
 # The channel it buys is not free and the heights it costs were paying more.
 #
@@ -268,7 +268,7 @@ _REPAIR_PASSES = 4
 #: Exhaustion refuses the route; it never relaxes physical admission.
 _MAX_EXPANSIONS = 200_000
 
-#: Total A* expansions across ALL nets and ALL rip-up rounds of one routing
+#: Total geometric search work across ALL nets and ALL rip-up rounds of one routing
 #: pass.  `_MAX_EXPANSIONS` bounds a single search; this bounds their product,
 #: which is what actually runs away at scale.
 _ROUTING_BUDGET = 2_000_000
@@ -277,7 +277,8 @@ _ROUTING_BUDGET = 2_000_000
 #:
 #: A belt at z=0 leaves z=1 and z=2 open above it -- only a machine denies all
 #: three, and only because its collider outreaches this lattice
-#: (:func:`_crossing_ban_levels`) -- but a plain step costs 1 and a ramp 3, so A* has
+#: (:func:`_crossing_ban_levels`) -- but a plain step costs 1 and a ramp 3, so the
+#: geometric search has
 #: no reason to climb and never does unless it is blocked.  The whole block
 #: therefore wires on one plane, and a route that crosses it CUTS that plane:
 #: ramping over a belt needs two free tiles of run on each side, and a dense
@@ -2414,7 +2415,7 @@ class _Canvas:
     #: A port is a lane's end tile, so it has at most three free neighbours and
     #: often one.  Without a reservation an earlier net's path takes the last
     #: one, and every net using that port is then handed an EMPTY start or goal
-    #: set: A* reports dynamic access loss having expanded zero nodes.  That is
+    #: set: the geometric search reports dynamic access loss having expanded zero nodes.  That is
     #: distinguishable from congestion in diagnostics but still cannot be
     #: negotiated away, because a net that expands nothing never registers a
     #: conflict for the history term to price.  Measured on the magnetic-ring
@@ -2516,7 +2517,7 @@ class _Canvas:
         idx = len(self.buildings)
         self.buildings.append(b)
         #: A ramp tile rests between levels, so which lattice cell it takes out
-        #: of play is a choice, not a reading.  Routed belts pass the level A*
+        #: of play is a choice, not a reading.  Routed belts pass the level the geometric search
         #: actually verified; everything else -- the `replace(b, ...)` copies a
         #: tap makes of a lane belt, which inherit its altitude -- falls back to
         #: the level BELOW, the one a ramp climbs from.
@@ -2929,7 +2930,7 @@ class _Port:
     #: port lives at 0.  ``_reserve_port_access`` and ``_net_ends`` both looked
     #: for a free cell beside a port at level 0 regardless, which for a drop is
     #: the plane BELOW it, and that plane is solid lane belt.  The port reported
-    #: no free neighbour, the reservation could not hold one, and A* was handed
+    #: no free neighbour, the reservation could not hold one, and the geometric search was handed
     #: an empty start set -- a search that expands zero nodes and so registers no
     #: congestion for any amount of negotiation to price.
     z: int = 0
@@ -4345,7 +4346,7 @@ def _altitude_profile_cached(path: tuple[Cell, ...], ramped: bool) -> tuple[Frac
         if form is not TransitionForm.RAMP:
             raise AssertionError(
                 f"path step {j} wants the {form.value} form, which costs no "
-                f"horizontal run -- but A* spent a tile on it, so the path and "
+                f"horizontal run -- but the geometric search spent a tile on it, so the path and "
                 f"the profile disagree about the shape of this climb"
             )
         # A ramp needs a FLAT cell to leave from, because the half-level this
@@ -4424,7 +4425,7 @@ class _Grid:
     by ADDING a precomputed offset rather than by building a tuple.
 
     ``occ`` folds ``bounds``, ``blocked``, ``solid`` and ``keep_out`` into one
-    byte per cell, so :func:`_astar`'s neighbour test is a single indexed read
+    byte per cell, so :func:`_geometric_search`'s neighbour test is a single indexed read
     where it used to be four hashed probes and two tuple builds.  ``reserved``
     is kept OUT of it and applied per call, because which reservations a net may
     use depends on ``canvas.routing_ports``, which is rebound for every net.
@@ -4531,7 +4532,7 @@ def _route_box(canvas: _Canvas, bounds: tuple[int, int, int, int]) -> tuple[int,
     Both are inclusive boxes and a cell must sit in BOTH, so they are intersected
     once rather than tested twice per neighbour.  A grid is only reusable for the
     box it was built for, so this has to give the same answer here and in
-    :func:`_astar`.
+    :func:`_geometric_search`.
     """
     lo_x, lo_y, hi_x, hi_y = bounds
     if canvas.limit is not None:
@@ -4595,7 +4596,7 @@ def _make_grid(
     # grid that DISAGREES WITH ``_Canvas.free``.
     #
     # `_Canvas.free` refuses both (see `belt_ban` and `guard`); the flat grid is
-    # what A* actually searches, and it was built from `blocked`, `solid`,
+    # what the geometric search actually searches, and it was built from `blocked`, `solid`,
     # `keep_out` and `reserved` only.  So the search happily returned paths
     # through a Spray Coater's 1.8975 band, `_commit_paths` asked `free` about
     # every cell it was about to build on, found one refused, and dropped the
@@ -4667,7 +4668,7 @@ class _PathSearchResult:
     expansions: int
 
 
-def _astar(
+def _geometric_search(
     canvas: _Canvas,
     starts: list[tuple[int, int, int]],
     goals: Collection[tuple[int, int, int]],
@@ -5428,7 +5429,7 @@ def _merge_frontier(
     run).  Reaching a sibling's belt is therefore as good as reaching the lane
     it feeds, and it is the ONLY option when the lane itself is walled in.
 
-    The sibling's own cells are not offered as goals: they are occupied, so A*
+    The sibling's own cells are not offered as goals: they are occupied, so the geometric search
     could never step onto them.  Their free neighbours are what a merging belt
     actually needs.
 
@@ -5437,7 +5438,7 @@ def _merge_frontier(
     Leaving a sibling's path puts a SPLITTER on the cell left from, because that
     cell already flows onward; a splitter's cross collider needs three and a
     half tiles from an Assembling Machine's centre, and a path running beside a
-    machine band offers plenty of cells at 2.83.  Without the filter A* takes
+    machine band offers plenty of cells at 2.83.  Without the filter the geometric search takes
     the cheapest of those, ``_tap_source`` refuses the site at commit time, and
     the whole pack is discarded for a tap that was never legal -- with the
     router blamed for a route it was told to make.
@@ -5459,7 +5460,7 @@ def _merge_frontier(
     ``belt_prefab`` makes that source-side proof include physical Splitter port
     identity.  A ramp and a branch may occupy different routing levels in the
     same compass direction, but they still name one port.  Such a neighbour is
-    withheld here so A* can choose another side instead of discovering the
+    withheld here so the geometric search can choose another side instead of discovering the
     duplicate only after every path has been committed.
 
     ``owned_guard`` maps an exact reserved branch dock to the sibling tap that
@@ -6020,7 +6021,7 @@ def _route_all(
     #: What gets committed used to be whichever round the loop happened to stop
     #: on, and the shared expansion budget makes the last round systematically
     #: the WORST one: round 1 spends the budget, every round after it has
-    #: nothing left to search with, and `_astar` reports budget exhaustion for
+    #: nothing left to search with, and `_geometric_search` reports budget exhaustion for
     #: every net before expanding a node. Committing that round throws away a
     #: perfectly good routing and reports the pack unwireable.
     #:
@@ -6449,7 +6450,7 @@ def _route_all(
     # ONE flattening of the canvas for the whole pass, kept current instead of
     # rebuilt.
     #
-    # `_astar` searches on flat integer cell indices and needs the canvas as
+    # `_geometric_search` searches on flat integer cell indices and needs the canvas as
     # flat arrays to do it. Building those is a pass over `blocked` -- measured
     # at 9.79ms on `universe-matrix`, and a pass makes 589 searches, so 5.77s of
     # a 19.5s routing pass went on re-deriving something that changes by a few
@@ -7208,7 +7209,7 @@ def _route_all(
         source_access_walls[index] = tuple(occupied_source_access) if not starts else ()
         # A shared source can become unusable without an occupied access cell:
         # an earlier sibling may consume the only legal branch topology. That
-        # sibling is concrete blocking ownership even though the failed A*
+        # sibling is concrete blocking ownership even though the failed geometric search
         # search has an empty wall.
         source_access_blockers[index] = (
             tuple(
@@ -7253,7 +7254,7 @@ def _route_all(
             sink_provenance.pop(cell, None)
         goals.update(cell for cell in frontier if cell not in rejected_goals[index])
         # A zero-expansion access miss can still be congestion: earlier paths
-        # may occupy every direct dock, leaving A* no start or goal and therefore
+        # may occupy every direct dock, leaving the geometric search no start or goal and therefore
         # no explored wall to attribute. Retain those exact owners so repair can
         # rip up the paths that closed either endpoint instead of repeating the
         # same order with an anonymous dynamic-access failure.
@@ -7261,7 +7262,7 @@ def _route_all(
             tuple(cell for cell in destination_access if cell in owner) if not goals else ()
         )
         # These maps belong to THIS endpoint query.  A path may be staked only
-        # with the exact promises A* selected from, even if a later repair asks
+        # with the exact promises the geometric search selected from, even if a later repair asks
         # `_ends` another question for the same net.
         offers = (
             dict(source_provenance),
@@ -7372,7 +7373,7 @@ def _route_all(
                 geometry_screen = FlatScreen((), query_deadline, world)
             prepared = time.monotonic()
             # The staged proposal slice is part of, never additional to, the
-            # existing ordinary allowance. A miss still takes the original A*.
+            # existing ordinary allowance. A miss still takes the original geometric search.
             proposal_deadline = prepared + 0.05
             if query_deadline is not None:
                 proposal_deadline = min(proposal_deadline, query_deadline)
@@ -7465,7 +7466,7 @@ def _route_all(
                 if proposed is not None:
                     return _PathSearchResult(proposed, None, (), 0)
             private = {"left": ordinary_remaining}
-            result = _astar(
+            result = _geometric_search(
                 canvas,
                 candidates,
                 goals,
@@ -7530,7 +7531,7 @@ def _route_all(
                         # Repeating its bounded prefix cannot find a new path;
                         # retain the shared quota for other nets, still refusing.
                         return replace(capped_ordinary, expansions=total_expansions)
-                    found = _astar(
+                    found = _geometric_search(
                         canvas,
                         search_starts,
                         goals,
@@ -7741,7 +7742,7 @@ def _route_all(
                 )
                 total += found.expansions
                 # No routing state changes between proposal admission and this
-                # return. Reuse only the exact immutable path's witness; A* and
+                # return. Reuse only the exact immutable path's witness; the geometric search and
                 # other proposals still receive their own family proof.
                 if found.path is None or _preserves_source_frontier(
                     index,
@@ -7994,7 +7995,7 @@ def _route_all(
                         signatures[mandatory] = signature
                     groups.setdefault(signature, []).append(cell)
                     # Rank only starts admitted by the same physical exceptions
-                    # as _astar, but retain every first-wins offer in its group.
+                    # as _geometric_search, but retain every first-wins offer in its group.
                     if (
                         0 <= cell[2] < canvas.levels
                         and cell not in forbidden_before
@@ -9331,7 +9332,7 @@ def _route_all(
             # paths -- greedy sequential routing painting itself into a corner it had
             # no way to price.
             #
-            # A search whose heap emptied has PROVED its pocket sealed, `_astar`
+            # A search whose heap emptied has PROVED its pocket sealed, `_geometric_search`
             # names the committed cells in its wall, and a wall small enough to
             # accuse somebody (`_BLAME_MAX_WALL`) is charged in proportion to how
             # many nets it cut off. Next round the net holding one pays
@@ -10005,7 +10006,7 @@ def _match_access_corridors(
         # STRICTLY larger, so the FIRST round to reach a given size keeps it:
         # the rank solves already fixed each rank's total, so later rounds are
         # tie-break re-arrangements of the same size and re-surveying one buys
-        # nothing but A* probes.
+        # nothing but the geometric search probes.
         if len(assigned) > len(best_partial):
             best_partial = assigned
         cut_variables = [
@@ -10140,7 +10141,7 @@ def _reserve_port_access(
         # are only written after the matcher returns -- so the shared grid carries
         # exactly the state a per-probe build would have derived.  `probe_cells`
         # names every cell two steps from a demand, which is every exit cell any
-        # probe can start from; `_astar` falls back to a private grid for a start
+        # probe can start from; `_geometric_search` falls back to a private grid for a start
         # or goal outside the span, so a miss costs a build and never a result.
         shared_grid: _Grid | None = None
         if bounds is not None and probed:
@@ -10153,7 +10154,7 @@ def _reserve_port_access(
                 for ex, ey in _STEPS
             ]
             # EVERY goal cell has to be inside the span, not just the boundary's:
-            # `_astar` falls back to a private grid for a goal outside it, which
+            # `_geometric_search` falls back to a private grid for a goal outside it, which
             # would cost a fresh flatten per probe -- the 872 rebuilds and 3.9s
             # this shared grid exists to avoid.
             goal_cells = sorted(
@@ -10175,7 +10176,7 @@ def _reserve_port_access(
             routing_ports = canvas.routing_ports
             canvas.routing_ports = endpoint_ports[demand]
             try:
-                result = _astar(
+                result = _geometric_search(
                     canvas,
                     [exit_cell],
                     goal,
@@ -10294,7 +10295,7 @@ def _reserve_port_access(
         ) -> tuple[Cell, ...] | None:
             """The wall between this corridor and its goal, or None if it reaches.
 
-            A ``BUDGET`` refusal is NOT a wall: the A* ran out of expansions, which
+            A ``BUDGET`` refusal is NOT a wall: the geometric search ran out of expansions, which
             says nothing about the ground, and convicting on it would drop
             corridors for the searcher's clock rather than for geometry.
             """
@@ -11818,7 +11819,7 @@ def _route_boundary_nets(
     # The fallback search may travel ALONG the entry ring, which the straight
     # runs already use; a cell on the outermost ring cannot wall anything in,
     # because outward of it is ground no pass can reach.
-    astar_bounds = _grow(core, _ENTRY_RING)
+    search_bounds = _grow(core, _ENTRY_RING)
     reservations = _CorridorReservations(canvas)
 
     def port_of(net: _Net) -> _Port:
@@ -11924,13 +11925,13 @@ def _route_boundary_nets(
                     continue
                 starts = sorted(access) if outward else live_boundary
                 goals = set(live_boundary) if outward else access
-                searched = _astar(
+                searched = _geometric_search(
                     canvas,
                     starts,
                     goals,
                     history,
                     1.0,
-                    astar_bounds,
+                    search_bounds,
                     budget,
                     deadline,
                 )
@@ -16340,7 +16341,7 @@ def _prepare_routing_problem(
     # Coater drop belts and external input runs are placed onto a canvas that is
     # otherwise empty, so they take whatever cell suits them -- and a lane head's
     # only free neighbour is exactly the sort of cell that suits them. The net
-    # that needed it is then handed an EMPTY goal set: A* returns None having
+    # that needed it is then handed an EMPTY goal set: the geometric search returns None having
     # expanded nothing, and no amount of rip-up can negotiate for a cell that is
     # occupied by a building rather than contested by another path.
     #
@@ -17537,7 +17538,7 @@ def _coater_belt_ban_cells(
         #
         # The body's OWN level was banned here too, to stop `_merge_frontier`
         # OFFERING a body tile as a merge goal -- the one path by which a
-        # second predecessor could reach a cell the coater covers, since A*
+        # second predecessor could reach a cell the coater covers, since the geometric search
         # cannot step onto an occupied belt.  The frontier offers only cells
         # `_Canvas.free` accepts, so that ban could only bite on a body cell
         # that was free when it was written.  Measured over three proliferated
@@ -18441,7 +18442,7 @@ def _proliferator_supply_tree(
     north-west input. Balanced groups prefer spaced trunk taps. All taps retain
     that common supply-root identity, so detailed routing can share an admitted
     leaf branch when a designated tap is congested. The trunk itself is already
-    emitted and does not need to be rediscovered by A*.
+    emitted and does not need to be rediscovered by the geometric search.
     """
     if not coaters:
         return []
