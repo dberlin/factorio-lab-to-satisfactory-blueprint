@@ -1555,7 +1555,7 @@ def test_a_stranded_cut_is_named_by_item_blocks_and_router_kind(
             kind=RouteFailureKind.SEALED_POCKET,
             wall=(),
             blocking_nets=(),
-            expansions=0,
+            work=0,
         )
         routed = tuple(net.net_id for net in nets[1:])
         return DetailedRouteResult(
@@ -1563,7 +1563,7 @@ def test_a_stranded_cut_is_named_by_item_blocks_and_router_kind(
             routed=routed,
             failures=(failure,),
             iterations=1,
-            expansions=0,
+            work=0,
         )
 
     monkeypatch.setattr(compose, "_route_all", stranded)
@@ -1594,7 +1594,7 @@ def test_a_cut_the_router_never_reached_is_reported_under_its_status(
             routed=(),
             failures=(),
             iterations=0,
-            expansions=0,
+            work=0,
         )
 
     monkeypatch.setattr(compose, "_route_all", out_of_budget)

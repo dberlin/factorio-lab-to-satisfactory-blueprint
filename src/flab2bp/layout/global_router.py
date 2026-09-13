@@ -35,7 +35,9 @@ class GlobalNetResult:
     length: int
     level_changes: int
     overflow: int
-    expansions: int
+    #: Charged geometric work units (see `GeometricMetrics.charged_work`), not
+    #: a count of expanded A* nodes.
+    work: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,7 +49,9 @@ class GlobalRouteResult:
     max_overflow: int
     unreachable_ports: int
     rounds: int
-    expansions: int
+    #: Charged geometric work units (see `GeometricMetrics.charged_work`), not
+    #: a count of expanded A* nodes.
+    work: int
     exhausted_budget: bool
     hot_cells: tuple[Cell, ...]
     hot_regions: tuple[tuple[int, int, int, int], ...]
@@ -59,10 +63,14 @@ class GlobalRouteResult:
 
 @dataclass(frozen=True, slots=True)
 class _SearchResult:
-    """Relaxed result; ``expansions`` records charged geometric work units."""
+    """Relaxed result; ``work`` records charged geometric work units.
+
+    The unit is :attr:`~flab2bp.layout.geometric_router.GeometricMetrics.charged_work`,
+    not a count of expanded A* nodes.
+    """
 
     path: tuple[Cell, ...] | None
-    expansions: int
+    work: int
     exhausted_budget: bool
     cancelled: bool
 
@@ -139,7 +147,7 @@ def route_global_once(
         max_overflow=result.max_overflow,
         unreachable_ports=result.unreachable_ports,
         rounds=1,
-        expansions=result.expansions,
+        work=result.work,
         exhausted_budget=result.exhausted_budget,
         hot_cells=hot_cells,
         hot_regions=hot_regions,
@@ -161,7 +169,7 @@ def route_global(
     history = dict(feedback.cell_history)
     nets = _routing_order(problem.nets)
     remaining = budget
-    expansions = 0
+    work = 0
 
     for round_number in range(1, max_rounds + 1):
         result, overflows, grid = _route_round(
@@ -172,8 +180,8 @@ def route_global(
             nets,
             cancelled,
         )
-        remaining -= result.expansions
-        expansions += result.expansions
+        remaining -= result.work
+        work += result.work
         for cell, overflow in overflows:
             history[cell] = history.get(cell, 0.0) + overflow
         hot_cells, hot_regions = _hot_summary(history, grid)
@@ -185,7 +193,7 @@ def route_global(
             max_overflow=result.max_overflow,
             unreachable_ports=result.unreachable_ports,
             rounds=round_number,
-            expansions=expansions,
+            work=work,
             exhausted_budget=result.exhausted_budget,
             hot_cells=hot_cells,
             hot_regions=hot_regions,
@@ -232,7 +240,7 @@ def _route_round(
     paths: dict[NetId, tuple[Cell, ...]] = {}
     net_results: list[GlobalNetResult] = []
     remaining = budget
-    expansions = 0
+    work = 0
     unreachable = 0
     exhausted_budget = False
     was_cancelled = False
@@ -261,13 +269,13 @@ def _route_round(
             cancelled,
             movement=movement,
         )
-        remaining -= searched.expansions
-        expansions += searched.expansions
+        remaining -= searched.work
+        work += searched.work
         exhausted_budget = exhausted_budget or searched.exhausted_budget
         path = searched.path
         if path is None:
             unreachable += 1
-            net_results.append(GlobalNetResult(net.net_id, 0, 0, 0, searched.expansions))
+            net_results.append(GlobalNetResult(net.net_id, 0, 0, 0, searched.work))
             if searched.cancelled:
                 unreachable += len(nets) - net_index - 1
                 was_cancelled = True
@@ -284,7 +292,7 @@ def _route_round(
                     before[2] != after[2] for before, after in zip(path, path[1:], strict=False)
                 ),
                 overflow=overflow,
-                expansions=searched.expansions,
+                work=searched.work,
             )
         )
 
@@ -310,7 +318,7 @@ def _route_round(
             ),
             unreachable_ports=unreachable,
             rounds=1,
-            expansions=expansions,
+            work=work,
             exhausted_budget=exhausted_budget,
             hot_cells=(),
             hot_regions=(),

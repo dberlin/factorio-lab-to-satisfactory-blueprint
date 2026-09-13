@@ -11,7 +11,7 @@ Two instruments, deliberately, because each lies in a way the other does not:
   numbers are RATIOS, not seconds.
 * the default is a wrapper-based tally: it patches ``_route_all``, ``_geometric_search``,
   ``_commit_paths``, ``_make_grid`` and ``_Grid.refresh_history`` with timing
-  shims and counts calls, expansions (from the shared budget's decrements) and
+  shims and counts calls, charged work (from the shared budget's decrements) and
   rip-up rounds.  A shim per call is nothing against a search; the inner loop
   is untouched, so the seconds are real.
 
@@ -176,13 +176,13 @@ class Tally:
     def __init__(self) -> None:
         self.t: dict[str, float] = {}
         self.n: dict[str, int] = {}
-        self.expansions = 0
+        self.work = 0
         self.rounds = 0
         self.passes = 0
         self.search_none = 0
         self.search_hit = 0
         self.path_cells = 0
-        #: One row per search: (expansions, seconds, path length or -1).
+        #: One row per search: (charged work, seconds, path length or -1).
         self.calls: list[tuple[int, float, int]] = []
         #: Seconds per `_prepare_routing_problem` call, in call order, so a
         #: cold first candidate and a warm second one are both visible.
@@ -242,13 +242,13 @@ def install(tally: Tally) -> Callable[[], None]:
         )
         dt = time.perf_counter() - t0
         tally.add("geometric_search", dt)
-        tally.expansions += out.expansions
+        tally.work += out.work
         if out.path is None:
             tally.search_none += 1
         else:
             tally.search_hit += 1
             tally.path_cells += len(out.path)
-        tally.calls.append((out.expansions, dt, -1 if out.path is None else len(out.path)))
+        tally.calls.append((out.work, dt, -1 if out.path is None else len(out.path)))
         return out
 
     def route_all(
@@ -678,7 +678,8 @@ def main() -> int:
                         "geometric_search_s": inner,
                         "geometric_search_routing_share": inner / max(routing, 1e-9),
                         "geometric_search_wall_share": inner / max(wall, 1e-9),
-                        "expansions": tally.expansions,
+                        # report key kept as "expansions": evidence tooling reads it
+                        "expansions": tally.work,
                         "hits": tally.search_hit,
                         "misses": tally.search_none,
                         "phases": {
@@ -742,35 +743,35 @@ def main() -> int:
             print("      prepare per call: " + ", ".join(f"{s:.2f}" for s in tally.prepare_calls))
         print(
             f"    Geometric search: {tally.search_hit} found / {tally.search_none} none, "
-            f"{tally.expansions:,} expansions, "
+            f"{tally.work:,} expansions, "
             f"{tally.path_cells:,} path cells"
         )
-        if tally.expansions:
+        if tally.work:
             print(
-                f"    {tally.expansions / max(inner, 1e-9):,.0f} expansions/s, "
-                f"{1e6 * inner / tally.expansions:.2f} us/expansion"
+                f"    {tally.work / max(inner, 1e-9):,.0f} expansions/s, "
+                f"{1e6 * inner / tally.work:.2f} us/expansion"
             )
-        # WHERE THE EXPANSIONS GO -- a search that finds nothing still spends
-        # them, and a cap-sized failure spends `_MAX_EXPANSIONS` of them.
+        # WHERE THE WORK GOES -- a search that finds nothing still spends it,
+        # and a cap-sized failure spends `_MAX_SEARCH_WORK` of it.
         found: list[tuple[int, float, int]] = []
         counts = [0, 0]
-        expansions = [0, 0]
+        work_by_bucket = [0, 0]
         seconds = [0.0, 0.0]
         for call in tally.calls:
             bucket = 0 if call[2] >= 0 else 1
             counts[bucket] += 1
-            expansions[bucket] += call[0]
+            work_by_bucket[bucket] += call[0]
             seconds[bucket] += call[1]
             if bucket == 0:
                 found.append(call)
         for bucket, name in enumerate(("found", "none ")):
             if not counts[bucket]:
                 continue
-            exp = expansions[bucket]
+            exp = work_by_bucket[bucket]
             sec = seconds[bucket]
             print(
                 f"      {name}: n={counts[bucket]:<5} {exp:>10,} exp "
-                f"({100 * exp / max(tally.expansions, 1):4.1f}%)  {sec:6.2f}s "
+                f"({100 * exp / max(tally.work, 1):4.1f}%)  {sec:6.2f}s "
                 f"({100 * sec / max(inner, 1e-9):4.1f}%)"
             )
         if found:

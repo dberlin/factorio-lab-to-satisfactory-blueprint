@@ -549,7 +549,7 @@ def test_prepared_static_access_failure_spends_no_route_budget(
 
     assert result.routing.status is DetailedRouteStatus.STRANDED
     assert result.routing.failures == failed.preparation_failures
-    assert result.routing.expansions == 0
+    assert result.routing.work == 0
 
 
 def test_prepared_budget_result_stops_before_every_emission_boundary(
@@ -584,7 +584,7 @@ def test_prepared_budget_result_stops_before_every_emission_boundary(
             ),
         ),
         iterations=2,
-        expansions=7,
+        work=7,
     )
     empty = DetailedRouteResult(DetailedRouteStatus.ROUTED, (), (), 0, 0)
 
@@ -4230,7 +4230,7 @@ def _stranded_attempt_with_relation(
                 relation_skipped_siblings=0,
                 restore_mismatch=0,
                 nodes=1,
-                expansions=0,
+                work=0,
                 seconds=0.0,
                 relation_strips=relation,
                 relation_evidence="cluster",
@@ -6327,7 +6327,7 @@ class TestSolverActuallyRuns:
                 routed=(),
                 failures=(),
                 iterations=0,
-                expansions=0,
+                work=0,
             ),
             budget_stage=None,
             towers=(),
@@ -6655,7 +6655,7 @@ def _sweep_with_pitch_feedback(
         routed=(),
         failures=(),
         iterations=0,
-        expansions=0,
+        work=0,
     )
     seen_candidates: list[tuple[int, int, int]] = []
     feedback_index = 0
@@ -6846,7 +6846,7 @@ def test_unaffordable_pitch_feedback_replans_later_base_height(
         routed=(),
         failures=(),
         iterations=0,
-        expansions=0,
+        work=0,
     )
     seen_candidates: list[tuple[int, int, int]] = []
 
@@ -6975,7 +6975,7 @@ def test_geometry_replan_discards_feedback_width_and_direct_cuts_from_old_strips
         routed=(),
         failures=(),
         iterations=0,
-        expansions=0,
+        work=0,
     )
     old_pitch_cut = freeform._DirectRelationNoGood(
         DirectInsertId(0, 1, "pitch-sensitive", CargoDomain.UNSPRAYED),
@@ -7436,7 +7436,7 @@ def test_projection_no_good_owned_strip_collision_learns_and_repacks(
                 routed=(),
                 failures=(),
                 iterations=0,
-                expansions=0,
+                work=0,
             ),
             budget_stage=None,
             towers=(),
@@ -9132,7 +9132,7 @@ def test_staged_static_pack_dependent_exhaustion_learns_exact_no_good(
                 routed=(),
                 failures=(),
                 iterations=0,
-                expansions=0,
+                work=0,
             ),
             budget_stage=None,
             towers=(),
@@ -9463,7 +9463,7 @@ def test_clearance_feedback_replans_later_base_height_without_minting_retry(
         routed=(),
         failures=(),
         iterations=0,
-        expansions=0,
+        work=0,
     )
     seen_candidates: list[tuple[int, int, int]] = []
 
@@ -9710,7 +9710,7 @@ def _sweep_with_repeated_exact_feedback(
         routed=(),
         failures=(),
         iterations=0,
-        expansions=0,
+        work=0,
     )
 
     def build_or_refuse(
@@ -9840,7 +9840,7 @@ def test_unaffordable_base_height_is_not_started_after_valid_candidate(
         routed=(),
         failures=(),
         iterations=0,
-        expansions=0,
+        work=0,
     )
     seen_heights: list[int] = []
 
@@ -11989,7 +11989,7 @@ def test_boundary_goal_search_reaches_exit_without_exhausting_expansion_budget()
     assert result.path is not None
     assert result.path[0] == (0, 0, 0)
     assert result.path[-1] in boundary
-    assert result.expansions < 1024
+    assert result.work < 1024
 
 
 def test_a_middle_lane_head_in_twice_cannot_hold_its_second_corridor() -> None:
@@ -14891,7 +14891,7 @@ class TestDetailedRoutingDiagnostics:
             },
         )
         shared_budget = {"left": 1000}
-        monkeypatch.setattr("flab2bp.layout.routing_domain._MAX_EXPANSIONS", 1)
+        monkeypatch.setattr("flab2bp.layout.routing_domain._MAX_SEARCH_WORK", 1)
         monkeypatch.setattr("flab2bp.layout.routing_domain.RRR_MAX", 1)
         monkeypatch.setattr("flab2bp.layout.routing_domain._REPAIR_PASSES", 1)
 
@@ -14948,7 +14948,7 @@ class TestDetailedRoutingDiagnostics:
         )
 
         assert result.kind is RouteFailureKind.DYNAMIC_ACCESS
-        assert result.expansions == 0
+        assert result.work == 0
 
     def test_geometric_search_opens_only_the_explicitly_owned_guarded_start(self) -> None:
         canvas = _Canvas(limit=(-2, -2, 4, 2))
@@ -15777,7 +15777,7 @@ class TestAFailedSearchNamesTheWallThatCutIt:
 
         assert result.path is None
         assert result.kind is RouteFailureKind.SEALED_POCKET
-        assert result.expansions > routing_domain._BLAME_MAX_POCKET
+        assert result.work > routing_domain._BLAME_MAX_POCKET
         assert len(result.wall) == 1
         assert owner[result.wall[0]] == 7
 
@@ -20163,7 +20163,7 @@ def _bounded_result() -> object:
         outcome=last_mile_module.ClusterOutcome.BOUNDED,
         paths={},
         nodes=0,
-        expansions=0,
+        work=0,
         seconds=0.0,
         bound=last_mile_module.ClusterBound.NODES,
     )
@@ -20220,7 +20220,7 @@ def test_cluster_admission_keeps_own_source_corridor_but_excludes_foreign_owners
             outcome=last_mile.ClusterOutcome.BOUNDED,
             paths={},
             nodes=0,
-            expansions=0,
+            work=0,
             seconds=0.0,
             bound=last_mile.ClusterBound.NODES,
         )
@@ -20482,7 +20482,7 @@ def test_a_hostile_cluster_solution_never_raises_and_never_routes(
             outcome=last_mile_module.ClusterOutcome.SOLVED,
             paths={index: (cell,) for index in problem.nets},
             nodes=1,
-            expansions=0,
+            work=0,
             seconds=0.0,
         )
 
@@ -20837,7 +20837,7 @@ def test_a_short_cluster_solution_degrades_instead_of_raising(
             outcome=last_mile_module.ClusterOutcome.SOLVED,
             paths={problem.nets[0]: ((0, 0, 0),)},
             nodes=1,
-            expansions=0,
+            work=0,
             seconds=0.0,
         )
 
@@ -21010,7 +21010,7 @@ def test_a_cluster_search_that_drains_its_allowance_is_only_a_bound(
     BOUNDED rather than as a closed tree.  `LastMileReport` does not carry the
     `ClusterBound`, so the drain is evidenced by the expansions the pass spent.
     """
-    monkeypatch.setattr(last_mile, "B_LOW_LEVEL_EXPANSIONS", 1)
+    monkeypatch.setattr(last_mile, "B_LOW_LEVEL_WORK", 1)
     canvas, nets, bounds = _one_stranded_net_fixture()
     belt_id = catalog.item_id("conveyor-belt-1")
 
@@ -21029,7 +21029,7 @@ def test_a_cluster_search_that_drains_its_allowance_is_only_a_bound(
     assert result.last_mile.bounded == 1
     assert result.last_mile.solved == 0
     assert result.last_mile.proved == 0
-    assert result.last_mile.expansions >= 1
+    assert result.last_mile.work >= 1
     assert result.last_mile.restore_mismatch == 0
 
 
@@ -21044,7 +21044,7 @@ def test_two_sub_routing_last_mile_reports_sum() -> None:
         relation_skipped_siblings=0,
         restore_mismatch=0,
         nodes=3,
-        expansions=5,
+        work=5,
         seconds=0.25,
     )
     internal = LastMileReport(
@@ -21056,7 +21056,7 @@ def test_two_sub_routing_last_mile_reports_sum() -> None:
         relation_skipped_siblings=1,
         restore_mismatch=1,
         nodes=4,
-        expansions=7,
+        work=7,
         seconds=0.5,
         relation_strips=(1, 2),
         relation_evidence="the relaxed cluster closed",
@@ -21071,7 +21071,7 @@ def test_two_sub_routing_last_mile_reports_sum() -> None:
         relation_skipped_siblings=1,
         restore_mismatch=1,
         nodes=7,
-        expansions=12,
+        work=12,
         seconds=0.75,
         relation_strips=(1, 2),
         relation_evidence="the relaxed cluster closed",
@@ -23137,7 +23137,7 @@ def test_an_over_band_seed_is_skipped_and_never_reported_as_wired(
     assert rejected == []
 
 
-def _port_seating_attempt(count: int, *, expansions: int = 0) -> freeform.PackAttempt:
+def _port_seating_attempt(count: int, *, work: int = 0) -> freeform.PackAttempt:
     """A pack whose router never ran: STATIC_ACCESS only, zero expansions.
 
     Built from the file's existing `_proof_attempt` factory so the `PackAttempt`
@@ -23154,7 +23154,7 @@ def _port_seating_attempt(count: int, *, expansions: int = 0) -> freeform.PackAt
         )
         for index in range(count)
     )
-    routing = DetailedRouteResult(DetailedRouteStatus.STRANDED, (), failures, 0, expansions)
+    routing = DetailedRouteResult(DetailedRouteStatus.STRANDED, (), failures, 0, work)
     attempt = _proof_attempt(routing, strips)
     ports = []
     for index in range(count):
@@ -23237,7 +23237,7 @@ def test_two_physical_strip_instances_with_the_same_label_and_item_stay_distinct
 
 
 def test_a_pack_the_router_ran_on_is_not_reported_as_port_seating() -> None:
-    assert freeform._port_seating_refusal([_port_seating_attempt(1, expansions=1200)]) is None
+    assert freeform._port_seating_refusal([_port_seating_attempt(1, work=1200)]) is None
     assert freeform._port_seating_refusal([]) is None
 
 

@@ -189,7 +189,7 @@ def test_candidate_projection_cancellation_returns_budget_with_search_work(
         _canvas: routing._Canvas, proceed: Callable[[], routing._PathSearchResult]
     ) -> routing._PathSearchResult:
         result = proceed()
-        observed.append(result.expansions)
+        observed.append(result.work)
         return result
 
     def interrupt(*_args: object, **_kwargs: object) -> Never:
@@ -201,7 +201,7 @@ def test_candidate_projection_cancellation_returns_budget_with_search_work(
     monkeypatch.setattr(canvas.junction_projection, "allows_buildings", interrupt)
     result = _run(canvas, nets, budget={"left": 20_000})
     assert result.status is DetailedRouteStatus.BUDGET
-    assert result.expansions == sum(observed) > 0
+    assert result.work == sum(observed) > 0
     assert all(failure.kind is RouteFailureKind.BUDGET for failure in result.failures)
     assert not result.exhaustive
     assert tuple(canvas.buildings) == before
@@ -456,7 +456,7 @@ def test_cluster_projection_cancellation_debits_private_work_and_retains_prior_s
             return routing._PathSearchResult(None, RouteFailureKind.DYNAMIC_ACCESS, (), 0)
         found = proceed()
         if cluster_started:
-            observed.append(found.expansions)
+            observed.append(found.work)
             if second_net:
                 assert found.path is not None
                 cancelled = True
@@ -495,11 +495,11 @@ def test_cluster_projection_cancellation_debits_private_work_and_retains_prior_s
     monkeypatch.setattr(last_mile, "solve_cluster", solve)
     result = _run(canvas, nets, budget=budget)
     assert cancelled and len(observed) == 2
-    assert all(expansions > 0 for expansions in observed)
+    assert all(work > 0 for work in observed)
     assert result.status is DetailedRouteStatus.BUDGET
     assert entry_budget - budget["left"] == sum(observed)
     assert result.last_mile is not None
-    assert result.last_mile.expansions == sum(observed)
+    assert result.last_mile.work == sum(observed)
     assert result.last_mile.bounded == 1
     assert not result.exhaustive
     assert all(failure.kind is not RouteFailureKind.COMMIT_LINK for failure in result.failures)

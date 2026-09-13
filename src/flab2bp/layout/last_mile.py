@@ -60,11 +60,11 @@ B_MAX_CBS_NODES = 512
 #: than pruning the branch: a pruned branch would make a closed tree a lie.
 B_MAX_CONSTRAINTS = 64
 
-#: Share of the routing pass's remaining expansion budget one run may spend.
-B_CBS_EXPANSION_SHARE = 0.25
+#: Share of the routing pass's remaining work budget one run may spend.
+B_CBS_WORK_SHARE = 0.25
 
 #: Bound on the low-level geometric search work one CBS run may spend.
-B_LOW_LEVEL_EXPANSIONS = 50_000
+B_LOW_LEVEL_WORK = 50_000
 
 #: Remaining wall seconds below which the pass declines to start.  MEASURED,
 #: not guessed: ``scripts/last_mile_bench.py``'s two corpus captures put the
@@ -346,7 +346,9 @@ class ClusterResult:
     outcome: ClusterOutcome
     paths: Mapping[int, tuple[Cell, ...]]
     nodes: int
-    expansions: int
+    #: Charged geometric work units (see `GeometricMetrics.charged_work`), not
+    #: a count of expanded A* nodes.
+    work: int
     seconds: float
     bound: ClusterBound = ClusterBound.NONE
 
@@ -468,7 +470,7 @@ def solve_cluster(
             outcome=outcome,
             paths=dict(paths) if outcome is ClusterOutcome.SOLVED else {},
             nodes=nodes,
-            expansions=entry_budget - environment.budget_left(),
+            work=entry_budget - environment.budget_left(),
             seconds=time.perf_counter() - started,
             bound=bound,
         )

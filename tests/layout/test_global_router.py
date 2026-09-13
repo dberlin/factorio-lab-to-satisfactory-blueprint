@@ -248,7 +248,7 @@ def test_global_router_uses_relaxed_moves_deterministically() -> None:
     _assert_relaxed_legal_walk(path)
     assert second.paths == first.paths
     assert second.net_results == first.net_results
-    assert second.expansions == first.expansions
+    assert second.work == first.work
 
 
 def test_prepared_blocked_cells_and_foreign_reserved_ports_remain_impassable() -> None:
@@ -560,7 +560,7 @@ def test_zero_budget_expands_nothing() -> None:
 
     result = route_global_once(problem, _feedback(problem), budget=0)
 
-    assert result.expansions == 0
+    assert result.work == 0
     assert result.unreachable_ports == 1
     assert result.paths == {}
     assert result.rounds == 1
@@ -631,7 +631,7 @@ def test_global_routing_stops_when_the_hard_deadline_is_cancelled() -> None:
     assert result.cancelled
     assert result.rounds == 1
     assert result.paths == {}
-    assert result.expansions < 100_000
+    assert result.work < 100_000
 
 
 def test_global_negotiation_honours_configured_round_count() -> None:
@@ -650,13 +650,13 @@ def test_global_negotiation_honours_configured_round_count() -> None:
 def test_negotiation_spends_one_exact_shared_expansion_budget() -> None:
     problem = _impossible_overflow_problem()
     first_round = route_global_once(problem, _feedback(problem), budget=100_000)
-    shared_budget = first_round.expansions + 1
+    shared_budget = first_round.work + 1
 
     result = route_global(problem, _feedback(problem), budget=shared_budget)
 
     assert result.rounds == 2
     assert result.exhausted_budget
-    assert result.expansions == shared_budget
+    assert result.work == shared_budget
 
 
 def test_global_route_is_deterministic_and_longest_first() -> None:

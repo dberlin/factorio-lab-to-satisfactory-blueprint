@@ -45,7 +45,7 @@ def _environment(
         starts, goals, routing_ports = case.ends[index]
         canvas.routing_ports = routing_ports
         allowance = min(
-            last_mile.B_LOW_LEVEL_EXPANSIONS,
+            last_mile.B_LOW_LEVEL_WORK,
             max(0, budget["left"] - floor),
         )
         private = {"left": allowance}

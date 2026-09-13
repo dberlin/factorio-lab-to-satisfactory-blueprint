@@ -195,8 +195,8 @@ def test_goal_pocket_reports_incoming_ramp_via_owner_within_budget() -> None:
 
     assert result.kind is RouteFailureKind.SEALED_POCKET
     assert result.wall == (via,)
-    assert 0 < result.expansions < 1024
-    assert budget["left"] == 1024 - result.expansions
+    assert 0 < result.work < 1024
+    assert budget["left"] == 1024 - result.work
 
     del canvas.blocked[via]
     opened = routing_domain._geometric_search(canvas, [start], {goal}, {}, 1.0, bounds)
@@ -232,18 +232,18 @@ def test_detailed_search_charges_shared_budget_without_exceeding_its_cap(
     )
     assert exhausted.path is None
     assert exhausted.kind is RouteFailureKind.BUDGET
-    assert 0 < exhausted.expansions <= 3
-    assert budget["left"] == 3 - exhausted.expansions
+    assert 0 < exhausted.work <= 3
+    assert budget["left"] == 3 - exhausted.work
 
-    monkeypatch.setattr(routing_domain, "_MAX_EXPANSIONS", 2)
+    monkeypatch.setattr(routing_domain, "_MAX_SEARCH_WORK", 2)
     shared = {"left": 1000}
     capped = routing_domain._geometric_search(
         canvas, [(0, 0, 0)], {(7, 0, 0)}, {}, 1.0, bounds, shared
     )
     assert capped.path is None
     assert capped.kind is RouteFailureKind.BUDGET
-    assert 0 < capped.expansions <= 2
-    assert shared["left"] == 1000 - capped.expansions
+    assert 0 < capped.work <= 2
+    assert shared["left"] == 1000 - capped.work
 
 
 def test_expired_detailed_search_does_not_spend_shared_budget() -> None:
@@ -257,7 +257,7 @@ def test_expired_detailed_search_does_not_spend_shared_budget() -> None:
 
     assert result.path is None
     assert result.kind is RouteFailureKind.BUDGET
-    assert result.expansions == 0
+    assert result.work == 0
     assert budget["left"] == 1000
 
 

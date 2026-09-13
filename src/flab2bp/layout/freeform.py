@@ -251,7 +251,7 @@ MU_DIRECT = 4
 #: that sets it is written down.
 _PACK_SHARE = 0.35
 
-#: Expansions the whole `lay_out` call may spend, per second of its ceiling.
+#: Charged geometric work the whole `lay_out` call may spend, per second of its ceiling.
 #:
 #: A BACKSTOP, not the binding constraint -- the wall clock is what bounds the
 #: call, and this exists so a re-run at the same budget explores the same
@@ -259,7 +259,7 @@ _PACK_SHARE = 0.35
 #:
 #: Sized well above what the clock can actually spend, and that margin is not
 #: slack, it is the whole point.  One shared `_ROUTING_BUDGET` was tried and it
-#: measured four cells WORSE: the geometric search had just got 2.1x faster, so 2M expansions went
+#: measured four cells WORSE: the geometric search had just got 2.1x faster, so 2M work units went
 #: from more than a 15s ceiling could reach to less, the second candidate height
 #: exhausted it, and every height after that got nothing.  A budget that binds
 #: before the clock does not bound the runaway the clock already bounds; it just
@@ -267,7 +267,7 @@ _PACK_SHARE = 0.35
 #:
 #: THE RATE IT IS 2.5x OF HAS TO BE THE RATE THE ROUTER ACTUALLY RUNS AT.  400k
 #: was 2.5x a measured 155k/sec; the sprayed `universe-matrix` cells spend
-#: 3.32M expansions in the 14.0s `_route_all` of their first pack, which is
+#: 3.32M work units in the 14.0s `_route_all` of their first pack, which is
 #: 237k/sec, so 400k was only 1.7x and the backstop had quietly become the
 #: binding constraint.  It binds through the coverage pass, which hands each net
 #: `budget["left"] // nets_remaining`: at a 20s ceiling that is 8.0M/279 = 28.7k
@@ -279,7 +279,7 @@ _PACK_SHARE = 0.35
 #: same area 28,800 the cell gives at a 30s ceiling, whose 12M ledger was never
 #: the bound.  Six hundred thousand restores the 2.5x margin against the rate
 #: measured today.
-_ROUTING_EXPANSIONS_PER_SECOND = 600_000
+_ROUTING_WORK_PER_SECOND = 600_000
 
 
 def lanes_for(rate: Fraction, capacity: Fraction) -> int:
@@ -3538,7 +3538,7 @@ def _proof_scoped_no_goods(
             detail=(
                 f"{failure.kind.value}: net={failure.net_id!r}; "
                 f"wall={failure.wall!r}; blockers={failure.blocking_nets!r}; "
-                f"expansions={failure.expansions}"
+                f"expansions={failure.work}"
             ),
             band=0,
         )
@@ -3850,11 +3850,11 @@ def _build_prepared(
         ),
         failures=failures,
         iterations=internal_routing.iterations,
-        expansions=(
-            external_routing.expansions
-            + early_output_routing.expansions
-            + internal_routing.expansions
-            + late_output_routing.expansions
+        work=(
+            external_routing.work
+            + early_output_routing.work
+            + internal_routing.work
+            + late_output_routing.work
         ),
         exhaustive=(
             prepared.preparation_exhaustive
@@ -3994,7 +3994,8 @@ def _last_mile_stats(report: LastMileReport | None) -> PlacementStats:
         "last_mile_restore_mismatch": float(report.restore_mismatch),
         "last_mile_relation_skipped_siblings": float(report.relation_skipped_siblings),
         "last_mile_nodes": float(report.nodes),
-        "last_mile_expansions": float(report.expansions),
+        # stats key kept as "expansions": evidence tooling reads it
+        "last_mile_expansions": float(report.work),
         "last_mile_seconds": report.seconds,
         "last_mile_relation_strips": float(len(report.relation_strips)),
     }
@@ -4258,7 +4259,7 @@ def _port_seating_refusal(attempts: Sequence[PackAttempt]) -> str | None:
     if not attempts:
         return None
     for attempt in attempts:
-        if attempt.routing.expansions:
+        if attempt.routing.work:
             return None
         if not attempt.routing.failures:
             return None
@@ -4357,7 +4358,7 @@ def _routing_failure_bound(attempts: Sequence[PackAttempt]) -> str | None:
     if set(kind_counts) == {RouteFailureKind.BUDGET}:
         # BUDGET means "no proof of impossibility", and the clock is only one of
         # the three things that reach it. Saying ROUTING-CLOCK for all of them
-        # tells a reader to buy seconds that an expansion cap or a bounded
+        # tells a reader to buy seconds that a work cap or a bounded
         # search would spend to no effect.
         if set(cause_counts) == {BudgetCause.DEADLINE}:
             return (
@@ -4563,18 +4564,16 @@ class FreeformLayout:
         # unpickling the spec all happen after the clock began.  Same expression
         # `sequence_solver._production_run` already uses for the same reason.
         deadline = started + ceiling if absolute_deadline is None else absolute_deadline
-        # ONE routing budget for the call. `_MAX_EXPANSIONS` bounds a single
+        # ONE routing budget for the call. `_MAX_SEARCH_WORK` bounds a single
         # search and `_ROUTING_BUDGET` bounded one routing pass; nothing bounded
         # the ten to twenty passes a sweep makes, so the packer could spend it
         # over and over. The wall clock bounds them in seconds; this bounds them
         # deterministically, which is what keeps a re-run reproducible -- and it
         # is scaled to the ceiling so that it stays a backstop rather than
         # becoming the thing that ends the sweep. See
-        # `_ROUTING_EXPANSIONS_PER_SECOND`.
+        # `_ROUTING_WORK_PER_SECOND`.
         budget = {
-            "left": max(
-                routing_domain._ROUTING_BUDGET, int(_ROUTING_EXPANSIONS_PER_SECOND * ceiling)
-            )
+            "left": max(routing_domain._ROUTING_BUDGET, int(_ROUTING_WORK_PER_SECOND * ceiling))
         }
 
         def planning_cancelled() -> bool:
@@ -4626,7 +4625,7 @@ class FreeformLayout:
         # Forty or more physical strips makes preparation and detailed
         # negotiation scale the same logical lanes into hundreds of redundant
         # branch nets. On the stress families this was 40-76 strips and repeated
-        # one-net/zero-expansion misses; the same authoritative families
+        # one-net/zero-work misses; the same authoritative families
         # partitioned coarsely are 27-46 strips and route in one round.
         # Choose that representation before packing, not as a rescue afterward.
         try:
@@ -4862,7 +4861,7 @@ class FreeformLayout:
                 )
             # A sweep whose router never ran has a mechanism, and the deadline is
             # not it.  When every retained attempt is a preparation-time static
-            # access with zero expansions, say so instead of counting packs that
+            # access with zero charged work, say so instead of counting packs that
             # were never routed.
             seating = _port_seating_refusal(attempts)
             if seating is not None:
@@ -4984,7 +4983,7 @@ class FreeformLayout:
         needs.
 
         ``time_budget_s`` bounds the WHOLE sweep, not just CP-SAT.  It used to
-        bound only the packing: routing is limited by an expansion count, not a
+        bound only the packing: routing is limited by a charged work count, not a
         clock, so a 1s budget could spend 13.5s and a 4s budget 68.6s -- both on
         specs that then refused.  A caller who says one second and waits over a
         minute has not been given a budget, and the bake-off cannot sweep a
@@ -5045,7 +5044,7 @@ class FreeformLayout:
         # What the measurement under it DOES show is that some heights wire and
         # others do not, unpredictably, and shortest-first can spend the whole
         # ceiling short of the one that would. Routing every candidate height of
-        # `quantum-chip/max-proliferation` with a 20M expansion budget and no
+        # `quantum-chip/max-proliferation` with a 20M work budget and no
         # clock: h=30 w=104 left two nets unrouted, h=40 w=87 three, h=50 w=61
         # four, h=62 w=52 three, and h=80 w=39 routed EVERY net. It reads as a
         # width story and is not one -- `quantum-chip/no-proliferator` at a fixed
@@ -6337,7 +6336,7 @@ class FreeformLayout:
                                                         f"wall={routing_failure.wall!r}; "
                                                         "blockers="
                                                         f"{routing_failure.blocking_nets!r}; "
-                                                        f"expansions={routing_failure.expansions}"
+                                                        f"expansions={routing_failure.work}"
                                                     ),
                                                     band=0,
                                                 ),

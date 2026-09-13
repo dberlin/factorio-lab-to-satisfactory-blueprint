@@ -44,7 +44,7 @@ from flab2bp.layout.compact_seed import (
 )
 from flab2bp.layout.freeform import (
     _COATER_WEST_CHANNEL,
-    _ROUTING_EXPANSIONS_PER_SECOND,
+    _ROUTING_WORK_PER_SECOND,
     C_WINDOW_DEADLINE_SAFETY_SECONDS,
     C_WINDOW_SECONDS,
     DirectAlignmentMemo,
@@ -583,7 +583,7 @@ class DetailedStageResult:
     placement: Placement | None
     # Routing telemetry may include diagnostic work outside the charged attempt.
     # This ledger value is authoritative for every Sequence budget settlement.
-    charged_expansions: int
+    charged_work: int
     projection_failures: tuple[finalize.ProjectionFailure, ...] = ()
     prepared_lower_bound: tuple[int, PreparedRoutingLowerBound] | None = None
     lower_bound_dominated: bool = False
@@ -823,7 +823,7 @@ class StageObservation:
     global_overflow: int | None
     detailed_status: DetailedRouteStatus
     stranded: int
-    expansions: int
+    work: int
     lns_size: int
     exact_key: tuple[int, int] | None
     validation_failures: tuple[str, ...]
@@ -1200,10 +1200,10 @@ class SequenceSolver[PreparedT]:
                         routed=(),
                         failures=(),
                         iterations=0,
-                        expansions=0,
+                        work=0,
                     ),
                     placement=None,
-                    charged_expansions=0,
+                    charged_work=0,
                     prepared_lower_bound=declared,
                     lower_bound_dominated=True,
                     detailed_skip_reason="prepared-lower-bound",
@@ -1814,7 +1814,7 @@ class SequenceSolver[PreparedT]:
             allow_proof_skip=True,
         )
         self._finish_measured_completion(measured_detailed_started)
-        spent = detailed.charged_expansions
+        spent = detailed.charged_work
         _check_spend(spent, allowance)
         # `_complete_routing_stage` folds this very candidate's own failures
         # into `height_state.feedback` before it returns.  Capture the feedback
@@ -1982,7 +1982,7 @@ class SequenceSolver[PreparedT]:
             allow_proof_skip=True,
         )
         self._finish_measured_completion(measured_detailed_started)
-        spent = detailed.charged_expansions
+        spent = detailed.charged_work
         _check_spend(spent, allowance)
         self.budget.charge_detailed_discovery(height, spent)
         self._complete_routing_stage(
@@ -2286,7 +2286,7 @@ class SequenceSolver[PreparedT]:
             allow_proof_skip=True,
         )
         self._finish_measured_completion(measured_detailed_started)
-        spent = detailed.charged_expansions
+        spent = detailed.charged_work
         _check_spend(spent, allowance)
         return self._complete_routing_stage(
             height_state,
@@ -2389,9 +2389,9 @@ class SequenceSolver[PreparedT]:
                 proxy_allowance,
             )
             global_route_time_s += time.perf_counter() - global_started
-            _check_spend(global_result.expansions, proxy_allowance)
-            spent += global_result.expansions
-            proxy_left -= global_result.expansions
+            _check_spend(global_result.work, proxy_allowance)
+            spent += global_result.work
+            proxy_left -= global_result.work
             global_candidates.append(
                 _GlobalCandidate(
                     prepared=prepared,
@@ -2443,8 +2443,8 @@ class SequenceSolver[PreparedT]:
             allow_proof_skip=True,
         )
         self._finish_measured_completion(measured_detailed_started)
-        _check_spend(detailed.charged_expansions, detailed_allowance)
-        spent += detailed.charged_expansions
+        _check_spend(detailed.charged_work, detailed_allowance)
+        spent += detailed.charged_work
         selected_source = selected.source
         if selected_source is None:
             raise ValueError("annealed global candidate must retain its restart source")
@@ -3068,7 +3068,7 @@ class SequenceSolver[PreparedT]:
             global_overflow=global_overflow,
             detailed_status=detailed.routing.status,
             stranded=detailed.routing.failed_count,
-            expansions=spent,
+            work=spent,
             lns_size=lns_size,
             exact_key=exact_key,
             prepared_lower_bound=(
@@ -4688,8 +4688,8 @@ class _ProductionTelemetry:
     planning_time_s: float = 0.0
     global_routes: int = 0
     detailed_routes: int = 0
-    global_expansions: int = 0
-    detailed_expansions: int = 0
+    global_work: int = 0
+    detailed_work: int = 0
     best_overflow: int | None = None
     best_stranded: int | None = None
     relation_no_goods_produced: int = 0
@@ -4757,7 +4757,7 @@ def _empty_global_result(*, exhausted: bool, cancelled: bool = False) -> GlobalR
         max_overflow=0,
         unreachable_ports=1,
         rounds=0,
-        expansions=0,
+        work=0,
         exhausted_budget=exhausted,
         hot_cells=(),
         hot_regions=(),
@@ -4768,7 +4768,7 @@ def _empty_global_result(*, exhausted: bool, cancelled: bool = False) -> GlobalR
 def _closed_detailed_result(
     status: DetailedRouteStatus,
     *,
-    expansions: int = 0,
+    work: int = 0,
     projection_failures: tuple[finalize.ProjectionFailure, ...] = (),
 ) -> DetailedStageResult:
     return DetailedStageResult(
@@ -4777,11 +4777,11 @@ def _closed_detailed_result(
             routed=(),
             failures=(),
             iterations=0,
-            expansions=expansions,
+            work=work,
         ),
         placement=None,
         projection_failures=projection_failures,
-        charged_expansions=expansions,
+        charged_work=work,
     )
 
 
@@ -4808,11 +4808,11 @@ def _route_detailed_candidate(
             prioritize_source_families=True,
         )
     except _Unpowerable:
-        expansions = allowance - attempt_budget["left"]
-        _check_spend(expansions, allowance)
+        work = allowance - attempt_budget["left"]
+        _check_spend(work, allowance)
         return _closed_detailed_result(
             DetailedRouteStatus.UNPOWERABLE,
-            expansions=expansions,
+            work=work,
         )
     spent = allowance - attempt_budget["left"]
     _check_spend(spent, allowance)
@@ -4824,7 +4824,7 @@ def _route_detailed_candidate(
     return DetailedStageResult(
         routing=routing,
         placement=placement,
-        charged_expansions=spent,
+        charged_work=spent,
     )
 
 
@@ -5435,7 +5435,7 @@ def _production_run(
                 length=0,
                 level_changes=0,
                 overflow=0,
-                expansions=0,
+                work=0,
             )
             for net in prelinked_nets
         )
@@ -5484,7 +5484,7 @@ def _production_run(
                 net_results=(*result.net_results, *prelinked_results),
                 paths={**result.paths, **prelinked_paths},
             )
-        telemetry.global_expansions += result.expansions
+        telemetry.global_work += result.work
         telemetry.best_overflow = (
             result.total_overflow
             if telemetry.best_overflow is None
@@ -5517,7 +5517,7 @@ def _production_run(
             deadline=deadline,
             allowance=allowance,
         )
-        telemetry.detailed_expansions += result.routing.expansions
+        telemetry.detailed_work += result.routing.work
         telemetry.best_stranded = (
             result.routing.failed_count
             if telemetry.best_stranded is None
@@ -5907,7 +5907,7 @@ def _production_run(
 
     expansion_total = max(
         _ROUTING_BUDGET,
-        int(_ROUTING_EXPANSIONS_PER_SECOND * ceiling),
+        int(_ROUTING_WORK_PER_SECOND * ceiling),
     )
     exact_candidate_allowance = _speculative_exact_allowance(
         expansion_total,
@@ -6721,8 +6721,9 @@ def _with_observational_stats(
             "validation_time_s": validation_time_s,
             "compilation_time_s": 0.0,
             "total_time_s": total_time_s,
-            "global_expansions": float(telemetry.global_expansions),
-            "detailed_expansions": float(telemetry.detailed_expansions),
+            # stats keys kept as "*expansions": evidence tooling reads them
+            "global_expansions": float(telemetry.global_work),
+            "detailed_expansions": float(telemetry.detailed_work),
             "expansions": float(run.solver.budget.spent),
             "expansion_allowance": float(run.solver.budget.total),
             "final_reserved": float(run.solver.budget.final_reserved),

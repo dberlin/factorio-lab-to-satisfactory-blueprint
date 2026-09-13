@@ -650,7 +650,7 @@ def test_the_same_cluster_solves_identically_twice() -> None:
 
     assert first.paths == second.paths
     assert first.nodes == second.nodes
-    assert first.expansions == second.expansions
+    assert first.work == second.work
 
 
 def test_paths_on_different_levels_over_one_column_do_not_conflict() -> None:
