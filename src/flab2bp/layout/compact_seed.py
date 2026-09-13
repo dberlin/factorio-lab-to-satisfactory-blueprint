@@ -19,6 +19,7 @@ from enum import StrEnum
 from ortools.sat.python import cp_model
 
 from flab2bp.dsp import catalog
+from flab2bp.layout import budget
 from flab2bp.layout.sequence_pair import (
     AnnealState,
     DecodedPlacement,
@@ -1375,7 +1376,7 @@ def _safe_deterministic_time(solver: cp_model.CpSolver) -> float:
 
 
 def _deadline_reached(deadline: float | None) -> bool:
-    return deadline is not None and time.monotonic() >= deadline
+    return budget.expired(deadline, time.monotonic)
 
 
 def _remaining_wall_time(deadline: float | None) -> float | None:
