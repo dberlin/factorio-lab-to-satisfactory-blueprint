@@ -10,6 +10,7 @@ import pytest
 from flab2bp.dsp import catalog, splitter_ports
 from flab2bp.layout import global_router, junction, routing_domain
 from flab2bp.layout.base import PlacedBuilding
+from flab2bp.layout.budget import WorkBudget
 from flab2bp.layout.route_feedback import FeedbackState, NetId, NetRole, RouteFailureKind
 from flab2bp.layout.route_primitives import RoutePrimitives
 
@@ -95,12 +96,12 @@ def test_sparse_connectors_spend_the_same_work_reported_to_the_shared_budget() -
         grid.index(start): ((grid.index(goal), 2.0),)
     }
     for allowance in (1, 20_000):
-        budget = {"left": allowance}
+        budget = WorkBudget(left=allowance)
         result = routing_domain._geometric_search(
             canvas, [start], {goal}, {}, 1.0, box, budget, grid=grid, extra_edges=edges
         )
         assert result.work <= allowance
-        assert budget["left"] == allowance - result.work
+        assert budget.left == allowance - result.work
         if allowance == 20_000:
             assert result.path == (start, goal)
         else:
@@ -434,7 +435,7 @@ def test_cost_plateau_reaches_goal_before_shared_quota_exhaustion() -> None:
     bounds = (0, 0, 100, 80)
     grid = routing_domain._make_grid(canvas, bounds, (-3, -3, 103, 83), {})
     result = routing_domain._geometric_search(
-        canvas, [(0, 0, 0)], {(100, 80, 0)}, {}, 1.0, bounds, {"left": 1000}, grid=grid
+        canvas, [(0, 0, 0)], {(100, 80, 0)}, {}, 1.0, bounds, WorkBudget(left=1000), grid=grid
     )
     assert result.path is not None
     assert result.path[0] == (0, 0, 0)

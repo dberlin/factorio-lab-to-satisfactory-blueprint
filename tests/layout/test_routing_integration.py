@@ -9,6 +9,7 @@ from flab2bp.dsp import catalog
 from flab2bp.layout import routing_domain as domain
 from flab2bp.layout import validate
 from flab2bp.layout.base import PlacedBuilding, Placement
+from flab2bp.layout.budget import WorkBudget
 from flab2bp.layout.route_feedback import Cell, DetailedRouteStatus, NetId, NetRole
 
 
@@ -581,7 +582,7 @@ def test_cluster_provider_hands_its_new_tap_to_the_dropped_sibling(
         nonlocal initial_queries
         if initial_queries:
             initial_queries -= 1
-            kwargs["budget"]["left"] -= 1
+            kwargs["budget"].left -= 1
             return domain._PathSearchResult(None, RouteFailureKind.BUDGET, (), 1)
         return search(*args, **kwargs)
 
@@ -683,7 +684,7 @@ def test_repair_moves_a_route_blocking_only_the_future_splitter(
             and grid is not None
             and not grid.occ[grid.index((1, -1, 0))]
         ):
-            arguments["budget"] = {"left": 0}
+            arguments["budget"] = WorkBudget(left=0)
             return search(**arguments)
         return search(*args, **kwargs)
 
@@ -802,7 +803,7 @@ def test_repair_reselects_source_after_displacing_its_provider(
         nonlocal queries
         queries += 1
         if queries == 2:
-            kwargs["budget"]["left"] -= 1
+            kwargs["budget"].left -= 1
             return domain._PathSearchResult(None, RouteFailureKind.BUDGET, (), 1)
         if queries == 3:
             start = next(cell for cell in args[1] if cell[1] == -1 and cell[0] < 16)
@@ -815,7 +816,7 @@ def test_repair_reselects_source_after_displacing_its_provider(
                 *((x, 3, 0) for x in range(17, 7, -1)),
             )
             assert path[-1] in args[2]
-            kwargs["budget"]["left"] -= len(path)
+            kwargs["budget"].left -= len(path)
             return domain._PathSearchResult(path, None, (), len(path))
         return search(*args, **kwargs)
 

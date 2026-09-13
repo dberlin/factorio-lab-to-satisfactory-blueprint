@@ -37,6 +37,7 @@ from flab2bp.layout.base import (
     Placement,
     PlacementCompletion,
 )
+from flab2bp.layout.budget import WorkBudget
 from flab2bp.layout.buildings import MutableBuildings
 from flab2bp.layout.finalize import ProjectionNoGood
 from flab2bp.layout.finalize import finalize_placement as project_placement
@@ -11982,7 +11983,7 @@ def test_boundary_goal_search_reaches_exit_without_exhausting_expansion_budget()
         (x, y, 0) for x in range(-40, 41) for y in range(-40, 41) if abs(x) == 40 or abs(y) == 40
     }
     grid = _make_grid(canvas, bounds, (-42, -42, 42, 42), {})
-    budget = {"left": 1024}
+    budget = WorkBudget(left=1024)
 
     result = _geometric_search(canvas, [(0, 0, 0)], boundary, {}, 0.0, bounds, budget, grid=grid)
 
@@ -14944,7 +14945,7 @@ class TestDetailedRoutingDiagnostics:
             {},
             1.0,
             bounds,
-            budget={"left": 0},
+            budget=WorkBudget(left=0),
         )
 
         assert result.kind is RouteFailureKind.DYNAMIC_ACCESS
@@ -15717,7 +15718,7 @@ class TestAFailedSearchNamesTheWallThatCutIt:
             {},
             1.0,
             bounds,
-            {"left": 0},
+            WorkBudget(left=0),
             None,
             blame,
         )
