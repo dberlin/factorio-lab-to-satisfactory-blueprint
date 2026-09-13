@@ -5967,7 +5967,7 @@ def _route_all(
 
     history: dict[tuple[int, int, int], float] = defaultdict(float)
     primitives = RoutePrimitives(canvas.belt_rules)
-    geometry_world: projection_world.GeometricWorld | None = None
+    geometry_world: projection_world.ClearanceOracle | None = None
     geometry_screen: FlatScreen | None = None
     #: The live routing -- net index to path -- and the same cells the other way
     #: round.  ``owner`` is what makes a TARGETED rip-up possible: a repair
@@ -7441,7 +7441,7 @@ def _route_all(
         nonlocal geometry_world, geometry_screen
         try:
             if geometry_world is None:
-                geometry_world = projection_world.GeometricWorld(canvas, deadline=query_deadline)
+                geometry_world = projection_world.ClearanceOracle(canvas, deadline=query_deadline)
             world = geometry_world
             world.history = search_history
             world.pressure = pressure
