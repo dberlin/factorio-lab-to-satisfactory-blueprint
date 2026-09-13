@@ -5613,6 +5613,11 @@ class _SourceWalk:
     #: tap recorded as provenance, and the free cells offered.
     offers: list[tuple[Cell, Cell, tuple[Cell, ...]]]
     neighborhood: JunctionNeighborhood | None
+    #: The prebuilt-source dock answers by tap: the docks, the occupied access
+    #: cells, and the blockers the tap's admission ask blamed.
+    docks: dict[Cell, tuple[tuple[Cell, ...], tuple[Cell, ...], tuple[int, ...]]] = field(
+        default_factory=dict
+    )
 
     def replay(
         self,
@@ -7208,14 +7213,36 @@ def _route_all(
             canvas.buildings[source.belt].output_obj is not None
         )
         source_provenance: dict[Cell, Cell] = {}
-        starts, occupied_source_access = _prebuilt_source_starts(
-            index,
-            source,
-            siblings,
-            owned_guard,
-            needs_junction=needs_junction,
-            project=(source.x, source.y, source.z) in project_taps,
-            tentative_ok=tentative_ok,
+        # The cells whose `project` flag this ask widened; every other answer
+        # of the walk it replays still holds.
+        added = frozenset() if replay is None else project_taps - replay.project_taps
+        walk_docks: dict[Cell, tuple[tuple[Cell, ...], tuple[Cell, ...], tuple[int, ...]]] = {}
+
+        def prebuilt_starts(
+            tap: Cell, port: _Port, *, needs_junction: bool
+        ) -> tuple[list[Cell], list[Cell]]:
+            """`_prebuilt_source_starts` for ``tap``, replayed when its flag did not widen."""
+            nonlocal last_junction_blame
+            if replay is not None and tap not in added:
+                docks, occupied, blame = replay.docks[tap]
+                junction_reservation_blockers.update(blame)
+            else:
+                last_junction_blame = ()
+                found, taken = _prebuilt_source_starts(
+                    index,
+                    port,
+                    siblings,
+                    owned_guard,
+                    needs_junction=needs_junction,
+                    project=tap in project_taps,
+                    tentative_ok=tentative_ok,
+                )
+                docks, occupied, blame = tuple(found), tuple(taken), last_junction_blame
+            walk_docks[tap] = (docks, occupied, blame)
+            return list(docks), list(occupied)
+
+        starts, occupied_source_access = prebuilt_starts(
+            (source.x, source.y, source.z), source, needs_junction=needs_junction
         )
         if (
             starts
@@ -7361,15 +7388,7 @@ def _route_all(
             ):
                 continue
             selected_sources.add(tap)
-            docks, occupied = _prebuilt_source_starts(
-                index,
-                sibling_source,
-                siblings,
-                owned_guard,
-                needs_junction=True,
-                project=tap in project_taps,
-                tentative_ok=tentative_ok,
-            )
+            docks, occupied = prebuilt_starts(tap, sibling_source, needs_junction=True)
             occupied_source_access.extend(occupied)
             if docks and admit_source_tap is not None and not admit_source_tap(tap):
                 continue
@@ -7397,7 +7416,7 @@ def _route_all(
                 tentative_ok=tentative_ok,
                 project_taps=project_taps | competing,
                 admit_source_tap=admit_source_tap,
-                replay=_SourceWalk(project_taps, asks, walk_offers, neighborhood),
+                replay=_SourceWalk(project_taps, asks, walk_offers, neighborhood, walk_docks),
             )
         source_access_walls[index] = tuple(occupied_source_access) if not starts else ()
         # A shared source can become unusable without an occupied access cell:
