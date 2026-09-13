@@ -1,0 +1,3040 @@
+[
+ {
+  "url": "iron-ingot",
+  "label": "all-products",
+  "item": "iron-ore",
+  "seat": [
+   1,
+   0
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 0.3
+ },
+ {
+  "url": "iron-ingot",
+  "label": "output-products",
+  "item": "iron-ore",
+  "seat": [
+   1,
+   0
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 0.2
+ },
+ {
+  "url": "magnetic-coil",
+  "label": "all-products",
+  "item": "copper-ore",
+  "seat": [
+   1,
+   0
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 0.5
+ },
+ {
+  "url": "magnetic-coil",
+  "label": "all-products",
+  "item": "iron-ore",
+  "seat": [
+   1,
+   6
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 0.5
+ },
+ {
+  "url": "magnetic-coil",
+  "label": "all-products",
+  "item": "copper-ingot",
+  "seat": [
+   8,
+   0
+  ],
+  "body_x": [
+   7,
+   9
+  ],
+  "seconds": 0.5
+ },
+ {
+  "url": "magnetic-coil",
+  "label": "all-products",
+  "item": "magnet",
+  "seat": [
+   8,
+   1
+  ],
+  "body_x": [
+   7,
+   9
+  ],
+  "seconds": 0.5
+ },
+ {
+  "url": "magnetic-coil",
+  "label": "output-products",
+  "item": "copper-ingot",
+  "seat": [
+   9,
+   0
+  ],
+  "body_x": [
+   8,
+   10
+  ],
+  "seconds": 0.3
+ },
+ {
+  "url": "magnetic-coil",
+  "label": "output-products",
+  "item": "magnet",
+  "seat": [
+   9,
+   1
+  ],
+  "body_x": [
+   8,
+   10
+  ],
+  "seconds": 0.3
+ },
+ {
+  "url": "graphene",
+  "label": "all-products",
+  "item": "coal",
+  "seat": [
+   1,
+   0
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 0.6
+ },
+ {
+  "url": "graphene",
+  "label": "all-products",
+  "item": "energetic-graphite",
+  "seat": [
+   1,
+   6
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 0.6
+ },
+ {
+  "url": "graphene",
+  "label": "all-products",
+  "item": "sulfuric-acid",
+  "seat": [
+   1,
+   7
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 0.6
+ },
+ {
+  "url": "graphene",
+  "label": "output-products",
+  "item": "energetic-graphite",
+  "seat": [
+   1,
+   6
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 0.3
+ },
+ {
+  "url": "graphene",
+  "label": "output-products",
+  "item": "sulfuric-acid",
+  "seat": [
+   1,
+   7
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 0.3
+ },
+ {
+  "url": "electromagnetic-matrix",
+  "label": "all-products",
+  "item": "copper-ingot",
+  "seat": [
+   1,
+   0
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 1.0
+ },
+ {
+  "url": "electromagnetic-matrix",
+  "label": "all-products",
+  "item": "iron-ingot",
+  "seat": [
+   1,
+   1
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 1.0
+ },
+ {
+  "url": "electromagnetic-matrix",
+  "label": "all-products",
+  "item": "copper-ore",
+  "seat": [
+   1,
+   8
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 1.0
+ },
+ {
+  "url": "electromagnetic-matrix",
+  "label": "all-products",
+  "item": "circuit-board",
+  "seat": [
+   10,
+   0
+  ],
+  "body_x": [
+   9,
+   11
+  ],
+  "seconds": 1.0
+ },
+ {
+  "url": "electromagnetic-matrix",
+  "label": "all-products",
+  "item": "magnetic-coil",
+  "seat": [
+   10,
+   1
+  ],
+  "body_x": [
+   9,
+   11
+  ],
+  "seconds": 1.0
+ },
+ {
+  "url": "electromagnetic-matrix",
+  "label": "all-products",
+  "item": "iron-ore",
+  "seat": [
+   10,
+   9
+  ],
+  "body_x": [
+   9,
+   11
+  ],
+  "seconds": 1.0
+ },
+ {
+  "url": "electromagnetic-matrix",
+  "label": "all-products",
+  "item": "iron-ore",
+  "seat": [
+   10,
+   15
+  ],
+  "body_x": [
+   9,
+   11
+  ],
+  "seconds": 1.0
+ },
+ {
+  "url": "electromagnetic-matrix",
+  "label": "all-products",
+  "item": "copper-ingot",
+  "seat": [
+   32,
+   0
+  ],
+  "body_x": [
+   31,
+   33
+  ],
+  "seconds": 1.0
+ },
+ {
+  "url": "electromagnetic-matrix",
+  "label": "all-products",
+  "item": "magnet",
+  "seat": [
+   32,
+   1
+  ],
+  "body_x": [
+   31,
+   33
+  ],
+  "seconds": 1.0
+ },
+ {
+  "url": "electromagnetic-matrix",
+  "label": "output-products",
+  "item": "circuit-board",
+  "seat": [
+   7,
+   0
+  ],
+  "body_x": [
+   6,
+   8
+  ],
+  "seconds": 0.2
+ },
+ {
+  "url": "electromagnetic-matrix",
+  "label": "output-products",
+  "item": "magnetic-coil",
+  "seat": [
+   7,
+   1
+  ],
+  "body_x": [
+   6,
+   8
+  ],
+  "seconds": 0.2
+ },
+ {
+  "url": "plastic",
+  "label": "all-products",
+  "item": "coal",
+  "seat": [
+   1,
+   0
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 0.8
+ },
+ {
+  "url": "plastic",
+  "label": "all-products",
+  "item": "crude-oil",
+  "seat": [
+   1,
+   6
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 0.8
+ },
+ {
+  "url": "plastic",
+  "label": "all-products",
+  "item": "energetic-graphite",
+  "seat": [
+   1,
+   13
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 0.8
+ },
+ {
+  "url": "plastic",
+  "label": "all-products",
+  "item": "refined-oil",
+  "seat": [
+   1,
+   14
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 0.8
+ },
+ {
+  "url": "plastic",
+  "label": "output-products",
+  "item": "energetic-graphite",
+  "seat": [
+   1,
+   13
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 0.5
+ },
+ {
+  "url": "plastic",
+  "label": "output-products",
+  "item": "refined-oil",
+  "seat": [
+   1,
+   14
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 0.5
+ },
+ {
+  "url": "processor",
+  "label": "all-products",
+  "item": "copper-ingot",
+  "seat": [
+   1,
+   0
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 0.9
+ },
+ {
+  "url": "processor",
+  "label": "all-products",
+  "item": "iron-ingot",
+  "seat": [
+   1,
+   1
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 0.9
+ },
+ {
+  "url": "processor",
+  "label": "all-products",
+  "item": "copper-ore",
+  "seat": [
+   1,
+   8
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 0.9
+ },
+ {
+  "url": "processor",
+  "label": "all-products",
+  "item": "silicon-ore",
+  "seat": [
+   1,
+   15
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 0.9
+ },
+ {
+  "url": "processor",
+  "label": "all-products",
+  "item": "iron-ore",
+  "seat": [
+   20,
+   0
+  ],
+  "body_x": [
+   19,
+   21
+  ],
+  "seconds": 0.9
+ },
+ {
+  "url": "processor",
+  "label": "all-products",
+  "item": "copper-ingot",
+  "seat": [
+   20,
+   6
+  ],
+  "body_x": [
+   19,
+   21
+  ],
+  "seconds": 0.9
+ },
+ {
+  "url": "processor",
+  "label": "all-products",
+  "item": "high-purity-silicon",
+  "seat": [
+   20,
+   7
+  ],
+  "body_x": [
+   19,
+   21
+  ],
+  "seconds": 0.9
+ },
+ {
+  "url": "processor",
+  "label": "all-products",
+  "item": "circuit-board",
+  "seat": [
+   20,
+   14
+  ],
+  "body_x": [
+   19,
+   21
+  ],
+  "seconds": 0.9
+ },
+ {
+  "url": "processor",
+  "label": "all-products",
+  "item": "microcrystalline-component",
+  "seat": [
+   20,
+   15
+  ],
+  "body_x": [
+   19,
+   21
+  ],
+  "seconds": 0.9
+ },
+ {
+  "url": "processor",
+  "label": "output-products",
+  "item": "circuit-board",
+  "seat": [
+   33,
+   0
+  ],
+  "body_x": [
+   32,
+   34
+  ],
+  "seconds": 0.5
+ },
+ {
+  "url": "processor",
+  "label": "output-products",
+  "item": "microcrystalline-component",
+  "seat": [
+   33,
+   1
+  ],
+  "body_x": [
+   32,
+   34
+  ],
+  "seconds": 0.5
+ },
+ {
+  "url": "energy-matrix",
+  "label": "all-products",
+  "item": "coal",
+  "seat": [
+   1,
+   0
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 0.3
+ },
+ {
+  "url": "energy-matrix",
+  "label": "all-products",
+  "item": "energetic-graphite",
+  "seat": [
+   1,
+   6
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 0.3
+ },
+ {
+  "url": "energy-matrix",
+  "label": "all-products",
+  "item": "hydrogen",
+  "seat": [
+   1,
+   7
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 0.3
+ },
+ {
+  "url": "energy-matrix",
+  "label": "output-products",
+  "item": "energetic-graphite",
+  "seat": [
+   1,
+   6
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 0.2
+ },
+ {
+  "url": "energy-matrix",
+  "label": "output-products",
+  "item": "hydrogen",
+  "seat": [
+   1,
+   7
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 0.2
+ },
+ {
+  "url": "super-magnetic-ring",
+  "label": "all-products",
+  "item": "copper-ore",
+  "seat": [
+   1,
+   0
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 0.3
+ },
+ {
+  "url": "super-magnetic-ring",
+  "label": "all-products",
+  "item": "gear",
+  "seat": [
+   1,
+   6
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 0.3
+ },
+ {
+  "url": "super-magnetic-ring",
+  "label": "all-products",
+  "item": "iron-ingot",
+  "seat": [
+   1,
+   7
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 0.3
+ },
+ {
+  "url": "super-magnetic-ring",
+  "label": "all-products",
+  "item": "magnetic-coil",
+  "seat": [
+   1,
+   8
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 0.3
+ },
+ {
+  "url": "super-magnetic-ring",
+  "label": "all-products",
+  "item": "electric-motor",
+  "seat": [
+   1,
+   15
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 0.3
+ },
+ {
+  "url": "super-magnetic-ring",
+  "label": "all-products",
+  "item": "magnetic-coil",
+  "seat": [
+   1,
+   16
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 0.3
+ },
+ {
+  "url": "super-magnetic-ring",
+  "label": "all-products",
+  "item": "coal",
+  "seat": [
+   1,
+   23
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 0.3
+ },
+ {
+  "url": "super-magnetic-ring",
+  "label": "all-products",
+  "item": "iron-ingot",
+  "seat": [
+   26,
+   0
+  ],
+  "body_x": [
+   25,
+   27
+  ],
+  "seconds": 0.3
+ },
+ {
+  "url": "super-magnetic-ring",
+  "label": "all-products",
+  "item": "iron-ore",
+  "seat": [
+   26,
+   7
+  ],
+  "body_x": [
+   25,
+   27
+  ],
+  "seconds": 0.3
+ },
+ {
+  "url": "super-magnetic-ring",
+  "label": "all-products",
+  "item": "iron-ore",
+  "seat": [
+   26,
+   14
+  ],
+  "body_x": [
+   25,
+   27
+  ],
+  "seconds": 0.3
+ },
+ {
+  "url": "super-magnetic-ring",
+  "label": "all-products",
+  "item": "iron-ore",
+  "seat": [
+   26,
+   21
+  ],
+  "body_x": [
+   25,
+   27
+  ],
+  "seconds": 0.3
+ },
+ {
+  "url": "super-magnetic-ring",
+  "label": "all-products",
+  "item": "copper-ingot",
+  "seat": [
+   48,
+   0
+  ],
+  "body_x": [
+   47,
+   49
+  ],
+  "seconds": 0.3
+ },
+ {
+  "url": "super-magnetic-ring",
+  "label": "all-products",
+  "item": "magnet",
+  "seat": [
+   48,
+   1
+  ],
+  "body_x": [
+   47,
+   49
+  ],
+  "seconds": 0.3
+ },
+ {
+  "url": "super-magnetic-ring",
+  "label": "all-products",
+  "item": "electromagnetic-turbine",
+  "seat": [
+   48,
+   9
+  ],
+  "body_x": [
+   47,
+   49
+  ],
+  "seconds": 0.3
+ },
+ {
+  "url": "super-magnetic-ring",
+  "label": "all-products",
+  "item": "energetic-graphite",
+  "seat": [
+   48,
+   10
+  ],
+  "body_x": [
+   47,
+   49
+  ],
+  "seconds": 0.3
+ },
+ {
+  "url": "super-magnetic-ring",
+  "label": "all-products",
+  "item": "magnet",
+  "seat": [
+   48,
+   11
+  ],
+  "body_x": [
+   47,
+   49
+  ],
+  "seconds": 0.3
+ },
+ {
+  "url": "super-magnetic-ring",
+  "label": "output-products",
+  "item": "electromagnetic-turbine",
+  "seat": [
+   37,
+   16
+  ],
+  "body_x": [
+   36,
+   38
+  ],
+  "seconds": 0.4
+ },
+ {
+  "url": "super-magnetic-ring",
+  "label": "output-products",
+  "item": "energetic-graphite",
+  "seat": [
+   37,
+   17
+  ],
+  "body_x": [
+   36,
+   38
+  ],
+  "seconds": 0.4
+ },
+ {
+  "url": "super-magnetic-ring",
+  "label": "output-products",
+  "item": "magnet",
+  "seat": [
+   37,
+   18
+  ],
+  "body_x": [
+   36,
+   38
+  ],
+  "seconds": 0.4
+ },
+ {
+  "url": "casimir-crystal",
+  "label": "all-products",
+  "item": "graphene",
+  "seat": [
+   1,
+   0
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 1.0
+ },
+ {
+  "url": "casimir-crystal",
+  "label": "all-products",
+  "item": "hydrogen",
+  "seat": [
+   1,
+   1
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 1.0
+ },
+ {
+  "url": "casimir-crystal",
+  "label": "all-products",
+  "item": "titanium-crystal",
+  "seat": [
+   1,
+   2
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 1.0
+ },
+ {
+  "url": "casimir-crystal",
+  "label": "all-products",
+  "item": "coal",
+  "seat": [
+   1,
+   9
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 1.0
+ },
+ {
+  "url": "casimir-crystal",
+  "label": "all-products",
+  "item": "energetic-graphite",
+  "seat": [
+   1,
+   15
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 1.0
+ },
+ {
+  "url": "casimir-crystal",
+  "label": "all-products",
+  "item": "sulfuric-acid",
+  "seat": [
+   1,
+   16
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 1.0
+ },
+ {
+  "url": "casimir-crystal",
+  "label": "all-products",
+  "item": "organic-crystal",
+  "seat": [
+   22,
+   0
+  ],
+  "body_x": [
+   21,
+   23
+  ],
+  "seconds": 1.0
+ },
+ {
+  "url": "casimir-crystal",
+  "label": "all-products",
+  "item": "titanium-ingot",
+  "seat": [
+   22,
+   1
+  ],
+  "body_x": [
+   21,
+   23
+  ],
+  "seconds": 1.0
+ },
+ {
+  "url": "casimir-crystal",
+  "label": "all-products",
+  "item": "titanium-ore",
+  "seat": [
+   22,
+   8
+  ],
+  "body_x": [
+   21,
+   23
+  ],
+  "seconds": 1.0
+ },
+ {
+  "url": "casimir-crystal",
+  "label": "output-products",
+  "item": "graphene",
+  "seat": [
+   1,
+   0
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 0.6
+ },
+ {
+  "url": "casimir-crystal",
+  "label": "output-products",
+  "item": "hydrogen",
+  "seat": [
+   1,
+   1
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 0.6
+ },
+ {
+  "url": "casimir-crystal",
+  "label": "output-products",
+  "item": "titanium-crystal",
+  "seat": [
+   1,
+   2
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 0.6
+ },
+ {
+  "url": "information-matrix",
+  "label": "all-products",
+  "item": "graphene",
+  "seat": [
+   1,
+   0
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 2.0
+ },
+ {
+  "url": "information-matrix",
+  "label": "all-products",
+  "item": "titanium-ingot",
+  "seat": [
+   1,
+   1
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 2.0
+ },
+ {
+  "url": "information-matrix",
+  "label": "all-products",
+  "item": "copper-ingot",
+  "seat": [
+   1,
+   9
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 2.0
+ },
+ {
+  "url": "information-matrix",
+  "label": "all-products",
+  "item": "iron-ingot",
+  "seat": [
+   1,
+   10
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 2.0
+ },
+ {
+  "url": "information-matrix",
+  "label": "all-products",
+  "item": "copper-ore",
+  "seat": [
+   1,
+   17
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 2.0
+ },
+ {
+  "url": "information-matrix",
+  "label": "all-products",
+  "item": "high-purity-silicon",
+  "seat": [
+   1,
+   24
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 2.0
+ },
+ {
+  "url": "information-matrix",
+  "label": "all-products",
+  "item": "coal",
+  "seat": [
+   1,
+   30
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 2.0
+ },
+ {
+  "url": "information-matrix",
+  "label": "all-products",
+  "item": "energetic-graphite",
+  "seat": [
+   1,
+   37
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 2.0
+ },
+ {
+  "url": "information-matrix",
+  "label": "all-products",
+  "item": "sulfuric-acid",
+  "seat": [
+   1,
+   38
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 2.0
+ },
+ {
+  "url": "information-matrix",
+  "label": "all-products",
+  "item": "silicon-ore",
+  "seat": [
+   29,
+   0
+  ],
+  "body_x": [
+   28,
+   30
+  ],
+  "seconds": 2.0
+ },
+ {
+  "url": "information-matrix",
+  "label": "all-products",
+  "item": "silicon-ore",
+  "seat": [
+   29,
+   7
+  ],
+  "body_x": [
+   28,
+   30
+  ],
+  "seconds": 2.0
+ },
+ {
+  "url": "information-matrix",
+  "label": "all-products",
+  "item": "particle-broadband",
+  "seat": [
+   29,
+   14
+  ],
+  "body_x": [
+   28,
+   30
+  ],
+  "seconds": 2.0
+ },
+ {
+  "url": "information-matrix",
+  "label": "all-products",
+  "item": "processor",
+  "seat": [
+   29,
+   15
+  ],
+  "body_x": [
+   28,
+   30
+  ],
+  "seconds": 2.0
+ },
+ {
+  "url": "information-matrix",
+  "label": "all-products",
+  "item": "particle-broadband",
+  "seat": [
+   29,
+   23
+  ],
+  "body_x": [
+   28,
+   30
+  ],
+  "seconds": 2.0
+ },
+ {
+  "url": "information-matrix",
+  "label": "all-products",
+  "item": "processor",
+  "seat": [
+   29,
+   24
+  ],
+  "body_x": [
+   28,
+   30
+  ],
+  "seconds": 2.0
+ },
+ {
+  "url": "information-matrix",
+  "label": "all-products",
+  "item": "iron-ore",
+  "seat": [
+   29,
+   32
+  ],
+  "body_x": [
+   28,
+   30
+  ],
+  "seconds": 2.0
+ },
+ {
+  "url": "information-matrix",
+  "label": "all-products",
+  "item": "copper-ingot",
+  "seat": [
+   29,
+   38
+  ],
+  "body_x": [
+   28,
+   30
+  ],
+  "seconds": 2.0
+ },
+ {
+  "url": "information-matrix",
+  "label": "all-products",
+  "item": "high-purity-silicon",
+  "seat": [
+   29,
+   39
+  ],
+  "body_x": [
+   28,
+   30
+  ],
+  "seconds": 2.0
+ },
+ {
+  "url": "information-matrix",
+  "label": "all-products",
+  "item": "carbon-nanotube",
+  "seat": [
+   57,
+   0
+  ],
+  "body_x": [
+   56,
+   58
+  ],
+  "seconds": 2.0
+ },
+ {
+  "url": "information-matrix",
+  "label": "all-products",
+  "item": "crystal-silicon",
+  "seat": [
+   57,
+   1
+  ],
+  "body_x": [
+   56,
+   58
+  ],
+  "seconds": 2.0
+ },
+ {
+  "url": "information-matrix",
+  "label": "all-products",
+  "item": "plastic",
+  "seat": [
+   57,
+   2
+  ],
+  "body_x": [
+   56,
+   58
+  ],
+  "seconds": 2.0
+ },
+ {
+  "url": "information-matrix",
+  "label": "all-products",
+  "item": "crude-oil",
+  "seat": [
+   57,
+   9
+  ],
+  "body_x": [
+   56,
+   58
+  ],
+  "seconds": 2.0
+ },
+ {
+  "url": "information-matrix",
+  "label": "all-products",
+  "item": "energetic-graphite",
+  "seat": [
+   57,
+   16
+  ],
+  "body_x": [
+   56,
+   58
+  ],
+  "seconds": 2.0
+ },
+ {
+  "url": "information-matrix",
+  "label": "all-products",
+  "item": "refined-oil",
+  "seat": [
+   57,
+   17
+  ],
+  "body_x": [
+   56,
+   58
+  ],
+  "seconds": 2.0
+ },
+ {
+  "url": "information-matrix",
+  "label": "all-products",
+  "item": "circuit-board",
+  "seat": [
+   57,
+   25
+  ],
+  "body_x": [
+   56,
+   58
+  ],
+  "seconds": 2.0
+ },
+ {
+  "url": "information-matrix",
+  "label": "all-products",
+  "item": "microcrystalline-component",
+  "seat": [
+   57,
+   26
+  ],
+  "body_x": [
+   56,
+   58
+  ],
+  "seconds": 2.0
+ },
+ {
+  "url": "information-matrix",
+  "label": "all-products",
+  "item": "titanium-ore",
+  "seat": [
+   57,
+   33
+  ],
+  "body_x": [
+   56,
+   58
+  ],
+  "seconds": 2.0
+ },
+ {
+  "url": "information-matrix",
+  "label": "output-products",
+  "item": "particle-broadband",
+  "seat": [
+   35,
+   21
+  ],
+  "body_x": [
+   34,
+   36
+  ],
+  "seconds": 0.8
+ },
+ {
+  "url": "information-matrix",
+  "label": "output-products",
+  "item": "processor",
+  "seat": [
+   35,
+   22
+  ],
+  "body_x": [
+   34,
+   36
+  ],
+  "seconds": 0.8
+ },
+ {
+  "url": "information-matrix",
+  "label": "output-products",
+  "item": "particle-broadband",
+  "seat": [
+   35,
+   30
+  ],
+  "body_x": [
+   34,
+   36
+  ],
+  "seconds": 0.8
+ },
+ {
+  "url": "information-matrix",
+  "label": "output-products",
+  "item": "processor",
+  "seat": [
+   35,
+   31
+  ],
+  "body_x": [
+   34,
+   36
+  ],
+  "seconds": 0.8
+ },
+ {
+  "url": "quantum-chip",
+  "label": "all-products",
+  "item": "graphene",
+  "seat": [
+   1,
+   0
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 2.4
+ },
+ {
+  "url": "quantum-chip",
+  "label": "all-products",
+  "item": "hydrogen",
+  "seat": [
+   1,
+   1
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 2.4
+ },
+ {
+  "url": "quantum-chip",
+  "label": "all-products",
+  "item": "titanium-crystal",
+  "seat": [
+   1,
+   2
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 2.4
+ },
+ {
+  "url": "quantum-chip",
+  "label": "all-products",
+  "item": "copper-ingot",
+  "seat": [
+   1,
+   9
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 2.4
+ },
+ {
+  "url": "quantum-chip",
+  "label": "all-products",
+  "item": "iron-ingot",
+  "seat": [
+   1,
+   10
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 2.4
+ },
+ {
+  "url": "quantum-chip",
+  "label": "all-products",
+  "item": "copper-ore",
+  "seat": [
+   1,
+   17
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 2.4
+ },
+ {
+  "url": "quantum-chip",
+  "label": "all-products",
+  "item": "coal",
+  "seat": [
+   1,
+   24
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 2.4
+ },
+ {
+  "url": "quantum-chip",
+  "label": "all-products",
+  "item": "stone",
+  "seat": [
+   1,
+   30
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 2.4
+ },
+ {
+  "url": "quantum-chip",
+  "label": "all-products",
+  "item": "energetic-graphite",
+  "seat": [
+   1,
+   36
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 2.4
+ },
+ {
+  "url": "quantum-chip",
+  "label": "all-products",
+  "item": "sulfuric-acid",
+  "seat": [
+   1,
+   37
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 2.4
+ },
+ {
+  "url": "quantum-chip",
+  "label": "all-products",
+  "item": "silicon-ore",
+  "seat": [
+   21,
+   0
+  ],
+  "body_x": [
+   20,
+   22
+  ],
+  "seconds": 2.4
+ },
+ {
+  "url": "quantum-chip",
+  "label": "all-products",
+  "item": "iron-ore",
+  "seat": [
+   21,
+   6
+  ],
+  "body_x": [
+   20,
+   22
+  ],
+  "seconds": 2.4
+ },
+ {
+  "url": "quantum-chip",
+  "label": "all-products",
+  "item": "copper-ingot",
+  "seat": [
+   21,
+   12
+  ],
+  "body_x": [
+   20,
+   22
+  ],
+  "seconds": 2.4
+ },
+ {
+  "url": "quantum-chip",
+  "label": "all-products",
+  "item": "high-purity-silicon",
+  "seat": [
+   21,
+   13
+  ],
+  "body_x": [
+   20,
+   22
+  ],
+  "seconds": 2.4
+ },
+ {
+  "url": "quantum-chip",
+  "label": "all-products",
+  "item": "casimir-crystal",
+  "seat": [
+   21,
+   20
+  ],
+  "body_x": [
+   20,
+   22
+  ],
+  "seconds": 2.4
+ },
+ {
+  "url": "quantum-chip",
+  "label": "all-products",
+  "item": "titanium-glass",
+  "seat": [
+   21,
+   21
+  ],
+  "body_x": [
+   20,
+   22
+  ],
+  "seconds": 2.4
+ },
+ {
+  "url": "quantum-chip",
+  "label": "all-products",
+  "item": "casimir-crystal",
+  "seat": [
+   21,
+   28
+  ],
+  "body_x": [
+   20,
+   22
+  ],
+  "seconds": 2.4
+ },
+ {
+  "url": "quantum-chip",
+  "label": "all-products",
+  "item": "titanium-glass",
+  "seat": [
+   21,
+   29
+  ],
+  "body_x": [
+   20,
+   22
+  ],
+  "seconds": 2.4
+ },
+ {
+  "url": "quantum-chip",
+  "label": "all-products",
+  "item": "circuit-board",
+  "seat": [
+   21,
+   36
+  ],
+  "body_x": [
+   20,
+   22
+  ],
+  "seconds": 2.4
+ },
+ {
+  "url": "quantum-chip",
+  "label": "all-products",
+  "item": "microcrystalline-component",
+  "seat": [
+   21,
+   37
+  ],
+  "body_x": [
+   20,
+   22
+  ],
+  "seconds": 2.4
+ },
+ {
+  "url": "quantum-chip",
+  "label": "all-products",
+  "item": "plane-filter",
+  "seat": [
+   50,
+   0
+  ],
+  "body_x": [
+   49,
+   51
+  ],
+  "seconds": 2.4
+ },
+ {
+  "url": "quantum-chip",
+  "label": "all-products",
+  "item": "processor",
+  "seat": [
+   50,
+   1
+  ],
+  "body_x": [
+   49,
+   51
+  ],
+  "seconds": 2.4
+ },
+ {
+  "url": "quantum-chip",
+  "label": "all-products",
+  "item": "organic-crystal",
+  "seat": [
+   50,
+   8
+  ],
+  "body_x": [
+   49,
+   51
+  ],
+  "seconds": 2.4
+ },
+ {
+  "url": "quantum-chip",
+  "label": "all-products",
+  "item": "titanium-ingot",
+  "seat": [
+   50,
+   9
+  ],
+  "body_x": [
+   49,
+   51
+  ],
+  "seconds": 2.4
+ },
+ {
+  "url": "quantum-chip",
+  "label": "all-products",
+  "item": "glass",
+  "seat": [
+   50,
+   16
+  ],
+  "body_x": [
+   49,
+   51
+  ],
+  "seconds": 2.4
+ },
+ {
+  "url": "quantum-chip",
+  "label": "all-products",
+  "item": "titanium-ingot",
+  "seat": [
+   50,
+   17
+  ],
+  "body_x": [
+   49,
+   51
+  ],
+  "seconds": 2.4
+ },
+ {
+  "url": "quantum-chip",
+  "label": "all-products",
+  "item": "water",
+  "seat": [
+   50,
+   18
+  ],
+  "body_x": [
+   49,
+   51
+  ],
+  "seconds": 2.4
+ },
+ {
+  "url": "quantum-chip",
+  "label": "all-products",
+  "item": "titanium-ore",
+  "seat": [
+   50,
+   25
+  ],
+  "body_x": [
+   49,
+   51
+  ],
+  "seconds": 2.4
+ },
+ {
+  "url": "quantum-chip",
+  "label": "output-products",
+  "item": "plane-filter",
+  "seat": [
+   49,
+   8
+  ],
+  "body_x": [
+   48,
+   50
+  ],
+  "seconds": 0.6
+ },
+ {
+  "url": "quantum-chip",
+  "label": "output-products",
+  "item": "processor",
+  "seat": [
+   49,
+   9
+  ],
+  "body_x": [
+   48,
+   50
+  ],
+  "seconds": 0.6
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "graphene",
+  "seat": [
+   1,
+   0
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "titanium-ingot",
+  "seat": [
+   1,
+   1
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "hydrogen",
+  "seat": [
+   1,
+   9
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "graphene",
+  "seat": [
+   1,
+   10
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "titanium-crystal",
+  "seat": [
+   1,
+   11
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "copper-ingot",
+  "seat": [
+   1,
+   18
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "iron-ingot",
+  "seat": [
+   1,
+   19
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "copper-ore",
+  "seat": [
+   1,
+   27
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "copper-ore",
+  "seat": [
+   1,
+   34
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "high-purity-silicon",
+  "seat": [
+   1,
+   61
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "energetic-graphite",
+  "seat": [
+   1,
+   75
+  ],
+  "body_x": [
+   0,
+   2
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "gear",
+  "seat": [
+   39,
+   0
+  ],
+  "body_x": [
+   38,
+   40
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "iron-ingot",
+  "seat": [
+   39,
+   1
+  ],
+  "body_x": [
+   38,
+   40
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "magnetic-coil",
+  "seat": [
+   39,
+   2
+  ],
+  "body_x": [
+   38,
+   40
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "circuit-board",
+  "seat": [
+   39,
+   9
+  ],
+  "body_x": [
+   38,
+   40
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "magnetic-coil",
+  "seat": [
+   39,
+   10
+  ],
+  "body_x": [
+   38,
+   40
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "electric-motor",
+  "seat": [
+   39,
+   18
+  ],
+  "body_x": [
+   38,
+   40
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "magnetic-coil",
+  "seat": [
+   39,
+   19
+  ],
+  "body_x": [
+   38,
+   40
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "coal",
+  "seat": [
+   39,
+   26
+  ],
+  "body_x": [
+   38,
+   40
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "coal",
+  "seat": [
+   39,
+   33
+  ],
+  "body_x": [
+   38,
+   40
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "hydrogen",
+  "seat": [
+   39,
+   40
+  ],
+  "body_x": [
+   38,
+   40
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "energetic-graphite",
+  "seat": [
+   39,
+   41
+  ],
+  "body_x": [
+   38,
+   40
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "iron-ingot",
+  "seat": [
+   39,
+   49
+  ],
+  "body_x": [
+   38,
+   40
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "stone",
+  "seat": [
+   39,
+   56
+  ],
+  "body_x": [
+   38,
+   40
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "energetic-graphite",
+  "seat": [
+   39,
+   62
+  ],
+  "body_x": [
+   38,
+   40
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "sulfuric-acid",
+  "seat": [
+   39,
+   63
+  ],
+  "body_x": [
+   38,
+   40
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "diamond",
+  "seat": [
+   39,
+   73
+  ],
+  "body_x": [
+   38,
+   40
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "strange-matter",
+  "seat": [
+   39,
+   74
+  ],
+  "body_x": [
+   38,
+   40
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "graviton-lens",
+  "seat": [
+   67,
+   0
+  ],
+  "body_x": [
+   66,
+   68
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "quantum-chip",
+  "seat": [
+   67,
+   1
+  ],
+  "body_x": [
+   66,
+   68
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "graviton-lens",
+  "seat": [
+   67,
+   9
+  ],
+  "body_x": [
+   66,
+   68
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "quantum-chip",
+  "seat": [
+   67,
+   10
+  ],
+  "body_x": [
+   66,
+   68
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "silicon-ore",
+  "seat": [
+   67,
+   18
+  ],
+  "body_x": [
+   66,
+   68
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "particle-broadband",
+  "seat": [
+   67,
+   25
+  ],
+  "body_x": [
+   66,
+   68
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "processor",
+  "seat": [
+   67,
+   26
+  ],
+  "body_x": [
+   66,
+   68
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "particle-broadband",
+  "seat": [
+   67,
+   34
+  ],
+  "body_x": [
+   66,
+   68
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "processor",
+  "seat": [
+   67,
+   35
+  ],
+  "body_x": [
+   66,
+   68
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "iron-ore",
+  "seat": [
+   67,
+   43
+  ],
+  "body_x": [
+   66,
+   68
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "iron-ore",
+  "seat": [
+   67,
+   50
+  ],
+  "body_x": [
+   66,
+   68
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "iron-ore",
+  "seat": [
+   67,
+   57
+  ],
+  "body_x": [
+   66,
+   68
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "copper-ingot",
+  "seat": [
+   67,
+   63
+  ],
+  "body_x": [
+   66,
+   68
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "magnet",
+  "seat": [
+   67,
+   64
+  ],
+  "body_x": [
+   66,
+   68
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "copper-ingot",
+  "seat": [
+   95,
+   0
+  ],
+  "body_x": [
+   94,
+   96
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "high-purity-silicon",
+  "seat": [
+   95,
+   1
+  ],
+  "body_x": [
+   94,
+   96
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "carbon-nanotube",
+  "seat": [
+   95,
+   8
+  ],
+  "body_x": [
+   94,
+   96
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "crystal-silicon",
+  "seat": [
+   95,
+   9
+  ],
+  "body_x": [
+   94,
+   96
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "plastic",
+  "seat": [
+   95,
+   10
+  ],
+  "body_x": [
+   94,
+   96
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "copper-ingot",
+  "seat": [
+   95,
+   17
+  ],
+  "body_x": [
+   94,
+   96
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "electromagnetic-turbine",
+  "seat": [
+   95,
+   18
+  ],
+  "body_x": [
+   94,
+   96
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "graphene",
+  "seat": [
+   95,
+   19
+  ],
+  "body_x": [
+   94,
+   96
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "casimir-crystal",
+  "seat": [
+   95,
+   26
+  ],
+  "body_x": [
+   94,
+   96
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "titanium-glass",
+  "seat": [
+   95,
+   27
+  ],
+  "body_x": [
+   94,
+   96
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "crude-oil",
+  "seat": [
+   95,
+   34
+  ],
+  "body_x": [
+   94,
+   96
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "crude-oil",
+  "seat": [
+   95,
+   42
+  ],
+  "body_x": [
+   94,
+   96
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "energetic-graphite",
+  "seat": [
+   95,
+   50
+  ],
+  "body_x": [
+   94,
+   96
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "refined-oil",
+  "seat": [
+   95,
+   51
+  ],
+  "body_x": [
+   94,
+   96
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "circuit-board",
+  "seat": [
+   95,
+   59
+  ],
+  "body_x": [
+   94,
+   96
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "microcrystalline-component",
+  "seat": [
+   95,
+   60
+  ],
+  "body_x": [
+   94,
+   96
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "plane-filter",
+  "seat": [
+   95,
+   68
+  ],
+  "body_x": [
+   94,
+   96
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "processor",
+  "seat": [
+   95,
+   69
+  ],
+  "body_x": [
+   94,
+   96
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "deuterium",
+  "seat": [
+   116,
+   0
+  ],
+  "body_x": [
+   115,
+   117
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "iron-ingot",
+  "seat": [
+   116,
+   1
+  ],
+  "body_x": [
+   115,
+   117
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "particle-container",
+  "seat": [
+   116,
+   8
+  ],
+  "body_x": [
+   115,
+   117
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "diamond",
+  "seat": [
+   116,
+   10
+  ],
+  "body_x": [
+   115,
+   117
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "titanium-crystal",
+  "seat": [
+   116,
+   11
+  ],
+  "body_x": [
+   115,
+   117
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "organic-crystal",
+  "seat": [
+   116,
+   19
+  ],
+  "body_x": [
+   115,
+   117
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "titanium-ingot",
+  "seat": [
+   116,
+   20
+  ],
+  "body_x": [
+   115,
+   117
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "glass",
+  "seat": [
+   116,
+   28
+  ],
+  "body_x": [
+   115,
+   117
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "titanium-ingot",
+  "seat": [
+   116,
+   29
+  ],
+  "body_x": [
+   115,
+   117
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "water",
+  "seat": [
+   116,
+   30
+  ],
+  "body_x": [
+   115,
+   117
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "titanium-ore",
+  "seat": [
+   116,
+   37
+  ],
+  "body_x": [
+   115,
+   117
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "antimatter",
+  "seat": [
+   116,
+   45
+  ],
+  "body_x": [
+   115,
+   117
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "gravity-matrix",
+  "seat": [
+   116,
+   52
+  ],
+  "body_x": [
+   115,
+   117
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "antimatter",
+  "seat": [
+   116,
+   54
+  ],
+  "body_x": [
+   115,
+   117
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "all-products",
+  "item": "gravity-matrix",
+  "seat": [
+   116,
+   61
+  ],
+  "body_x": [
+   115,
+   117
+  ],
+  "seconds": 8.5
+ },
+ {
+  "url": "universe-matrix",
+  "label": "output-products",
+  "item": "antimatter",
+  "seat": [
+   135,
+   62
+  ],
+  "body_x": [
+   134,
+   136
+  ],
+  "seconds": 2.7
+ },
+ {
+  "url": "universe-matrix",
+  "label": "output-products",
+  "item": "gravity-matrix",
+  "seat": [
+   135,
+   69
+  ],
+  "body_x": [
+   134,
+   136
+  ],
+  "seconds": 2.7
+ },
+ {
+  "url": "universe-matrix",
+  "label": "output-products",
+  "item": "antimatter",
+  "seat": [
+   135,
+   71
+  ],
+  "body_x": [
+   134,
+   136
+  ],
+  "seconds": 2.7
+ },
+ {
+  "url": "universe-matrix",
+  "label": "output-products",
+  "item": "gravity-matrix",
+  "seat": [
+   135,
+   78
+  ],
+  "body_x": [
+   134,
+   136
+  ],
+  "seconds": 2.7
+ }
+]

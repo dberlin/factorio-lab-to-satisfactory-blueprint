@@ -1,0 +1,19 @@
+EVIDENCE=docs/superpowers/evidence/2026-09-04-matrix-forced-topology
+EXPERIMENT_COMMIT="$(git rev-parse 'HEAD^{commit}')"
+BASELINE_COMMIT="$(git rev-parse '4982494^{commit}')"
+
+rm -f "$EVIDENCE/forced-compact.jsonl" "$EVIDENCE/forced-unstacked.jsonl"
+
+uv run python scripts/audit.py --budget 30 --jobs 3 --max-seconds 180 --only universe-matrix --strategy sequence-pair --force-lab-topology compact --json "$EVIDENCE/forced-compact.jsonl"
+
+uv run python scripts/audit.py --budget 30 --jobs 3 --max-seconds 180 --only universe-matrix --strategy sequence-pair --force-lab-topology unstacked --json "$EVIDENCE/forced-unstacked.jsonl"
+
+uv run python "$EVIDENCE/topology_probe.py" --mode compact --source-commit "$EXPERIMENT_COMMIT" --output "$EVIDENCE/topology-compact.json"
+
+uv run python "$EVIDENCE/topology_probe.py" --mode unstacked --source-commit "$EXPERIMENT_COMMIT" --output "$EVIDENCE/topology-unstacked.json"
+
+git archive --format=tar --output=/tmp/matrix-baseline.tar "$BASELINE_COMMIT"
+rm -rf /tmp/matrix-baseline && mkdir -p /tmp/matrix-baseline && tar -xf /tmp/matrix-baseline.tar -C /tmp/matrix-baseline
+PROBE_ROOT=/tmp/matrix-baseline uv run python "$EVIDENCE/topology_probe.py" --mode baseline --source-commit "$BASELINE_COMMIT" --output "$EVIDENCE/topology-baseline.json"
+
+uv run python "$EVIDENCE/compare_topologies.py"

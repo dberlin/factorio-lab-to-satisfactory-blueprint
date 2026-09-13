@@ -1,0 +1,7011 @@
+{
+  "aggregation_scope": "Every failure in every exact_closures record whose detailed status is stranded; not only the closure matching each row best_stranded value.",
+  "commands": [
+    "taskset -c 0-127 env -u VIRTUAL_ENV PYTHONHASHSEED=0 uv run python scripts/audit.py --strategy sequence-pair --only universe-matrix --tier stress --budget 30 --jobs 1 --max-seconds 180 --candidate-policy no-proliferator,all-products,output-products --exact-closure-diagnostics 1 --json docs/superpowers/evidence/2026-09-05-matrix-recovery/round1.jsonl",
+    "taskset -c 0-127 env -u VIRTUAL_ENV PYTHONHASHSEED=0 uv run python scripts/audit.py --strategy sequence-pair --only universe-matrix --tier stress --budget 30 --jobs 1 --max-seconds 180 --candidate-policy no-proliferator,all-products,output-products --exact-closure-diagnostics 2 --json docs/superpowers/evidence/2026-09-05-matrix-recovery/round2.jsonl",
+    "taskset -c 0-127 env -u VIRTUAL_ENV PYTHONHASHSEED=0 uv run python scripts/audit.py --strategy sequence-pair --only universe-matrix --tier stress --budget 30 --jobs 1 --max-seconds 180 --candidate-policy no-proliferator,all-products,output-products --exact-closure-diagnostics 3 --json docs/superpowers/evidence/2026-09-05-matrix-recovery/round3.jsonl"
+  ],
+  "conclusion": "All three policies generated candidates that detailed routing rejected in every round. The all-products two-net 93x101 failure and the output-products one-net 236x77 failure each recur in all three rounds; other earlier stranded closures also recur and are catalogued. Terminal row status is a later search outcome and does not erase failures observed in earlier detailed closures.",
+  "diagnosis_branch": "generated and detailed routing rejected it",
+  "environment": {
+    "assets": {
+      "lab_data": "vendored data loaded by flab2bp.data.load_vendored()",
+      "source_commit": "31c68413c9b0649c7d8f318e420934c5945dd61d",
+      "uv_lock_sha256": "41eaa7bb8cdd8b9368cc21461c061070c50fd618575b276e12309281f1ff922f"
+    },
+    "available_cpus": 128,
+    "candidate_policies": [
+      "no-proliferator",
+      "all-products",
+      "output-products"
+    ],
+    "cell_budget_s": 30,
+    "concurrent_workload": "none; Main granted and later released a dedicated idle-machine window",
+    "cpu_affinity": "0-127",
+    "jobs": 1,
+    "python_hash_seed": 0,
+    "strategy": "sequence-pair"
+  },
+  "equivalence_assessment": "No routed closure carries a failure signature, and no identical semantic failure signature was observed under a different candidate policy; exact cross-policy success equivalence is therefore false for every recorded failure.",
+  "matrix_variant_sets": {
+    "08bebb83fbbef715": [
+      {
+        "attachments": [
+          [
+            "input:south:0",
+            -2,
+            [
+              {
+                "cell": [
+                  1,
+                  0
+                ],
+                "column": 1,
+                "item": "circuit-board",
+                "slot": 6,
+                "span": 2
+              }
+            ]
+          ],
+          [
+            "input:south:1",
+            -1,
+            [
+              {
+                "cell": [
+                  2,
+                  0
+                ],
+                "column": 2,
+                "item": "magnetic-coil",
+                "slot": 7,
+                "span": 1
+              }
+            ]
+          ],
+          [
+            "output:north:0",
+            5,
+            [
+              {
+                "cell": [
+                  1,
+                  4
+                ],
+                "column": 1,
+                "item": "electromagnetic-matrix",
+                "slot": 2,
+                "span": 1
+              }
+            ]
+          ]
+        ],
+        "box": [
+          6,
+          8
+        ],
+        "column_heights": [
+          3
+        ],
+        "family_id": {
+          "group_key": "electromagnetic-matrix#9",
+          "shard_index": 0
+        },
+        "footprint": [
+          5,
+          5
+        ],
+        "lane_rows": [
+          [
+            "input:south:0",
+            -2
+          ],
+          [
+            "input:south:1",
+            -1
+          ],
+          [
+            "output:north:0",
+            5
+          ]
+        ],
+        "machine_origins_x": [
+          0
+        ],
+        "max_stack_height": 3,
+        "placement_geometry": [
+          5,
+          5,
+          6,
+          5,
+          0,
+          1,
+          0,
+          0
+        ],
+        "port_docks": [],
+        "yaw_degrees": 0
+      },
+      {
+        "attachments": [
+          [
+            "input:south:0",
+            -2,
+            [
+              {
+                "cell": [
+                  1,
+                  0
+                ],
+                "column": 1,
+                "item": "hydrogen",
+                "slot": 6,
+                "span": 2
+              }
+            ]
+          ],
+          [
+            "input:south:1",
+            -1,
+            [
+              {
+                "cell": [
+                  2,
+                  0
+                ],
+                "column": 2,
+                "item": "energetic-graphite",
+                "slot": 7,
+                "span": 1
+              }
+            ]
+          ],
+          [
+            "output:north:0",
+            5,
+            [
+              {
+                "cell": [
+                  1,
+                  4
+                ],
+                "column": 1,
+                "item": "energy-matrix",
+                "slot": 2,
+                "span": 1
+              }
+            ]
+          ]
+        ],
+        "box": [
+          6,
+          8
+        ],
+        "column_heights": [
+          6
+        ],
+        "family_id": {
+          "group_key": "energy-matrix#12",
+          "shard_index": 0
+        },
+        "footprint": [
+          5,
+          5
+        ],
+        "lane_rows": [
+          [
+            "input:south:0",
+            -2
+          ],
+          [
+            "input:south:1",
+            -1
+          ],
+          [
+            "output:north:0",
+            5
+          ]
+        ],
+        "machine_origins_x": [
+          0
+        ],
+        "max_stack_height": 6,
+        "placement_geometry": [
+          5,
+          5,
+          6,
+          5,
+          0,
+          1,
+          0,
+          0
+        ],
+        "port_docks": [],
+        "yaw_degrees": 0
+      },
+      {
+        "attachments": [
+          [
+            "input:south:0",
+            -2,
+            [
+              {
+                "cell": [
+                  1,
+                  0
+                ],
+                "column": 1,
+                "item": "graviton-lens",
+                "slot": 6,
+                "span": 2
+              }
+            ]
+          ],
+          [
+            "input:south:1",
+            -1,
+            [
+              {
+                "cell": [
+                  2,
+                  0
+                ],
+                "column": 2,
+                "item": "quantum-chip",
+                "slot": 7,
+                "span": 1
+              }
+            ]
+          ],
+          [
+            "output:north:0",
+            5,
+            [
+              {
+                "cell": [
+                  1,
+                  4
+                ],
+                "column": 1,
+                "item": "gravity-matrix",
+                "slot": 2,
+                "span": 1
+              }
+            ]
+          ]
+        ],
+        "box": [
+          12,
+          8
+        ],
+        "column_heights": [
+          6,
+          6
+        ],
+        "family_id": {
+          "group_key": "gravity-matrix#17",
+          "shard_index": 0
+        },
+        "footprint": [
+          5,
+          5
+        ],
+        "lane_rows": [
+          [
+            "input:south:0",
+            -2
+          ],
+          [
+            "input:south:1",
+            -1
+          ],
+          [
+            "output:north:0",
+            5
+          ]
+        ],
+        "machine_origins_x": [
+          0,
+          6
+        ],
+        "max_stack_height": 9,
+        "placement_geometry": [
+          5,
+          5,
+          6,
+          5,
+          0,
+          1,
+          0,
+          0
+        ],
+        "port_docks": [],
+        "yaw_degrees": 0
+      },
+      {
+        "attachments": [
+          [
+            "input:south:0",
+            -2,
+            [
+              {
+                "cell": [
+                  1,
+                  0
+                ],
+                "column": 1,
+                "item": "particle-broadband",
+                "slot": 6,
+                "span": 2
+              }
+            ]
+          ],
+          [
+            "input:south:1",
+            -1,
+            [
+              {
+                "cell": [
+                  2,
+                  0
+                ],
+                "column": 2,
+                "item": "processor",
+                "slot": 7,
+                "span": 1
+              }
+            ]
+          ],
+          [
+            "output:north:0",
+            5,
+            [
+              {
+                "cell": [
+                  1,
+                  4
+                ],
+                "column": 1,
+                "item": "information-matrix",
+                "slot": 2,
+                "span": 1
+              }
+            ]
+          ]
+        ],
+        "box": [
+          12,
+          8
+        ],
+        "column_heights": [
+          5,
+          5
+        ],
+        "family_id": {
+          "group_key": "information-matrix#19",
+          "shard_index": 0
+        },
+        "footprint": [
+          5,
+          5
+        ],
+        "lane_rows": [
+          [
+            "input:south:0",
+            -2
+          ],
+          [
+            "input:south:1",
+            -1
+          ],
+          [
+            "output:north:0",
+            5
+          ]
+        ],
+        "machine_origins_x": [
+          0,
+          6
+        ],
+        "max_stack_height": 9,
+        "placement_geometry": [
+          5,
+          5,
+          6,
+          5,
+          0,
+          1,
+          0,
+          0
+        ],
+        "port_docks": [],
+        "yaw_degrees": 0
+      },
+      {
+        "attachments": [
+          [
+            "input:south:0",
+            -2,
+            [
+              {
+                "cell": [
+                  1,
+                  0
+                ],
+                "column": 1,
+                "item": "diamond",
+                "slot": 6,
+                "span": 2
+              }
+            ]
+          ],
+          [
+            "input:south:1",
+            -1,
+            [
+              {
+                "cell": [
+                  2,
+                  0
+                ],
+                "column": 2,
+                "item": "titanium-crystal",
+                "slot": 7,
+                "span": 1
+              }
+            ]
+          ],
+          [
+            "output:north:0",
+            5,
+            [
+              {
+                "cell": [
+                  1,
+                  4
+                ],
+                "column": 1,
+                "item": "structure-matrix",
+                "slot": 2,
+                "span": 1
+              }
+            ]
+          ]
+        ],
+        "box": [
+          6,
+          8
+        ],
+        "column_heights": [
+          8
+        ],
+        "family_id": {
+          "group_key": "structure-matrix#33",
+          "shard_index": 0
+        },
+        "footprint": [
+          5,
+          5
+        ],
+        "lane_rows": [
+          [
+            "input:south:0",
+            -2
+          ],
+          [
+            "input:south:1",
+            -1
+          ],
+          [
+            "output:north:0",
+            5
+          ]
+        ],
+        "machine_origins_x": [
+          0
+        ],
+        "max_stack_height": 8,
+        "placement_geometry": [
+          5,
+          5,
+          6,
+          5,
+          0,
+          1,
+          0,
+          0
+        ],
+        "port_docks": [],
+        "yaw_degrees": 0
+      },
+      {
+        "attachments": [
+          [
+            "input:south:0",
+            -1,
+            [
+              {
+                "cell": [
+                  1,
+                  0
+                ],
+                "column": 1,
+                "item": "antimatter",
+                "slot": 6,
+                "span": 1
+              },
+              {
+                "cell": [
+                  2,
+                  0
+                ],
+                "column": 2,
+                "item": "electromagnetic-matrix",
+                "slot": 7,
+                "span": 1
+              },
+              {
+                "cell": [
+                  3,
+                  0
+                ],
+                "column": 3,
+                "item": "energy-matrix",
+                "slot": 8,
+                "span": 1
+              }
+            ]
+          ],
+          [
+            "input:north:0",
+            6,
+            [
+              {
+                "cell": [
+                  1,
+                  4
+                ],
+                "column": 1,
+                "item": "gravity-matrix",
+                "slot": 2,
+                "span": 2
+              },
+              {
+                "cell": [
+                  2,
+                  4
+                ],
+                "column": 2,
+                "item": "information-matrix",
+                "slot": 1,
+                "span": 2
+              },
+              {
+                "cell": [
+                  3,
+                  4
+                ],
+                "column": 3,
+                "item": "structure-matrix",
+                "slot": 0,
+                "span": 2
+              }
+            ]
+          ]
+        ],
+        "box": [
+          14,
+          8
+        ],
+        "column_heights": [
+          8,
+          7
+        ],
+        "family_id": {
+          "group_key": "universe-matrix#37",
+          "shard_index": 0
+        },
+        "footprint": [
+          5,
+          5
+        ],
+        "lane_rows": [
+          [
+            "input:south:0",
+            -1
+          ],
+          [
+            "input:north:0",
+            6
+          ]
+        ],
+        "machine_origins_x": [
+          0,
+          7
+        ],
+        "max_stack_height": 9,
+        "placement_geometry": [
+          5,
+          5,
+          7,
+          5,
+          0,
+          2,
+          0,
+          0
+        ],
+        "port_docks": [],
+        "yaw_degrees": 0
+      }
+    ],
+    "1a3ddcb29a340a11": [
+      {
+        "attachments": [
+          [
+            "input:south:0",
+            -2,
+            [
+              {
+                "cell": [
+                  1,
+                  0
+                ],
+                "column": 1,
+                "item": "circuit-board",
+                "slot": 6,
+                "span": 2
+              }
+            ]
+          ],
+          [
+            "input:south:1",
+            -1,
+            [
+              {
+                "cell": [
+                  2,
+                  0
+                ],
+                "column": 2,
+                "item": "magnetic-coil",
+                "slot": 7,
+                "span": 1
+              }
+            ]
+          ],
+          [
+            "output:north:0",
+            5,
+            [
+              {
+                "cell": [
+                  1,
+                  4
+                ],
+                "column": 1,
+                "item": "electromagnetic-matrix",
+                "slot": 2,
+                "span": 1
+              }
+            ]
+          ]
+        ],
+        "box": [
+          6,
+          8
+        ],
+        "column_heights": [
+          2
+        ],
+        "family_id": {
+          "group_key": "electromagnetic-matrix#9",
+          "shard_index": 0
+        },
+        "footprint": [
+          5,
+          5
+        ],
+        "lane_rows": [
+          [
+            "input:south:0",
+            -2
+          ],
+          [
+            "input:south:1",
+            -1
+          ],
+          [
+            "output:north:0",
+            5
+          ]
+        ],
+        "machine_origins_x": [
+          0
+        ],
+        "max_stack_height": 2,
+        "placement_geometry": [
+          5,
+          5,
+          6,
+          5,
+          0,
+          1,
+          0,
+          0
+        ],
+        "port_docks": [],
+        "yaw_degrees": 0
+      },
+      {
+        "attachments": [
+          [
+            "input:south:0",
+            -2,
+            [
+              {
+                "cell": [
+                  1,
+                  0
+                ],
+                "column": 1,
+                "item": "hydrogen",
+                "slot": 6,
+                "span": 2
+              }
+            ]
+          ],
+          [
+            "input:south:1",
+            -1,
+            [
+              {
+                "cell": [
+                  2,
+                  0
+                ],
+                "column": 2,
+                "item": "energetic-graphite",
+                "slot": 7,
+                "span": 1
+              }
+            ]
+          ],
+          [
+            "output:north:0",
+            5,
+            [
+              {
+                "cell": [
+                  1,
+                  4
+                ],
+                "column": 1,
+                "item": "energy-matrix",
+                "slot": 2,
+                "span": 1
+              }
+            ]
+          ]
+        ],
+        "box": [
+          6,
+          8
+        ],
+        "column_heights": [
+          4
+        ],
+        "family_id": {
+          "group_key": "energy-matrix#12",
+          "shard_index": 0
+        },
+        "footprint": [
+          5,
+          5
+        ],
+        "lane_rows": [
+          [
+            "input:south:0",
+            -2
+          ],
+          [
+            "input:south:1",
+            -1
+          ],
+          [
+            "output:north:0",
+            5
+          ]
+        ],
+        "machine_origins_x": [
+          0
+        ],
+        "max_stack_height": 4,
+        "placement_geometry": [
+          5,
+          5,
+          6,
+          5,
+          0,
+          1,
+          0,
+          0
+        ],
+        "port_docks": [],
+        "yaw_degrees": 0
+      },
+      {
+        "attachments": [
+          [
+            "input:south:0",
+            -2,
+            [
+              {
+                "cell": [
+                  1,
+                  0
+                ],
+                "column": 1,
+                "item": "graviton-lens",
+                "slot": 6,
+                "span": 2
+              }
+            ]
+          ],
+          [
+            "input:south:1",
+            -1,
+            [
+              {
+                "cell": [
+                  2,
+                  0
+                ],
+                "column": 2,
+                "item": "quantum-chip",
+                "slot": 7,
+                "span": 1
+              }
+            ]
+          ],
+          [
+            "output:north:0",
+            5,
+            [
+              {
+                "cell": [
+                  1,
+                  4
+                ],
+                "column": 1,
+                "item": "gravity-matrix",
+                "slot": 2,
+                "span": 1
+              }
+            ]
+          ]
+        ],
+        "box": [
+          6,
+          8
+        ],
+        "column_heights": [
+          8
+        ],
+        "family_id": {
+          "group_key": "gravity-matrix#17",
+          "shard_index": 0
+        },
+        "footprint": [
+          5,
+          5
+        ],
+        "lane_rows": [
+          [
+            "input:south:0",
+            -2
+          ],
+          [
+            "input:south:1",
+            -1
+          ],
+          [
+            "output:north:0",
+            5
+          ]
+        ],
+        "machine_origins_x": [
+          0
+        ],
+        "max_stack_height": 8,
+        "placement_geometry": [
+          5,
+          5,
+          6,
+          5,
+          0,
+          1,
+          0,
+          0
+        ],
+        "port_docks": [],
+        "yaw_degrees": 0
+      },
+      {
+        "attachments": [
+          [
+            "input:south:0",
+            -2,
+            [
+              {
+                "cell": [
+                  1,
+                  0
+                ],
+                "column": 1,
+                "item": "particle-broadband",
+                "slot": 6,
+                "span": 2
+              }
+            ]
+          ],
+          [
+            "input:south:1",
+            -1,
+            [
+              {
+                "cell": [
+                  2,
+                  0
+                ],
+                "column": 2,
+                "item": "processor",
+                "slot": 7,
+                "span": 1
+              }
+            ]
+          ],
+          [
+            "output:north:0",
+            5,
+            [
+              {
+                "cell": [
+                  1,
+                  4
+                ],
+                "column": 1,
+                "item": "information-matrix",
+                "slot": 2,
+                "span": 1
+              }
+            ]
+          ]
+        ],
+        "box": [
+          6,
+          8
+        ],
+        "column_heights": [
+          7
+        ],
+        "family_id": {
+          "group_key": "information-matrix#19",
+          "shard_index": 0
+        },
+        "footprint": [
+          5,
+          5
+        ],
+        "lane_rows": [
+          [
+            "input:south:0",
+            -2
+          ],
+          [
+            "input:south:1",
+            -1
+          ],
+          [
+            "output:north:0",
+            5
+          ]
+        ],
+        "machine_origins_x": [
+          0
+        ],
+        "max_stack_height": 7,
+        "placement_geometry": [
+          5,
+          5,
+          6,
+          5,
+          0,
+          1,
+          0,
+          0
+        ],
+        "port_docks": [],
+        "yaw_degrees": 0
+      },
+      {
+        "attachments": [
+          [
+            "input:south:0",
+            -2,
+            [
+              {
+                "cell": [
+                  1,
+                  0
+                ],
+                "column": 1,
+                "item": "diamond",
+                "slot": 6,
+                "span": 2
+              }
+            ]
+          ],
+          [
+            "input:south:1",
+            -1,
+            [
+              {
+                "cell": [
+                  2,
+                  0
+                ],
+                "column": 2,
+                "item": "titanium-crystal",
+                "slot": 7,
+                "span": 1
+              }
+            ]
+          ],
+          [
+            "output:north:0",
+            5,
+            [
+              {
+                "cell": [
+                  1,
+                  4
+                ],
+                "column": 1,
+                "item": "structure-matrix",
+                "slot": 2,
+                "span": 1
+              }
+            ]
+          ]
+        ],
+        "box": [
+          6,
+          8
+        ],
+        "column_heights": [
+          6
+        ],
+        "family_id": {
+          "group_key": "structure-matrix#33",
+          "shard_index": 0
+        },
+        "footprint": [
+          5,
+          5
+        ],
+        "lane_rows": [
+          [
+            "input:south:0",
+            -2
+          ],
+          [
+            "input:south:1",
+            -1
+          ],
+          [
+            "output:north:0",
+            5
+          ]
+        ],
+        "machine_origins_x": [
+          0
+        ],
+        "max_stack_height": 6,
+        "placement_geometry": [
+          5,
+          5,
+          6,
+          5,
+          0,
+          1,
+          0,
+          0
+        ],
+        "port_docks": [],
+        "yaw_degrees": 0
+      },
+      {
+        "attachments": [
+          [
+            "input:south:0",
+            -1,
+            [
+              {
+                "cell": [
+                  1,
+                  0
+                ],
+                "column": 1,
+                "item": "antimatter",
+                "slot": 6,
+                "span": 1
+              },
+              {
+                "cell": [
+                  2,
+                  0
+                ],
+                "column": 2,
+                "item": "electromagnetic-matrix",
+                "slot": 7,
+                "span": 1
+              },
+              {
+                "cell": [
+                  3,
+                  0
+                ],
+                "column": 3,
+                "item": "energy-matrix",
+                "slot": 8,
+                "span": 1
+              }
+            ]
+          ],
+          [
+            "input:north:0",
+            6,
+            [
+              {
+                "cell": [
+                  1,
+                  4
+                ],
+                "column": 1,
+                "item": "gravity-matrix",
+                "slot": 2,
+                "span": 2
+              },
+              {
+                "cell": [
+                  2,
+                  4
+                ],
+                "column": 2,
+                "item": "information-matrix",
+                "slot": 1,
+                "span": 2
+              },
+              {
+                "cell": [
+                  3,
+                  4
+                ],
+                "column": 3,
+                "item": "structure-matrix",
+                "slot": 0,
+                "span": 2
+              }
+            ]
+          ]
+        ],
+        "box": [
+          14,
+          8
+        ],
+        "column_heights": [
+          6,
+          6
+        ],
+        "family_id": {
+          "group_key": "universe-matrix#37",
+          "shard_index": 0
+        },
+        "footprint": [
+          5,
+          5
+        ],
+        "lane_rows": [
+          [
+            "input:south:0",
+            -1
+          ],
+          [
+            "input:north:0",
+            6
+          ]
+        ],
+        "machine_origins_x": [
+          0,
+          7
+        ],
+        "max_stack_height": 9,
+        "placement_geometry": [
+          5,
+          5,
+          7,
+          5,
+          0,
+          2,
+          0,
+          0
+        ],
+        "port_docks": [],
+        "yaw_degrees": 0
+      }
+    ],
+    "be30410f4bdc02fd": [
+      {
+        "attachments": [
+          [
+            "input:south:0",
+            -2,
+            [
+              {
+                "cell": [
+                  1,
+                  0
+                ],
+                "column": 1,
+                "item": "circuit-board",
+                "slot": 6,
+                "span": 2
+              }
+            ]
+          ],
+          [
+            "input:south:1",
+            -1,
+            [
+              {
+                "cell": [
+                  2,
+                  0
+                ],
+                "column": 2,
+                "item": "magnetic-coil",
+                "slot": 7,
+                "span": 1
+              }
+            ]
+          ],
+          [
+            "output:north:0",
+            5,
+            [
+              {
+                "cell": [
+                  1,
+                  4
+                ],
+                "column": 1,
+                "item": "electromagnetic-matrix",
+                "slot": 2,
+                "span": 1
+              }
+            ]
+          ]
+        ],
+        "box": [
+          6,
+          8
+        ],
+        "column_heights": [
+          3
+        ],
+        "family_id": {
+          "group_key": "electromagnetic-matrix#9",
+          "shard_index": 0
+        },
+        "footprint": [
+          5,
+          5
+        ],
+        "lane_rows": [
+          [
+            "input:south:0",
+            -2
+          ],
+          [
+            "input:south:1",
+            -1
+          ],
+          [
+            "output:north:0",
+            5
+          ]
+        ],
+        "machine_origins_x": [
+          0
+        ],
+        "max_stack_height": 3,
+        "placement_geometry": [
+          5,
+          5,
+          6,
+          5,
+          0,
+          1,
+          0,
+          0
+        ],
+        "port_docks": [],
+        "yaw_degrees": 0
+      },
+      {
+        "attachments": [
+          [
+            "input:south:0",
+            -2,
+            [
+              {
+                "cell": [
+                  1,
+                  0
+                ],
+                "column": 1,
+                "item": "hydrogen",
+                "slot": 6,
+                "span": 2
+              }
+            ]
+          ],
+          [
+            "input:south:1",
+            -1,
+            [
+              {
+                "cell": [
+                  2,
+                  0
+                ],
+                "column": 2,
+                "item": "energetic-graphite",
+                "slot": 7,
+                "span": 1
+              }
+            ]
+          ],
+          [
+            "output:north:0",
+            5,
+            [
+              {
+                "cell": [
+                  1,
+                  4
+                ],
+                "column": 1,
+                "item": "energy-matrix",
+                "slot": 2,
+                "span": 1
+              }
+            ]
+          ]
+        ],
+        "box": [
+          6,
+          8
+        ],
+        "column_heights": [
+          5
+        ],
+        "family_id": {
+          "group_key": "energy-matrix#12",
+          "shard_index": 0
+        },
+        "footprint": [
+          5,
+          5
+        ],
+        "lane_rows": [
+          [
+            "input:south:0",
+            -2
+          ],
+          [
+            "input:south:1",
+            -1
+          ],
+          [
+            "output:north:0",
+            5
+          ]
+        ],
+        "machine_origins_x": [
+          0
+        ],
+        "max_stack_height": 5,
+        "placement_geometry": [
+          5,
+          5,
+          6,
+          5,
+          0,
+          1,
+          0,
+          0
+        ],
+        "port_docks": [],
+        "yaw_degrees": 0
+      },
+      {
+        "attachments": [
+          [
+            "input:south:0",
+            -2,
+            [
+              {
+                "cell": [
+                  1,
+                  0
+                ],
+                "column": 1,
+                "item": "graviton-lens",
+                "slot": 6,
+                "span": 2
+              }
+            ]
+          ],
+          [
+            "input:south:1",
+            -1,
+            [
+              {
+                "cell": [
+                  2,
+                  0
+                ],
+                "column": 2,
+                "item": "quantum-chip",
+                "slot": 7,
+                "span": 1
+              }
+            ]
+          ],
+          [
+            "output:north:0",
+            5,
+            [
+              {
+                "cell": [
+                  1,
+                  4
+                ],
+                "column": 1,
+                "item": "gravity-matrix",
+                "slot": 2,
+                "span": 1
+              }
+            ]
+          ]
+        ],
+        "box": [
+          12,
+          8
+        ],
+        "column_heights": [
+          5,
+          5
+        ],
+        "family_id": {
+          "group_key": "gravity-matrix#17",
+          "shard_index": 0
+        },
+        "footprint": [
+          5,
+          5
+        ],
+        "lane_rows": [
+          [
+            "input:south:0",
+            -2
+          ],
+          [
+            "input:south:1",
+            -1
+          ],
+          [
+            "output:north:0",
+            5
+          ]
+        ],
+        "machine_origins_x": [
+          0,
+          6
+        ],
+        "max_stack_height": 9,
+        "placement_geometry": [
+          5,
+          5,
+          6,
+          5,
+          0,
+          1,
+          0,
+          0
+        ],
+        "port_docks": [],
+        "yaw_degrees": 0
+      },
+      {
+        "attachments": [
+          [
+            "input:south:0",
+            -2,
+            [
+              {
+                "cell": [
+                  1,
+                  0
+                ],
+                "column": 1,
+                "item": "particle-broadband",
+                "slot": 6,
+                "span": 2
+              }
+            ]
+          ],
+          [
+            "input:south:1",
+            -1,
+            [
+              {
+                "cell": [
+                  2,
+                  0
+                ],
+                "column": 2,
+                "item": "processor",
+                "slot": 7,
+                "span": 1
+              }
+            ]
+          ],
+          [
+            "output:north:0",
+            5,
+            [
+              {
+                "cell": [
+                  1,
+                  4
+                ],
+                "column": 1,
+                "item": "information-matrix",
+                "slot": 2,
+                "span": 1
+              }
+            ]
+          ]
+        ],
+        "box": [
+          6,
+          8
+        ],
+        "column_heights": [
+          8
+        ],
+        "family_id": {
+          "group_key": "information-matrix#19",
+          "shard_index": 0
+        },
+        "footprint": [
+          5,
+          5
+        ],
+        "lane_rows": [
+          [
+            "input:south:0",
+            -2
+          ],
+          [
+            "input:south:1",
+            -1
+          ],
+          [
+            "output:north:0",
+            5
+          ]
+        ],
+        "machine_origins_x": [
+          0
+        ],
+        "max_stack_height": 8,
+        "placement_geometry": [
+          5,
+          5,
+          6,
+          5,
+          0,
+          1,
+          0,
+          0
+        ],
+        "port_docks": [],
+        "yaw_degrees": 0
+      },
+      {
+        "attachments": [
+          [
+            "input:south:0",
+            -2,
+            [
+              {
+                "cell": [
+                  1,
+                  0
+                ],
+                "column": 1,
+                "item": "diamond",
+                "slot": 6,
+                "span": 2
+              }
+            ]
+          ],
+          [
+            "input:south:1",
+            -1,
+            [
+              {
+                "cell": [
+                  2,
+                  0
+                ],
+                "column": 2,
+                "item": "titanium-crystal",
+                "slot": 7,
+                "span": 1
+              }
+            ]
+          ],
+          [
+            "output:north:0",
+            5,
+            [
+              {
+                "cell": [
+                  1,
+                  4
+                ],
+                "column": 1,
+                "item": "structure-matrix",
+                "slot": 2,
+                "span": 1
+              }
+            ]
+          ]
+        ],
+        "box": [
+          6,
+          8
+        ],
+        "column_heights": [
+          7
+        ],
+        "family_id": {
+          "group_key": "structure-matrix#33",
+          "shard_index": 0
+        },
+        "footprint": [
+          5,
+          5
+        ],
+        "lane_rows": [
+          [
+            "input:south:0",
+            -2
+          ],
+          [
+            "input:south:1",
+            -1
+          ],
+          [
+            "output:north:0",
+            5
+          ]
+        ],
+        "machine_origins_x": [
+          0
+        ],
+        "max_stack_height": 7,
+        "placement_geometry": [
+          5,
+          5,
+          6,
+          5,
+          0,
+          1,
+          0,
+          0
+        ],
+        "port_docks": [],
+        "yaw_degrees": 0
+      },
+      {
+        "attachments": [
+          [
+            "input:south:0",
+            -1,
+            [
+              {
+                "cell": [
+                  1,
+                  0
+                ],
+                "column": 1,
+                "item": "antimatter",
+                "slot": 6,
+                "span": 1
+              },
+              {
+                "cell": [
+                  2,
+                  0
+                ],
+                "column": 2,
+                "item": "electromagnetic-matrix",
+                "slot": 7,
+                "span": 1
+              },
+              {
+                "cell": [
+                  3,
+                  0
+                ],
+                "column": 3,
+                "item": "energy-matrix",
+                "slot": 8,
+                "span": 1
+              }
+            ]
+          ],
+          [
+            "input:north:0",
+            6,
+            [
+              {
+                "cell": [
+                  1,
+                  4
+                ],
+                "column": 1,
+                "item": "gravity-matrix",
+                "slot": 2,
+                "span": 2
+              },
+              {
+                "cell": [
+                  2,
+                  4
+                ],
+                "column": 2,
+                "item": "information-matrix",
+                "slot": 1,
+                "span": 2
+              },
+              {
+                "cell": [
+                  3,
+                  4
+                ],
+                "column": 3,
+                "item": "structure-matrix",
+                "slot": 0,
+                "span": 2
+              }
+            ]
+          ]
+        ],
+        "box": [
+          14,
+          8
+        ],
+        "column_heights": [
+          6,
+          6
+        ],
+        "family_id": {
+          "group_key": "universe-matrix#37",
+          "shard_index": 0
+        },
+        "footprint": [
+          5,
+          5
+        ],
+        "lane_rows": [
+          [
+            "input:south:0",
+            -1
+          ],
+          [
+            "input:north:0",
+            6
+          ]
+        ],
+        "machine_origins_x": [
+          0,
+          7
+        ],
+        "max_stack_height": 9,
+        "placement_geometry": [
+          5,
+          5,
+          7,
+          5,
+          0,
+          2,
+          0,
+          0
+        ],
+        "port_docks": [],
+        "yaw_degrees": 0
+      }
+    ]
+  },
+  "observations": [
+    {
+      "area": 18096.0,
+      "best_stranded": 0,
+      "candidate_policy": "no-proliferator",
+      "elapsed_s": 26.452577769057825,
+      "exact_closure_count": 3,
+      "round": 1,
+      "status": "CLEAN",
+      "stranded_exact_closures": [
+        {
+          "candidate_role": "completion-reserve",
+          "closure_index": 0,
+          "detailed_status": "stranded",
+          "elapsed_s": 15.023,
+          "lab_max_stacks": [
+            [
+              10,
+              3
+            ],
+            [
+              14,
+              6
+            ],
+            [
+              19,
+              9
+            ],
+            [
+              21,
+              9
+            ],
+            [
+              38,
+              8
+            ],
+            [
+              42,
+              9
+            ]
+          ],
+          "pre_route_area": 12782,
+          "pre_route_dimensions": [
+            154,
+            83
+          ],
+          "remaining_s": 14.977,
+          "restart": 0,
+          "selected_matrix_variant_set_id": "08bebb83fbbef715",
+          "semantic_failures": [
+            {
+              "destination_access": [
+                1,
+                33,
+                0
+              ],
+              "equivalent_signature_succeeds_in_another_policy": false,
+              "signature_id": "10140ae67473455b",
+              "source_access": [
+                115,
+                37,
+                0
+              ]
+            }
+          ],
+          "stage": 0,
+          "stranded": 1,
+          "topology_signature_id": "73e15bac360b31ea"
+        }
+      ]
+    },
+    {
+      "area": 0.0,
+      "best_stranded": 2,
+      "candidate_policy": "all-products",
+      "elapsed_s": 22.786457356996834,
+      "exact_closure_count": 3,
+      "round": 1,
+      "status": "REFUSED",
+      "stranded_exact_closures": [
+        {
+          "candidate_role": "completion-reserve",
+          "closure_index": 0,
+          "detailed_status": "stranded",
+          "elapsed_s": 9.805,
+          "lab_max_stacks": [
+            [
+              10,
+              2
+            ],
+            [
+              14,
+              4
+            ],
+            [
+              19,
+              8
+            ],
+            [
+              21,
+              7
+            ],
+            [
+              37,
+              6
+            ],
+            [
+              41,
+              9
+            ]
+          ],
+          "pre_route_area": 7980,
+          "pre_route_dimensions": [
+            114,
+            70
+          ],
+          "remaining_s": 20.195,
+          "restart": 0,
+          "selected_matrix_variant_set_id": "1a3ddcb29a340a11",
+          "semantic_failures": [
+            {
+              "destination_access": [
+                -1,
+                50,
+                1
+              ],
+              "equivalent_signature_succeeds_in_another_policy": false,
+              "signature_id": "9eb6dc075837b15c",
+              "source_access": [
+                -4,
+                94,
+                0
+              ]
+            },
+            {
+              "destination_access": [
+                -1,
+                51,
+                1
+              ],
+              "equivalent_signature_succeeds_in_another_policy": false,
+              "signature_id": "9eb6dc075837b15c",
+              "source_access": [
+                -4,
+                102,
+                0
+              ]
+            },
+            {
+              "destination_access": [
+                -1,
+                52,
+                1
+              ],
+              "equivalent_signature_succeeds_in_another_policy": false,
+              "signature_id": "9eb6dc075837b15c",
+              "source_access": [
+                -4,
+                110,
+                0
+              ]
+            },
+            {
+              "destination_access": [
+                -1,
+                59,
+                1
+              ],
+              "equivalent_signature_succeeds_in_another_policy": false,
+              "signature_id": "27e5f9c7e6ea9bd8",
+              "source_access": [
+                -4,
+                114,
+                0
+              ]
+            },
+            {
+              "destination_access": [
+                0,
+                51,
+                0
+              ],
+              "equivalent_signature_succeeds_in_another_policy": false,
+              "signature_id": "12054cadf6cd2942",
+              "source_access": [
+                104,
+                39,
+                0
+              ]
+            },
+            {
+              "destination_access": [
+                11,
+                27,
+                0
+              ],
+              "equivalent_signature_succeeds_in_another_policy": false,
+              "signature_id": "be51f019bd64e35c",
+              "source_access": [
+                49,
+                53,
+                0
+              ]
+            },
+            {
+              "destination_access": [
+                20,
+                27,
+                0
+              ],
+              "equivalent_signature_succeeds_in_another_policy": false,
+              "signature_id": "464d398d7e53b280",
+              "source_access": [
+                49,
+                53,
+                0
+              ]
+            }
+          ],
+          "stage": 0,
+          "stranded": 7,
+          "topology_signature_id": "1864851eca74ea52"
+        },
+        {
+          "candidate_role": "anneal",
+          "closure_index": 2,
+          "detailed_status": "stranded",
+          "elapsed_s": 22.756,
+          "lab_max_stacks": [
+            [
+              10,
+              2
+            ],
+            [
+              14,
+              4
+            ],
+            [
+              19,
+              8
+            ],
+            [
+              21,
+              7
+            ],
+            [
+              37,
+              6
+            ],
+            [
+              41,
+              9
+            ]
+          ],
+          "pre_route_area": 9393,
+          "pre_route_dimensions": [
+            93,
+            101
+          ],
+          "remaining_s": 7.244,
+          "restart": 0,
+          "selected_matrix_variant_set_id": "1a3ddcb29a340a11",
+          "semantic_failures": [
+            {
+              "destination_access": [
+                0,
+                10,
+                0
+              ],
+              "equivalent_signature_succeeds_in_another_policy": false,
+              "signature_id": "836539f0b0a92c49",
+              "source_access": [
+                59,
+                80,
+                0
+              ]
+            },
+            {
+              "destination_access": [
+                0,
+                93,
+                0
+              ],
+              "equivalent_signature_succeeds_in_another_policy": false,
+              "signature_id": "ce0ff0506ed0e58f",
+              "source_access": [
+                49,
+                89,
+                0
+              ]
+            }
+          ],
+          "stage": 0,
+          "stranded": 2,
+          "topology_signature_id": "95e52a129f1b8789"
+        }
+      ]
+    },
+    {
+      "area": 0.0,
+      "best_stranded": 1,
+      "candidate_policy": "output-products",
+      "elapsed_s": 22.48476912896149,
+      "exact_closure_count": 3,
+      "round": 1,
+      "status": "REFUSED",
+      "stranded_exact_closures": [
+        {
+          "candidate_role": "completion-reserve",
+          "closure_index": 0,
+          "detailed_status": "stranded",
+          "elapsed_s": 14.92,
+          "lab_max_stacks": [
+            [
+              10,
+              3
+            ],
+            [
+              14,
+              5
+            ],
+            [
+              19,
+              9
+            ],
+            [
+              21,
+              8
+            ],
+            [
+              38,
+              7
+            ],
+            [
+              42,
+              9
+            ]
+          ],
+          "pre_route_area": 12087,
+          "pre_route_dimensions": [
+            153,
+            79
+          ],
+          "remaining_s": 15.08,
+          "restart": 0,
+          "selected_matrix_variant_set_id": "be30410f4bdc02fd",
+          "semantic_failures": [
+            {
+              "destination_access": [
+                103,
+                46,
+                0
+              ],
+              "equivalent_signature_succeeds_in_another_policy": false,
+              "signature_id": "eb09b5f628779889",
+              "source_access": [
+                36,
+                13,
+                0
+              ]
+            },
+            {
+              "destination_access": [
+                23,
+                34,
+                0
+              ],
+              "equivalent_signature_succeeds_in_another_policy": false,
+              "signature_id": "9edbac06c5918080",
+              "source_access": [
+                8,
+                29,
+                0
+              ]
+            }
+          ],
+          "stage": 0,
+          "stranded": 2,
+          "topology_signature_id": "9d6bf206b352777d"
+        },
+        {
+          "candidate_role": "proxy-budget",
+          "closure_index": 1,
+          "detailed_status": "stranded",
+          "elapsed_s": 17.413,
+          "lab_max_stacks": [
+            [
+              10,
+              3
+            ],
+            [
+              14,
+              5
+            ],
+            [
+              19,
+              9
+            ],
+            [
+              21,
+              8
+            ],
+            [
+              38,
+              7
+            ],
+            [
+              42,
+              9
+            ]
+          ],
+          "pre_route_area": 18172,
+          "pre_route_dimensions": [
+            236,
+            77
+          ],
+          "remaining_s": 12.587,
+          "restart": 0,
+          "selected_matrix_variant_set_id": "be30410f4bdc02fd",
+          "semantic_failures": [
+            {
+              "destination_access": [
+                201,
+                27,
+                0
+              ],
+              "equivalent_signature_succeeds_in_another_policy": false,
+              "signature_id": "e56b66725704f15a",
+              "source_access": [
+                88,
+                25,
+                0
+              ]
+            }
+          ],
+          "stage": 1,
+          "stranded": 1,
+          "topology_signature_id": "257f709990b6bfc6"
+        }
+      ]
+    },
+    {
+      "area": 18096.0,
+      "best_stranded": 0,
+      "candidate_policy": "no-proliferator",
+      "elapsed_s": 26.511550314957276,
+      "exact_closure_count": 3,
+      "round": 2,
+      "status": "CLEAN",
+      "stranded_exact_closures": [
+        {
+          "candidate_role": "completion-reserve",
+          "closure_index": 0,
+          "detailed_status": "stranded",
+          "elapsed_s": 15.028,
+          "lab_max_stacks": [
+            [
+              10,
+              3
+            ],
+            [
+              14,
+              6
+            ],
+            [
+              19,
+              9
+            ],
+            [
+              21,
+              9
+            ],
+            [
+              38,
+              8
+            ],
+            [
+              42,
+              9
+            ]
+          ],
+          "pre_route_area": 12782,
+          "pre_route_dimensions": [
+            154,
+            83
+          ],
+          "remaining_s": 14.972,
+          "restart": 0,
+          "selected_matrix_variant_set_id": "08bebb83fbbef715",
+          "semantic_failures": [
+            {
+              "destination_access": [
+                1,
+                33,
+                0
+              ],
+              "equivalent_signature_succeeds_in_another_policy": false,
+              "signature_id": "10140ae67473455b",
+              "source_access": [
+                115,
+                37,
+                0
+              ]
+            }
+          ],
+          "stage": 0,
+          "stranded": 1,
+          "topology_signature_id": "73e15bac360b31ea"
+        }
+      ]
+    },
+    {
+      "area": 0.0,
+      "best_stranded": 2,
+      "candidate_policy": "all-products",
+      "elapsed_s": 22.925804350990802,
+      "exact_closure_count": 3,
+      "round": 2,
+      "status": "REFUSED",
+      "stranded_exact_closures": [
+        {
+          "candidate_role": "completion-reserve",
+          "closure_index": 0,
+          "detailed_status": "stranded",
+          "elapsed_s": 9.822,
+          "lab_max_stacks": [
+            [
+              10,
+              2
+            ],
+            [
+              14,
+              4
+            ],
+            [
+              19,
+              8
+            ],
+            [
+              21,
+              7
+            ],
+            [
+              37,
+              6
+            ],
+            [
+              41,
+              9
+            ]
+          ],
+          "pre_route_area": 7980,
+          "pre_route_dimensions": [
+            114,
+            70
+          ],
+          "remaining_s": 20.178,
+          "restart": 0,
+          "selected_matrix_variant_set_id": "1a3ddcb29a340a11",
+          "semantic_failures": [
+            {
+              "destination_access": [
+                -1,
+                50,
+                1
+              ],
+              "equivalent_signature_succeeds_in_another_policy": false,
+              "signature_id": "9eb6dc075837b15c",
+              "source_access": [
+                -4,
+                94,
+                0
+              ]
+            },
+            {
+              "destination_access": [
+                -1,
+                51,
+                1
+              ],
+              "equivalent_signature_succeeds_in_another_policy": false,
+              "signature_id": "9eb6dc075837b15c",
+              "source_access": [
+                -4,
+                102,
+                0
+              ]
+            },
+            {
+              "destination_access": [
+                -1,
+                52,
+                1
+              ],
+              "equivalent_signature_succeeds_in_another_policy": false,
+              "signature_id": "9eb6dc075837b15c",
+              "source_access": [
+                -4,
+                110,
+                0
+              ]
+            },
+            {
+              "destination_access": [
+                -1,
+                59,
+                1
+              ],
+              "equivalent_signature_succeeds_in_another_policy": false,
+              "signature_id": "27e5f9c7e6ea9bd8",
+              "source_access": [
+                -4,
+                114,
+                0
+              ]
+            },
+            {
+              "destination_access": [
+                0,
+                51,
+                0
+              ],
+              "equivalent_signature_succeeds_in_another_policy": false,
+              "signature_id": "12054cadf6cd2942",
+              "source_access": [
+                104,
+                39,
+                0
+              ]
+            },
+            {
+              "destination_access": [
+                11,
+                27,
+                0
+              ],
+              "equivalent_signature_succeeds_in_another_policy": false,
+              "signature_id": "be51f019bd64e35c",
+              "source_access": [
+                49,
+                53,
+                0
+              ]
+            },
+            {
+              "destination_access": [
+                20,
+                27,
+                0
+              ],
+              "equivalent_signature_succeeds_in_another_policy": false,
+              "signature_id": "464d398d7e53b280",
+              "source_access": [
+                49,
+                53,
+                0
+              ]
+            }
+          ],
+          "stage": 0,
+          "stranded": 7,
+          "topology_signature_id": "1864851eca74ea52"
+        },
+        {
+          "candidate_role": "anneal",
+          "closure_index": 2,
+          "detailed_status": "stranded",
+          "elapsed_s": 22.881,
+          "lab_max_stacks": [
+            [
+              10,
+              2
+            ],
+            [
+              14,
+              4
+            ],
+            [
+              19,
+              8
+            ],
+            [
+              21,
+              7
+            ],
+            [
+              37,
+              6
+            ],
+            [
+              41,
+              9
+            ]
+          ],
+          "pre_route_area": 9393,
+          "pre_route_dimensions": [
+            93,
+            101
+          ],
+          "remaining_s": 7.119,
+          "restart": 0,
+          "selected_matrix_variant_set_id": "1a3ddcb29a340a11",
+          "semantic_failures": [
+            {
+              "destination_access": [
+                0,
+                10,
+                0
+              ],
+              "equivalent_signature_succeeds_in_another_policy": false,
+              "signature_id": "836539f0b0a92c49",
+              "source_access": [
+                59,
+                80,
+                0
+              ]
+            },
+            {
+              "destination_access": [
+                0,
+                93,
+                0
+              ],
+              "equivalent_signature_succeeds_in_another_policy": false,
+              "signature_id": "ce0ff0506ed0e58f",
+              "source_access": [
+                49,
+                89,
+                0
+              ]
+            }
+          ],
+          "stage": 0,
+          "stranded": 2,
+          "topology_signature_id": "95e52a129f1b8789"
+        }
+      ]
+    },
+    {
+      "area": 0.0,
+      "best_stranded": 1,
+      "candidate_policy": "output-products",
+      "elapsed_s": 22.602588197914883,
+      "exact_closure_count": 3,
+      "round": 2,
+      "status": "REFUSED",
+      "stranded_exact_closures": [
+        {
+          "candidate_role": "completion-reserve",
+          "closure_index": 0,
+          "detailed_status": "stranded",
+          "elapsed_s": 14.961,
+          "lab_max_stacks": [
+            [
+              10,
+              3
+            ],
+            [
+              14,
+              5
+            ],
+            [
+              19,
+              9
+            ],
+            [
+              21,
+              8
+            ],
+            [
+              38,
+              7
+            ],
+            [
+              42,
+              9
+            ]
+          ],
+          "pre_route_area": 12087,
+          "pre_route_dimensions": [
+            153,
+            79
+          ],
+          "remaining_s": 15.039,
+          "restart": 0,
+          "selected_matrix_variant_set_id": "be30410f4bdc02fd",
+          "semantic_failures": [
+            {
+              "destination_access": [
+                103,
+                46,
+                0
+              ],
+              "equivalent_signature_succeeds_in_another_policy": false,
+              "signature_id": "eb09b5f628779889",
+              "source_access": [
+                36,
+                13,
+                0
+              ]
+            },
+            {
+              "destination_access": [
+                23,
+                34,
+                0
+              ],
+              "equivalent_signature_succeeds_in_another_policy": false,
+              "signature_id": "9edbac06c5918080",
+              "source_access": [
+                8,
+                29,
+                0
+              ]
+            }
+          ],
+          "stage": 0,
+          "stranded": 2,
+          "topology_signature_id": "9d6bf206b352777d"
+        },
+        {
+          "candidate_role": "proxy-budget",
+          "closure_index": 1,
+          "detailed_status": "stranded",
+          "elapsed_s": 17.449,
+          "lab_max_stacks": [
+            [
+              10,
+              3
+            ],
+            [
+              14,
+              5
+            ],
+            [
+              19,
+              9
+            ],
+            [
+              21,
+              8
+            ],
+            [
+              38,
+              7
+            ],
+            [
+              42,
+              9
+            ]
+          ],
+          "pre_route_area": 18172,
+          "pre_route_dimensions": [
+            236,
+            77
+          ],
+          "remaining_s": 12.551,
+          "restart": 0,
+          "selected_matrix_variant_set_id": "be30410f4bdc02fd",
+          "semantic_failures": [
+            {
+              "destination_access": [
+                201,
+                27,
+                0
+              ],
+              "equivalent_signature_succeeds_in_another_policy": false,
+              "signature_id": "e56b66725704f15a",
+              "source_access": [
+                88,
+                25,
+                0
+              ]
+            }
+          ],
+          "stage": 1,
+          "stranded": 1,
+          "topology_signature_id": "257f709990b6bfc6"
+        }
+      ]
+    },
+    {
+      "area": 18096.0,
+      "best_stranded": 0,
+      "candidate_policy": "no-proliferator",
+      "elapsed_s": 26.40219915402122,
+      "exact_closure_count": 3,
+      "round": 3,
+      "status": "CLEAN",
+      "stranded_exact_closures": [
+        {
+          "candidate_role": "completion-reserve",
+          "closure_index": 0,
+          "detailed_status": "stranded",
+          "elapsed_s": 15.063,
+          "lab_max_stacks": [
+            [
+              10,
+              3
+            ],
+            [
+              14,
+              6
+            ],
+            [
+              19,
+              9
+            ],
+            [
+              21,
+              9
+            ],
+            [
+              38,
+              8
+            ],
+            [
+              42,
+              9
+            ]
+          ],
+          "pre_route_area": 12782,
+          "pre_route_dimensions": [
+            154,
+            83
+          ],
+          "remaining_s": 14.937,
+          "restart": 0,
+          "selected_matrix_variant_set_id": "08bebb83fbbef715",
+          "semantic_failures": [
+            {
+              "destination_access": [
+                1,
+                33,
+                0
+              ],
+              "equivalent_signature_succeeds_in_another_policy": false,
+              "signature_id": "10140ae67473455b",
+              "source_access": [
+                115,
+                37,
+                0
+              ]
+            }
+          ],
+          "stage": 0,
+          "stranded": 1,
+          "topology_signature_id": "73e15bac360b31ea"
+        }
+      ]
+    },
+    {
+      "area": 0.0,
+      "best_stranded": 2,
+      "candidate_policy": "all-products",
+      "elapsed_s": 22.80942279100418,
+      "exact_closure_count": 3,
+      "round": 3,
+      "status": "REFUSED",
+      "stranded_exact_closures": [
+        {
+          "candidate_role": "completion-reserve",
+          "closure_index": 0,
+          "detailed_status": "stranded",
+          "elapsed_s": 9.803,
+          "lab_max_stacks": [
+            [
+              10,
+              2
+            ],
+            [
+              14,
+              4
+            ],
+            [
+              19,
+              8
+            ],
+            [
+              21,
+              7
+            ],
+            [
+              37,
+              6
+            ],
+            [
+              41,
+              9
+            ]
+          ],
+          "pre_route_area": 7980,
+          "pre_route_dimensions": [
+            114,
+            70
+          ],
+          "remaining_s": 20.197,
+          "restart": 0,
+          "selected_matrix_variant_set_id": "1a3ddcb29a340a11",
+          "semantic_failures": [
+            {
+              "destination_access": [
+                -1,
+                50,
+                1
+              ],
+              "equivalent_signature_succeeds_in_another_policy": false,
+              "signature_id": "9eb6dc075837b15c",
+              "source_access": [
+                -4,
+                94,
+                0
+              ]
+            },
+            {
+              "destination_access": [
+                -1,
+                51,
+                1
+              ],
+              "equivalent_signature_succeeds_in_another_policy": false,
+              "signature_id": "9eb6dc075837b15c",
+              "source_access": [
+                -4,
+                102,
+                0
+              ]
+            },
+            {
+              "destination_access": [
+                -1,
+                52,
+                1
+              ],
+              "equivalent_signature_succeeds_in_another_policy": false,
+              "signature_id": "9eb6dc075837b15c",
+              "source_access": [
+                -4,
+                110,
+                0
+              ]
+            },
+            {
+              "destination_access": [
+                -1,
+                59,
+                1
+              ],
+              "equivalent_signature_succeeds_in_another_policy": false,
+              "signature_id": "27e5f9c7e6ea9bd8",
+              "source_access": [
+                -4,
+                114,
+                0
+              ]
+            },
+            {
+              "destination_access": [
+                0,
+                51,
+                0
+              ],
+              "equivalent_signature_succeeds_in_another_policy": false,
+              "signature_id": "12054cadf6cd2942",
+              "source_access": [
+                104,
+                39,
+                0
+              ]
+            },
+            {
+              "destination_access": [
+                11,
+                27,
+                0
+              ],
+              "equivalent_signature_succeeds_in_another_policy": false,
+              "signature_id": "be51f019bd64e35c",
+              "source_access": [
+                49,
+                53,
+                0
+              ]
+            },
+            {
+              "destination_access": [
+                20,
+                27,
+                0
+              ],
+              "equivalent_signature_succeeds_in_another_policy": false,
+              "signature_id": "464d398d7e53b280",
+              "source_access": [
+                49,
+                53,
+                0
+              ]
+            }
+          ],
+          "stage": 0,
+          "stranded": 7,
+          "topology_signature_id": "1864851eca74ea52"
+        },
+        {
+          "candidate_role": "anneal",
+          "closure_index": 2,
+          "detailed_status": "stranded",
+          "elapsed_s": 22.778,
+          "lab_max_stacks": [
+            [
+              10,
+              2
+            ],
+            [
+              14,
+              4
+            ],
+            [
+              19,
+              8
+            ],
+            [
+              21,
+              7
+            ],
+            [
+              37,
+              6
+            ],
+            [
+              41,
+              9
+            ]
+          ],
+          "pre_route_area": 9393,
+          "pre_route_dimensions": [
+            93,
+            101
+          ],
+          "remaining_s": 7.222,
+          "restart": 0,
+          "selected_matrix_variant_set_id": "1a3ddcb29a340a11",
+          "semantic_failures": [
+            {
+              "destination_access": [
+                0,
+                10,
+                0
+              ],
+              "equivalent_signature_succeeds_in_another_policy": false,
+              "signature_id": "836539f0b0a92c49",
+              "source_access": [
+                59,
+                80,
+                0
+              ]
+            },
+            {
+              "destination_access": [
+                0,
+                93,
+                0
+              ],
+              "equivalent_signature_succeeds_in_another_policy": false,
+              "signature_id": "ce0ff0506ed0e58f",
+              "source_access": [
+                49,
+                89,
+                0
+              ]
+            }
+          ],
+          "stage": 0,
+          "stranded": 2,
+          "topology_signature_id": "95e52a129f1b8789"
+        }
+      ]
+    },
+    {
+      "area": 0.0,
+      "best_stranded": 1,
+      "candidate_policy": "output-products",
+      "elapsed_s": 22.488357193069533,
+      "exact_closure_count": 3,
+      "round": 3,
+      "status": "REFUSED",
+      "stranded_exact_closures": [
+        {
+          "candidate_role": "completion-reserve",
+          "closure_index": 0,
+          "detailed_status": "stranded",
+          "elapsed_s": 14.892,
+          "lab_max_stacks": [
+            [
+              10,
+              3
+            ],
+            [
+              14,
+              5
+            ],
+            [
+              19,
+              9
+            ],
+            [
+              21,
+              8
+            ],
+            [
+              38,
+              7
+            ],
+            [
+              42,
+              9
+            ]
+          ],
+          "pre_route_area": 12087,
+          "pre_route_dimensions": [
+            153,
+            79
+          ],
+          "remaining_s": 15.108,
+          "restart": 0,
+          "selected_matrix_variant_set_id": "be30410f4bdc02fd",
+          "semantic_failures": [
+            {
+              "destination_access": [
+                103,
+                46,
+                0
+              ],
+              "equivalent_signature_succeeds_in_another_policy": false,
+              "signature_id": "eb09b5f628779889",
+              "source_access": [
+                36,
+                13,
+                0
+              ]
+            },
+            {
+              "destination_access": [
+                23,
+                34,
+                0
+              ],
+              "equivalent_signature_succeeds_in_another_policy": false,
+              "signature_id": "9edbac06c5918080",
+              "source_access": [
+                8,
+                29,
+                0
+              ]
+            }
+          ],
+          "stage": 0,
+          "stranded": 2,
+          "topology_signature_id": "9d6bf206b352777d"
+        },
+        {
+          "candidate_role": "proxy-budget",
+          "closure_index": 1,
+          "detailed_status": "stranded",
+          "elapsed_s": 17.348,
+          "lab_max_stacks": [
+            [
+              10,
+              3
+            ],
+            [
+              14,
+              5
+            ],
+            [
+              19,
+              9
+            ],
+            [
+              21,
+              8
+            ],
+            [
+              38,
+              7
+            ],
+            [
+              42,
+              9
+            ]
+          ],
+          "pre_route_area": 18172,
+          "pre_route_dimensions": [
+            236,
+            77
+          ],
+          "remaining_s": 12.652,
+          "restart": 0,
+          "selected_matrix_variant_set_id": "be30410f4bdc02fd",
+          "semantic_failures": [
+            {
+              "destination_access": [
+                201,
+                27,
+                0
+              ],
+              "equivalent_signature_succeeds_in_another_policy": false,
+              "signature_id": "e56b66725704f15a",
+              "source_access": [
+                88,
+                25,
+                0
+              ]
+            }
+          ],
+          "stage": 1,
+          "stranded": 1,
+          "topology_signature_id": "257f709990b6bfc6"
+        }
+      ]
+    }
+  ],
+  "recurring_semantic_failures": [
+    {
+      "equivalent_signature_succeeds_in_another_policy": false,
+      "occurrences": [
+        {
+          "candidate_policy": "no-proliferator",
+          "closure_index": 0,
+          "round": 1
+        },
+        {
+          "candidate_policy": "no-proliferator",
+          "closure_index": 0,
+          "round": 2
+        },
+        {
+          "candidate_policy": "no-proliferator",
+          "closure_index": 0,
+          "round": 3
+        }
+      ],
+      "policies": [
+        "no-proliferator"
+      ],
+      "round_policy_occurrences": [
+        {
+          "candidate_policy": "no-proliferator",
+          "round": 1
+        },
+        {
+          "candidate_policy": "no-proliferator",
+          "round": 2
+        },
+        {
+          "candidate_policy": "no-proliferator",
+          "round": 3
+        }
+      ],
+      "rounds": [
+        1,
+        2,
+        3
+      ],
+      "signature_id": "10140ae67473455b",
+      "total_failure_occurrences": 3
+    },
+    {
+      "equivalent_signature_succeeds_in_another_policy": false,
+      "occurrences": [
+        {
+          "candidate_policy": "all-products",
+          "closure_index": 0,
+          "round": 1
+        },
+        {
+          "candidate_policy": "all-products",
+          "closure_index": 0,
+          "round": 2
+        },
+        {
+          "candidate_policy": "all-products",
+          "closure_index": 0,
+          "round": 3
+        }
+      ],
+      "policies": [
+        "all-products"
+      ],
+      "round_policy_occurrences": [
+        {
+          "candidate_policy": "all-products",
+          "round": 1
+        },
+        {
+          "candidate_policy": "all-products",
+          "round": 2
+        },
+        {
+          "candidate_policy": "all-products",
+          "round": 3
+        }
+      ],
+      "rounds": [
+        1,
+        2,
+        3
+      ],
+      "signature_id": "12054cadf6cd2942",
+      "total_failure_occurrences": 3
+    },
+    {
+      "equivalent_signature_succeeds_in_another_policy": false,
+      "occurrences": [
+        {
+          "candidate_policy": "all-products",
+          "closure_index": 0,
+          "round": 1
+        },
+        {
+          "candidate_policy": "all-products",
+          "closure_index": 0,
+          "round": 2
+        },
+        {
+          "candidate_policy": "all-products",
+          "closure_index": 0,
+          "round": 3
+        }
+      ],
+      "policies": [
+        "all-products"
+      ],
+      "round_policy_occurrences": [
+        {
+          "candidate_policy": "all-products",
+          "round": 1
+        },
+        {
+          "candidate_policy": "all-products",
+          "round": 2
+        },
+        {
+          "candidate_policy": "all-products",
+          "round": 3
+        }
+      ],
+      "rounds": [
+        1,
+        2,
+        3
+      ],
+      "signature_id": "27e5f9c7e6ea9bd8",
+      "total_failure_occurrences": 3
+    },
+    {
+      "equivalent_signature_succeeds_in_another_policy": false,
+      "occurrences": [
+        {
+          "candidate_policy": "all-products",
+          "closure_index": 0,
+          "round": 1
+        },
+        {
+          "candidate_policy": "all-products",
+          "closure_index": 0,
+          "round": 2
+        },
+        {
+          "candidate_policy": "all-products",
+          "closure_index": 0,
+          "round": 3
+        }
+      ],
+      "policies": [
+        "all-products"
+      ],
+      "round_policy_occurrences": [
+        {
+          "candidate_policy": "all-products",
+          "round": 1
+        },
+        {
+          "candidate_policy": "all-products",
+          "round": 2
+        },
+        {
+          "candidate_policy": "all-products",
+          "round": 3
+        }
+      ],
+      "rounds": [
+        1,
+        2,
+        3
+      ],
+      "signature_id": "464d398d7e53b280",
+      "total_failure_occurrences": 3
+    },
+    {
+      "equivalent_signature_succeeds_in_another_policy": false,
+      "occurrences": [
+        {
+          "candidate_policy": "all-products",
+          "closure_index": 2,
+          "round": 1
+        },
+        {
+          "candidate_policy": "all-products",
+          "closure_index": 2,
+          "round": 2
+        },
+        {
+          "candidate_policy": "all-products",
+          "closure_index": 2,
+          "round": 3
+        }
+      ],
+      "policies": [
+        "all-products"
+      ],
+      "round_policy_occurrences": [
+        {
+          "candidate_policy": "all-products",
+          "round": 1
+        },
+        {
+          "candidate_policy": "all-products",
+          "round": 2
+        },
+        {
+          "candidate_policy": "all-products",
+          "round": 3
+        }
+      ],
+      "rounds": [
+        1,
+        2,
+        3
+      ],
+      "signature_id": "836539f0b0a92c49",
+      "total_failure_occurrences": 3
+    },
+    {
+      "equivalent_signature_succeeds_in_another_policy": false,
+      "occurrences": [
+        {
+          "candidate_policy": "all-products",
+          "closure_index": 0,
+          "round": 1
+        },
+        {
+          "candidate_policy": "all-products",
+          "closure_index": 0,
+          "round": 1
+        },
+        {
+          "candidate_policy": "all-products",
+          "closure_index": 0,
+          "round": 1
+        },
+        {
+          "candidate_policy": "all-products",
+          "closure_index": 0,
+          "round": 2
+        },
+        {
+          "candidate_policy": "all-products",
+          "closure_index": 0,
+          "round": 2
+        },
+        {
+          "candidate_policy": "all-products",
+          "closure_index": 0,
+          "round": 2
+        },
+        {
+          "candidate_policy": "all-products",
+          "closure_index": 0,
+          "round": 3
+        },
+        {
+          "candidate_policy": "all-products",
+          "closure_index": 0,
+          "round": 3
+        },
+        {
+          "candidate_policy": "all-products",
+          "closure_index": 0,
+          "round": 3
+        }
+      ],
+      "policies": [
+        "all-products"
+      ],
+      "round_policy_occurrences": [
+        {
+          "candidate_policy": "all-products",
+          "round": 1
+        },
+        {
+          "candidate_policy": "all-products",
+          "round": 2
+        },
+        {
+          "candidate_policy": "all-products",
+          "round": 3
+        }
+      ],
+      "rounds": [
+        1,
+        2,
+        3
+      ],
+      "signature_id": "9eb6dc075837b15c",
+      "total_failure_occurrences": 9
+    },
+    {
+      "equivalent_signature_succeeds_in_another_policy": false,
+      "occurrences": [
+        {
+          "candidate_policy": "output-products",
+          "closure_index": 0,
+          "round": 1
+        },
+        {
+          "candidate_policy": "output-products",
+          "closure_index": 0,
+          "round": 2
+        },
+        {
+          "candidate_policy": "output-products",
+          "closure_index": 0,
+          "round": 3
+        }
+      ],
+      "policies": [
+        "output-products"
+      ],
+      "round_policy_occurrences": [
+        {
+          "candidate_policy": "output-products",
+          "round": 1
+        },
+        {
+          "candidate_policy": "output-products",
+          "round": 2
+        },
+        {
+          "candidate_policy": "output-products",
+          "round": 3
+        }
+      ],
+      "rounds": [
+        1,
+        2,
+        3
+      ],
+      "signature_id": "9edbac06c5918080",
+      "total_failure_occurrences": 3
+    },
+    {
+      "equivalent_signature_succeeds_in_another_policy": false,
+      "occurrences": [
+        {
+          "candidate_policy": "all-products",
+          "closure_index": 0,
+          "round": 1
+        },
+        {
+          "candidate_policy": "all-products",
+          "closure_index": 0,
+          "round": 2
+        },
+        {
+          "candidate_policy": "all-products",
+          "closure_index": 0,
+          "round": 3
+        }
+      ],
+      "policies": [
+        "all-products"
+      ],
+      "round_policy_occurrences": [
+        {
+          "candidate_policy": "all-products",
+          "round": 1
+        },
+        {
+          "candidate_policy": "all-products",
+          "round": 2
+        },
+        {
+          "candidate_policy": "all-products",
+          "round": 3
+        }
+      ],
+      "rounds": [
+        1,
+        2,
+        3
+      ],
+      "signature_id": "be51f019bd64e35c",
+      "total_failure_occurrences": 3
+    },
+    {
+      "equivalent_signature_succeeds_in_another_policy": false,
+      "occurrences": [
+        {
+          "candidate_policy": "all-products",
+          "closure_index": 2,
+          "round": 1
+        },
+        {
+          "candidate_policy": "all-products",
+          "closure_index": 2,
+          "round": 2
+        },
+        {
+          "candidate_policy": "all-products",
+          "closure_index": 2,
+          "round": 3
+        }
+      ],
+      "policies": [
+        "all-products"
+      ],
+      "round_policy_occurrences": [
+        {
+          "candidate_policy": "all-products",
+          "round": 1
+        },
+        {
+          "candidate_policy": "all-products",
+          "round": 2
+        },
+        {
+          "candidate_policy": "all-products",
+          "round": 3
+        }
+      ],
+      "rounds": [
+        1,
+        2,
+        3
+      ],
+      "signature_id": "ce0ff0506ed0e58f",
+      "total_failure_occurrences": 3
+    },
+    {
+      "equivalent_signature_succeeds_in_another_policy": false,
+      "occurrences": [
+        {
+          "candidate_policy": "output-products",
+          "closure_index": 1,
+          "round": 1
+        },
+        {
+          "candidate_policy": "output-products",
+          "closure_index": 1,
+          "round": 2
+        },
+        {
+          "candidate_policy": "output-products",
+          "closure_index": 1,
+          "round": 3
+        }
+      ],
+      "policies": [
+        "output-products"
+      ],
+      "round_policy_occurrences": [
+        {
+          "candidate_policy": "output-products",
+          "round": 1
+        },
+        {
+          "candidate_policy": "output-products",
+          "round": 2
+        },
+        {
+          "candidate_policy": "output-products",
+          "round": 3
+        }
+      ],
+      "rounds": [
+        1,
+        2,
+        3
+      ],
+      "signature_id": "e56b66725704f15a",
+      "total_failure_occurrences": 3
+    },
+    {
+      "equivalent_signature_succeeds_in_another_policy": false,
+      "occurrences": [
+        {
+          "candidate_policy": "output-products",
+          "closure_index": 0,
+          "round": 1
+        },
+        {
+          "candidate_policy": "output-products",
+          "closure_index": 0,
+          "round": 2
+        },
+        {
+          "candidate_policy": "output-products",
+          "closure_index": 0,
+          "round": 3
+        }
+      ],
+      "policies": [
+        "output-products"
+      ],
+      "round_policy_occurrences": [
+        {
+          "candidate_policy": "output-products",
+          "round": 1
+        },
+        {
+          "candidate_policy": "output-products",
+          "round": 2
+        },
+        {
+          "candidate_policy": "output-products",
+          "round": 3
+        }
+      ],
+      "rounds": [
+        1,
+        2,
+        3
+      ],
+      "signature_id": "eb09b5f628779889",
+      "total_failure_occurrences": 3
+    }
+  ],
+  "semantic_failure_signatures": {
+    "10140ae67473455b": {
+      "destination_instance_id": {
+        "family_id": {
+          "group_key": "plastic#29",
+          "shard_index": 0
+        },
+        "machine_count": 2,
+        "machine_start": 0
+      },
+      "destination_variant_id": {
+        "attachments": [
+          [
+            "input:south:0",
+            -2,
+            [
+              {
+                "cell": [
+                  2,
+                  1
+                ],
+                "column": 2,
+                "item": "energetic-graphite",
+                "slot": 6,
+                "span": 3
+              }
+            ]
+          ],
+          [
+            "input:south:1",
+            -1,
+            [
+              {
+                "cell": [
+                  3,
+                  1
+                ],
+                "column": 3,
+                "item": "refined-oil",
+                "slot": 5,
+                "span": 2
+              }
+            ]
+          ],
+          [
+            "output:north:0",
+            5,
+            [
+              {
+                "cell": [
+                  2,
+                  4
+                ],
+                "column": 2,
+                "item": "plastic",
+                "slot": 0,
+                "span": 1
+              }
+            ]
+          ]
+        ],
+        "box": [
+          16,
+          8
+        ],
+        "column_heights": [
+          1,
+          1
+        ],
+        "family_id": {
+          "group_key": "plastic#29",
+          "shard_index": 0
+        },
+        "footprint": [
+          7,
+          5
+        ],
+        "lane_rows": [
+          [
+            "input:south:0",
+            -2
+          ],
+          [
+            "input:south:1",
+            -1
+          ],
+          [
+            "output:north:0",
+            5
+          ]
+        ],
+        "machine_origins_x": [
+          0,
+          8
+        ],
+        "max_stack_height": 1,
+        "placement_geometry": [
+          7,
+          5,
+          8,
+          5,
+          0,
+          1,
+          0,
+          0
+        ],
+        "port_docks": [],
+        "yaw_degrees": 0
+      },
+      "kind": "dynamic-access",
+      "logical_net": {
+        "cargo_domain": "unsprayed",
+        "destination_family": {
+          "group_key": "plastic#29",
+          "shard_index": 0
+        },
+        "item": "energetic-graphite",
+        "legacy_destination_strip": null,
+        "legacy_ordinal": null,
+        "legacy_source_strip": null,
+        "role": "internal",
+        "source_family": {
+          "group_key": "energetic-graphite#11",
+          "shard_index": 1
+        }
+      },
+      "source_instance_id": {
+        "family_id": {
+          "group_key": "energetic-graphite#11",
+          "shard_index": 1
+        },
+        "machine_count": 11,
+        "machine_start": 0
+      },
+      "source_variant_id": {
+        "attachments": [
+          [
+            "input:south:0",
+            -1,
+            [
+              {
+                "cell": [
+                  0,
+                  0
+                ],
+                "column": 0,
+                "item": "coal",
+                "slot": 8,
+                "span": 1
+              }
+            ]
+          ],
+          [
+            "output:north:0",
+            3,
+            [
+              {
+                "cell": [
+                  0,
+                  2
+                ],
+                "column": 0,
+                "item": "energetic-graphite",
+                "slot": 0,
+                "span": 1
+              }
+            ]
+          ],
+          [
+            "output:north:1",
+            4,
+            [
+              {
+                "cell": [
+                  1,
+                  2
+                ],
+                "column": 1,
+                "item": "energetic-graphite",
+                "slot": 1,
+                "span": 2
+              }
+            ]
+          ]
+        ],
+        "box": [
+          33,
+          6
+        ],
+        "column_heights": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "family_id": {
+          "group_key": "energetic-graphite#11",
+          "shard_index": 1
+        },
+        "footprint": [
+          3,
+          3
+        ],
+        "lane_rows": [
+          [
+            "input:south:0",
+            -1
+          ],
+          [
+            "output:north:0",
+            3
+          ],
+          [
+            "output:north:1",
+            4
+          ]
+        ],
+        "machine_origins_x": [
+          0,
+          3,
+          6,
+          9,
+          12,
+          15,
+          18,
+          21,
+          24,
+          27,
+          30
+        ],
+        "max_stack_height": 1,
+        "placement_geometry": [
+          3,
+          3,
+          3,
+          3,
+          0,
+          0,
+          0,
+          0
+        ],
+        "port_docks": [],
+        "yaw_degrees": 0
+      }
+    },
+    "12054cadf6cd2942": {
+      "destination_instance_id": {
+        "family_id": {
+          "group_key": "particle-broadband#25",
+          "shard_index": 0
+        },
+        "machine_count": 3,
+        "machine_start": 0
+      },
+      "destination_variant_id": {
+        "attachments": [
+          [
+            "input:south:0",
+            -3,
+            [
+              {
+                "cell": [
+                  0,
+                  0
+                ],
+                "column": 0,
+                "item": "carbon-nanotube",
+                "slot": 8,
+                "span": 3
+              }
+            ]
+          ],
+          [
+            "input:south:1",
+            -2,
+            [
+              {
+                "cell": [
+                  1,
+                  0
+                ],
+                "column": 1,
+                "item": "crystal-silicon",
+                "slot": 7,
+                "span": 2
+              }
+            ]
+          ],
+          [
+            "input:south:2",
+            -1,
+            [
+              {
+                "cell": [
+                  2,
+                  0
+                ],
+                "column": 2,
+                "item": "plastic",
+                "slot": 6,
+                "span": 1
+              }
+            ]
+          ],
+          [
+            "output:north:0",
+            4,
+            [
+              {
+                "cell": [
+                  0,
+                  2
+                ],
+                "column": 0,
+                "item": "particle-broadband",
+                "slot": 0,
+                "span": 2
+              }
+            ]
+          ]
+        ],
+        "box": [
+          12,
+          8
+        ],
+        "column_heights": [
+          1,
+          1,
+          1
+        ],
+        "family_id": {
+          "group_key": "particle-broadband#25",
+          "shard_index": 0
+        },
+        "footprint": [
+          3,
+          3
+        ],
+        "lane_rows": [
+          [
+            "input:south:0",
+            -3
+          ],
+          [
+            "input:south:1",
+            -2
+          ],
+          [
+            "input:south:2",
+            -1
+          ],
+          [
+            "output:north:0",
+            4
+          ]
+        ],
+        "machine_origins_x": [
+          0,
+          4,
+          8
+        ],
+        "max_stack_height": 1,
+        "placement_geometry": [
+          3,
+          3,
+          4,
+          4,
+          0,
+          1,
+          0,
+          1
+        ],
+        "port_docks": [],
+        "yaw_degrees": 0
+      },
+      "kind": "sealed-pocket",
+      "logical_net": {
+        "cargo_domain": "requires-spray",
+        "destination_family": {
+          "group_key": "particle-broadband#25",
+          "shard_index": 0
+        },
+        "item": "crystal-silicon",
+        "legacy_destination_strip": null,
+        "legacy_ordinal": null,
+        "legacy_source_strip": null,
+        "role": "internal",
+        "source_family": {
+          "group_key": "crystal-silicon#5",
+          "shard_index": 0
+        }
+      },
+      "source_instance_id": {
+        "family_id": {
+          "group_key": "crystal-silicon#5",
+          "shard_index": 0
+        },
+        "machine_count": 1,
+        "machine_start": 0
+      },
+      "source_variant_id": {
+        "attachments": [
+          [
+            "input:south:0",
+            -1,
+            [
+              {
+                "cell": [
+                  0,
+                  0
+                ],
+                "column": 0,
+                "item": "high-purity-silicon",
+                "slot": 8,
+                "span": 1
+              }
+            ]
+          ],
+          [
+            "output:north:0",
+            3,
+            [
+              {
+                "cell": [
+                  0,
+                  2
+                ],
+                "column": 0,
+                "item": "crystal-silicon",
+                "slot": 0,
+                "span": 1
+              }
+            ]
+          ]
+        ],
+        "box": [
+          3,
+          5
+        ],
+        "column_heights": [
+          1
+        ],
+        "family_id": {
+          "group_key": "crystal-silicon#5",
+          "shard_index": 0
+        },
+        "footprint": [
+          3,
+          3
+        ],
+        "lane_rows": [
+          [
+            "input:south:0",
+            -1
+          ],
+          [
+            "output:north:0",
+            3
+          ]
+        ],
+        "machine_origins_x": [
+          0
+        ],
+        "max_stack_height": 1,
+        "placement_geometry": [
+          3,
+          3,
+          3,
+          3,
+          0,
+          0,
+          0,
+          0
+        ],
+        "port_docks": [],
+        "yaw_degrees": 0
+      }
+    },
+    "27e5f9c7e6ea9bd8": {
+      "destination_instance_id": {
+        "family_id": {
+          "group_key": "magnet#21",
+          "shard_index": 0
+        },
+        "machine_count": 2,
+        "machine_start": 0
+      },
+      "destination_variant_id": {
+        "attachments": [
+          [
+            "input:south:0",
+            -1,
+            [
+              {
+                "cell": [
+                  0,
+                  0
+                ],
+                "column": 0,
+                "item": "iron-ore",
+                "slot": 8,
+                "span": 1
+              }
+            ]
+          ],
+          [
+            "output:north:0",
+            3,
+            [
+              {
+                "cell": [
+                  0,
+                  2
+                ],
+                "column": 0,
+                "item": "magnet",
+                "slot": 0,
+                "span": 1
+              }
+            ]
+          ]
+        ],
+        "box": [
+          6,
+          5
+        ],
+        "column_heights": [
+          1,
+          1
+        ],
+        "family_id": {
+          "group_key": "magnet#21",
+          "shard_index": 0
+        },
+        "footprint": [
+          3,
+          3
+        ],
+        "lane_rows": [
+          [
+            "input:south:0",
+            -1
+          ],
+          [
+            "output:north:0",
+            3
+          ]
+        ],
+        "machine_origins_x": [
+          0,
+          3
+        ],
+        "max_stack_height": 1,
+        "placement_geometry": [
+          3,
+          3,
+          3,
+          3,
+          0,
+          0,
+          0,
+          0
+        ],
+        "port_docks": [],
+        "yaw_degrees": 0
+      },
+      "kind": "sealed-pocket",
+      "logical_net": {
+        "cargo_domain": "unsprayed",
+        "destination_family": {
+          "group_key": "magnet#21",
+          "shard_index": 0
+        },
+        "item": "proliferator-3",
+        "legacy_destination_strip": null,
+        "legacy_ordinal": null,
+        "legacy_source_strip": null,
+        "role": "proliferator",
+        "source_family": null
+      },
+      "source_instance_id": null,
+      "source_variant_id": null
+    },
+    "464d398d7e53b280": {
+      "destination_instance_id": {
+        "family_id": {
+          "group_key": "energy-matrix#12",
+          "shard_index": 0
+        },
+        "machine_count": 4,
+        "machine_start": 0
+      },
+      "destination_variant_id": {
+        "attachments": [
+          [
+            "input:south:0",
+            -2,
+            [
+              {
+                "cell": [
+                  1,
+                  0
+                ],
+                "column": 1,
+                "item": "hydrogen",
+                "slot": 6,
+                "span": 2
+              }
+            ]
+          ],
+          [
+            "input:south:1",
+            -1,
+            [
+              {
+                "cell": [
+                  2,
+                  0
+                ],
+                "column": 2,
+                "item": "energetic-graphite",
+                "slot": 7,
+                "span": 1
+              }
+            ]
+          ],
+          [
+            "output:north:0",
+            5,
+            [
+              {
+                "cell": [
+                  1,
+                  4
+                ],
+                "column": 1,
+                "item": "energy-matrix",
+                "slot": 2,
+                "span": 1
+              }
+            ]
+          ]
+        ],
+        "box": [
+          6,
+          8
+        ],
+        "column_heights": [
+          4
+        ],
+        "family_id": {
+          "group_key": "energy-matrix#12",
+          "shard_index": 0
+        },
+        "footprint": [
+          5,
+          5
+        ],
+        "lane_rows": [
+          [
+            "input:south:0",
+            -2
+          ],
+          [
+            "input:south:1",
+            -1
+          ],
+          [
+            "output:north:0",
+            5
+          ]
+        ],
+        "machine_origins_x": [
+          0
+        ],
+        "max_stack_height": 4,
+        "placement_geometry": [
+          5,
+          5,
+          6,
+          5,
+          0,
+          1,
+          0,
+          0
+        ],
+        "port_docks": [],
+        "yaw_degrees": 0
+      },
+      "kind": "sealed-pocket",
+      "logical_net": {
+        "cargo_domain": "requires-spray",
+        "destination_family": {
+          "group_key": "energy-matrix#12",
+          "shard_index": 0
+        },
+        "item": "hydrogen",
+        "legacy_destination_strip": null,
+        "legacy_ordinal": null,
+        "legacy_source_strip": null,
+        "role": "internal",
+        "source_family": {
+          "group_key": "mass-energy-storage#23",
+          "shard_index": 0
+        }
+      },
+      "source_instance_id": {
+        "family_id": {
+          "group_key": "mass-energy-storage#23",
+          "shard_index": 0
+        },
+        "machine_count": 1,
+        "machine_start": 0
+      },
+      "source_variant_id": {
+        "attachments": [
+          [
+            "input:south:0",
+            -1,
+            [
+              {
+                "cell": [
+                  2,
+                  0
+                ],
+                "column": 2,
+                "item": "critical-photon",
+                "slot": 7,
+                "span": 1
+              }
+            ]
+          ],
+          [
+            "output:north:0",
+            5,
+            [
+              {
+                "cell": [
+                  2,
+                  4
+                ],
+                "column": 2,
+                "item": "antimatter",
+                "slot": 1,
+                "span": 1
+              }
+            ]
+          ],
+          [
+            "output:north:1",
+            6,
+            [
+              {
+                "cell": [
+                  1,
+                  4
+                ],
+                "column": 1,
+                "item": "hydrogen",
+                "slot": 2,
+                "span": 2
+              }
+            ]
+          ],
+          [
+            "output:north:2",
+            7,
+            [
+              {
+                "cell": [
+                  3,
+                  4
+                ],
+                "column": 3,
+                "item": "hydrogen",
+                "slot": 0,
+                "span": 3
+              }
+            ]
+          ]
+        ],
+        "box": [
+          10,
+          9
+        ],
+        "column_heights": [
+          1
+        ],
+        "family_id": {
+          "group_key": "mass-energy-storage#23",
+          "shard_index": 0
+        },
+        "footprint": [
+          9,
+          5
+        ],
+        "lane_rows": [
+          [
+            "input:south:0",
+            -1
+          ],
+          [
+            "output:north:0",
+            5
+          ],
+          [
+            "output:north:1",
+            6
+          ],
+          [
+            "output:north:2",
+            7
+          ]
+        ],
+        "machine_origins_x": [
+          0
+        ],
+        "max_stack_height": 1,
+        "placement_geometry": [
+          9,
+          5,
+          10,
+          5,
+          0,
+          1,
+          0,
+          0
+        ],
+        "port_docks": [],
+        "yaw_degrees": 0
+      }
+    },
+    "836539f0b0a92c49": {
+      "destination_instance_id": {
+        "family_id": {
+          "group_key": "microcrystalline-component#24",
+          "shard_index": 0
+        },
+        "machine_count": 4,
+        "machine_start": 0
+      },
+      "destination_variant_id": {
+        "attachments": [
+          [
+            "input:south:0",
+            -2,
+            [
+              {
+                "cell": [
+                  0,
+                  0
+                ],
+                "column": 0,
+                "item": "copper-ingot",
+                "slot": 8,
+                "span": 2
+              }
+            ]
+          ],
+          [
+            "input:south:1",
+            -1,
+            [
+              {
+                "cell": [
+                  1,
+                  0
+                ],
+                "column": 1,
+                "item": "high-purity-silicon",
+                "slot": 7,
+                "span": 1
+              }
+            ]
+          ],
+          [
+            "output:north:0",
+            4,
+            [
+              {
+                "cell": [
+                  0,
+                  2
+                ],
+                "column": 0,
+                "item": "microcrystalline-component",
+                "slot": 0,
+                "span": 2
+              }
+            ]
+          ]
+        ],
+        "box": [
+          16,
+          7
+        ],
+        "column_heights": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "family_id": {
+          "group_key": "microcrystalline-component#24",
+          "shard_index": 0
+        },
+        "footprint": [
+          3,
+          3
+        ],
+        "lane_rows": [
+          [
+            "input:south:0",
+            -2
+          ],
+          [
+            "input:south:1",
+            -1
+          ],
+          [
+            "output:north:0",
+            4
+          ]
+        ],
+        "machine_origins_x": [
+          0,
+          4,
+          8,
+          12
+        ],
+        "max_stack_height": 1,
+        "placement_geometry": [
+          3,
+          3,
+          4,
+          4,
+          0,
+          1,
+          0,
+          1
+        ],
+        "port_docks": [],
+        "yaw_degrees": 0
+      },
+      "kind": "sealed-pocket",
+      "logical_net": {
+        "cargo_domain": "requires-spray",
+        "destination_family": {
+          "group_key": "microcrystalline-component#24",
+          "shard_index": 0
+        },
+        "item": "copper-ingot",
+        "legacy_destination_strip": null,
+        "legacy_ordinal": null,
+        "legacy_source_strip": null,
+        "role": "internal",
+        "source_family": {
+          "group_key": "copper-ingot#3",
+          "shard_index": 1
+        }
+      },
+      "source_instance_id": {
+        "family_id": {
+          "group_key": "copper-ingot#3",
+          "shard_index": 1
+        },
+        "machine_count": 2,
+        "machine_start": 0
+      },
+      "source_variant_id": {
+        "attachments": [
+          [
+            "input:south:0",
+            -1,
+            [
+              {
+                "cell": [
+                  0,
+                  0
+                ],
+                "column": 0,
+                "item": "copper-ore",
+                "slot": 8,
+                "span": 1
+              }
+            ]
+          ],
+          [
+            "output:north:0",
+            3,
+            [
+              {
+                "cell": [
+                  0,
+                  2
+                ],
+                "column": 0,
+                "item": "copper-ingot",
+                "slot": 0,
+                "span": 1
+              }
+            ]
+          ],
+          [
+            "output:north:1",
+            4,
+            [
+              {
+                "cell": [
+                  1,
+                  2
+                ],
+                "column": 1,
+                "item": "copper-ingot",
+                "slot": 1,
+                "span": 2
+              }
+            ]
+          ]
+        ],
+        "box": [
+          6,
+          6
+        ],
+        "column_heights": [
+          1,
+          1
+        ],
+        "family_id": {
+          "group_key": "copper-ingot#3",
+          "shard_index": 1
+        },
+        "footprint": [
+          3,
+          3
+        ],
+        "lane_rows": [
+          [
+            "input:south:0",
+            -1
+          ],
+          [
+            "output:north:0",
+            3
+          ],
+          [
+            "output:north:1",
+            4
+          ]
+        ],
+        "machine_origins_x": [
+          0,
+          3
+        ],
+        "max_stack_height": 1,
+        "placement_geometry": [
+          3,
+          3,
+          3,
+          3,
+          0,
+          0,
+          0,
+          0
+        ],
+        "port_docks": [],
+        "yaw_degrees": 0
+      }
+    },
+    "9eb6dc075837b15c": {
+      "destination_instance_id": {
+        "family_id": {
+          "group_key": "particle-broadband#25",
+          "shard_index": 0
+        },
+        "machine_count": 3,
+        "machine_start": 0
+      },
+      "destination_variant_id": {
+        "attachments": [
+          [
+            "input:south:0",
+            -3,
+            [
+              {
+                "cell": [
+                  0,
+                  0
+                ],
+                "column": 0,
+                "item": "carbon-nanotube",
+                "slot": 8,
+                "span": 3
+              }
+            ]
+          ],
+          [
+            "input:south:1",
+            -2,
+            [
+              {
+                "cell": [
+                  1,
+                  0
+                ],
+                "column": 1,
+                "item": "crystal-silicon",
+                "slot": 7,
+                "span": 2
+              }
+            ]
+          ],
+          [
+            "input:south:2",
+            -1,
+            [
+              {
+                "cell": [
+                  2,
+                  0
+                ],
+                "column": 2,
+                "item": "plastic",
+                "slot": 6,
+                "span": 1
+              }
+            ]
+          ],
+          [
+            "output:north:0",
+            4,
+            [
+              {
+                "cell": [
+                  0,
+                  2
+                ],
+                "column": 0,
+                "item": "particle-broadband",
+                "slot": 0,
+                "span": 2
+              }
+            ]
+          ]
+        ],
+        "box": [
+          12,
+          8
+        ],
+        "column_heights": [
+          1,
+          1,
+          1
+        ],
+        "family_id": {
+          "group_key": "particle-broadband#25",
+          "shard_index": 0
+        },
+        "footprint": [
+          3,
+          3
+        ],
+        "lane_rows": [
+          [
+            "input:south:0",
+            -3
+          ],
+          [
+            "input:south:1",
+            -2
+          ],
+          [
+            "input:south:2",
+            -1
+          ],
+          [
+            "output:north:0",
+            4
+          ]
+        ],
+        "machine_origins_x": [
+          0,
+          4,
+          8
+        ],
+        "max_stack_height": 1,
+        "placement_geometry": [
+          3,
+          3,
+          4,
+          4,
+          0,
+          1,
+          0,
+          1
+        ],
+        "port_docks": [],
+        "yaw_degrees": 0
+      },
+      "kind": "sealed-pocket",
+      "logical_net": {
+        "cargo_domain": "unsprayed",
+        "destination_family": {
+          "group_key": "particle-broadband#25",
+          "shard_index": 0
+        },
+        "item": "proliferator-3",
+        "legacy_destination_strip": null,
+        "legacy_ordinal": null,
+        "legacy_source_strip": null,
+        "role": "proliferator",
+        "source_family": null
+      },
+      "source_instance_id": null,
+      "source_variant_id": null
+    },
+    "9edbac06c5918080": {
+      "destination_instance_id": {
+        "family_id": {
+          "group_key": "electromagnetic-turbine#10",
+          "shard_index": 0
+        },
+        "machine_count": 3,
+        "machine_start": 0
+      },
+      "destination_variant_id": {
+        "attachments": [
+          [
+            "input:south:0",
+            -2,
+            [
+              {
+                "cell": [
+                  0,
+                  0
+                ],
+                "column": 0,
+                "item": "electric-motor",
+                "slot": 8,
+                "span": 2
+              }
+            ]
+          ],
+          [
+            "input:south:1",
+            -1,
+            [
+              {
+                "cell": [
+                  1,
+                  0
+                ],
+                "column": 1,
+                "item": "magnetic-coil",
+                "slot": 7,
+                "span": 1
+              }
+            ]
+          ],
+          [
+            "output:north:0",
+            4,
+            [
+              {
+                "cell": [
+                  0,
+                  2
+                ],
+                "column": 0,
+                "item": "electromagnetic-turbine",
+                "slot": 0,
+                "span": 2
+              }
+            ]
+          ]
+        ],
+        "box": [
+          12,
+          7
+        ],
+        "column_heights": [
+          1,
+          1,
+          1
+        ],
+        "family_id": {
+          "group_key": "electromagnetic-turbine#10",
+          "shard_index": 0
+        },
+        "footprint": [
+          3,
+          3
+        ],
+        "lane_rows": [
+          [
+            "input:south:0",
+            -2
+          ],
+          [
+            "input:south:1",
+            -1
+          ],
+          [
+            "output:north:0",
+            4
+          ]
+        ],
+        "machine_origins_x": [
+          0,
+          4,
+          8
+        ],
+        "max_stack_height": 1,
+        "placement_geometry": [
+          3,
+          3,
+          4,
+          4,
+          0,
+          1,
+          0,
+          1
+        ],
+        "port_docks": [],
+        "yaw_degrees": 0
+      },
+      "kind": "dynamic-access",
+      "logical_net": {
+        "cargo_domain": "unsprayed",
+        "destination_family": {
+          "group_key": "electromagnetic-turbine#10",
+          "shard_index": 0
+        },
+        "item": "magnetic-coil",
+        "legacy_destination_strip": null,
+        "legacy_ordinal": null,
+        "legacy_source_strip": null,
+        "role": "internal",
+        "source_family": {
+          "group_key": "magnetic-coil#22",
+          "shard_index": 0
+        }
+      },
+      "source_instance_id": {
+        "family_id": {
+          "group_key": "magnetic-coil#22",
+          "shard_index": 0
+        },
+        "machine_count": 2,
+        "machine_start": 0
+      },
+      "source_variant_id": {
+        "attachments": [
+          [
+            "input:south:0",
+            -2,
+            [
+              {
+                "cell": [
+                  0,
+                  0
+                ],
+                "column": 0,
+                "item": "copper-ingot",
+                "slot": 8,
+                "span": 2
+              }
+            ]
+          ],
+          [
+            "input:south:1",
+            -1,
+            [
+              {
+                "cell": [
+                  1,
+                  0
+                ],
+                "column": 1,
+                "item": "magnet",
+                "slot": 7,
+                "span": 1
+              }
+            ]
+          ],
+          [
+            "output:north:0",
+            4,
+            [
+              {
+                "cell": [
+                  0,
+                  2
+                ],
+                "column": 0,
+                "item": "magnetic-coil",
+                "slot": 0,
+                "span": 2
+              }
+            ]
+          ],
+          [
+            "output:north:1",
+            5,
+            [
+              {
+                "cell": [
+                  1,
+                  2
+                ],
+                "column": 1,
+                "item": "magnetic-coil",
+                "slot": 1,
+                "span": 3
+              }
+            ]
+          ]
+        ],
+        "box": [
+          8,
+          8
+        ],
+        "column_heights": [
+          1,
+          1
+        ],
+        "family_id": {
+          "group_key": "magnetic-coil#22",
+          "shard_index": 0
+        },
+        "footprint": [
+          3,
+          3
+        ],
+        "lane_rows": [
+          [
+            "input:south:0",
+            -2
+          ],
+          [
+            "input:south:1",
+            -1
+          ],
+          [
+            "output:north:0",
+            4
+          ],
+          [
+            "output:north:1",
+            5
+          ]
+        ],
+        "machine_origins_x": [
+          0,
+          4
+        ],
+        "max_stack_height": 1,
+        "placement_geometry": [
+          3,
+          3,
+          4,
+          4,
+          0,
+          1,
+          0,
+          1
+        ],
+        "port_docks": [],
+        "yaw_degrees": 0
+      }
+    },
+    "be51f019bd64e35c": {
+      "destination_instance_id": {
+        "family_id": {
+          "group_key": "casimir-crystal#1",
+          "shard_index": 0
+        },
+        "machine_count": 1,
+        "machine_start": 0
+      },
+      "destination_variant_id": {
+        "attachments": [
+          [
+            "input:south:0",
+            -3,
+            [
+              {
+                "cell": [
+                  0,
+                  0
+                ],
+                "column": 0,
+                "item": "hydrogen",
+                "slot": 8,
+                "span": 3
+              }
+            ]
+          ],
+          [
+            "input:south:1",
+            -2,
+            [
+              {
+                "cell": [
+                  1,
+                  0
+                ],
+                "column": 1,
+                "item": "graphene",
+                "slot": 7,
+                "span": 2
+              }
+            ]
+          ],
+          [
+            "input:south:2",
+            -1,
+            [
+              {
+                "cell": [
+                  2,
+                  0
+                ],
+                "column": 2,
+                "item": "titanium-crystal",
+                "slot": 6,
+                "span": 1
+              }
+            ]
+          ],
+          [
+            "output:north:0",
+            4,
+            [
+              {
+                "cell": [
+                  0,
+                  2
+                ],
+                "column": 0,
+                "item": "casimir-crystal",
+                "slot": 0,
+                "span": 2
+              }
+            ]
+          ]
+        ],
+        "box": [
+          4,
+          8
+        ],
+        "column_heights": [
+          1
+        ],
+        "family_id": {
+          "group_key": "casimir-crystal#1",
+          "shard_index": 0
+        },
+        "footprint": [
+          3,
+          3
+        ],
+        "lane_rows": [
+          [
+            "input:south:0",
+            -3
+          ],
+          [
+            "input:south:1",
+            -2
+          ],
+          [
+            "input:south:2",
+            -1
+          ],
+          [
+            "output:north:0",
+            4
+          ]
+        ],
+        "machine_origins_x": [
+          0
+        ],
+        "max_stack_height": 1,
+        "placement_geometry": [
+          3,
+          3,
+          4,
+          4,
+          0,
+          1,
+          0,
+          1
+        ],
+        "port_docks": [],
+        "yaw_degrees": 0
+      },
+      "kind": "sealed-pocket",
+      "logical_net": {
+        "cargo_domain": "requires-spray",
+        "destination_family": {
+          "group_key": "casimir-crystal#1",
+          "shard_index": 0
+        },
+        "item": "hydrogen",
+        "legacy_destination_strip": null,
+        "legacy_ordinal": null,
+        "legacy_source_strip": null,
+        "role": "internal",
+        "source_family": {
+          "group_key": "mass-energy-storage#23",
+          "shard_index": 0
+        }
+      },
+      "source_instance_id": {
+        "family_id": {
+          "group_key": "mass-energy-storage#23",
+          "shard_index": 0
+        },
+        "machine_count": 1,
+        "machine_start": 0
+      },
+      "source_variant_id": {
+        "attachments": [
+          [
+            "input:south:0",
+            -1,
+            [
+              {
+                "cell": [
+                  2,
+                  0
+                ],
+                "column": 2,
+                "item": "critical-photon",
+                "slot": 7,
+                "span": 1
+              }
+            ]
+          ],
+          [
+            "output:north:0",
+            5,
+            [
+              {
+                "cell": [
+                  2,
+                  4
+                ],
+                "column": 2,
+                "item": "antimatter",
+                "slot": 1,
+                "span": 1
+              }
+            ]
+          ],
+          [
+            "output:north:1",
+            6,
+            [
+              {
+                "cell": [
+                  1,
+                  4
+                ],
+                "column": 1,
+                "item": "hydrogen",
+                "slot": 2,
+                "span": 2
+              }
+            ]
+          ],
+          [
+            "output:north:2",
+            7,
+            [
+              {
+                "cell": [
+                  3,
+                  4
+                ],
+                "column": 3,
+                "item": "hydrogen",
+                "slot": 0,
+                "span": 3
+              }
+            ]
+          ]
+        ],
+        "box": [
+          10,
+          9
+        ],
+        "column_heights": [
+          1
+        ],
+        "family_id": {
+          "group_key": "mass-energy-storage#23",
+          "shard_index": 0
+        },
+        "footprint": [
+          9,
+          5
+        ],
+        "lane_rows": [
+          [
+            "input:south:0",
+            -1
+          ],
+          [
+            "output:north:0",
+            5
+          ],
+          [
+            "output:north:1",
+            6
+          ],
+          [
+            "output:north:2",
+            7
+          ]
+        ],
+        "machine_origins_x": [
+          0
+        ],
+        "max_stack_height": 1,
+        "placement_geometry": [
+          9,
+          5,
+          10,
+          5,
+          0,
+          1,
+          0,
+          0
+        ],
+        "port_docks": [],
+        "yaw_degrees": 0
+      }
+    },
+    "ce0ff0506ed0e58f": {
+      "destination_instance_id": {
+        "family_id": {
+          "group_key": "particle-container#26",
+          "shard_index": 0
+        },
+        "machine_count": 1,
+        "machine_start": 0
+      },
+      "destination_variant_id": {
+        "attachments": [
+          [
+            "input:south:0",
+            -3,
+            [
+              {
+                "cell": [
+                  0,
+                  0
+                ],
+                "column": 0,
+                "item": "copper-ingot",
+                "slot": 8,
+                "span": 3
+              }
+            ]
+          ],
+          [
+            "input:south:1",
+            -2,
+            [
+              {
+                "cell": [
+                  1,
+                  0
+                ],
+                "column": 1,
+                "item": "electromagnetic-turbine",
+                "slot": 7,
+                "span": 2
+              }
+            ]
+          ],
+          [
+            "input:south:2",
+            -1,
+            [
+              {
+                "cell": [
+                  2,
+                  0
+                ],
+                "column": 2,
+                "item": "graphene",
+                "slot": 6,
+                "span": 1
+              }
+            ]
+          ],
+          [
+            "output:north:0",
+            4,
+            [
+              {
+                "cell": [
+                  0,
+                  2
+                ],
+                "column": 0,
+                "item": "particle-container",
+                "slot": 0,
+                "span": 2
+              }
+            ]
+          ]
+        ],
+        "box": [
+          4,
+          8
+        ],
+        "column_heights": [
+          1
+        ],
+        "family_id": {
+          "group_key": "particle-container#26",
+          "shard_index": 0
+        },
+        "footprint": [
+          3,
+          3
+        ],
+        "lane_rows": [
+          [
+            "input:south:0",
+            -3
+          ],
+          [
+            "input:south:1",
+            -2
+          ],
+          [
+            "input:south:2",
+            -1
+          ],
+          [
+            "output:north:0",
+            4
+          ]
+        ],
+        "machine_origins_x": [
+          0
+        ],
+        "max_stack_height": 1,
+        "placement_geometry": [
+          3,
+          3,
+          4,
+          4,
+          0,
+          1,
+          0,
+          1
+        ],
+        "port_docks": [],
+        "yaw_degrees": 0
+      },
+      "kind": "sealed-pocket",
+      "logical_net": {
+        "cargo_domain": "requires-spray",
+        "destination_family": {
+          "group_key": "particle-container#26",
+          "shard_index": 0
+        },
+        "item": "electromagnetic-turbine",
+        "legacy_destination_strip": null,
+        "legacy_ordinal": null,
+        "legacy_source_strip": null,
+        "role": "internal",
+        "source_family": {
+          "group_key": "electromagnetic-turbine#10",
+          "shard_index": 0
+        }
+      },
+      "source_instance_id": {
+        "family_id": {
+          "group_key": "electromagnetic-turbine#10",
+          "shard_index": 0
+        },
+        "machine_count": 1,
+        "machine_start": 0
+      },
+      "source_variant_id": {
+        "attachments": [
+          [
+            "input:south:0",
+            -2,
+            [
+              {
+                "cell": [
+                  0,
+                  0
+                ],
+                "column": 0,
+                "item": "electric-motor",
+                "slot": 8,
+                "span": 2
+              }
+            ]
+          ],
+          [
+            "input:south:1",
+            -1,
+            [
+              {
+                "cell": [
+                  1,
+                  0
+                ],
+                "column": 1,
+                "item": "magnetic-coil",
+                "slot": 7,
+                "span": 1
+              }
+            ]
+          ],
+          [
+            "output:north:0",
+            4,
+            [
+              {
+                "cell": [
+                  0,
+                  2
+                ],
+                "column": 0,
+                "item": "electromagnetic-turbine",
+                "slot": 0,
+                "span": 2
+              }
+            ]
+          ]
+        ],
+        "box": [
+          4,
+          7
+        ],
+        "column_heights": [
+          1
+        ],
+        "family_id": {
+          "group_key": "electromagnetic-turbine#10",
+          "shard_index": 0
+        },
+        "footprint": [
+          3,
+          3
+        ],
+        "lane_rows": [
+          [
+            "input:south:0",
+            -2
+          ],
+          [
+            "input:south:1",
+            -1
+          ],
+          [
+            "output:north:0",
+            4
+          ]
+        ],
+        "machine_origins_x": [
+          0
+        ],
+        "max_stack_height": 1,
+        "placement_geometry": [
+          3,
+          3,
+          4,
+          4,
+          0,
+          1,
+          0,
+          1
+        ],
+        "port_docks": [],
+        "yaw_degrees": 0
+      }
+    },
+    "e56b66725704f15a": {
+      "destination_instance_id": {
+        "family_id": {
+          "group_key": "electromagnetic-turbine#10",
+          "shard_index": 0
+        },
+        "machine_count": 3,
+        "machine_start": 0
+      },
+      "destination_variant_id": {
+        "attachments": [
+          [
+            "input:south:0",
+            -2,
+            [
+              {
+                "cell": [
+                  0,
+                  0
+                ],
+                "column": 0,
+                "item": "electric-motor",
+                "slot": 8,
+                "span": 2
+              }
+            ]
+          ],
+          [
+            "input:south:1",
+            -1,
+            [
+              {
+                "cell": [
+                  1,
+                  0
+                ],
+                "column": 1,
+                "item": "magnetic-coil",
+                "slot": 7,
+                "span": 1
+              }
+            ]
+          ],
+          [
+            "output:north:0",
+            4,
+            [
+              {
+                "cell": [
+                  0,
+                  2
+                ],
+                "column": 0,
+                "item": "electromagnetic-turbine",
+                "slot": 0,
+                "span": 2
+              }
+            ]
+          ]
+        ],
+        "box": [
+          12,
+          7
+        ],
+        "column_heights": [
+          1,
+          1,
+          1
+        ],
+        "family_id": {
+          "group_key": "electromagnetic-turbine#10",
+          "shard_index": 0
+        },
+        "footprint": [
+          3,
+          3
+        ],
+        "lane_rows": [
+          [
+            "input:south:0",
+            -2
+          ],
+          [
+            "input:south:1",
+            -1
+          ],
+          [
+            "output:north:0",
+            4
+          ]
+        ],
+        "machine_origins_x": [
+          0,
+          4,
+          8
+        ],
+        "max_stack_height": 1,
+        "placement_geometry": [
+          3,
+          3,
+          4,
+          4,
+          0,
+          1,
+          0,
+          1
+        ],
+        "port_docks": [],
+        "yaw_degrees": 0
+      },
+      "kind": "dynamic-access",
+      "logical_net": {
+        "cargo_domain": "unsprayed",
+        "destination_family": {
+          "group_key": "electromagnetic-turbine#10",
+          "shard_index": 0
+        },
+        "item": "electric-motor",
+        "legacy_destination_strip": null,
+        "legacy_ordinal": null,
+        "legacy_source_strip": null,
+        "role": "internal",
+        "source_family": {
+          "group_key": "electric-motor#8",
+          "shard_index": 0
+        }
+      },
+      "source_instance_id": {
+        "family_id": {
+          "group_key": "electric-motor#8",
+          "shard_index": 0
+        },
+        "machine_count": 5,
+        "machine_start": 0
+      },
+      "source_variant_id": {
+        "attachments": [
+          [
+            "input:south:0",
+            -3,
+            [
+              {
+                "cell": [
+                  0,
+                  0
+                ],
+                "column": 0,
+                "item": "gear",
+                "slot": 8,
+                "span": 3
+              }
+            ]
+          ],
+          [
+            "input:south:1",
+            -2,
+            [
+              {
+                "cell": [
+                  1,
+                  0
+                ],
+                "column": 1,
+                "item": "iron-ingot",
+                "slot": 7,
+                "span": 2
+              }
+            ]
+          ],
+          [
+            "input:south:2",
+            -1,
+            [
+              {
+                "cell": [
+                  2,
+                  0
+                ],
+                "column": 2,
+                "item": "magnetic-coil",
+                "slot": 6,
+                "span": 1
+              }
+            ]
+          ],
+          [
+            "output:north:0",
+            4,
+            [
+              {
+                "cell": [
+                  0,
+                  2
+                ],
+                "column": 0,
+                "item": "electric-motor",
+                "slot": 0,
+                "span": 2
+              }
+            ]
+          ]
+        ],
+        "box": [
+          20,
+          8
+        ],
+        "column_heights": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "family_id": {
+          "group_key": "electric-motor#8",
+          "shard_index": 0
+        },
+        "footprint": [
+          3,
+          3
+        ],
+        "lane_rows": [
+          [
+            "input:south:0",
+            -3
+          ],
+          [
+            "input:south:1",
+            -2
+          ],
+          [
+            "input:south:2",
+            -1
+          ],
+          [
+            "output:north:0",
+            4
+          ]
+        ],
+        "machine_origins_x": [
+          0,
+          4,
+          8,
+          12,
+          16
+        ],
+        "max_stack_height": 1,
+        "placement_geometry": [
+          3,
+          3,
+          4,
+          4,
+          0,
+          1,
+          0,
+          1
+        ],
+        "port_docks": [],
+        "yaw_degrees": 0
+      }
+    },
+    "eb09b5f628779889": {
+      "destination_instance_id": {
+        "family_id": {
+          "group_key": "crystal-silicon#5",
+          "shard_index": 0
+        },
+        "machine_count": 2,
+        "machine_start": 0
+      },
+      "destination_variant_id": {
+        "attachments": [
+          [
+            "input:south:0",
+            -1,
+            [
+              {
+                "cell": [
+                  0,
+                  0
+                ],
+                "column": 0,
+                "item": "high-purity-silicon",
+                "slot": 8,
+                "span": 1
+              }
+            ]
+          ],
+          [
+            "output:north:0",
+            3,
+            [
+              {
+                "cell": [
+                  0,
+                  2
+                ],
+                "column": 0,
+                "item": "crystal-silicon",
+                "slot": 0,
+                "span": 1
+              }
+            ]
+          ]
+        ],
+        "box": [
+          6,
+          5
+        ],
+        "column_heights": [
+          1,
+          1
+        ],
+        "family_id": {
+          "group_key": "crystal-silicon#5",
+          "shard_index": 0
+        },
+        "footprint": [
+          3,
+          3
+        ],
+        "lane_rows": [
+          [
+            "input:south:0",
+            -1
+          ],
+          [
+            "output:north:0",
+            3
+          ]
+        ],
+        "machine_origins_x": [
+          0,
+          3
+        ],
+        "max_stack_height": 1,
+        "placement_geometry": [
+          3,
+          3,
+          3,
+          3,
+          0,
+          0,
+          0,
+          0
+        ],
+        "port_docks": [],
+        "yaw_degrees": 0
+      },
+      "kind": "sealed-pocket",
+      "logical_net": {
+        "cargo_domain": "unsprayed",
+        "destination_family": {
+          "group_key": "crystal-silicon#5",
+          "shard_index": 0
+        },
+        "item": "high-purity-silicon",
+        "legacy_destination_strip": null,
+        "legacy_ordinal": null,
+        "legacy_source_strip": null,
+        "role": "internal",
+        "source_family": {
+          "group_key": "high-purity-silicon#18",
+          "shard_index": 0
+        }
+      },
+      "source_instance_id": {
+        "family_id": {
+          "group_key": "high-purity-silicon#18",
+          "shard_index": 0
+        },
+        "machine_count": 12,
+        "machine_start": 0
+      },
+      "source_variant_id": {
+        "attachments": [
+          [
+            "input:south:0",
+            -1,
+            [
+              {
+                "cell": [
+                  0,
+                  0
+                ],
+                "column": 0,
+                "item": "silicon-ore",
+                "slot": 8,
+                "span": 1
+              }
+            ]
+          ],
+          [
+            "output:north:0",
+            3,
+            [
+              {
+                "cell": [
+                  0,
+                  2
+                ],
+                "column": 0,
+                "item": "high-purity-silicon",
+                "slot": 0,
+                "span": 1
+              }
+            ]
+          ],
+          [
+            "output:north:1",
+            4,
+            [
+              {
+                "cell": [
+                  1,
+                  2
+                ],
+                "column": 1,
+                "item": "high-purity-silicon",
+                "slot": 1,
+                "span": 2
+              }
+            ]
+          ]
+        ],
+        "box": [
+          36,
+          6
+        ],
+        "column_heights": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "family_id": {
+          "group_key": "high-purity-silicon#18",
+          "shard_index": 0
+        },
+        "footprint": [
+          3,
+          3
+        ],
+        "lane_rows": [
+          [
+            "input:south:0",
+            -1
+          ],
+          [
+            "output:north:0",
+            3
+          ],
+          [
+            "output:north:1",
+            4
+          ]
+        ],
+        "machine_origins_x": [
+          0,
+          3,
+          6,
+          9,
+          12,
+          15,
+          18,
+          21,
+          24,
+          27,
+          30,
+          33
+        ],
+        "max_stack_height": 1,
+        "placement_geometry": [
+          3,
+          3,
+          3,
+          3,
+          0,
+          0,
+          0,
+          0
+        ],
+        "port_docks": [],
+        "yaw_degrees": 0
+      }
+    }
+  },
+  "source_commit": "31c68413c9b0649c7d8f318e420934c5945dd61d",
+  "terminal_result_interpretation": "Failure recurrence is independent of terminal-result nondeterminism: a row may end CLEAN after a later routed closure even when the same semantic failure occurred earlier. The corrected recapture ended no-proliferator CLEAN and both product policies REFUSED in all three rounds.",
+  "topology_signatures": {
+    "1864851eca74ea52": [
+      [
+        24,
+        9,
+        28,
+        37,
+        15,
+        3,
+        36,
+        35,
+        8,
+        23,
+        1,
+        21,
+        32,
+        38,
+        14,
+        39,
+        22,
+        26,
+        0,
+        27,
+        41,
+        34,
+        40,
+        16,
+        29,
+        17,
+        31,
+        13,
+        4,
+        20,
+        7,
+        10,
+        18,
+        30,
+        5,
+        12,
+        6,
+        25,
+        33,
+        19,
+        11,
+        2
+      ],
+      [
+        3,
+        32,
+        15,
+        21,
+        37,
+        1,
+        23,
+        5,
+        39,
+        14,
+        8,
+        28,
+        24,
+        40,
+        38,
+        35,
+        9,
+        31,
+        34,
+        0,
+        26,
+        36,
+        13,
+        30,
+        17,
+        16,
+        41,
+        18,
+        10,
+        29,
+        27,
+        22,
+        7,
+        11,
+        19,
+        2,
+        33,
+        25,
+        20,
+        4,
+        6,
+        12
+      ]
+    ],
+    "1a5e5f5665bd0c94": [
+      [
+        41,
+        38,
+        14,
+        32,
+        6,
+        21,
+        29,
+        33,
+        0,
+        15,
+        1,
+        35,
+        24,
+        22,
+        31,
+        9,
+        36,
+        19,
+        34,
+        25,
+        40,
+        18,
+        8,
+        12,
+        2,
+        42,
+        4,
+        3,
+        20,
+        7,
+        13,
+        27,
+        39,
+        5,
+        28,
+        17,
+        16,
+        11,
+        26,
+        37,
+        30,
+        23,
+        10
+      ],
+      [
+        13,
+        32,
+        38,
+        14,
+        7,
+        18,
+        6,
+        20,
+        8,
+        40,
+        25,
+        41,
+        42,
+        34,
+        15,
+        2,
+        12,
+        19,
+        0,
+        33,
+        36,
+        26,
+        11,
+        3,
+        9,
+        29,
+        21,
+        16,
+        4,
+        31,
+        35,
+        1,
+        30,
+        37,
+        17,
+        28,
+        22,
+        24,
+        23,
+        10,
+        5,
+        27,
+        39
+      ]
+    ],
+    "257f709990b6bfc6": [
+      [
+        22,
+        23,
+        32,
+        39,
+        25,
+        36,
+        0,
+        6,
+        41,
+        12,
+        42,
+        7,
+        5,
+        13,
+        20,
+        29,
+        38,
+        28,
+        8,
+        9,
+        40,
+        18,
+        31,
+        2,
+        21,
+        19,
+        27,
+        30,
+        4,
+        1,
+        35,
+        16,
+        24,
+        15,
+        14,
+        37,
+        17,
+        34,
+        11,
+        3,
+        10,
+        33,
+        26
+      ],
+      [
+        29,
+        20,
+        25,
+        6,
+        0,
+        39,
+        32,
+        23,
+        22,
+        38,
+        13,
+        12,
+        8,
+        9,
+        28,
+        31,
+        5,
+        41,
+        36,
+        42,
+        7,
+        34,
+        18,
+        17,
+        35,
+        27,
+        19,
+        40,
+        21,
+        2,
+        1,
+        4,
+        30,
+        37,
+        15,
+        24,
+        16,
+        14,
+        10,
+        3,
+        11,
+        33,
+        26
+      ]
+    ],
+    "33758aa0157075ec": [
+      [
+        24,
+        36,
+        28,
+        37,
+        15,
+        3,
+        35,
+        0,
+        23,
+        5,
+        32,
+        9,
+        12,
+        21,
+        22,
+        38,
+        1,
+        4,
+        14,
+        39,
+        11,
+        26,
+        34,
+        6,
+        40,
+        27,
+        41,
+        16,
+        17,
+        31,
+        29,
+        10,
+        18,
+        13,
+        20,
+        7,
+        30,
+        8,
+        25,
+        33,
+        19,
+        2
+      ],
+      [
+        3,
+        32,
+        15,
+        5,
+        0,
+        37,
+        28,
+        24,
+        23,
+        35,
+        36,
+        21,
+        12,
+        11,
+        39,
+        1,
+        9,
+        6,
+        14,
+        38,
+        22,
+        40,
+        31,
+        34,
+        4,
+        13,
+        17,
+        16,
+        26,
+        30,
+        18,
+        10,
+        41,
+        29,
+        27,
+        19,
+        2,
+        33,
+        8,
+        7,
+        20,
+        25
+      ]
+    ],
+    "5a4a24129843a3d1": [
+      [
+        21,
+        28,
+        39,
+        4,
+        31,
+        16,
+        7,
+        19,
+        18,
+        23,
+        20,
+        30,
+        15,
+        36,
+        11,
+        13,
+        17,
+        27,
+        9,
+        42,
+        29,
+        1,
+        40,
+        10,
+        32,
+        38,
+        25,
+        35,
+        37,
+        24,
+        34,
+        41,
+        3,
+        33,
+        12,
+        26,
+        6,
+        8,
+        0,
+        2,
+        14,
+        22,
+        5
+      ],
+      [
+        7,
+        16,
+        32,
+        31,
+        4,
+        39,
+        28,
+        21,
+        10,
+        40,
+        1,
+        38,
+        29,
+        42,
+        9,
+        15,
+        18,
+        27,
+        36,
+        30,
+        19,
+        5,
+        3,
+        41,
+        25,
+        34,
+        26,
+        24,
+        6,
+        12,
+        37,
+        17,
+        13,
+        11,
+        20,
+        23,
+        8,
+        22,
+        2,
+        0,
+        33,
+        35,
+        14
+      ]
+    ],
+    "73e15bac360b31ea": [
+      [
+        7,
+        15,
+        34,
+        41,
+        11,
+        5,
+        19,
+        18,
+        14,
+        17,
+        32,
+        33,
+        37,
+        27,
+        16,
+        22,
+        9,
+        28,
+        24,
+        40,
+        25,
+        6,
+        29,
+        31,
+        30,
+        1,
+        38,
+        42,
+        36,
+        20,
+        13,
+        39,
+        12,
+        23,
+        35,
+        26,
+        4,
+        2,
+        21,
+        10,
+        8,
+        0,
+        3
+      ],
+      [
+        40,
+        30,
+        24,
+        11,
+        1,
+        31,
+        28,
+        41,
+        34,
+        15,
+        16,
+        7,
+        12,
+        29,
+        9,
+        27,
+        14,
+        22,
+        35,
+        39,
+        6,
+        25,
+        37,
+        18,
+        32,
+        19,
+        33,
+        23,
+        26,
+        13,
+        38,
+        2,
+        4,
+        3,
+        20,
+        17,
+        5,
+        36,
+        0,
+        10,
+        42,
+        8,
+        21
+      ]
+    ],
+    "7ae1ff846a370e77": [
+      [
+        7,
+        15,
+        34,
+        41,
+        11,
+        0,
+        19,
+        13,
+        40,
+        30,
+        26,
+        42,
+        17,
+        8,
+        32,
+        29,
+        24,
+        1,
+        14,
+        33,
+        21,
+        36,
+        5,
+        37,
+        27,
+        22,
+        9,
+        28,
+        16,
+        31,
+        25,
+        6,
+        38,
+        20,
+        4,
+        39,
+        12,
+        23,
+        18,
+        3,
+        2,
+        35,
+        10
+      ],
+      [
+        40,
+        30,
+        1,
+        13,
+        0,
+        11,
+        41,
+        34,
+        15,
+        7,
+        24,
+        29,
+        26,
+        8,
+        19,
+        31,
+        16,
+        28,
+        9,
+        27,
+        14,
+        32,
+        12,
+        35,
+        39,
+        22,
+        6,
+        25,
+        37,
+        33,
+        17,
+        42,
+        36,
+        21,
+        38,
+        23,
+        2,
+        18,
+        4,
+        3,
+        20,
+        10,
+        5
+      ]
+    ],
+    "95e52a129f1b8789": [
+      [
+        29,
+        25,
+        9,
+        18,
+        41,
+        38,
+        31,
+        32,
+        14,
+        21,
+        6,
+        7,
+        24,
+        8,
+        17,
+        19,
+        26,
+        27,
+        15,
+        2,
+        40,
+        11,
+        1,
+        4,
+        33,
+        23,
+        20,
+        39,
+        30,
+        13,
+        28,
+        36,
+        3,
+        0,
+        22,
+        37,
+        35,
+        34,
+        16,
+        5,
+        12,
+        10
+      ],
+      [
+        5,
+        27,
+        31,
+        26,
+        38,
+        19,
+        41,
+        18,
+        9,
+        25,
+        29,
+        2,
+        15,
+        0,
+        3,
+        17,
+        7,
+        14,
+        22,
+        36,
+        28,
+        8,
+        24,
+        6,
+        32,
+        21,
+        13,
+        23,
+        16,
+        10,
+        34,
+        30,
+        33,
+        1,
+        11,
+        39,
+        20,
+        4,
+        40,
+        12,
+        35,
+        37
+      ]
+    ],
+    "9d6bf206b352777d": [
+      [
+        5,
+        9,
+        32,
+        39,
+        25,
+        11,
+        13,
+        41,
+        18,
+        20,
+        29,
+        19,
+        27,
+        22,
+        23,
+        42,
+        0,
+        28,
+        8,
+        38,
+        36,
+        7,
+        40,
+        1,
+        31,
+        4,
+        24,
+        2,
+        16,
+        6,
+        15,
+        21,
+        14,
+        30,
+        12,
+        37,
+        35,
+        17,
+        34,
+        33,
+        3,
+        10,
+        26
+      ],
+      [
+        29,
+        20,
+        13,
+        25,
+        39,
+        32,
+        9,
+        11,
+        38,
+        8,
+        31,
+        28,
+        18,
+        27,
+        19,
+        41,
+        2,
+        1,
+        0,
+        42,
+        5,
+        34,
+        17,
+        35,
+        37,
+        15,
+        24,
+        40,
+        23,
+        36,
+        6,
+        4,
+        16,
+        7,
+        22,
+        14,
+        21,
+        10,
+        3,
+        33,
+        12,
+        30,
+        26
+      ]
+    ]
+  }
+}
