@@ -1,3 +1,4 @@
+from collections import defaultdict
 from fractions import Fraction
 
 from flab2bp.layout.freeform import plan_strips
@@ -105,6 +106,26 @@ def test_sub_spec_and_composed_spec_keep_the_power_tower_choice():
         assert sub.power_tower_item_id == "satellite-substation"
     composed = partition.composed_spec(spec, part.blocks)
     assert composed.power_tower_item_id == "satellite-substation"
+
+
+def test_made_by_sums_each_unit_output_once() -> None:
+    spec = _chain()
+    units = [partition.Unit(i, g, g.count) for i, g in enumerate(spec.groups)]
+    expected: dict[str, Fraction] = defaultdict(Fraction)
+    for u in units:
+        for item in u.group.outputs_per_machine:
+            expected[item] += u.produces(item)
+    assert dict(partition.made_by(units)) == dict(expected)
+
+
+def test_consumed_by_sums_each_unit_input_once() -> None:
+    spec = _chain()
+    units = [partition.Unit(i, g, g.count) for i, g in enumerate(spec.groups)]
+    expected: dict[str, Fraction] = defaultdict(Fraction)
+    for u in units:
+        for item in u.group.inputs_per_machine:
+            expected[item] += u.consumes(item)
+    assert dict(partition.consumed_by(units)) == dict(expected)
 
 
 def test_split_block_of_one_unit_splits_the_count():
