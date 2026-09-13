@@ -368,6 +368,7 @@ def install(tally: Tally) -> Callable[[], None]:
         merged_cells: Collection[Cell] = frozenset(),
         protected_sinks: Collection[Cell] = frozenset(),
         source_feeds: Mapping[int, int] | None = None,
+        trace: list[tuple[Cell, Cell, tuple[Cell, ...]]] | None = None,
     ) -> set[Cell]:
         t0 = time.perf_counter()
         out = orig_merge(
@@ -388,6 +389,7 @@ def install(tally: Tally) -> Callable[[], None]:
             merged_cells=merged_cells,
             protected_sinks=protected_sinks,
             source_feeds=source_feeds,
+            trace=trace,
         )
         tally.add("merge_frontier", time.perf_counter() - t0)
         return out

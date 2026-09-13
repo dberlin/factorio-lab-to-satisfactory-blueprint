@@ -5422,6 +5422,7 @@ def _merge_frontier(
     merged_cells: Collection[Cell] = frozenset(),
     protected_sinks: Collection[Cell] = frozenset(),
     source_feeds: Mapping[int, int] | None = None,
+    trace: list[tuple[Cell, Cell, tuple[Cell, ...]]] | None = None,
 ) -> set[Cell]:
     """Free cells beside a sibling net's path -- somewhere to merge into.
 
@@ -5473,6 +5474,10 @@ def _merge_frontier(
     ``source_choices`` retains competing tap identities until the endpoint
     owner can certify them before collapsing provenance. Unambiguous offers
     may defer projected-frame admission to the chosen-path search.
+
+    ``trace`` receives one entry per offering path cell, in walk order: the
+    cell ``junctionable`` was asked about, the tap recorded as provenance, and
+    the free cells offered.  `_SourceWalk` replays it.
     """
     out: set[Cell] = set()
     for sibling in siblings:
@@ -5579,9 +5584,72 @@ def _merge_frontier(
                     provenance.setdefault(cell, tap)
                     if source_choices is not None:
                         source_choices.setdefault(cell, set()).add(tap)
+            if trace is not None:
+                trace.append(((x, y, actual_level), (x, y, lvl), tuple(free)))
             if witness is not None:
                 return out
     return out
+
+
+@dataclass(slots=True)
+class _SourceWalk:
+    """One `_ends` source-side frontier walk, replayable when `project_taps` widens.
+
+    After a walk, `_ends` finds the source taps that compete for a start cell
+    and asks the same walk again with those taps added to ``project_taps``.
+    Nothing the walk reads changes between the two asks; only the ``project``
+    flag of the added cells does.  The second ask therefore re-asks the
+    admission predicate for those cells alone and replays every other answer,
+    including the reservation blame each ask contributed, and rebuilds the
+    offers in the original walk order so provenance keeps its first-wins
+    result.
+    """
+
+    project_taps: frozenset[Cell]
+    #: One entry per admission ask, in walk order: the asked cell, its answer,
+    #: and the blockers it blamed.
+    asks: list[tuple[Cell, bool, tuple[int, ...]]]
+    #: One entry per offering path cell, in walk order: the asked cell, the
+    #: tap recorded as provenance, and the free cells offered.
+    offers: list[tuple[Cell, Cell, tuple[Cell, ...]]]
+    neighborhood: JunctionNeighborhood | None
+
+    def replay(
+        self,
+        project_taps: frozenset[Cell],
+        ask: Callable[[int, int, int], bool],
+        *,
+        asks: list[tuple[Cell, bool, tuple[int, ...]]],
+        blame: set[int],
+        provenance: dict[Cell, Cell],
+        source_choices: dict[Cell, set[Cell]],
+    ) -> set[Cell]:
+        """The walk's frontier under a wider ``project_taps``.
+
+        ``ask`` must be the current walk's predicate: it records its own
+        entries into ``asks`` and blames into ``blame``; replayed entries are
+        recorded and blamed here.
+        """
+        if not project_taps >= self.project_taps:
+            raise ValueError("a source walk replays only a widened project_taps")
+        added = project_taps - self.project_taps
+        answers: dict[Cell, bool] = {}
+        for cell, admitted, blamed in self.asks:
+            if cell in added:
+                admitted = ask(*cell)
+            else:
+                blame.update(blamed)
+                asks.append((cell, admitted, blamed))
+            answers[cell] = admitted
+        out: set[Cell] = set()
+        for cell, tap, free in self.offers:
+            if not answers[cell]:
+                continue
+            out.update(free)
+            for offered in free:
+                provenance.setdefault(offered, tap)
+                source_choices.setdefault(offered, set()).add(tap)
+        return out
 
 
 @dataclass(frozen=True, slots=True)
@@ -6546,6 +6614,9 @@ def _route_all(
     #: `try`/`finally`, so it cannot survive the run even on an exception.
     relaxed_junctions = False
     junction_reservation_blockers: set[int] = set()
+    #: The blockers the latest `_can_junction` ask blamed, so a replayed source
+    #: walk (`_SourceWalk`) can restore that side effect without asking again.
+    last_junction_blame: tuple[int, ...] = ()
 
     @cache
     def _junction_stacks_collide(existing: Cell, candidate: Cell) -> bool:
@@ -6582,6 +6653,8 @@ def _route_all(
         project: bool = True,
         neighborhood: JunctionNeighborhood | None = None,
     ) -> bool:
+        nonlocal last_junction_blame
+        last_junction_blame = ()
         cell = (x, y, level)
         planned_here = planned_taps.get(cell, ())
         if len(planned_here) >= 2:
@@ -6676,6 +6749,7 @@ def _route_all(
         keepout: list[Cell] = []
         reserved_values: list[Cell | None] = []
         denied = False
+        blamed: set[int] = set()
         for member in _splitter_stack_geometry(x, y, level):
             for guard_cell in junction.keepout_cells(
                 x, y, int(member.z), model_index=member.model_index, yaw=member.yaw
@@ -6694,12 +6768,14 @@ def _route_all(
                         ("dst", PortAccessKind.INTERNAL_ARRIVAL),
                     ):
                         if corridor.kind in (None, kind):
-                            junction_reservation_blockers.update(
+                            blamed.update(
                                 member for member, _net in net_index.payloads_in_role(key, role)
                             )
         if denied:
             # Carries blame that depends on corridor state the memo does not
             # follow; recomputed on every ask.
+            junction_reservation_blockers.update(blamed)
+            last_junction_blame = tuple(sorted(blamed))
             return False
         return remember(True, tuple(keepout), tuple(reserved_values))
 
@@ -7062,6 +7138,7 @@ def _route_all(
         witnessed_taps: dict[Cell, bool] | None = None,
         witness_ports: frozenset[Cell] | None = None,
         admit_source_tap: Callable[[Cell], bool] | None = None,
+        replay: _SourceWalk | None = None,
     ) -> tuple[
         list[Cell],
         set[Cell],
@@ -7074,6 +7151,9 @@ def _route_all(
         the committer cannot attach at either end -- which is precisely the class
         of bug `3f04239` and `00d1f78` were.  The caller clears
         ``canvas.routing_ports`` once its search returns.
+
+        ``replay`` is the source walk of the ask this one widens
+        ``project_taps`` from; only the widened cells are asked again.
         """
         junction_reservation_blockers.clear()
         net = nets[index]
@@ -7195,8 +7275,10 @@ def _route_all(
         # This owner lives for exactly one frontier. No tap is staked or
         # unstaked while _merge_frontier calls its admission predicate.
         # Construct lazily so an empty/ranged/witness-expired frontier does
-        # not prepare geometry that it will never query.
-        neighborhood: JunctionNeighborhood | None = None
+        # not prepare geometry that it will never query.  A replayed walk
+        # shares the owner of the walk it replays: no tap moved in between.
+        neighborhood: JunctionNeighborhood | None = None if replay is None else replay.neighborhood
+        asks: list[tuple[Cell, bool, tuple[int, ...]]] = []
 
         def frontier_junctionable(x: int, y: int, level: int) -> bool:
             nonlocal neighborhood
@@ -7206,32 +7288,47 @@ def _route_all(
                 except TimeoutError as error:
                     # Incomplete preparation publishes no admission answer.
                     raise _PreparationDeadline from error
-            return _can_junction(
+            admitted = _can_junction(
                 x,
                 y,
                 level,
                 project=(x, y, level) in project_taps,
                 neighborhood=neighborhood,
             )
+            asks.append(((x, y, level), admitted, last_junction_blame))
+            return admitted
 
-        frontier = _merge_frontier(
-            canvas,
-            paths,
-            siblings,
-            frontier_junctionable,
-            provenance=source_provenance,
-            belt_prefab=(belt_id, belt_model),
-            tentative_ok=tentative_ok,
-            owned_guard=owned_guard,
-            primitives=primitives,
-            source_choices=source_choices,
-            witness=witness,
-            admit_tap=admit_source_tap,
-            deadline=deadline,
-            path_ranges=source_ranges,
-            merged_cells=existing_sink_targets,
-            source_feeds=source_feeds,
-        )
+        walk_offers: list[tuple[Cell, Cell, tuple[Cell, ...]]] = []
+        if replay is None:
+            frontier = _merge_frontier(
+                canvas,
+                paths,
+                siblings,
+                frontier_junctionable,
+                provenance=source_provenance,
+                belt_prefab=(belt_id, belt_model),
+                tentative_ok=tentative_ok,
+                owned_guard=owned_guard,
+                primitives=primitives,
+                source_choices=source_choices,
+                witness=witness,
+                admit_tap=admit_source_tap,
+                deadline=deadline,
+                path_ranges=source_ranges,
+                merged_cells=existing_sink_targets,
+                source_feeds=source_feeds,
+                trace=walk_offers,
+            )
+        else:
+            walk_offers = replay.offers
+            frontier = replay.replay(
+                project_taps,
+                frontier_junctionable,
+                asks=asks,
+                blame=junction_reservation_blockers,
+                provenance=source_provenance,
+                source_choices=source_choices,
+            )
         if witness is not None and frontier:
             cell = min(frontier)
             return [cell], set(), ({}, {}, {cell: source_provenance[cell]})
@@ -7300,6 +7397,7 @@ def _route_all(
                 tentative_ok=tentative_ok,
                 project_taps=project_taps | competing,
                 admit_source_tap=admit_source_tap,
+                replay=_SourceWalk(project_taps, asks, walk_offers, neighborhood),
             )
         source_access_walls[index] = tuple(occupied_source_access) if not starts else ()
         # A shared source can become unusable without an occupied access cell:
