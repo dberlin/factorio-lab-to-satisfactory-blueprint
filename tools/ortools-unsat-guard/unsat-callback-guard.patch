@@ -1,0 +1,65 @@
+Guard against propagating past a locally UNSAT worker in OR-Tools CP-SAT 9.15.
+
+Applies to tag v9.15 (551ad10d94835c99e5e1e684500d3db398c0e345). Generated
+2026-09-13 for factorio-lab-to-blueprint. Built and verified the same day;
+see docs/superpowers/evidence/2026-09-13-native-abort/ and README.md beside
+this file. Not submitted upstream.
+
+The abort: CHECK(!sat_solver_->ModelIsUnsat()) at the top of
+LinearProgrammingConstraint::Propagate(). A shared-tree worker's level-zero
+callbacks import bounds without propagating and return true; the shared-tree
+sync callback then decodes a tree literal, the encoder adds level-zero
+implication clauses, the pending propagation conflicts, the solver is marked
+UNSAT, the encoder drops that status, and the callback still returns true.
+The next propagation reaches the CHECK.
+
+All three hunks test the pure getter ModelIsUnsat() and change nothing when
+the worker is not UNSAT; every caller already handles a false return.
+
+Apply with: git apply --check unsat-callback-guard.patch
+
+diff --git a/ortools/sat/integer_search.cc b/ortools/sat/integer_search.cc
+index 737a086..68938ac 100644
+--- a/ortools/sat/integer_search.cc
++++ b/ortools/sat/integer_search.cc
+@@ -1362,6 +1362,9 @@ IntegerSearchHelper::IntegerSearchHelper(Model* model)
+       inprocessing_(model->GetOrCreate<Inprocessing>()) {}
+
+ bool IntegerSearchHelper::BeforeTakingDecision() {
++  // A level-zero callback (or the code it triggers) may already have marked
++  // the local solver UNSAT while returning true; never propagate past that.
++  if (sat_solver_->ModelIsUnsat()) return false;
+   DCHECK(sat_solver_->PropagationIsDone());
+
+   // If we pushed root level deductions, we go back to level zero and call
+@@ -1388,7 +1391,14 @@ bool IntegerSearchHelper::BeforeTakingDecision() {
+
+   auto* level_zero_callbacks = model_->GetOrCreate<LevelZeroCallbackHelper>();
+   for (const auto& cb : level_zero_callbacks->callbacks) {
+-    if (!cb()) {
++    // Callbacks such as SharedTreeWorker::SyncWithSharedTree() can create
++    // integer literals whose level-zero implication clauses conflict with
++    // bounds imported by an earlier callback; SatSolver::AddProblemClause()
++    // then sets model_is_unsat_ but IntegerEncoder::AddImplications() drops
++    // that return value and the callback still returns true.  Propagating
++    // afterwards would reach LinearProgrammingConstraint::Propagate() and its
++    // CHECK(!sat_solver_->ModelIsUnsat()).
++    if (!cb() || sat_solver_->ModelIsUnsat()) {
+       sat_solver_->NotifyThatModelIsUnsat();
+       return false;
+     }
+diff --git a/ortools/sat/work_assignment.cc b/ortools/sat/work_assignment.cc
+index 7cfdb79..ed71fea 100644
+--- a/ortools/sat/work_assignment.cc
++++ b/ortools/sat/work_assignment.cc
+@@ -1430,6 +1430,10 @@ bool SharedTreeWorker::SyncWithSharedTree() {
+     assigned_tree_implications_.push_back(std::move(implications));
+   }
+   DCHECK(CheckLratInvariants());
++  // DecodeDecision() -> IntegerEncoder::GetOrCreateAssociatedLiteral() may add
++  // level-zero clauses whose propagation marks this worker UNSAT; the encoder
++  // discards that status, so report it here instead of returning true.
++  if (sat_solver_->ModelIsUnsat()) return false;
+   return true;
+ }
+
