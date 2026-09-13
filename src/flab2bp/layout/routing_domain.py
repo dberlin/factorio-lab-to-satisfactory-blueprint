@@ -224,30 +224,57 @@ def _crossing_ban_tiles(
     collider.  The game refuses it; the lattice, measuring flat, had called the
     cell free and spent a whole routing pack on it.
 
-    :func:`~flab2bp.dsp.planet.tightest_column_arc` is that spacing and
-    :func:`~flab2bp.dsp.planet.projections_for` is why a layout is held to it:
-    finalization checks EVERY anchor the band admits, so the most compressed row
-    is reachable and therefore binding.  The widest band is the one used here
-    because no narrower one is known before an extent exists -- see
-    :func:`~flab2bp.dsp.planet.widest_band` -- which leaves this exact for a
-    layout that lands in the equatorial band and no weaker than the flat rule
-    for one that lands in a narrower, more compressed band, where the projection
-    validator stays the oracle.
+    :func:`~flab2bp.dsp.planet.projections_for` is why a layout is held to that
+    spacing: finalization checks EVERY anchor the band admits, so the most
+    compressed row is reachable and therefore binding.
 
-    At that spacing 25 of the 61 models reach past their footprint and 36 do
+    ONLY ONE AXIS COMPRESSES, AND WHICH ONE IS THE PASTE'S TO CHOOSE.  The
+    longitude axis gets :func:`~flab2bp.dsp.planet.tightest_column_arc`; the
+    latitude axis gets :func:`~flab2bp.dsp.planet.row_arc`, a constant with no
+    ``cos`` in it.  ``TransitionWidthAndHeight`` swaps which lattice axis is
+    which at quadrant 1, and ``band_for_extent`` turns a blueprint whenever the
+    turn fits a narrower band -- measured over five corpus builds, 71 of 1,068
+    candidate extents came back rotated, 64 of them on ``casimir-crystal``. The
+    orientation follows from the FINAL extent, which does not exist until
+    routing has run, so this asks both ways and takes the union.
+
+    The union, and not one arc on both axes, which is what phase 3 shipped and
+    was wrong twice over.  It over-reserved, by 11 % of the banned tiles, for a
+    row compression that never happens.  It also UNDER-reserved: compression
+    moves a tile toward the origin, so a collider box that does not straddle the
+    origin on an axis can be stepped out of as well as into, and a Vertical
+    Launching Silo has two tiles per yaw that a single-axis paste hits and a
+    both-axes measurement misses.
+
+    THE BAND IS THE LOOSEST ONE A LAYOUT CAN REACH, not a conservative default.
+    :func:`~flab2bp.dsp.planet.band_for_extent` picks the SMALLEST band an
+    extent fits, and a narrower band compresses harder -- 0.857 at band 160,
+    0.852 at 100, 0.784 at 32 -- so measuring at the equatorial band's 0.877
+    makes this exact only for a layout large enough to need band 200, roughly
+    400 columns or 60 rows. Smaller layouts are certified against a TIGHTER arc
+    than this measures, and for them the rule is stronger than the flat one it
+    replaces but still weaker than the validator. The surviving case is narrow
+    and worth naming: an Assembling Machine bans nothing here and needs all
+    twelve of its orthogonal neighbours once the arc reaches 0.848, which is
+    band 80 and below, and ``belt_collisions`` excuses a belt chained to the
+    building, so it bites only an UNLINKED belt passing one in a small layout.
+    Closing it needs the layout's own band at reservation time; the extent is
+    not known until routing has run, and band 4's arc is 0, which no finite
+    keepout covers.
+
+    At these spacings 25 of the 61 models reach past their footprint and 36 do
     not, so this is a per-model reading and not a ring nobody escapes: an
     Assembling Machine keeps its neighbouring belt legal down to a 0.850 arc
     ratio and the band's is 0.877, while a Chemical Plant breaks at 0.900 and
     gains a column.
     """
-    arc = planet.tightest_column_arc(planet.widest_band().area_segments)
+    column = planet.tightest_column_arc(planet.widest_band().area_segments)
+    row = planet.row_arc()
+    reach = colliders.belt_keepout_reach(model_index, min(column, row))
+    levels = spherical_overflight_limit(model_index, Fraction(0))
     offsets = colliders.belt_keepout_offsets(
-        model_index,
-        yaw,
-        colliders.belt_keepout_reach(model_index, arc),
-        spherical_overflight_limit(model_index, Fraction(0)),
-        arc,
-    )
+        model_index, yaw, reach, levels, column, row
+    ) | colliders.belt_keepout_offsets(model_index, yaw, reach, levels, row, column)
     #: The measurement is about the footprint CENTRE, which is what
     #: `codec.tile_to_local_offset` hands the collider; `tiles()` counts from
     #: the minimum corner.  Every catalog footprint is odd, so the centre is a
@@ -263,33 +290,6 @@ def _crossing_ban_tiles(
             }
         )
     )
-
-
-def _crossing_ban_cells(b: PlacedBuilding) -> Iterator[tuple[int, int, int]]:
-    """``(x, y, level)`` cells this building denies to a belt.
-
-    Its own footprint, plus the tiles :func:`_crossing_ban_tiles` measures
-    outside it, each over the band :func:`_crossing_ban_levels` reserves.  The
-    two halves live in different places on the canvas -- the footprint in
-    ``blocked``, which denies the cell to everything, the rest in
-    ``belt_keepout``, which denies it only to belts -- so this is the union a
-    BELT faces and not a set any single canvas field holds.
-
-    ONE VERTICAL RULE, not two.  The band is a radial argument -- a projected
-    corner stands further from the planet's centre than the collider's flat top
-    does -- and that argument is about the collider, not about which tile is
-    under it, so a tile outside the footprint is owed the same ceiling as one
-    inside it.
-    """
-    banned = _crossing_ban_levels(b)
-    tiles = _crossing_ban_tiles(b.model_index, b.yaw, b.width, b.height)
-    for dx in range(b.width):
-        for dy in range(b.height):
-            for level in banned:
-                yield (b.x + dx, b.y + dy, level)
-    for dx, dy in tiles:
-        for level in banned:
-            yield (b.x + dx, b.y + dy, level)
 
 
 #: Rip-up-and-reroute iterations before a placement is declared unroutable.

@@ -382,6 +382,24 @@ def tightest_column_arc(
     return shell * math.cos(latitude) * longitude_rad_per_grid(band.area_segments)
 
 
+def row_arc(
+    segment: int = colliders.PLANET_SEGMENT, radius: float = colliders.PLANET_RADIUS
+) -> float:
+    """World units between adjacent ROWS, anywhere on the planet.
+
+    ``shell * latitude_rad_per_grid`` (:meth:`Projection.row_arc`), and there is
+    no ``cos`` in it: :func:`latitude_rad_per_grid` is constant over the whole
+    planet, so unlike a column a row never compresses.  On the ground shell of a
+    terrestrial planet it is 1.25789, which is 1.001 TIMES
+    :data:`~flab2bp.dsp.colliders.GRID_ARC` rather than 0.877 of it.
+
+    The contrast with :func:`tightest_column_arc` is the whole reason both
+    exist: a rule that spaces rows the way a paste spaces columns reserves
+    against a compression that never happens on that axis.
+    """
+    return (radius + 0.2) * latitude_rad_per_grid(segment)
+
+
 def widest_band(segment: int = colliders.PLANET_SEGMENT) -> Band:
     """The band holding the most latitude rows -- the equatorial one.
 
