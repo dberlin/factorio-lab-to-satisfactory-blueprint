@@ -31,7 +31,7 @@ from functools import partial
 from typing import NamedTuple
 
 from flab2bp.dsp import catalog
-from flab2bp.layout import finalize, junction, physical_flow, slots, validate
+from flab2bp.layout import budget, finalize, junction, physical_flow, slots, validate
 from flab2bp.layout.band_policy import BandPolicy
 from flab2bp.layout.base import PlacedBuilding, Placement
 from flab2bp.layout.buildings import Buildings
@@ -604,7 +604,7 @@ def _corridor_evidence(evidence: PortAccessEvidence | None) -> str:
 
 def _spent(deadline: float | None) -> bool:
     """Whether ``deadline`` has already passed; ``None`` never has."""
-    return deadline is not None and time.monotonic() >= deadline
+    return budget.expired(deadline, time.monotonic)
 
 
 def _outer_ring(bounds: tuple[int, int, int, int]) -> list[Cell]:
