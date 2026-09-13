@@ -38,7 +38,16 @@ import numpy as np
 from ortools.linear_solver import pywraplp
 from ortools.sat.python import cp_model
 
-from flab2bp.dsp import catalog, codec, colliders, params, planet, rules, splitter_ports
+from flab2bp.dsp import (
+    catalog,
+    codec,
+    colliders,
+    params,
+    planet,
+    quaternion,
+    rules,
+    splitter_ports,
+)
 from flab2bp.indexed import Nets, PortReservations, StakedPaths, UnionFind
 from flab2bp.indexed.staked_paths import StakedPathSnapshot
 from flab2bp.layout import (
@@ -13172,9 +13181,9 @@ class _CoaterJunctionCache:
         if pole is None:
             # Match spherical_rotation's actual fixed-global-forward branch.
             # That branch is not equivariant under a longitude translation.
-            direction = planet._norm(projection.direction(placed.x, placed.y))
-            tangent = planet._cross(direction, (0.0, 1.0, 0.0))
-            pole = planet._dot3(tangent, tangent) < 1e-4
+            direction = quaternion.normalize(projection.direction(placed.x, placed.y))
+            tangent = quaternion.cross(direction, (0.0, 1.0, 0.0))
+            pole = quaternion.dot(tangent, tangent) < 1e-4
             states[key] = pole
         return pole
 
