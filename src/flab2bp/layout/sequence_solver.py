@@ -20,7 +20,7 @@ from typing import Protocol, TypedDict
 
 from flab2bp.dsp import catalog
 from flab2bp.indexed import Stages, StripPositions
-from flab2bp.layout import finalize, geometric_router, last_mile
+from flab2bp.layout import budget, finalize, geometric_router, last_mile
 from flab2bp.layout.band_policy import BandPolicy
 from flab2bp.layout.base import (
     ATOMIC_COMPLETION_GRACE_S as ATOMIC_COMPLETION_GRACE_S,
@@ -3443,7 +3443,7 @@ def _projection_feedback_stage_update(
     """Move an unchanged exact refusal to the nearest changed pair relation."""
     if len(geometry_signatures) != problem.size:
         raise ValueError("projection feedback requires one geometry signature per strip")
-    if deadline is not None and time.monotonic() >= deadline:
+    if budget.expired(deadline, time.monotonic):
         return None
     decoded = decode_state(problem, state)
     pack = _decoded_pack(
@@ -3494,13 +3494,13 @@ def _projection_feedback_stage_update(
         )
         return tuple(values)
 
-    if deadline is not None and time.monotonic() >= deadline:
+    if budget.expired(deadline, time.monotonic):
         return None
     positive_positions = StripPositions.of(state.pair.positive)
     negative_positions = StripPositions.of(state.pair.negative)
     for left, right in pairs:
         for axis in ("negative", "positive"):
-            if deadline is not None and time.monotonic() >= deadline:
+            if budget.expired(deadline, time.monotonic):
                 return None
             sequence_pair = (
                 replace(
@@ -4857,7 +4857,7 @@ def _production_run(
     )
 
     def deadline_reached() -> bool:
-        return time.monotonic() >= deadline
+        return budget.expired(deadline, time.monotonic)
 
     telemetry = _ProductionTelemetry()
     relation_no_goods = _RelationNoGoodLedger()
@@ -5148,7 +5148,7 @@ def _production_run(
             try:
 
                 def compact_deadline_reached() -> bool:
-                    return time.monotonic() >= compact_deadline
+                    return budget.expired(compact_deadline, time.monotonic)
 
                 direct_eligibility = (
                     _variant_direct_eligibility(
@@ -5535,7 +5535,7 @@ def _production_run(
             return ValidationVerdict(False, (), None, status=DetailedRouteStatus.BUDGET)
 
         completion_deadline = deadline + ATOMIC_COMPLETION_GRACE_S
-        if time.monotonic() >= completion_deadline:
+        if budget.expired(completion_deadline, time.monotonic):
             return budget_verdict()
         projection = finalize.prepare_placement_completion(
             placement,

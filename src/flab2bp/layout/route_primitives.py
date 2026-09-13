@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 from flab2bp.dsp import catalog
 from flab2bp.dsp.rules import BELT_PORT_DRAW_TO_SLOT
-from flab2bp.layout import junction
+from flab2bp.layout import budget, junction
 from flab2bp.layout.base import PlacedBuilding
 from flab2bp.layout.route_feedback import Cell, NetId
 
@@ -213,7 +213,7 @@ class RoutePrimitives:
         y1 = min(grid.span[3], max(cell[1] for cell in endpoints) + 2)
         forbidden_cells = frozenset(forbidden)
         committed = self.selection(active_paths, active_taps)
-        if deadline is not None and time.monotonic() >= deadline:
+        if budget.expired(deadline, time.monotonic):
             return {}
         groups = _template_groups(self.rules)
         # Connector occupancy only needs levels used by a dock or body. The
@@ -243,7 +243,7 @@ class RoutePrimitives:
         rows: dict[int, list[tuple[int, float]]] = {}
         for x in range(x0, x1 + 1):
             for y in range(y0, y1 + 1):
-                if deadline is not None and time.monotonic() >= deadline:
+                if budget.expired(deadline, time.monotonic):
                     return {index: tuple(row) for index, row in rows.items()}
                 start_free = free_levels(x, y)
                 if not start_free:

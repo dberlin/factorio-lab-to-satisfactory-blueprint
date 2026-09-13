@@ -36,7 +36,7 @@ from flab2bp.lab.flow import (
 from flab2bp.lab.schema import Dataset
 from flab2bp.lab.techs import belt_rules_for_url
 from flab2bp.lab.url import LabRequest, parse_url
-from flab2bp.layout import finalize, markers, strategy_race, validate
+from flab2bp.layout import budget, finalize, markers, strategy_race, validate
 from flab2bp.layout.band_policy import BandPolicy, BandSelection
 from flab2bp.layout.base import (
     ATOMIC_COMPLETION_GRACE_S,
@@ -1152,7 +1152,7 @@ def build(
             )
 
             def attempt_expired(_deadline: float = attempt_deadline) -> bool:
-                return time.monotonic() >= _deadline
+                return budget.expired(_deadline, time.monotonic)
 
             if placement.completion is not PlacementCompletion.COMPACTED_AND_FINALIZED:
                 phase_started = time.monotonic()

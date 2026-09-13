@@ -76,6 +76,7 @@ from typing import TYPE_CHECKING, cast
 from ortools.sat.python import cp_model
 
 from flab2bp.dsp import catalog, colliders
+from flab2bp.layout import budget as budget_module
 from flab2bp.layout import finalize, last_mile, routing_domain, slots, validate
 from flab2bp.layout.band_policy import BandPolicy
 from flab2bp.layout.base import (
@@ -3642,7 +3643,9 @@ def _build(
     staged_static_cache: routing_domain._StagedStaticCache | None = None,
 ) -> _BuildResult:
     """Prepare one pack, then emit it through the reusable detailed entry point."""
-    cancelled = None if deadline is None else lambda: time.monotonic() >= deadline
+    cancelled = (
+        None if deadline is None else lambda: budget_module.expired(deadline, time.monotonic)
+    )
     preparation_started = time.monotonic()
     try:
         prepared = routing_domain._prepare_routing_problem(
@@ -5746,7 +5749,7 @@ class FreeformLayout:
                 if (
                     not projection_retry
                     and best is not None
-                    and time.monotonic() >= improvement_soft
+                    and budget_module.expired(improvement_soft, time.monotonic)
                 ):
                     decline_to_start()
                     break
