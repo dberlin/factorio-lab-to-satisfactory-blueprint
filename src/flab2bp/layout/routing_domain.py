@@ -12511,7 +12511,7 @@ def _route_external_outputs(
     )
 
 
-class _PreparationDeadline(Exception):
+class _PreparationDeadline(budget_module.BudgetExhausted):
     """Exact candidate preparation stopped before producing a reusable result."""
 
     def __init__(self) -> None:

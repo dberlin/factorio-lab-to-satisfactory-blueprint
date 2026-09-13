@@ -130,3 +130,12 @@ def test_check_deadline_raises_the_proposals_deadline_from_the_shared_rule(
     with pytest.raises(routing_proposals.Deadline):
         routing_proposals.check_deadline(100.0)
     assert issubclass(routing_proposals.Deadline, work.BudgetExhausted)
+
+
+def test_a_preparation_deadline_still_carries_its_partial_result() -> None:
+    from flab2bp.layout import routing_domain
+
+    stopped = routing_domain._PreparationDeadline()
+    assert stopped.work == 0
+    assert stopped.net_index is None
+    assert stopped.failures == {}
