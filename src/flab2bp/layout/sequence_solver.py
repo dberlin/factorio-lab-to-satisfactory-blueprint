@@ -33,8 +33,8 @@ from flab2bp.layout.base import (
 )
 from flab2bp.layout.budget import (
     StagedWorkBudget,
-    _check_spend,
-    _fraction_ceiling,
+    check_spend,
+    fraction_ceiling,
 )
 from flab2bp.layout.compact_seed import (
     CompactSeedConfig,
@@ -1669,7 +1669,7 @@ class SequenceSolver[PreparedT]:
         )
         self._finish_measured_completion(measured_detailed_started)
         spent = detailed.charged_work
-        _check_spend(spent, allowance)
+        check_spend(spent, allowance)
         # `_complete_routing_stage` folds this very candidate's own failures
         # into `height_state.feedback` before it returns.  Capture the feedback
         # as it stood BEFORE that fold-in, so the repair choice below is scored
@@ -1837,7 +1837,7 @@ class SequenceSolver[PreparedT]:
         )
         self._finish_measured_completion(measured_detailed_started)
         spent = detailed.charged_work
-        _check_spend(spent, allowance)
+        check_spend(spent, allowance)
         self.budget.charge_detailed_discovery(height, spent)
         self._complete_routing_stage(
             height_state,
@@ -2141,7 +2141,7 @@ class SequenceSolver[PreparedT]:
         )
         self._finish_measured_completion(measured_detailed_started)
         spent = detailed.charged_work
-        _check_spend(spent, allowance)
+        check_spend(spent, allowance)
         return self._complete_routing_stage(
             height_state,
             selected,
@@ -2183,7 +2183,7 @@ class SequenceSolver[PreparedT]:
                 allowance,
                 max(
                     1,
-                    _fraction_ceiling(
+                    fraction_ceiling(
                         allowance,
                         self.config.final_reserve_fraction,
                     ),
@@ -2243,7 +2243,7 @@ class SequenceSolver[PreparedT]:
                 proxy_allowance,
             )
             global_route_time_s += time.perf_counter() - global_started
-            _check_spend(global_result.work, proxy_allowance)
+            check_spend(global_result.work, proxy_allowance)
             spent += global_result.work
             proxy_left -= global_result.work
             global_candidates.append(
@@ -2297,7 +2297,7 @@ class SequenceSolver[PreparedT]:
             allow_proof_skip=True,
         )
         self._finish_measured_completion(measured_detailed_started)
-        _check_spend(detailed.charged_work, detailed_allowance)
+        check_spend(detailed.charged_work, detailed_allowance)
         spent += detailed.charged_work
         selected_source = selected.source
         if selected_source is None:
@@ -4667,7 +4667,7 @@ def _route_detailed_candidate(
         unpowerable_left = attempt_budget.left
         assert unpowerable_left is not None
         work = allowance - unpowerable_left
-        _check_spend(work, allowance)
+        check_spend(work, allowance)
         return _closed_detailed_result(
             DetailedRouteStatus.UNPOWERABLE,
             work=work,
@@ -4675,7 +4675,7 @@ def _route_detailed_candidate(
     attempt_left = attempt_budget.left
     assert attempt_left is not None
     spent = allowance - attempt_left
-    _check_spend(spent, allowance)
+    check_spend(spent, allowance)
     routing = built.routing
     placement: Placement | None = None
     if routing.status is DetailedRouteStatus.ROUTED:

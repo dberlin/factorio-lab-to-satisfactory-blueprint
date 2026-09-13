@@ -127,7 +127,7 @@ class StagedWorkBudget:
     def __post_init__(self) -> None:
         if type(self.total) is not int or self.total < 0:
             raise ValueError("total expansion budget must be a non-negative integer")
-        self.final_reserved = _fraction_ceiling(self.total, Fraction(1, 4))
+        self.final_reserved = fraction_ceiling(self.total, Fraction(1, 4))
         self.final_left = self.final_reserved
         self.shared_left = self.total - self.final_reserved
 
@@ -151,7 +151,7 @@ class StagedWorkBudget:
         if not isinstance(reserve_fraction, Fraction) or not 0 <= reserve_fraction < 1:
             raise ValueError("reserve fraction must be a Fraction from zero to one")
 
-        self.final_reserved = _fraction_ceiling(self.total, reserve_fraction)
+        self.final_reserved = fraction_ceiling(self.total, reserve_fraction)
         self.final_left = self.final_reserved
         searchable = self.total - self.final_reserved
         discovery_slice, remainder = divmod(searchable, len(heights))
@@ -169,7 +169,7 @@ class StagedWorkBudget:
     def charge_discovery(self, height: int, spent: int) -> None:
         """Charge part of one height reservation without closing discovery."""
         allowance = self.discovery_allowance(height)
-        _check_spend(spent, allowance)
+        check_spend(spent, allowance)
         self._discovery_spent[height] += spent
         self._spent += spent
 
@@ -188,7 +188,7 @@ class StagedWorkBudget:
 
     def charge_detailed_discovery(self, height: int, spent: int) -> None:
         """Atomically charge closure without exposing borrowed work to proxies."""
-        _check_spend(spent, self.detailed_discovery_allowance(height))
+        check_spend(spent, self.detailed_discovery_allowance(height))
         remaining = spent
 
         current = self.discovery_allowance(height)
@@ -228,7 +228,7 @@ class StagedWorkBudget:
 
     def settle_discovery(self, height: int, spent: int) -> None:
         allowance = self.discovery_allowance(height)
-        _check_spend(spent, allowance)
+        check_spend(spent, allowance)
         self.charge_discovery(height, spent)
         self._pending_discovery_return += allowance - spent
         self._unsettled_discovery.remove(height)
@@ -243,16 +243,16 @@ class StagedWorkBudget:
 
     def settle_shared(self, spent: int) -> None:
         allowance = self.shared_allowance()
-        _check_spend(spent, allowance)
+        check_spend(spent, allowance)
         self.shared_left -= spent
         self._spent += spent
 
 
-def _fraction_ceiling(total: int, fraction: Fraction) -> int:
+def fraction_ceiling(total: int, fraction: Fraction) -> int:
     numerator = total * fraction.numerator
     return (numerator + fraction.denominator - 1) // fraction.denominator
 
 
-def _check_spend(spent: int, allowance: int) -> None:
+def check_spend(spent: int, allowance: int) -> None:
     if type(spent) is not int or not 0 <= spent <= allowance:
         raise ValueError("adapter expansion spend must be within its allowance")
