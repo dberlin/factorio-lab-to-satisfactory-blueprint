@@ -15,6 +15,7 @@ from fractions import Fraction
 from itertools import count, islice
 from typing import TYPE_CHECKING, NamedTuple
 
+from flab2bp.layout import budget
 from flab2bp.layout.route_feedback import Cell
 
 if TYPE_CHECKING:
@@ -139,12 +140,12 @@ class Counters:
     selected_expansion_s: float = 0.0
 
 
-class Deadline(Exception):
-    pass
+class Deadline(budget.BudgetExhausted):
+    """The proposal search's own clock ran out; not a proof of impossibility."""
 
 
 def check_deadline(deadline: float | None) -> None:
-    if deadline is not None and time.monotonic() >= deadline:
+    if budget.expired(deadline, time.monotonic):
         raise Deadline
 
 

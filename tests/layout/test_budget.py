@@ -86,3 +86,47 @@ def test_a_transport_refusal_is_a_budget_exhausted_and_a_runtime_error() -> None
     assert isinstance(refusal, work.BudgetExhausted)
     assert isinstance(refusal, RuntimeError)
     assert str(refusal) == "detail"
+
+
+def test_each_module_predicate_reads_its_own_time_attribute(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A module-scoped fake clock must still reach the module's predicate.
+
+    tests/layout/hierarchy/test_compose.py replaces ``compose.time`` wholesale;
+    a predicate that resolved ``time.monotonic`` inside flab2bp.layout.budget
+    would read the real clock and the test would pass for the wrong reason.
+    """
+    from types import SimpleNamespace
+
+    from flab2bp.layout import compact_seed, finalize, routing_domain
+    from flab2bp.layout.hierarchy import compose
+
+    cases = (
+        (routing_domain, routing_domain._expired),
+        (compact_seed, compact_seed._deadline_reached),
+        (finalize, finalize._completion_expired),
+        (compose, compose._spent),
+    )
+    for module, predicate in cases:
+        monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=lambda: 50.0))
+        assert predicate(100.0) is False, module.__name__
+        assert predicate(None) is False, module.__name__
+        monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=lambda: 100.0))
+        assert predicate(100.0) is True, module.__name__
+
+
+def test_check_deadline_raises_the_proposals_deadline_from_the_shared_rule(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from flab2bp.layout import routing_proposals
+
+    monkeypatch.setattr(routing_proposals, "time", SimpleNamespace(monotonic=lambda: 99.0))
+    routing_proposals.check_deadline(100.0)
+    routing_proposals.check_deadline(None)
+    monkeypatch.setattr(routing_proposals, "time", SimpleNamespace(monotonic=lambda: 100.0))
+    with pytest.raises(routing_proposals.Deadline):
+        routing_proposals.check_deadline(100.0)
+    assert issubclass(routing_proposals.Deadline, work.BudgetExhausted)
