@@ -1,0 +1,333 @@
+# Satisfactory target: FactorioLab URL to stacked Satisfactory blueprints
+
+Date: 2026-09-13
+Status: design, awaiting user review
+Owner: flab2bp
+
+## 1. Goal
+
+Turn a FactorioLab `/sfy/` URL into an ordered stack of Satisfactory blueprints
+(`.sbp` + `.sbpcfg` pairs) that the player loads through the Blueprint Designer,
+places one on top of the other, and connects at the edges. The stack runs the
+FactorioLab flow exactly. Every emitted file decodes back to the placement that
+produced it, and every placement passes a validator that is stricter than the
+game.
+
+The DSP side of this repository (`flab2bp.dsp`, `flab2bp.layout`) is the model:
+FactorioLab's flow is authoritative, a refusal is a result, invalid builds
+withhold the blueprint, and game constants come from the game install rather
+than from hand-typed tables.
+
+## 2. Decisions already taken
+
+| Decision | Ruling |
+|---|---|
+| Where it lives | Same repository, new package `flab2bp.sfy`; `lab/`, `rates/`, `bench/` and the web shell are reused with a game parameter. The DSP layout engine is not reused: it is tile-and-sorter shaped. |
+| Designer size limit | The factory is tiled into several designer-sized blueprints that stack vertically and auto-connect. Horizontal tiling is out of scope. |
+| Designer size choice | Chosen in the web UI and by a CLI flag, not from the URL (FactorioLab does not carry it). Mk1 = 4x4x4 foundations = 32 m cube, Mk2 = 40 m, Mk3 = 48 m. Default Mk1. |
+| Scope of logistics | Solid items on belts, splitters, mergers and lifts; fluids on pipes with junctions and pumps; power poles and wires inside every blueprint; foundation slabs under every level. |
+| Legality | Extracted from the game (Docs.json plus cooked assets), never hand-typed. On top of the game's rules we forbid belts passing through belts even though the game allows it. Minor clipping within a few cm at a belt's own connection point is allowed. |
+| Lifts into ports | A lift may connect directly to a machine or splitter/merger port, and its top may face a different direction than its bottom (a zero-footprint 90 or 180 degree turn). We allow this wherever the game's rules allow it, even though it is fiddly to do by hand. |
+| Rates | FactorioLab's chosen flow is consumed, never re-derived (same rule as DSP). `SatisfactorySolver` is not used. |
+| Strategies | Three layout strategies behind one protocol, raced like the DSP strategy race; the smallest valid stack wins. |
+| Verification | The user paste-tests on a Windows machine and reports. This box cannot run the game. |
+
+## 3. What the game install provides
+
+`~/Satisfactory` is a Windows Epic build (build 493833 in the newest fixture).
+`CommunityResources/` holds:
+
+- `Docs/en-US.json` (UTF-16, 10.6 MB): 114 native classes, 872 `FGRecipe`,
+  547 `FGBuildingDescriptor`, every buildable class with `mClearanceData`
+  (500 of 539 carry boxes, typed hard or `CT_Soft`, with a relative
+  transform), `mPowerConsumption`, `mManufacturingSpeed`, belt `mSpeed`
+  (120..2400 items/min for Mk1..Mk6), lift `mMeshHeight`, foundation
+  `mWidth/mDepth/mHeight`, designer `mDimensions` (4/5/6 foundations).
+  Docs.json does NOT carry connection component positions
+  (`mFactoryInputConnections` is empty).
+- `Headers.zip`: the game's public C++ headers. The blueprint container,
+  save custom versions and hologram limits are declared there.
+- `FactoryGame.usmap`: the property mapping needed to read the cooked
+  Blueprint assets in `FactoryGame/Content/Paks/*.pak|utoc|ucas`.
+- `CustomVersions.json`: engine custom version GUIDs and values.
+
+`dotnet 10` is installed, so a CUE4Parse extractor can read the paks.
+
+## 4. Blueprint file format (decoded from headers and 19 community fixtures)
+
+All integers are little-endian. `FString` is `int32 n` then `n` bytes
+(ANSI, NUL-terminated) or, when `n < 0`, `-n` UTF-16 code units.
+
+### 4.1 `.sbp` container (`FBlueprintSaveData`)
+
+```
+int32   header version        (FBlueprintHeader::Type, 2 = AddedUsedRecipes)
+int32   SaveVersion           (FSaveCustomVersion, 52 and 60 seen)
+int32   BuildVersion          (463028 .. 493833 seen)
+FIntVector Dimensions         (foundations, e.g. 4,4,4)
+TArray<FBlueprintItemAmount> Cost      { FObjectReferenceDisc{FString LevelName, FString PathName}; int32 Amount }
+TArray<FObjectReferenceDisc> RecipeRefs
+FSaveObjectVersionData        { uint32 version=0; FPackageFileVersion{int32 ue4, int32 ue5};
+                                int32 licensee; FEngineVersion{u16 major,u16 minor,u16 patch,u32 changelist,FString branch};
+                                FCustomVersionContainer (Optimized format) }
+compressed chunk stream       (repeated until EOF)
+```
+
+Each chunk: `uint32 tag 0x9E2A83C1; int32 0x22222222; int64 max chunk 131072;
+uint8 compression 3 (zlib); int64 compressed, int64 uncompressed, int64
+compressed, int64 uncompressed; zlib bytes`. Concatenated decompressed payload:
+
+```
+int32 total size (payload length - 4)
+int32 TOC size
+int32 object count
+object headers...
+int32 blob size
+int32 object count
+per object: int32 size, bytes
+```
+
+Object header: `int32 type (0 component, 1 actor); FString class path;
+FString level; FString instance path; int32 object flags;` then for actors
+`int32 needTransform; FQuat (4 x float32); FVector pos (3 x float32);
+FVector scale (3 x float32); int32 placedInLevel`, for components
+`FString parent actor path`. Positions are cm; the biofuel fixture spans
+-1200..1200 with foundations at z=50.
+
+Object data: `FString level; FString path;` then UE tagged properties
+(`StructProperty`, `ObjectProperty`, `IntProperty`, `ByteProperty`,
+`FloatProperty`, `ArrayProperty`, `EnumProperty`, terminated by `None`)
+followed by class-specific custom serialization. Properties seen in the
+fixtures include `mSplineData` (array of `SplinePointData` with `Location`,
+`ArriveTangent`, `LeaveTangent`), `mConnectedComponent` (object reference to
+the peer connection component), `mCurrentRecipe`, `mBuiltWithRecipe`,
+`mCustomizationData`, `mSavedDirections`, `mSortRules`, inventories.
+
+Foundations, walls, belts, lifts, splitters, mergers, storage and machines are
+all actors; connection, inventory, power and legs components are components
+under them. Belts link to machine ports by object reference, so port
+geometry only matters for the spline endpoints.
+
+### 4.2 `.sbpcfg` (`FBlueprintRecord`)
+
+`int32 ConfigVersion (6 = LatestVersion); FString BlueprintName; FString
+BlueprintDescription; FPersistentGlobalIconId IconID; FLinearColor Color;
+FString category; FString subcategory; int32 Priority; FPlayerInfoHandle
+LastEditedBy` (exact field order and the icon/handle encodings are confirmed
+byte-exactly against the fixtures during Milestone 1; the fixture is 101
+bytes).
+
+### 4.3 Guarantees
+
+- The reader decodes every fixture in `tests/fixtures/sfy/` completely,
+  including every property blob.
+- The writer re-encodes every fixture byte-identically (the DSP gate).
+- Every emitted blueprint decodes to the Placement that produced it.
+- Save/build version numbers are writer parameters; the default is the
+  newest fixture's pair, and the user's game build is confirmed at
+  Milestone 1.
+
+## 5. Game data and legality registry
+
+### 5.1 Sources
+
+- `Docs.json` (parsed once, cached): recipes, ingredients, products,
+  duration, producers, variable power constants; per buildable: clearance
+  boxes with type and transform, power, speed, belt/lift/pipe speeds, foundation
+  sizes, designer dimensions, potential (overclock) limits and shard slots,
+  production boost (somersloop) slots.
+- `tools/sfy-extract/` (dotnet, CUE4Parse + `FactoryGame.usmap`): for every
+  `Build_*_C` and its hologram: connection components (factory belt, pipe,
+  power) with direction (`FCD_INPUT/OUTPUT/ANY/SNAP_ONLY`), relative
+  transform, connector clearance and connection class; belt hologram
+  `mBendRadius`, `mMaxSplineLength` (5600.1 cm), `mMaxIncline`; lift hologram
+  `mStepHeight`, `mMinimumHeight`, `mMaximumHeight`,
+  `mMinimumHeightWithVerticalConnection`, `mFirstStepYaw` semantics; pipe
+  hologram `mBendRadius`, `mBendRadius2D` (199), `mMinBendRadius` (75), max
+  length; wire `mMaxLength` per pole class and pole connection counts;
+  hologram grid and rotation step; passthrough classes and thickness.
+- Rules that the headers state only in code (which connection directions a
+  lift may attach to, how the lift's top yaw is chosen) are transcribed into
+  the registry with a citation to the header line, and every such rule gets an
+  in-game confirmation entry in the Milestone 1 checklist.
+
+### 5.2 Registry shape
+
+`src/flab2bp/sfy/data/registry.json` is committed with a provenance stamp
+(game build, Docs.json hash, extractor version). Python loads it into frozen
+dataclasses (`Buildable`, `Port`, `ClearanceBox`, `BeltRules`, `LiftRules`,
+`PipeRules`, `PowerRules`, `Designer`). No module outside `flab2bp.sfy`
+imports the JSON directly.
+
+### 5.3 Cross-checks (tests)
+
+- Extracted port transforms are compared with belt spline endpoints in the
+  fixture corpus (belt endpoint minus machine transform), the same oracle idea
+  as the DSP collider cross-validation.
+- Every recipe's producer class exists in the buildable registry.
+- Every clearance box in Docs.json parses; unknown clearance types fail the
+  test rather than defaulting.
+
+## 6. FactorioLab side
+
+- `lab/` gains a `Game` value (`dsp`, `sfy`) carried by `LabRequest`; the URL
+  parser, dataset and hash URLs, `params.py`, CLI help and `web/jobs.py`
+  validation use it instead of the hard-coded `dsp` id.
+- FactorioLab's `sfy` dataset flags are `overclock`, `somersloop`,
+  `resourcePurity`, `power`, `consumptionAsDrain`; the URL parser's
+  `MachineSetting.overclock` and module settings already carry them.
+- Flow capture and CSV parsing are unchanged; provenance rules are unchanged.
+
+## 7. Rates and BuildSpec (sfy)
+
+- Machine counts come from the flow. Fractional counts round up; the last
+  machine of each recipe row is underclocked so the row's rate equals the
+  flow exactly (no shards needed for underclock).
+- URL overclock above 100 % is emitted as the machine's requested clock and
+  reported as "N power shards to insert". URL somersloops are emitted as the
+  production boost setting and reported the same way. Whether the game keeps
+  these settings on paste without the items is confirmed at Milestone 2; if
+  not, the report becomes the only carrier and the clock is capped at 100 %.
+- Belt tier per run: floor = URL belt, ceiling = URL max belt; pipes likewise
+  (300 and 600 m3/min). Runs whose demand exceeds the ceiling are split, and a
+  demand above what one splitter/merger tree can carry is a refusal with the
+  cause named.
+- Power: every machine's consumption is summed per blueprint and reported;
+  the blueprint contains poles and wires but no generators.
+
+## 8. Layout model shared by all strategies
+
+### 8.1 Space
+
+Coordinates are cm. A blueprint is the designer volume: `8 m x dims` in
+X, Y and Z. Each blueprint holds one or more internal levels. A level is a
+concrete slab of 8 m x 1 m foundations at a pitch chosen from the tallest
+object on that level plus belt clearance. Machines are placed on the
+extracted hologram grid with yaws in 90 degree steps.
+
+### 8.2 Objects
+
+Machine (class, transform, recipe, clock, boost), belt run (polyline turned
+into spline points with tangents, tier), lift (bottom transform, height,
+direction, top yaw), splitter/merger, smart splitter where a mixed input must
+be sorted, pipe run, pipe junction, pump, valve, power pole with wires, wall
+power outlet, foundation, wall, and passthrough where a lift or pipe crosses a
+slab.
+
+### 8.3 Stacking contract
+
+One wall of every blueprint is the bus wall. Every item that must cross from
+blueprint N to N+1 owns a fixed column on that wall at a spacing of one belt
+pitch. Lifts on those columns end exactly on the ceiling plane, and blueprint
+N+1 places its receiving lifts or ports on the same columns at z = 0, so the
+game's automatic connection joins them when N+1 is placed on N. External
+inputs enter blueprint 1 on the opposite face at fixed spacings; final outputs
+leave on a third face. The manifest lists every column, face and item.
+
+Whether automatic connection accepts a lift-to-lift or lift-to-port pairing at
+the boundary is confirmed in game at Milestone 3. Fallback: a short belt stub
+on each side of the boundary, which automatic connection is documented to
+bridge.
+
+### 8.4 Lifts as vertical turns
+
+Because lifts may attach directly to a port and their top may face any of the
+four directions, a lift is the preferred way to change direction or level with
+zero footprint. The reference pattern (user's screenshot, 2026-09-13) is a
+stack of floors where lifts drop through floor passthroughs straight into the
+ports of machines and splitters on the level below, with no horizontal belt at
+either end. The router treats a lift as an edge whose endpoints carry
+independent yaws, subject to the extracted rules: minimum height with a
+vertical connection, step height multiples, maximum height, and which
+connection directions accept a lift. Machines are therefore placed so that
+their ports sit under the bus columns or under the row above wherever that
+removes a belt run.
+
+## 9. Strategies
+
+All strategies implement one `LayoutStrategy` protocol
+(`lay_out(spec, designer, budget) -> Placement | refusal`), run under the
+existing deadline rule, and are raced; the smallest valid stack wins (fewest
+blueprints, then total occupied volume, then belt length).
+
+1. **Manifold rows.** Each recipe row is N identical machines fed by a splitter
+   chain and drained by a merger chain along the row. Levels are a 1D packing of
+   rows; blueprints are a 1D packing of levels. Trunk belts between rows, the
+   bus wall and the external faces are routed on a 1 m lattice. Rows longer than
+   the wall are split.
+2. **Grid-routed placement.** Machines are packed per level on the hologram
+   grid (greedy then CP-SAT rectangle packing on integer grid cells), every belt
+   is routed by a 3D orthogonal router on the lattice with lifts as vertical
+   edges and lift-turns at ports.
+3. **Continuous CP-SAT.** One model per blueprint: machine positions as integer
+   grid multiples, 3D no-overlap on hard clearance boxes, belt length bounds,
+   port-to-port distance bounds; spline routing as a post-pass with collision
+   checks feeding no-good cuts back into the model. This is the experiment that
+   tests whether CP-SAT packing and routing is usable at Satisfactory's scale.
+
+Strategy 1 ships first because it is the one players build by hand and the one
+most likely to pass the in-game gates early.
+
+## 10. Validation (our gate, stricter than the game)
+
+- Hard clearance boxes never intersect; soft boxes may intersect only soft
+  boxes.
+- Belt clearance capsules (built from the spline like the game's
+  `CreateClearanceData`) never intersect other belts or hard boxes, except
+  within a small tolerance (target 5 cm, tuned against fixtures) at the belt's
+  own connection points. Belts through belts are refused.
+- Per belt run: length <= max spline length, bend radius >= registry, incline
+  <= max incline. Per lift: height within min/max, a step multiple, the
+  vertical-connection minimum when attached to a port.
+- Every port is connected exactly once with matching direction; every net's
+  throughput <= its tier; pipes: flow <= tier and head lift within pump limits.
+- Wires <= max length and pole connection counts respected; every machine is
+  on a powered circuit that reaches the wall outlet.
+- Everything is inside the designer volume; a slab lies under every machine
+  foot; passthroughs exist wherever a lift or pipe crosses a slab.
+- The stacking contract holds: bus columns match across consecutive
+  blueprints, external faces carry exactly the flow's inputs and outputs.
+- Round trip: `decode(encode(placement)) == placement`.
+
+A validation failure withholds the blueprint and lists the errors, matching
+the DSP CLI and web behaviour.
+
+## 11. Web UI and CLI
+
+- CLI: `flab2bp <sfy url> --designer mk1|mk2|mk3 -o DIR` writes the stack and
+  manifest; `--zip` writes one archive.
+- Web: game selector, designer size selector, stack viewer (existing three.js
+  viewer with box geometry and belt ribbons), per-blueprint and zip download,
+  the manifest rendered as placement instructions.
+
+## 12. Verification and milestones
+
+Automated gates:
+
+- Format: every fixture decodes; every fixture re-encodes byte-identically.
+- Registry: extractor output is reproducible; port cross-check passes.
+- Corpus: a set of FactorioLab `sfy` URLs from early to late tiers; the gate
+  passes when every URL yields a valid stack within budget or a refusal with a
+  named cause.
+
+In-game checkpoints (user):
+
+1. A hand-built one-constructor blueprint with a belt and a pole loads and
+   places.
+2. A single-blueprint chain runs at the flow's rate.
+3. A two-blueprint stack auto-connects when placed.
+
+Milestones, each with its own plan:
+
+- M1 Format and registry: codec, extractor, fixtures, checkpoint 1.
+- M2 Lab game parameter, spec, rates, manifold rows in one blueprint,
+  validator, checkpoint 2.
+- M3 Stacking contract, lifts and passthroughs, manifest, zip, web UI,
+  checkpoint 3.
+- M4 Fluids, power and foundations completed across strategies.
+- M5 Grid-routed and continuous CP-SAT strategies, the race, the bench.
+
+## 13. Out of scope
+
+Horizontal tiling, trains and drones, generators, resource extraction,
+customization (paint), signs, and any mod content.
