@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import time
+from dataclasses import replace
 
 import pytest
 
+from flab2bp.lab.techs import belt_rules_for_url
 from flab2bp.layout import budget as work
-from flab2bp.layout import process_resources
+from flab2bp.layout import process_resources, routing_domain
 
 # ``budget`` holds this very module object, so patching ``usage`` here is what
 # the budget's memory probe sees. Reaching it as ``work.process_resources``
@@ -156,3 +158,66 @@ def test_a_preparation_deadline_still_carries_its_partial_result() -> None:
     assert stopped.work == 0
     assert stopped.net_index is None
     assert stopped.failures == {}
+
+
+_BELT_RULES = belt_rules_for_url("https://factoriolab.github.io/dsp/list?o=iron-ingot*60&v=11")
+
+
+def _tiny_open_canvas() -> tuple[
+    routing_domain._Canvas,
+    tuple[int, int, int],
+    tuple[int, int, int],
+    tuple[int, int, int, int],
+]:
+    """A three-tile corridor with one free ground path from start to goal."""
+    bounds = (0, 0, 2, 0)
+    canvas = routing_domain._Canvas(
+        limit=bounds, belt_rules=replace(_BELT_RULES, vertical_construction=False)
+    )
+    start, goal = (0, 0, 0), (2, 0, 0)
+    free = {start, (1, 0, 0), goal}
+    canvas.guard.update(
+        (x, 0, level)
+        for x in range(3)
+        for level in range(canvas.levels)
+        if (x, 0, level) not in free
+    )
+    return canvas, start, goal, bounds
+
+
+def test_the_search_leaf_sets_left_from_the_value_it_read() -> None:
+    """`left` after a query is the value read before it, minus the charge.
+
+    Not a decrement: if the kernel is clamped to `_MAX_SEARCH_WORK` below the
+    ledger, the two differ, and the committed refusal evidence matches the set.
+    """
+    canvas, start, goal, bounds = _tiny_open_canvas()
+    budget = work.WorkBudget(left=20_000)
+    result = routing_domain._geometric_search(canvas, [start], {goal}, {}, 1.0, bounds, budget)
+    assert result.path is not None
+    assert budget.left == 20_000 - result.work
+    assert isinstance(budget.left, int)
+
+
+def test_an_empty_ledger_refuses_before_the_kernel_runs() -> None:
+    from flab2bp.layout import route_feedback
+
+    canvas, start, goal, bounds = _tiny_open_canvas()
+    budget = work.WorkBudget(left=0)
+    result = routing_domain._geometric_search(canvas, [start], {goal}, {}, 1.0, bounds, budget)
+    assert result.path is None
+    assert result.kind is route_feedback.RouteFailureKind.BUDGET
+    assert budget.left == 0
+
+
+def test_a_ledger_without_a_left_is_unbounded_like_no_ledger_at_all() -> None:
+    """`left=None` is what `budget=None` was: a ledger carried for its clock."""
+    canvas, start, goal, bounds = _tiny_open_canvas()
+    budget = work.WorkBudget(deadline=None)
+    assert routing_domain._geometric_search(canvas, [start], {goal}, {}, 1.0, bounds, budget).path
+    assert budget.left is None
+
+
+def test_no_budget_still_means_unbounded() -> None:
+    canvas, start, goal, bounds = _tiny_open_canvas()
+    assert routing_domain._geometric_search(canvas, [start], {goal}, {}, 1.0, bounds).path

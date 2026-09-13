@@ -4850,7 +4850,7 @@ def _geometric_search(
     history: dict[tuple[int, int, int], float],
     pressure: float,
     bounds: tuple[int, int, int, int],
-    budget: dict[str, int] | None = None,
+    budget: budget_module.WorkBudget | None = None,
     deadline: float | None = None,
     blame: dict[tuple[int, int, int], float] | None = None,
     grid: _Grid | None = None,
@@ -4869,8 +4869,12 @@ def _geometric_search(
     history are borrowed only for this query.
 
     Work charges newly prepared cells plus processed active intervals against
-    both the per-query cap and shared ledger. Only complete exhaustion supplies
-    wall evidence. Budget or deadline termination never proves infeasibility.
+    both the per-query cap and the shared ledger's ``WorkBudget.left``, which
+    is read before the kernel and SET to that reading minus the charge after
+    it, never decremented. A ``left`` of ``None`` -- like no budget at all --
+    is unbounded; the ledger is then only along for its deadline. Only complete
+    exhaustion supplies wall evidence. Budget or deadline termination never
+    proves infeasibility.
     """
     forbidden_cells = frozenset(forbidden)
     goals = {goal for goal in goals if 0 <= goal[2] < canvas.levels}
@@ -4890,7 +4894,7 @@ def _geometric_search(
         for start in starts
     ):
         return _PathSearchResult(None, RouteFailureKind.DYNAMIC_ACCESS, (), 0)
-    if budget is not None and budget["left"] <= 0:
+    if budget is not None and budget.left is not None and budget.left <= 0:
         return _PathSearchResult(None, RouteFailureKind.BUDGET, (), 0, BudgetCause.ALLOWANCE)
     if _expired(deadline):
         return _PathSearchResult(None, RouteFailureKind.BUDGET, (), 0, BudgetCause.DEADLINE)
@@ -4979,7 +4983,7 @@ def _geometric_search(
         return _PathSearchResult(None, RouteFailureKind.DYNAMIC_ACCESS, (), 0)
 
     # The kernel returns its exact charge on every normal exit.
-    start_left = budget["left"] if budget is not None else 1 << 62
+    start_left = budget.left if budget is not None and budget.left is not None else 1 << 62
 
     world = GeometricWorld.from_grid(flat, flags, transitions)
     max_work = min(_MAX_SEARCH_WORK, start_left)
@@ -4996,8 +5000,8 @@ def _geometric_search(
     )
     outcome = geometric_router.summarize(result)
     work = outcome.work
-    if budget is not None:
-        budget["left"] = start_left - work
+    if budget is not None and budget.left is not None:
+        budget.left = start_left - work
     if outcome.exhausted_budget or outcome.cancelled:
         # The native search raises one limit for both bounds, so read them back
         # here: it charges exactly `max_work` and stops only when the allowance
@@ -7874,7 +7878,11 @@ def _route_all(
                 )
                 if proposed is not None:
                     return _PathSearchResult(proposed, None, (), 0)
-            private = {"left": ordinary_remaining}
+            # INTERIM: the leaf takes a typed ledger; this pass still carries a
+            # ``{"left": int}`` dict until the next task converts it. The dict
+            # is read BEFORE the call and set from that reading AFTER it, which
+            # is the leaf's own order, so the charge is unchanged.
+            private = budget_module.WorkBudget(left=ordinary_remaining)
             result = _geometric_search(
                 canvas,
                 candidates,
@@ -7892,8 +7900,9 @@ def _route_all(
                 blocking_owners=owner,
                 extra_edges=None,
             )
-            search_budget["left"] -= ordinary_remaining - private["left"]
-            ordinary_remaining = private["left"]
+            private_left = ordinary_remaining if private.left is None else private.left
+            search_budget["left"] -= ordinary_remaining - private_left
+            ordinary_remaining = private_left
             total_work += result.work
             if result.path is not None:
                 return result
@@ -7952,6 +7961,12 @@ def _route_all(
                         # Repeating its bounded prefix cannot find a new path;
                         # retain the shared quota for other nets, still refusing.
                         return replace(capped_ordinary, work=total_work)
+                    # INTERIM, as above: read the pass dict, hand the leaf a
+                    # typed ledger seeded from that reading, set the dict from
+                    # what the leaf left. Set, never decremented, so a query
+                    # clamped below the ledger charges exactly what it spent.
+                    leaf_start_left = search_budget["left"]
+                    leaf_budget = budget_module.WorkBudget(left=leaf_start_left)
                     found = _geometric_search(
                         canvas,
                         search_starts,
@@ -7959,7 +7974,7 @@ def _route_all(
                         search_history,
                         pressure,
                         bounds,
-                        search_budget,
+                        leaf_budget,
                         deadline,
                         blame,
                         search_grid,
@@ -7968,6 +7983,9 @@ def _route_all(
                         forbidden=forbidden if rejected is None else rejected,
                         blocking_owners=owner,
                         extra_edges=connector_edges,
+                    )
+                    search_budget["left"] = (
+                        leaf_start_left if leaf_budget.left is None else leaf_budget.left
                     )
                     total_work += found.work
                 if found.path is None:
@@ -12362,6 +12380,10 @@ def _route_boundary_nets(
                     continue
                 starts = sorted(access) if outward else live_boundary
                 goals = set(live_boundary) if outward else access
+                # INTERIM, as in `_search_route`: this pass still carries its
+                # ledger as a dict, so seed a typed one from it and set it back.
+                leaf_start_left = budget["left"]
+                leaf_budget = budget_module.WorkBudget(left=leaf_start_left)
                 searched = _geometric_search(
                     canvas,
                     starts,
@@ -12369,9 +12391,10 @@ def _route_boundary_nets(
                     history,
                     1.0,
                     search_bounds,
-                    budget,
+                    leaf_budget,
                     deadline,
                 )
+                budget["left"] = leaf_start_left if leaf_budget.left is None else leaf_budget.left
                 work += searched.work
                 path = searched.path
                 if path is None:
