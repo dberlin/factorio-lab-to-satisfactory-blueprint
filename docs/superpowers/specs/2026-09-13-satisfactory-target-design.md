@@ -231,17 +231,22 @@ bridge.
 
 ### 8.4 Lifts as vertical turns
 
-Because lifts may attach directly to a port and their top may face any of the
-four directions, a lift is the preferred way to change direction or level with
-zero footprint. The reference pattern (user's screenshot, 2026-09-13) is a
+Belts are used wherever a belt works: a belt run is cheaper than a lift and
+the game's bend radius allows gentle turns. A lift is required where a belt
+cannot make the turn within its bend radius, where the run must change level,
+or where a port faces the wrong way and there is no room for the belt's
+turning circle. Because lifts may attach directly to a port and their top may
+face any of the four directions, such a lift changes direction or level with
+zero footprint. One example pattern (user's screenshot, 2026-09-13) is a
 stack of floors where lifts drop through floor passthroughs straight into the
 ports of machines and splitters on the level below, with no horizontal belt at
-either end. The router treats a lift as an edge whose endpoints carry
-independent yaws, subject to the extracted rules: minimum height with a
-vertical connection, step height multiples, maximum height, and which
-connection directions accept a lift. Machines are therefore placed so that
-their ports sit under the bus columns or under the row above wherever that
-removes a belt run.
+either end; it is an example, not a rule. The router treats a lift as an edge
+whose endpoints carry independent yaws, subject to the extracted rules:
+minimum height with a vertical connection, step height multiples, maximum
+height, and which connection directions accept a lift. Strategies may place
+machines so that ports sit under bus columns or under the row above when that
+removes a belt run, and may equally keep everything on one level with belts
+when the turns fit.
 
 ## 9. Strategies
 
