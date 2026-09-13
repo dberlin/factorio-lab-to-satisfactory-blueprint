@@ -20,7 +20,14 @@ from __future__ import annotations
 from enum import StrEnum
 from fractions import Fraction
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
 # `layout.base` imports only the standard library at runtime -- `BuildSpec`
 # itself is under TYPE_CHECKING there -- so this is not a cycle.  The refusal
@@ -266,6 +273,18 @@ class BuildSpec(_Frozen):
     #: Items a group both consumes and produces.  Steady-state correct and dead
     #: on paste until primed; see :class:`SelfLoopSeed`.
     self_loop_seeds: tuple[SelfLoopSeed, ...] = ()
+
+    # JSON snapshots must not depend on frozenset iteration order after a
+    # process handoff. Python-mode dumps retain the typed unordered values.
+    @field_serializer("belt_required_edges", when_used="json")
+    def _serialize_belt_required_edges(
+        self, value: frozenset[tuple[str, str]]
+    ) -> list[tuple[str, str]]:
+        return sorted(value)
+
+    @field_serializer("lanes_requiring_split", when_used="json")
+    def _serialize_lanes_requiring_split(self, value: frozenset[str]) -> list[str]:
+        return sorted(value)
 
     @field_validator("machine_rank")
     @classmethod

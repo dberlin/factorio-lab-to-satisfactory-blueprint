@@ -25,6 +25,7 @@ interface ViewerBuilding {
 }
 
 interface ViewerBlueprint {
+  hashValid: boolean;
   buildings?: ViewerBuilding[];
   areas?: unknown[];
   header?: { headerVersion?: number };
@@ -84,9 +85,8 @@ for (const line of lines) {
     console.log(
       JSON.stringify({
         ok: true,
-        // parseBlueprint throws on checksum mismatch, so reaching here means
-        // the independent implementation accepted our MD5F.
-        hashValid: true,
+        // Parsing and checksum validity are separate decoder results.
+        hashValid: bp.hashValid,
         buildings: buildings.length,
         areas: (bp.areas ?? []).length,
         version: bp.header?.headerVersion ?? null,

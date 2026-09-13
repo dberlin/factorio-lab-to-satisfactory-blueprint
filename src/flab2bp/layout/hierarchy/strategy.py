@@ -846,13 +846,13 @@ class HierarchicalLayout:
                 sub = sub_spec(spec, entry.units, index)
                 tails[index], heads[index] = boundary_lanes(placement, sub, index)
             allocation = allocate_cuts(spec, cuts, tails, heads)
-            stats.player_fed = float(len(allocation.player_fed))
+            stats.player_fed = float(len(allocation.external))
             stats.cut_lanes = float(len(allocation.flows))
         except ContractError as exc:
             raise refuse(f"lane contract: {exc}") from exc
         except Exception as exc:  # noqa: BLE001 - preserve boundary/allocation crash handling
             raise refuse(f"composition crashed: {type(exc).__name__}: {exc}"[:400]) from exc
-        built = composed_spec(spec, blocks, player_fed=allocation.player_fed)
+        built = composed_spec(spec, blocks)
         try:
             composition = compose_mod.compose(
                 solved,

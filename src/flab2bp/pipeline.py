@@ -925,7 +925,9 @@ def build(
                 )
             )
 
-    def _solve_one(candidate: BuildSpec, sname: ExplicitStrategyName) -> Placement | NoValidLayout:
+    def _solve_one(
+        candidate: BuildSpec, sname: ExplicitStrategyName
+    ) -> tuple[Placement | NoValidLayout, strategy_race._PlacementJudgement | None]:
         """The pre-racing path, returning the refusal instead of raising it.
 
         The loop below branches on the RESULT rather than catching, so one shape
@@ -944,9 +946,16 @@ def build(
             observer=search_observer,
         )
         try:
-            return layout.lay_out(candidate, time_budget_s=time_budget_s)
+            placement = layout.lay_out(candidate, time_budget_s=time_budget_s)
+            judgement = None
+            if sname == "transport-routing":
+                from flab2bp.layout.transport_routing.strategy import TransportRoutingLayout
+
+                assert isinstance(layout, TransportRoutingLayout)
+                judgement = layout._judgement
+            return placement, judgement
         except NoValidLayout as exc:
-            return exc
+            return exc, None
 
     def _solve_serially(candidate: BuildSpec, first_index: int) -> Iterator[_Resolved]:
         """Yield one solved pair at a time, exactly as the pre-racing loop did.
@@ -960,7 +969,7 @@ def build(
         for offset, sname in enumerate(wanted):
             _announce(first_index + offset, candidate.label, sname)
             attempt_started = time.monotonic()
-            result = _solve_one(candidate, sname)
+            result, judgement = _solve_one(candidate, sname)
             yield (
                 sname,
                 first_index + offset,
@@ -968,7 +977,7 @@ def build(
                 None,
                 _serial_completion_grace(sname, islands),
                 result,
-                None,
+                judgement,
             )
 
     def _run_race(candidate: BuildSpec, candidate_workers: int) -> _CandidateRace:

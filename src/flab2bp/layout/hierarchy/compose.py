@@ -50,6 +50,7 @@ from flab2bp.layout.route_feedback import (
     RouteSettlementRefused,
 )
 from flab2bp.layout.routing_domain import (
+    _ROUTING_BUDGET,
     PortAccessDemand,
     PortAccessEvidence,
     PortAccessReservation,
@@ -66,6 +67,7 @@ from flab2bp.layout.routing_domain import (
     _reserve_coater_belt_ban,
     _reserve_port_access,
     _route_all,
+    _route_external_inputs,
     _sorter_stacks_for,
     _sorter_tiers_for,
     _Unpowerable,
@@ -915,22 +917,22 @@ def _pack_at(
 
     nets: list[_Net] = []
     for ordinal, flow in enumerate(flows):
-        src_block = blocks[flow.src.block]
         dst_block = blocks[flow.dst.block]
-        src_index = flow.src.building + src_block.base
         dst_index = flow.dst.building + dst_block.base
+        src_port = None
+        if flow.src is not None:
+            src_block = blocks[flow.src.block]
+            src_index = flow.src.building + src_block.base
+            src_port = _port(
+                building_index,
+                src_index,
+                _machines_behind(
+                    building_index, src_block, src_index, fallback_machine_counts[flow.src.block]
+                ),
+            )
         nets.append(
             _Net(
-                src=_port(
-                    building_index,
-                    src_index,
-                    _machines_behind(
-                        building_index,
-                        src_block,
-                        src_index,
-                        fallback_machine_counts[flow.src.block],
-                    ),
-                ),
+                src=src_port,
                 dst=_port(
                     building_index,
                     dst_index,
@@ -947,11 +949,16 @@ def _pack_at(
                 # returned `NetFailure` can be read back through to say which
                 # cut failed.
                 net_id=NetId(
-                    source_strip=flow.src.block,
+                    source_strip=flow.src.block if flow.src is not None else -1,
                     destination_strip=flow.dst.block,
                     item=flow.item,
-                    role=NetRole.INTERNAL,
+                    role=NetRole.INTERNAL if flow.src is not None else NetRole.EXTERNAL,
                     ordinal=ordinal,
+                ),
+                boundary_goals=(
+                    tuple(_outer_ring(canvas.limit))
+                    if flow.src is None and canvas.limit is not None
+                    else ()
                 ),
             )
         )
@@ -1775,16 +1782,39 @@ def compose(
         deadline,
         external_access=packed.external_access,
     )
+    external_nets = [net for net in nets if net.src is None]
+    internal_nets = [net for net in nets if net.src is not None]
+    route_budget = {"left": _ROUTING_BUDGET}
+    external_result = _route_external_inputs(
+        canvas, external_nets, belt_id, belt_model, bounds, deadline, route_budget
+    )
     result = _route_all(
         canvas,
-        nets,
+        internal_nets,
         belt_id,
         belt_model,
         bounds,
         deadline=deadline,
-        settle=settlement if not reservation.missing else None,
+        budget=route_budget,
+        settle=(
+            settlement
+            if not reservation.missing and external_result.status is DetailedRouteStatus.ROUTED
+            else None
+        ),
         flow_limits=RoutingFlowLimits(
-            tuple(flow.rate for flow in flows), spec.lane_capacity * spec.max_stack
+            tuple(flow.rate for flow in flows if flow.src is not None),
+            spec.lane_capacity * spec.max_stack,
+        ),
+    )
+    result = replace(
+        result,
+        routed=external_result.routed + result.routed,
+        failures=external_result.failures + result.failures,
+        expansions=external_result.expansions + result.expansions,
+        status=(
+            external_result.status
+            if external_result.status is not DetailedRouteStatus.ROUTED
+            else result.status
         ),
     )
 

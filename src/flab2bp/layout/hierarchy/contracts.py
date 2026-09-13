@@ -47,7 +47,7 @@ class LaneFlow:
     """One edge of the transportation assignment between two blocks' lanes."""
 
     item: str
-    src: LaneEnd  # a tail on the producing block
+    src: LaneEnd | None  # None is an explicitly routed external residual.
     dst: LaneEnd  # a head on the consuming block
     rate: Fraction
 
@@ -615,11 +615,10 @@ def assign_lanes(
 
 @dataclass(frozen=True)
 class CutAllocation:
-    """A wired assignment, plus what was left for the player instead."""
+    """Rated internal cuts and the exact authorized residual input lanes."""
 
     flows: list[LaneFlow]
-    #: (block index, item) pairs whose entry heads are left to the player.
-    player_fed: frozenset[tuple[int, str]]
+    external: tuple[LaneEnd, ...]
 
 
 def allocate_cuts(
@@ -628,67 +627,58 @@ def allocate_cuts(
     tails: dict[int, list[LaneEnd]],
     heads: dict[int, list[LaneEnd]],
 ) -> CutAllocation:
-    """Wire what the internal supply covers; leave a both-fed block's whole
-    demand to the player instead of demanding the tails stretch to cover it.
+    """Allocate physical heads from internal supply, then authorized imports.
 
-    Per item, ``S`` is the total internal supply -- the tails of every block
-    the cuts name as a producer.  Consumer blocks are visited IN BLOCK-INDEX
-    ORDER and served WHOLE OR NOT AT ALL: a block is served only while what is
-    left of ``S`` still covers its whole deficit ``D_b``.  That makes which
-    blocks get served DETERMINISTIC AND ORDER-STABLE rather than dependent on
-    whichever one a less careful pass happened to reach first -- but it is
-    FIRST-FIT, not a suffix rule: the pass does not stop at the first block it
-    cannot serve, so a later SMALL block is still served out of what a skipped
-    earlier LARGE one left behind.  A block that cannot be served is handed to
-    the player -- its heads are simply never offered to :func:`assign_lanes` --
-    exactly when ``item`` is one the parent spec already belts in
-    (``spec.external_inputs``).  Otherwise nothing supplies that head at all,
-    and that is a genuine :class:`ContractError`.
+    A mixed-fed lane needs two actual arrivals. Its external residual is an
+    explicit source-less flow, not a declaration that an internally connected
+    lane can magically receive player cargo. Fully external lanes already have
+    a physical root and remain protected by the composer's entry inventory.
     """
     by_item: dict[str, list[Cut]] = defaultdict(list)
     for cut in cuts:
         by_item[cut.item].append(cut)
-
-    player_fed: set[tuple[int, str]] = set()
-    served_heads: dict[int, list[LaneEnd]] = defaultdict(list)
+    flows: list[LaneFlow] = []
+    external: list[LaneEnd] = []
     for item, item_cuts in sorted(by_item.items()):
-        supply_blocks = sorted({c.src for c in item_cuts})
-        supply = sum(
-            (t.rate for src in supply_blocks for t in tails.get(src, ()) if t.item == item),
-            Fraction(0),
+        sources = sorted(
+            (
+                tail
+                for block in {cut.src for cut in item_cuts}
+                for tail in tails.get(block, ())
+                if tail.item == item and tail.rate > 0
+            ),
+            key=lambda tail: (-tail.rate, tail.block, tail.building),
         )
-        consumer_blocks = sorted({c.dst for c in item_cuts})
-        remaining = supply
-        for block in consumer_blocks:
-            block_heads = [h for h in heads.get(block, ()) if h.item == item]
-            deficit = sum((h.rate for h in block_heads), Fraction(0))
-            # THE THRESHOLD IS MEASURED AGAINST AN OVERSTATED DEMAND, KNOWINGLY.
-            # `boundary_lanes` rates a head at the block's WHOLE deficit (see
-            # its docstring), and for an item the PARENT also belts in, part of
-            # that share arrives from outside rather than from any cut --
-            # `derive_cuts` knows the difference and sizes each cut at
-            # `min(surplus, deficit)`.  So `deficit` here can exceed what the
-            # cuts actually owe this block, and a block short of 100/s with 1/s
-            # belted in by the parent and 99/s available internally is handed
-            # ENTIRELY to the player while the producer's 99/s tail dead-ends.
-            # The alternative would be to compare `remaining` against what
-            # `derive_cuts` sized for this (src, dst) pair instead of against
-            # the head sum.  It is deliberately NOT taken here: the plan
-            # mandates whole-or-nothing per (block, item), so this is not a
-            # contract violation but a coarser threshold, and changing it
-            # changes WHICH builds become player-fed -- with no measurement on
-            # this branch that could validate the change, the gate having seen
-            # exactly one player-fed pair.  Controller Ruling R16.
-            if remaining >= deficit:
-                remaining -= deficit
-                served_heads[block].extend(block_heads)
-            elif item in spec.external_inputs:
-                player_fed.add((block, item))
-            else:
-                raise ContractError(
-                    f"{item}: internal supply {supply} cannot cover block {block}'s "
-                    f"{deficit}; the parent does not belt it in"
-                )
-
-    flows = assign_lanes(cuts, tails, served_heads)
-    return CutAllocation(flows=flows, player_fed=frozenset(player_fed))
+        demands = sorted(
+            (
+                head
+                for lanes in heads.values()
+                for head in lanes
+                if head.item == item and head.rate > 0
+            ),
+            key=lambda head: (-head.rate, head.block, head.building),
+        )
+        source = 0
+        remaining = sources[0].rate if sources else Fraction(0)
+        imported = Fraction(0)
+        for head in demands:
+            want = head.rate
+            while want > 0 and source < len(sources):
+                take = min(want, remaining)
+                flows.append(LaneFlow(item, sources[source], head, take))
+                want -= take
+                remaining -= take
+                if remaining == 0:
+                    source += 1
+                    remaining = sources[source].rate if source < len(sources) else Fraction(0)
+            if want:
+                imported += want
+                if imported > spec.external_inputs.get(item, Fraction(0)):
+                    raise ContractError(
+                        f"{item}: rated lane deficits require {imported} external items/s; "
+                        f"the request authorizes {spec.external_inputs.get(item, Fraction(0))}"
+                    )
+                external.append(LaneEnd(head.block, head.building, item, want))
+                if want < head.rate:
+                    flows.append(LaneFlow(item, None, head, want))
+    return CutAllocation(flows, tuple(external))

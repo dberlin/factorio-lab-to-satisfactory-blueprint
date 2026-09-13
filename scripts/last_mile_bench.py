@@ -19,41 +19,31 @@ import hashlib
 import pickle
 import sys
 import time
+from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import cast
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from route_records import CanvasSnapshot, ClusterCase, snapshot_grid
 
 from flab2bp.layout import last_mile  # noqa: E402
-from flab2bp.layout.routing_domain import _astar  # noqa: E402
+from flab2bp.layout.routing_domain import _astar, _Grid, _PathSearchResult  # noqa: E402
 
 
-def _environment(case: dict[str, Any], budget: dict[str, int]) -> last_mile.ClusterEnvironment:
-    canvas = case["canvas"]
-    grid = case["grid"]
-
-    floor = case["budget_floor"]
-    # REPLAY THE CAPTURED DEADLINE, as a fresh absolute one.  `_astar` cuts a
-    # search short when the deadline passes, and that cut is NOT
-    # `ClusterBound.WALL` -- the only bound `_replayable` skips -- so a replay
-    # with `deadline=None` would take a different branch and report DIFFER for
-    # something the search never did.  The capture stores the seconds that were
-    # LEFT, which is the only part of a wall clock that means anything in
-    # another process; it is re-anchored here at replay start.
-    remaining = case["deadline_remaining"]
+def _environment(
+    case: last_mile.ClusterCapture, budget: dict[str, int]
+) -> last_mile.ClusterEnvironment:
+    canvas = cast(CanvasSnapshot, case.canvas).restore()
+    grid = snapshot_grid(cast(_Grid, case.grid))
+    floor = case.budget_floor
+    remaining = case.deadline_remaining
     deadline = None if remaining is None else time.monotonic() + float(remaining)
 
-    def search(index: int, constraints: frozenset[tuple[int, int, int]]) -> Any:
-        starts, goals, routing_ports = case["ends"][index]
-        # The live search ran with this net's own ports readable; without that
-        # the replay refuses starts the capture admitted and the digest differs
-        # for a reason that has nothing to do with the search.
+    def search(index: int, constraints: frozenset[tuple[int, int, int]]) -> _PathSearchResult:
+        starts, goals, routing_ports = case.ends[index]
         canvas.routing_ports = routing_ports
-        # CAP EACH SEARCH THE WAY THE LIVE PASS DOES.  A capture that ended
-        # `bound is BUDGET` because one search hit its private allowance would
-        # otherwise replay with no per-search cap, take a different branch, and
-        # report DIFFER for something that is not a regression.  Same private
-        # dict, same write-back.
         allowance = min(
             last_mile.B_LOW_LEVEL_EXPANSIONS,
             max(0, budget["left"] - floor),
@@ -63,24 +53,17 @@ def _environment(case: dict[str, Any], budget: dict[str, int]) -> last_mile.Clus
             canvas,
             list(starts),
             set(goals),
-            case["history"],
-            case["pressure"],
-            case["bounds"],
+            dict(case.history),
+            case.pressure,
+            case.bounds,
             private,
             deadline,
             {},
             grid,
-            # THE SAME SIDE INPUTS THE LIVE SEARCH HAD.  An owned start is a
-            # junction-guard cell `_astar` marks PASSABLE, and a rejected-commit
-            # cell is one it marks impassable; replaying with neither found a
-            # legal but eight-cell-longer route for one `universe-matrix`
-            # cluster and reported DIFFER for a difference the router never
-            # made.  `released_starts` stays empty because the live cluster
-            # search does not pass one either.
-            case["owned_starts"][index],
+            case.owned_starts[index],
             (),
-            case["rejected"][index] | constraints,
-            case["blocking_owners"],
+            case.rejected[index] | constraints,
+            case.blocking_owners,
         )
         budget["left"] -= allowance - private["left"]
         return found
@@ -89,10 +72,6 @@ def _environment(case: dict[str, Any], budget: dict[str, int]) -> last_mile.Clus
         search=search,
         offers=lambda _index: ({}, {}, {}),
         budget_left=lambda: budget["left"],
-        # REPLAY THE CAPTURED BOUNDS, not an unbounded run.  A case that ended
-        # BOUNDED because the shared floor was reached would otherwise replay
-        # under an infinite budget, reach PROVED, and report DIFFER for a
-        # reason that is not a regression.
         budget_floor=floor,
         expired=lambda: False,
     )
@@ -107,29 +86,36 @@ def digest(results: list[last_mile.ClusterResult]) -> str:
     return hasher.hexdigest()[:16]
 
 
-def _replayable(case: dict[str, Any]) -> bool:
+def _replayable(result: last_mile.ClusterResult) -> bool:
     """Whether the captured run's bound can be reproduced without a clock."""
-    return case["result"].bound is not last_mile.ClusterBound.WALL
+    return result.bound is not last_mile.ClusterBound.WALL
 
 
 def bench(path: Path, rounds: int, check: bool) -> int:
-    cases: list[dict[str, Any]] = pickle.loads(path.read_bytes())
+    cases: list[ClusterCase] = pickle.loads(path.read_bytes())
     if not cases:
         print("no cluster cases in this capture")
         return 1
-    replayable = [case for case in cases if _replayable(case)]
+    replayable = [case for case in cases if _replayable(case.result)]
     skipped = len(cases) - len(replayable)
     if not replayable:
         print(f"every one of {len(cases)} captured searches was wall-bounded")
         return 1
     best: tuple[float, list[last_mile.ClusterResult]] | None = None
+    matched = True
     for r in range(rounds):
         got: list[last_mile.ClusterResult] = []
         t0 = time.perf_counter()
         for case in replayable:
-            budget = {"left": case["budget_left"]}
-            got.append(last_mile.solve_cluster(case["problem"], _environment(case, budget)))
+            budget = {"left": case.capture.budget_left}
+            got.append(
+                last_mile.solve_cluster(case.capture.problem, _environment(case.capture, budget))
+            )
         dt = time.perf_counter() - t0
+        matched &= all(
+            replace(result, seconds=0.0) == replace(case.result, seconds=0.0)
+            for result, case in zip(got, replayable, strict=True)
+        )
         if best is None or dt < best[0]:
             best = (dt, got)
         nodes = sum(result.nodes for result in got)
@@ -143,10 +129,10 @@ def bench(path: Path, rounds: int, check: bool) -> int:
     truncated = 0
     runs = {1: 0, 2: 0}
     for case in replayable:
-        sizes.append(len(case["problem"].nets))
-        truncated += bool(case["problem"].truncated)
-        if case["run"] in runs:
-            runs[case["run"]] += 1
+        sizes.append(len(case.capture.problem.nets))
+        truncated += bool(case.capture.problem.truncated)
+        if case.capture.run in runs:
+            runs[case.capture.run] += 1
     print(
         f"BEST {dt:.3f}s  {len(replayable)} clusters  "
         f"(run1={runs[1]} run2={runs[2]}, skipped {skipped} wall-bounded)  "
@@ -155,11 +141,12 @@ def bench(path: Path, rounds: int, check: bool) -> int:
         + f"  digest {digest(got)}"
     )
     if check:
-        want = digest([case["result"] for case in replayable])
+        want = digest([case.result for case in replayable])
         same = digest(got)
         print(
             f"captured digest {want}   replay digest {same}   "
-            f"{'MATCH' if want == same else 'DIFFER'}"
+            f"{'MATCH' if want == same and matched else 'DIFFER'} "
+            "(all rounds: outcome, paths, nodes, work, bound; seconds measured separately)"
         )
         # Say what a MATCH is worth.  `offers` is a stub here and the commit
         # path (`_stake` + `commit_once`) is outside the capture entirely, so
@@ -169,7 +156,7 @@ def bench(path: Path, rounds: int, check: bool) -> int:
             "  (scope: the CBS search only -- `offers` is a stub and the commit "
             "path is not captured)"
         )
-        return 0 if want == same else 1
+        return 0 if want == same and matched else 1
     return 0
 
 

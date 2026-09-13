@@ -3049,25 +3049,6 @@ class TestPlacementProperties:
 
 
 class TestProliferationForbidsDirectInsertion:
-    def test_candidate_filter_rejects_belt_required_and_prefab_port_edges(
-        self,
-    ) -> None:
-        belt_required = magnetic_ring_spec().model_copy(
-            update={"belt_required_edges": frozenset({("iron-ingot", "gear")})}
-        )
-        strips = plan_strips(belt_required, strip_len=6)
-        candidates = _direct_net_candidates(strips, belt_required)
-        assert candidates, "the other eligible recipe edges keep the filter non-vacuous"
-        assert all(
-            (strips[source].recipe_id, strips[destination].recipe_id) != ("iron-ingot", "gear")
-            for source, destination in candidates
-        )
-
-        prefab = ray_receiver_spec()
-        prefab_strips = plan_strips(prefab, strip_len=6)
-        assert any(strip.takes_belt_ports for strip in prefab_strips)
-        assert _direct_net_candidates(prefab_strips, prefab) == {}
-
     def test_belt_required_edges_are_never_direct_inserted(self) -> None:
         spec = proliferated_spec()
         layout = FreeformLayout(
@@ -17324,6 +17305,8 @@ class TestASprayedLaneEitherGetsACoaterOrRefuses:
             _belt_model: int,
             *,
             policy: BandPolicy,
+            staged_static_cache: routing_domain._StagedStaticCache | None = None,
+            cancelled: Callable[[], bool] | None = None,
         ) -> list[CoaterSupplyPort]:
             seen.append(policy)
             raise routing_domain._Unseatable(

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 import time
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from functools import cache, partial
 from typing import Literal, cast
@@ -1474,6 +1474,73 @@ class _AddonProjectionContext:
     belt_position_by_index: dict[int, int]
     predecessor_by_position: dict[int, int]
     wanted_areas: tuple[tuple[int, catalog.AddonSupplyPose, PlacedBuilding, float, float], ...]
+    _belt_grids: dict[tuple[int, bool], dict[tuple[int, int], list[int]]] = field(
+        default_factory=dict, init=False, repr=False
+    )
+    _candidate_neighborhoods: dict[tuple[int, bool, int, int, int], range | tuple[int, ...]] = (
+        field(default_factory=dict, init=False, repr=False)
+    )
+
+    def candidate_belts(
+        self,
+        projection: planet.Projection,
+        area_index: int,
+        *,
+        cancelled: Callable[[], bool] | None = None,
+    ) -> range | tuple[int, ...]:
+        """Memoize one complete area on this owner's immutable belt/seat tuples."""
+        if cancelled is not None and cancelled():
+            raise ProjectionCancelled
+        column_reach, row_reach = _addon_grid_reach(projection)
+        key = (projection.band.columns, projection.rotated, column_reach, row_reach, area_index)
+        cached = self._candidate_neighborhoods.get(key)
+        if cached is not None:
+            return cached
+        result: range | tuple[int, ...]
+        if len(self.belts) <= (2 * column_reach + 1) * (2 * row_reach + 1):
+            result = range(len(self.belts))
+        else:
+            grid_key = (projection.band.columns, projection.rotated)
+            belt_grid = self._belt_grids.get(grid_key)
+            if belt_grid is None:
+                belt_grid = {}
+                longitude: float
+                latitude: float
+                for belt_position, (_belt_index, placed_belt) in enumerate(self.belts):
+                    if cancelled is not None and cancelled():
+                        raise ProjectionCancelled
+                    longitude, latitude = (
+                        (placed_belt.y, placed_belt.x)
+                        if projection.rotated
+                        else (placed_belt.x, placed_belt.y)
+                    )
+                    cell = (math.floor(longitude) % projection.band.columns, math.floor(latitude))
+                    belt_grid.setdefault(cell, []).append(belt_position)
+                if cancelled is not None and cancelled():
+                    raise ProjectionCancelled
+                self._belt_grids[grid_key] = belt_grid
+            _addon_index, _area, _addon, wanted_x, wanted_y = self.wanted_areas[area_index]
+            longitude, latitude = (
+                (wanted_y, wanted_x) if projection.rotated else (wanted_x, wanted_y)
+            )
+            target_column = math.floor(longitude) % projection.band.columns
+            target_row = math.floor(latitude)
+            positions: set[int] = set()
+            for dx in range(-column_reach, column_reach + 1):
+                for dy in range(-row_reach, row_reach + 1):
+                    if cancelled is not None and cancelled():
+                        raise ProjectionCancelled
+                    for belt_position in belt_grid.get(
+                        ((target_column + dx) % projection.band.columns, target_row + dy), ()
+                    ):
+                        if cancelled is not None and cancelled():
+                            raise ProjectionCancelled
+                        positions.add(belt_position)
+            result = tuple(sorted(positions))
+        if cancelled is not None and cancelled():
+            raise ProjectionCancelled
+        self._candidate_neighborhoods[key] = result
+        return result
 
 
 def _addon_projection_context(
@@ -1539,23 +1606,6 @@ def _projected_addon_failure_from_context(
     if not belts or not context.wanted_areas:
         return None
     radius2 = rules.ADDON_AREA_RADIUS**2
-    column_reach, row_reach = _addon_grid_reach(projection)
-
-    def transformed(x: float, y: float) -> tuple[float, float]:
-        return (y, x) if projection.rotated else (x, y)
-
-    scan_all_belts = len(belts) <= (2 * column_reach + 1) * (2 * row_reach + 1)
-    belt_grid: dict[tuple[int, int], list[int]] = {}
-    if not scan_all_belts:
-        for belt_position, (_belt_index, placed_belt) in enumerate(belts):
-            if cancelled is not None and cancelled():
-                raise ProjectionCancelled
-            longitude, latitude = transformed(placed_belt.x, placed_belt.y)
-            cell = (
-                math.floor(longitude) % projection.band.columns,
-                math.floor(latitude),
-            )
-            belt_grid.setdefault(cell, []).append(belt_position)
     belt_positions: dict[int, tuple[float, float, float]] = {}
 
     def projected_belt(belt_position: int) -> tuple[float, float, float]:
@@ -1571,7 +1621,9 @@ def _projected_addon_failure_from_context(
         belt_positions[belt_position] = projected
         return projected
 
-    for addon_index, area, addon, wanted_x, wanted_y in context.wanted_areas:
+    for area_index, (addon_index, area, addon, _wanted_x, _wanted_y) in enumerate(
+        context.wanted_areas
+    ):
         if cancelled is not None and cancelled():
             raise ProjectionCancelled
         # Addon poses are prefab-local WORLD offsets, not blueprint grid
@@ -1587,27 +1639,7 @@ def _projected_addon_failure_from_context(
             position[1] + offset[1],
             position[2] + offset[2],
         )
-        longitude, latitude = transformed(wanted_x, wanted_y)
-        target_column = math.floor(longitude) % projection.band.columns
-        target_row = math.floor(latitude)
-        candidates: Iterable[int] = (
-            range(len(belts))
-            if scan_all_belts
-            else sorted(
-                {
-                    belt_position
-                    for dx in range(-column_reach, column_reach + 1)
-                    for dy in range(-row_reach, row_reach + 1)
-                    for belt_position in belt_grid.get(
-                        (
-                            (target_column + dx) % projection.band.columns,
-                            target_row + dy,
-                        ),
-                        (),
-                    )
-                }
-            )
-        )
+        candidates = context.candidate_belts(projection, area_index, cancelled=cancelled)
         supplied = False
         line_misses: list[tuple[float, int, float]] = []
         for belt_position in candidates:

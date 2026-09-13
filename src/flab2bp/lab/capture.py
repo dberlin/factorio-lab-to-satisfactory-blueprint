@@ -365,7 +365,7 @@ _READY_STATE_JS: Final = "document.readyState"
 #: because nodriver hands back a CDP ``RemoteObject`` for anything structured,
 #: and a string round-trips exactly.
 _PROBE_JS: Final = """JSON.stringify({
-    rows: document.querySelectorAll('table.table tbody tr').length,
+    rows: document.querySelectorAll('table.lab-table tbody tr').length,
     csv: !!Array.from(document.querySelectorAll('button')).find(
         b => ((b.getAttribute('aria-label') || '') + (b.textContent || ''))
             .toLowerCase().includes('csv')),

@@ -4670,7 +4670,7 @@ class _PathSearchResult:
 def _astar(
     canvas: _Canvas,
     starts: list[tuple[int, int, int]],
-    goals: set[tuple[int, int, int]],
+    goals: Collection[tuple[int, int, int]],
     history: dict[tuple[int, int, int], float],
     pressure: float,
     bounds: tuple[int, int, int, int],
@@ -16444,28 +16444,17 @@ def _prepare_routing_problem(
         for ports in strip_in_ports
         for port in ports.values()
     ):
-        if cancelled is None:
-            coater_list = _place_coaters(
-                canvas,
-                spec,
-                strips,
-                strip_in_ports,
-                belt_id,
-                belt_model,
-                policy=policy,
-            )
-        else:
-            coater_list = _place_coaters(
-                canvas,
-                spec,
-                strips,
-                strip_in_ports,
-                belt_id,
-                belt_model,
-                policy=policy,
-                staged_static_cache=staged_static_cache,
-                cancelled=cancelled,
-            )
+        coater_list = _place_coaters(
+            canvas,
+            spec,
+            strips,
+            strip_in_ports,
+            belt_id,
+            belt_model,
+            policy=policy,
+            staged_static_cache=staged_static_cache,
+            cancelled=cancelled,
+        )
     coaters = len(coater_list)
     for coater in coater_list:
         host_strip = strip_of_belt[coater.host_belt]
@@ -17704,6 +17693,12 @@ def _place_coaters(
         ] = []
         first_refusal: _Unseatable | None = None
         lane_position = 0
+        # Prefer a complete seat assignment that does not depend on dropping
+        # any currently reachable static frame. Conditional support remains
+        # legal, but must not stop backtracking past an earlier supply approach
+        # that occupies a later lane's less projection-sensitive seat.
+        allow_conditional_frames = False
+        has_conditional_frames = False
         # A supply approach can occupy the next lane's only legal drop.
         # Search this strip's finite seat domain without revisiting prior strips
         # or mutating the canvas before the complete staged set is accepted.
@@ -17934,16 +17929,39 @@ def _place_coaters(
                         )
                     )
                 if potential_peers:
-                    projected_failure = _prospective_static_failure(
-                        (
-                            *((index, prospective[index]) for index in potential_peers),
-                            (coater_index, proposed_coater),
-                        ),
-                        static_frames,
-                        candidate_index=coater_index,
-                        cache=staged_static_cache,
-                        cancelled=cancelled,
+                    # A finalizer chooses one reachable frame, not every frame.
+                    # Retain its complete projection set: static clearance and
+                    # the addon gate below must have the SAME frame witness.
+                    static_buildings = (
+                        *((index, prospective[index]) for index in potential_peers),
+                        (coater_index, proposed_coater),
                     )
+                    clear_frames: list[_JunctionProjectionFrame] = []
+                    for frame in static_frames:
+                        frame_failure = _prospective_static_failure(
+                            static_buildings,
+                            (frame,),
+                            candidate_index=coater_index,
+                            cache=staged_static_cache,
+                            cancelled=cancelled,
+                        )
+                        if frame_failure is None:
+                            clear_frames.append(frame)
+                        elif projected_failure is None:
+                            projected_failure = frame_failure
+                    if (
+                        clear_frames
+                        and len(clear_frames) < len(static_frames)
+                        and not allow_conditional_frames
+                    ):
+                        has_conditional_frames = True
+                        failure_reasons.append(
+                            f"the {item} seat depends on conditional static frame support"
+                        )
+                        continue
+                    if clear_frames:
+                        static_frames = tuple(clear_frames)
+                        projected_failure = None
                 if projected_failure is not None:
                     peer_index = next(
                         (index for index in projected_failure.buildings if index != coater_index),
@@ -18108,6 +18126,14 @@ def _place_coaters(
                         ),
                     )
                 if lane_position == 0:
+                    if has_conditional_frames and not allow_conditional_frames:
+                        # The preferred finite assignment domain is exhausted.
+                        # Explore the remaining legal conditional assignments;
+                        # this is not a geometry refusal or a new layout attempt.
+                        allow_conditional_frames = True
+                        next_options = [0] * len(items)
+                        first_refusal = None
+                        continue
                     raise first_refusal
                 # The first branch's collider witness remains useful evidence,
                 # but it does not prove a clearance lift or a hard no-good for
@@ -18183,6 +18209,31 @@ def _place_coaters(
     for frame in final_frames:
         if cancelled is not None and cancelled():
             raise _PreparationDeadline
+        # Later seats change the survivor extent and therefore the reachable
+        # projections. The complete static set and all addon terminals must
+        # share one frame before any staged object is committed.
+        framed_static = tuple(
+            (
+                index,
+                finalize.materialize_frame_building(
+                    building, bounds=frame.bounds, candidate=frame.candidate
+                ),
+            )
+            for index, building in enumerate(prospective)
+            if not catalog.is_belt(building.item_id) and not catalog.is_sorter(building.item_id)
+        )
+        static_failure = finalize.first_projected_static_failure(
+            framed_static,
+            frame.projections,
+            _clean_contexts=staged_static_cache.clean_contexts,
+            _box_cache=staged_static_cache.boxes,
+            _placed_cache=staged_static_cache.placed,
+            cancelled=cancelled,
+        )
+        if static_failure is not None:
+            if final_addon_failure is None:
+                final_addon_failure = static_failure
+            continue
         final_frame_failure: finalize.ProjectionFailure | None = None
         frame_failed_candidate: _StagedCoater | None = None
         for candidate in staged:
@@ -18219,8 +18270,8 @@ def _place_coaters(
         raise _Unseatable(
             f"the {candidate.port.item} coater at "
             f"({candidate.port.host_x}, {candidate.port.host_y}, "
-            f"z={candidate.port.host_z}) loses a projected supply belt after "
-            "the complete coater set fixes the final frame",
+            f"z={candidate.port.host_z}) has no shared static/addon projection "
+            "after the complete coater set fixes the final frame",
             failure=final_addon_failure,
             exact_retry_evidence=_exact_retry_evidence(
                 "seating",

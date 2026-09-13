@@ -17,6 +17,7 @@ from flab2bp.layout.base import (
     ProjectionFailureRecord,
 )
 from flab2bp.layout.belt_tiers import retier_belts
+from flab2bp.layout.strategy_race import _PlacementJudgement
 from flab2bp.spec import BuildSpec
 
 from .budget import TransportRefusal, WorkBudget
@@ -28,6 +29,7 @@ class TransportRoutingKernel:
     def __init__(self, *, belt_rules: catalog.BeltAltitudeRules, band_policy: BandPolicy) -> None:
         self.belt_rules = belt_rules
         self.band_policy = band_policy
+        self._judgement: _PlacementJudgement | None = None
 
     def lay_out(
         self,
@@ -36,6 +38,7 @@ class TransportRoutingKernel:
         time_budget_s: float = 15.0,
         absolute_deadline: float | None = None,
     ) -> Placement:
+        self._judgement = None
         if not math.isfinite(time_budget_s) or time_budget_s <= 0:
             raise ValueError("transport-routing requires a finite positive time budget")
         deadline = (
@@ -99,8 +102,18 @@ class TransportRoutingKernel:
             )
             stage = "certification"
             budget.check()
+            placement = replace(placement, completion=PlacementCompletion.COMPACTED_AND_FINALIZED)
+            certification_started = time.monotonic()
+            spec_json = spec.model_dump_json()
             report = validate.certify(
                 placement, spec, belt_rules=self.belt_rules, expect_power=True
+            )
+            self._judgement = _PlacementJudgement(
+                placement,
+                spec_json,
+                self.belt_rules,
+                report,
+                time.monotonic() - certification_started,
             )
             if report.errors or report.skipped:
                 raise TransportRefusal(
@@ -156,4 +169,4 @@ class TransportRoutingKernel:
         placement.stats["belt_tiles"] = sum(
             catalog.is_belt(building.item_id) for building in placement.buildings
         )
-        return replace(placement, completion=PlacementCompletion.COMPACTED_AND_FINALIZED)
+        return placement

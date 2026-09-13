@@ -25,11 +25,9 @@ from flab2bp.layout.base import NoValidLayout, PlacedBuilding, Placement, Placem
 from flab2bp.layout.freeform import FreeformLayout
 from flab2bp.layout.hierarchy import compose as compose_mod
 from flab2bp.layout.hierarchy import dispatch, strategy
-from flab2bp.layout.hierarchy.contracts import CutAllocation, LaneEnd, LaneFlow, allocate_cuts
+from flab2bp.layout.hierarchy.contracts import LaneFlow
 from flab2bp.layout.hierarchy.partition import (
-    Cut,
     Unit,
-    composed_spec,
     derive_cuts,
     initial_partition,
     split_block,
@@ -1096,10 +1094,9 @@ def _starved_chain_spec() -> BuildSpec:
     Three smelters make 3 ingot/s; two gear machines and two magnet machines
     want 4/s between them, and the missing 1/s is what the parent belts in
     (`external_inputs["iron-ingot"]`).  At `strip_cap=1` that partitions into
-    one producer block and two single-recipe consumer blocks of 2/s each, so
-    `allocate_cuts` serves the first WHOLE and cannot serve the second -- one
-    player-fed `(block, item)` pair, which is the only shape of build that
-    reaches `composed_spec`'s `player_fed` arithmetic at all.
+    one producer block and two single-recipe consumer blocks of 2/s each.
+    The second consumer requires both the remaining internal 1/s and a real
+    external feeder carrying the authorized 1/s.
     """
     groups = (
         MachineGroup(
@@ -1141,60 +1138,8 @@ def _starved_chain_spec() -> BuildSpec:
     )
 
 
-def test_a_player_fed_block_is_declared_to_the_validator_and_certifies(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The whole player-fed path, end to end, with the declared rate pinned.
-
-    `allocate_cuts` leaves one (block, item) entirely to the player, its entry
-    heads are never offered to `assign_lanes`, `composed_spec` declares the
-    deficit those unwired heads carry, and `validate.certify` has to accept the
-    result -- which it can only do if `validate._entry_items` classifies that
-    unwired head as an EXTERNAL ENTRY run, since `_lane_balance` injects
-    `external_inputs` into no other kind of run and `flow.external_entry_points`
-    demands a reachable entry for every declared external item.  Nothing else
-    on this branch executes that line: every gate cell refused at or before the
-    router.
-
-    THE DECLARED RATE IS PINNED EXACTLY, not bounded.  It is the whole build's
-    own make/take deficit (1/s, which is also what the parent belts in) PLUS
-    the player-fed block's whole deficit (2/s).  The 3/s that makes is one more
-    than the 2/s the unwired heads physically want, and that one is the
-    whole-or-nothing rule's stranded remainder: the producer's third ingot per
-    second has no consumer left to be wired to.  Over-declaring is the safe
-    direction -- both `flow.conservation` clauses convict only on a SHORTFALL
-    -- but it is arithmetic, and an inequality would not have noticed a factor
-    in it.  Under-declaring is NOT safe, and that is what makes this an
-    integration test rather than an arithmetic one: dropping the player-fed
-    term convicts `flow.conservation` with "4 machine(s) consume 4 items/s of
-    iron-ingot but only 3 items/s ... can reach them", because only 2/s of the
-    production can reach a consumer at all.
-    """
+def test_mixed_supply_composition_certifies_against_the_original_request() -> None:
     spec = _starved_chain_spec()
-    seen: dict[str, object] = {}
-
-    def spy_allocate(
-        spec: BuildSpec,
-        cuts: list[Cut],
-        tails: dict[int, list[LaneEnd]],
-        heads: dict[int, list[LaneEnd]],
-    ) -> CutAllocation:
-        allocation = allocate_cuts(spec, cuts, tails, heads)
-        seen["player_fed"] = allocation.player_fed
-        return allocation
-
-    def spy_composed(
-        spec: BuildSpec,
-        blocks: list[list[Unit]],
-        *,
-        player_fed: frozenset[tuple[int, str]] = frozenset(),
-    ) -> BuildSpec:
-        built = composed_spec(spec, blocks, player_fed=player_fed)
-        seen["built"] = built
-        return built
-
-    monkeypatch.setattr(strategy, "allocate_cuts", spy_allocate)
-    monkeypatch.setattr(strategy, "composed_spec", spy_composed)
     layout = HierarchicalLayout(
         belt_rules=_BELT_RULES,
         band_policy=BandPolicy.parse("portable"),
@@ -1204,12 +1149,7 @@ def test_a_player_fed_block_is_declared_to_the_validator_and_certifies(
     )
     layout._executor_factory = ThreadPoolExecutor
     placement = layout.lay_out(spec, time_budget_s=40.0)
-
-    assert seen["player_fed"] == frozenset({(2, "iron-ingot")})
-    built = seen["built"]
-    assert isinstance(built, BuildSpec)
-    assert built.external_inputs["iron-ingot"] == Fraction(3)
-    report = validate.certify(placement, built, belt_rules=_BELT_RULES, expect_power=True)
+    report = validate.certify(placement, spec, belt_rules=_BELT_RULES, expect_power=True)
     assert report.ok, "; ".join(f"{f.check}: {f.message}" for f in report.errors[:5])
 
 

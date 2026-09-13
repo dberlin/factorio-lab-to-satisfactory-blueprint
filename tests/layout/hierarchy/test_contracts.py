@@ -82,14 +82,13 @@ def test_two_cuts_for_one_item_pool_supply_and_demand():
     assert sum(f.rate for f in flows if f.dst.building == 21) == 3
 
 
-def test_a_both_fed_item_leaves_the_unserved_block_to_the_player():
-    spec = _chain_with_external("ingot")  # ingot both produced inside and in external_inputs
+def test_external_lane_residual_cannot_exceed_authorized_imports():
+    spec = _chain_with_external("ingot")
     cuts = [Cut("ingot", 0, 1, Fraction(2)), Cut("ingot", 0, 2, Fraction(2))]
     tails = {0: [_end(0, 10, "ingot", 2)]}
     heads = {1: [_end(1, 20, "ingot", 2)], 2: [_end(2, 30, "ingot", 2)]}
-    got = allocate_cuts(spec, cuts, tails, heads)
-    assert [(f.src.building, f.dst.building, f.rate) for f in got.flows] == [(10, 20, Fraction(2))]
-    assert got.player_fed == {(2, "ingot")}
+    with pytest.raises(ContractError):
+        allocate_cuts(spec, cuts, tails, heads)
 
 
 def test_an_internal_item_short_of_supply_is_a_contract_error():
@@ -97,17 +96,22 @@ def test_an_internal_item_short_of_supply_is_a_contract_error():
     cuts = [Cut("ingot", 0, 1, Fraction(2)), Cut("ingot", 0, 2, Fraction(2))]
     tails = {0: [_end(0, 10, "ingot", 2)]}
     heads = {1: [_end(1, 20, "ingot", 2)], 2: [_end(2, 30, "ingot", 2)]}
-    with pytest.raises(ContractError, match=r"ingot.*block 2.*does not belt it in"):
+    with pytest.raises(ContractError):
         allocate_cuts(spec, cuts, tails, heads)
 
 
-def test_a_block_is_wired_entirely_or_not_at_all():
+def test_a_mixed_fed_lane_has_internal_and_external_arrivals():
     spec = _chain_with_external("ingot")
     cuts = [Cut("ingot", 0, 1, Fraction(3))]
     tails = {0: [_end(0, 10, "ingot", 3)]}
-    heads = {1: [_end(1, 20, "ingot", 2), _end(1, 21, "ingot", 2)]}  # wants 4, has 3
+    heads = {1: [_end(1, 20, "ingot", 2), _end(1, 21, "ingot", 2)]}
     got = allocate_cuts(spec, cuts, tails, heads)
-    assert got.flows == [] and got.player_fed == {(1, "ingot")}
+    assert sum(flow.rate for flow in got.flows if flow.src is not None) == 3
+    assert sum(flow.rate for flow in got.flows if flow.src is None) == 1
+    assert sum(lane.rate for lane in got.external) == 1
+    assert {
+        head.building: sum(flow.rate for flow in got.flows if flow.dst == head) for head in heads[1]
+    } == {20: 2, 21: 2}
 
 
 def _boundary_spec() -> BuildSpec:
@@ -359,7 +363,7 @@ def test_boundary_allocation_uses_surplus_beyond_splitter_not_consumer_tail():
     assert [(flow.src, flow.dst, flow.rate) for flow in allocation.flows] == [
         (LaneEnd(block=0, building=9, item="ingredientA", rate=Fraction(6)), demand, Fraction(6))
     ]
-    assert not allocation.player_fed
+    assert not allocation.external
 
 
 def _stripless_docked_placement() -> Placement:

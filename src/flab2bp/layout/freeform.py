@@ -75,7 +75,7 @@ from typing import TYPE_CHECKING, cast
 
 from ortools.sat.python import cp_model
 
-from flab2bp.dsp import catalog
+from flab2bp.dsp import catalog, colliders
 from flab2bp.layout import finalize, last_mile, routing_domain, slots, validate
 from flab2bp.layout.band_policy import BandPolicy
 from flab2bp.layout.base import (
@@ -1200,20 +1200,76 @@ def _direct_clear_columns(
     plan: LaneAttachmentPlan,
     span: int,
 ) -> frozenset[int]:
-    """Occupied lane columns clear of every sorter already seated on the lane.
+    """Occupied columns whose entire legal bridge approach clears seated sorters.
 
-    A bridge is vertical and a strip sorter leaves that same lane vertically in
-    the opposite direction. Their seated colliders can intersect only when they
-    share the lane column: sorter bodies are narrower than one tile, while the
-    end extension is along their run. Excluding the exact planned attachment
-    columns therefore proves the collider precondition before CP-SAT can reward
-    the candidate.
+    A slot seat drags the belt end sideways, so a recorded attachment column
+    does not identify its collider. Emit one machine's actual attachments with
+    the normal strip emitter and seat them with the paste transform. This also
+    preserves flanked drains and the emitter's shared machine-slot claim order.
+    Repeat only the resulting forbidden offsets at the strip's machine pitch.
+
+    Direct candidates do not constrain the bridge gap beyond sorter reach.
+    Screen that full approach, which contains every shorter legal bridge.
+    Sorter tiers currently share a collider; deduplicate the catalog shapes,
+    rather than assuming a particular tier or padding integer tap columns.
     """
+    canvas = routing_domain._Canvas()
+    # Plans are machine-relative, while emission starts at the strip's top.
+    # Keep the machine at (0, 0). Piler tails do not carry machine sorters.
+    probe = replace(strip, machines=1, pilers=())
+    belt_id = catalog.BELT_IDS[0]
+    routing_domain._emit_strip(
+        canvas,
+        probe,
+        0,
+        -probe.machine_row,
+        belt_id,
+        catalog.building(belt_id).model_index,
+        {},
+    )
+    models = {
+        colliders.build_colliders(catalog.building(tier).model_index): catalog.building(
+            tier
+        ).model_index
+        for tier in catalog.SORTER_TIERS
+    }.values()
+    start_y = plan.lane_y - catalog.SORTER_MAX_REACH if plan.lane.kind == "input" else plan.lane_y
+    end_y = plan.lane_y if plan.lane.kind == "input" else plan.lane_y + catalog.SORTER_MAX_REACH
+    queries = tuple(
+        colliders.sorter_box(colliders.SorterPreview(model, 0, start_y, 0, 0, end_y, 0))
+        for model in models
+    )
+    forbidden: set[int] = set()
+    for index in canvas.buildings.sorters():
+        seat = slots.seated_sorter(canvas.buildings[index], canvas.buildings)
+        if seat is None:
+            continue
+        for model in models:
+            target = colliders.sorter_box(replace(seat, model_index=model))
+            for query in queries:
+                # Exact bounding-sphere broad phase; only canonical OBB overlap
+                # rejects a column. No hand-sized column or collider margin.
+                radius = math.hypot(*target.half) + math.hypot(*query.half)
+                centre = target.centre[0] - query.centre[0]
+                low = math.floor((centre - radius) / colliders.GRID_ARC)
+                high = math.ceil((centre + radius) / colliders.GRID_ARC)
+                for column in range(low, high + 1):
+                    if column in forbidden:
+                        continue
+                    translated = colliders.Box(
+                        (
+                            query.centre[0] + column * colliders.GRID_ARC,
+                            query.centre[1],
+                            query.centre[2],
+                        ),
+                        query.half,
+                        query.rot,
+                    )
+                    if colliders.obb_overlap(translated, target):
+                        forbidden.add(column)
     occupied = set(range(span))
     occupied.difference_update(
-        machine * strip.pw + attachment.column
-        for machine in range(strip.machines)
-        for attachment in plan.attachments
+        machine * strip.pw + column for machine in range(strip.machines) for column in forbidden
     )
     return frozenset(occupied)
 
@@ -1314,6 +1370,8 @@ def _direct_geometry_key(strip: routing_domain.Strip) -> tuple[object, ...] | No
     * ``ph`` -- ``band_rows``, hence ``first_row_below_band``.
     * ``item_id``, ``yaw`` -- the probed building, its slot poses, its belt
       docks, and ``takes_belt_ports``.
+    * ``model_index``, ``mw``, ``mh`` -- the emitted machine whose centre and
+      exact slot seats determine every attachment collider.
     * ``cargo_domain`` -- the logical lane a flank-output plan synthesizes.
     * ``in_above``, ``in_below`` -- ``lane_of_input``, the lane's side and
       index, ``column_offset``, and ``machine_row``.
@@ -1324,14 +1382,15 @@ def _direct_geometry_key(strip: routing_domain.Strip) -> tuple[object, ...] | No
     * ``attachment_plan`` -- both attachment-plan lookups.
     * ``flank_outputs`` -- the synthesized-plan branch, ``machine_row``, and
       ``column_offset``.
+    * ``box_height``, ``port_dock_plan``, ``drain_outermost`` -- exact emitted
+      lane bounds, output rows and mechanism dispatch.
+    * ``recipe_id``, ``mode_params``, ``west_channel`` -- emitted machine job
+      and input-lane origin read by the shared strip emitter.
 
     Deliberately absent because nothing here reads them: ``group_key``,
-    ``recipe_id`` (error text only), ``model_index``, ``mw``, ``mh``,
-    ``box_height``, ``physical_variant`` (the gate below, but never read -- the
-    lane and attachment plans it produced are carried on the strip and are in
-    the key already), ``port_dock_plan`` (``input_lane_tiles`` probes the
-    building's docks, not the strip's plan), ``mode_params``, ``family_id``,
-    ``machine_start``, ``west_channel`` and ``tail_extension``.
+    ``physical_variant`` (the gate below, but never read -- the lane and
+    attachment plans it produced are carried on the strip and are in the key
+    already), ``family_id``, ``machine_start`` and ``tail_extension``.
     Every field kept is hashable -- strings, ints, floats, an enum, and frozen
     dataclasses of those.
 
@@ -1347,6 +1406,9 @@ def _direct_geometry_key(strip: routing_domain.Strip) -> tuple[object, ...] | No
         strip.pw,
         strip.ph,
         strip.item_id,
+        strip.model_index,
+        strip.mw,
+        strip.mh,
         strip.yaw,
         strip.cargo_domain,
         strip.in_above,
@@ -1356,6 +1418,12 @@ def _direct_geometry_key(strip: routing_domain.Strip) -> tuple[object, ...] | No
         strip.lane_plan,
         strip.attachment_plan,
         strip.flank_outputs,
+        strip.box_height,
+        strip.port_dock_plan,
+        strip.drain_outermost,
+        strip.recipe_id,
+        strip.mode_params,
+        strip.west_channel,
     )
 
 
@@ -1449,11 +1517,15 @@ def _direct_origin_deltas_uncached(
     source_columns: tuple[int, ...]
     if piled_tail_column is not None:
         # Emission replaces the original lane with one belt after the piler.
-        source_columns = (piled_tail_column,)
+        source_columns = tuple(
+            column
+            for column in _direct_clear_columns(source, source_plan, piled_tail_column + 1)
+            if column == piled_tail_column
+        )
     else:
         source_columns = tuple(
             column
-            for column in _direct_clear_columns(source, source_plan, source.width)
+            for column in sorted(_direct_clear_columns(source, source_plan, source.width))
             if column > last_source_injection
         )
     destination_span = destination.input_lane_tiles(destination.lane_of_input(item))

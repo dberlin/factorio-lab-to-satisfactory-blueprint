@@ -422,8 +422,8 @@ class PlacementStats(TypedDict, total=False):
     #: composition was never entered at all, and `MIN_GAP` means no committed
     #: rung can ever be 0.  Read it together with `cut_lanes`/`port_demands`.
     compose_gap: float
-    #: Hierarchical strategy: (block, item) entry heads left to the player
-    #: under the both-fed lane contract.
+    #: Hierarchical strategy: rated boundary lanes needing authorized external
+    #: cargo, including explicit residual feeders on mixed-supply lanes.
     player_fed: float
     #: Hierarchical strategy: port-access demands the composed canvas raised.
     #: Like `compose_gap`, `0` is AMBIGUOUS on a refusal: it is the sentinel for

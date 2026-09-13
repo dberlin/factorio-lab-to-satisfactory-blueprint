@@ -353,94 +353,18 @@ def sub_spec(spec: BuildSpec, block: list[Unit], index: int) -> BuildSpec:
     )
 
 
-def composed_spec(
-    spec: BuildSpec,
-    blocks: list[list[Unit]],
-    *,
-    player_fed: frozenset[tuple[int, str]] = frozenset(),
-) -> BuildSpec:
-    """The whole spec re-derived from the blocks, so composition is judged
-    against what was actually built rather than against the original counts.
-
-    Splitting can round counts up per (recipe, block), so the composed machine
-    count can exceed the original by a few machines.  That over-production is
-    real and must be visible to ``flow.conservation``, which is why this is
-    re-derived instead of reusing ``spec``.
-
-    ``player_fed`` names every (block index, item) whose entry head
-    ``contracts.allocate_cuts`` left unwired because the parent already belts
-    that item in.  The overall make/take balance below stays net-zero for such
-    an item -- it IS produced somewhere in the build, just not routed to this
-    particular block -- so each player-fed block's OWN local deficit is added
-    on top, on the understanding that the player closes exactly that lane by
-    hand.
-    """
-    by_recipe: dict[str, tuple[MachineGroup, int]] = {}
+def composed_spec(spec: BuildSpec, blocks: list[list[Unit]]) -> BuildSpec:
+    """Verify partition conservation without authorizing a different request."""
+    counts: dict[str, int] = defaultdict(int)
+    expected = {group.recipe_id: group for group in spec.groups}
     for block in blocks:
-        for u in block:
-            got = by_recipe.get(u.recipe)
-            by_recipe[u.recipe] = (u.group, (got[1] if got else 0) + u.count)
-    groups = tuple(
-        MachineGroup(
-            recipe_id=g.recipe_id,
-            machine_item_id=g.machine_item_id,
-            count=count,
-            proliferator_mode=g.proliferator_mode,
-            inputs_per_machine=dict(g.inputs_per_machine),
-            outputs_per_machine=dict(g.outputs_per_machine),
-        )
-        for g, count in (by_recipe[r] for r in sorted(by_recipe))
-    )
-    made: dict[str, Fraction] = defaultdict(Fraction)
-    took: dict[str, Fraction] = defaultdict(Fraction)
-    for g in groups:
-        for item, rate in g.outputs_per_machine.items():
-            made[item] += rate * g.count
-        for item, rate in g.inputs_per_machine.items():
-            took[item] += rate * g.count
-    external_inputs = {
-        item: rate for item, rate in spec.external_inputs.items() if not item.startswith("__")
-    }
-    for item in sorted(took):
-        deficit = took[item] - made.get(item, Fraction(0))
-        if deficit > 0:
-            external_inputs[item] = max(external_inputs.get(item, Fraction(0)), deficit)
-    for block_index, item in sorted(player_fed):
-        block = blocks[block_index]
-        block_made = sum((u.produces(item) for u in block), Fraction(0))
-        block_took = sum((u.consumes(item) for u in block), Fraction(0))
-        block_deficit = block_took - block_made
-        if block_deficit > 0:
-            external_inputs[item] = external_inputs.get(item, Fraction(0)) + block_deficit
-    outputs = dict(spec.outputs)
-    surplus = {}
-    for item in sorted(made):
-        left = made[item] - took.get(item, Fraction(0)) - outputs.get(item, Fraction(0))
-        if left > 0:
-            surplus[item] = left
-    return BuildSpec(
-        groups=groups,
-        external_inputs=external_inputs,
-        outputs=outputs,
-        surplus_outputs=surplus,
-        belt_item_id=spec.belt_item_id,
-        power_tower_item_id=spec.power_tower_item_id,
-        belt_items_per_second=spec.belt_items_per_second,
-        belt_upgrades=spec.belt_upgrades,
-        sorter_item_ids=spec.sorter_item_ids,
-        belt_stack=spec.belt_stack,
-        sorter_pick_stacks=spec.sorter_pick_stacks,
-        sorter_place_stacks=spec.sorter_place_stacks,
-        piler_unlocked=spec.piler_unlocked,
-        machine_rank=spec.machine_rank,
-        machine_moves=spec.machine_moves,
-        label=f"{spec.label}#composed",
-        belt_required_edges=spec.belt_required_edges,
-        spray_lanes=spec.spray_lanes,
-        lanes_requiring_split=spec.lanes_requiring_split,
-        coproduct_buffer_proofs=spec.coproduct_buffer_proofs,
-        self_loop_seeds=spec.self_loop_seeds,
-    )
+        for unit in block:
+            if unit.group != expected.get(unit.recipe):
+                raise ValueError(f"partition changed recipe/rate authority for {unit.recipe}")
+            counts[unit.recipe] += unit.count
+    if counts != {recipe: group.count for recipe, group in expected.items()}:
+        raise ValueError("partition changed the requested machine counts")
+    return spec
 
 
 def strip_count(spec: BuildSpec, block: list[Unit]) -> int:

@@ -757,8 +757,20 @@ def _run_race_leg(request: _StrategyRaceRequest) -> _StrategyRaceOutcome:
         )
     else:
         judgement = None
+        if request.strategy == "transport-routing":
+            from flab2bp.layout.transport_routing.runtime import TransportRoutingKernel
+
+            assert isinstance(layout, TransportRoutingKernel)
+            judgement = layout._judgement
+            if (
+                judgement is not None
+                and judgement.report_for(placement, request.spec, belt_rules=request.belt_rules)
+                is None
+            ):
+                judgement = None
         if request.settle and placement.completion is PlacementCompletion.COMPACTED_AND_FINALIZED:
-            judgement = published_judgement
+            if judgement is None:
+                judgement = published_judgement
             if (
                 judgement is None
                 or judgement.report_for(placement, request.spec, belt_rules=request.belt_rules)

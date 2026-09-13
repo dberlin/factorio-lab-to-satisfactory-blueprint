@@ -7,33 +7,35 @@ WHY A REPLAY AND NOT A CELL RUN
 
 A whole-cell A/B measures the router through CP-SAT, which is multi-worker and
 nondeterministic, so two runs route DIFFERENT packs and the seconds are not
-comparable.  Capturing the real arguments of real searches and replaying them
-gives the opposite: the same work every time, to the node, so a 3% change is
-visible -- and the paths come back as objects that can be compared cell for
-cell against the ones the captured run committed.
+comparable. Capturing real search arguments lets replay compare the same
+admitted geometry, endpoints and work policy without regenerating the pack.
+Results remain directly comparable, including cell paths and charged work;
+elapsed deadlines are retained as limits, not claimed to be deterministic.
 
-THE CORRECTNESS CHECK IS THE POINT.  ``--check`` prints a digest over every
-path returned.  A candidate that changes the digest has changed which belt gets
-laid, whatever it did to the clock, and is a different router rather than a
-faster one.
+THE CORRECTNESS CHECK IS THE POINT. ``--check`` compares every returned path,
+failure kind, blame wall and charged work count, plus the caller-visible budget
+and blame mutations, in EVERY round. Endpoint iteration order is part of that
+work contract: rebuilding a set during serialization can change native work
+even when the path cells do not change.
 
-WHAT IS CAPTURED, AND WHAT IS SHARED
+OWNED REPLAY INPUTS
 
-Only what a search MUTATES is copied: ``canvas.blocked`` (staked paths),
-``canvas.routing_ports`` (rebound per net) and the grid's ``occ`` and ``hist``.
-Everything else -- ``solid``, ``keep_out``, ``base`` -- is
-read-only for the length of a routing pass, so sharing it keeps a capture of
-sixty searches to megabytes rather than gigabytes.  ``_astar`` itself writes to
-nothing except the ``blame`` and ``budget`` the caller hands it, and the bench
-hands it fresh ones.
+Canvas containers and grid buffers are detached before the live call, using
+the existing canvas clone boundary. Fixed projection geometry is retained as
+typed constructor input, not as a live closure-bearing preparation object.
+Endpoint order, original shared allowance and remaining deadline are captured.
+Replay re-anchors that deadline, never widens the work allowance. Wall-bound
+queries can still differ on a different machine; they are reported as DIFFER,
+never silently excluded or replaced by the best round. Zero queries are not
+parity evidence. These diagnostics do not prove a complete factory validates.
 """
 
 from __future__ import annotations
 
 import argparse
-import copy
 import hashlib
 import pickle
+import statistics
 import sys
 import time
 from collections import Counter, deque
@@ -43,9 +45,11 @@ from pathlib import Path
 from typing import Any, cast
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from route_records import CanvasSnapshot, ClusterCase, RouteCase, RouteQuerySnapshot, snapshot_grid
 
 from flab2bp.bench.corpus import entry as corpus_entry  # noqa: E402
-from flab2bp.indexed.port_reservations import PortReservations  # noqa: E402
 from flab2bp.lab.data import load_vendored  # noqa: E402
 from flab2bp.lab.techs import belt_rules_for_url  # noqa: E402
 from flab2bp.lab.url import parse_url  # noqa: E402
@@ -60,37 +64,12 @@ def _snapshot(
     grid: routing_domain._Grid | None,
     history: dict[tuple[int, int, int], float],
 ) -> tuple[
-    routing_domain._Canvas,
+    CanvasSnapshot,
     routing_domain._Grid | None,
     dict[tuple[int, int, int], float],
 ]:
-    """The parts a routing pass moves, copied; the rest shared."""
-    shot_canvas = copy.copy(canvas)
-    shot_canvas.blocked = dict(canvas.blocked)
-    # `_reserve_port_access` rewrites this between routing passes, and
-    # `_Canvas.free` reads it for every start cell -- sharing it replayed one
-    # capture in eighty against the WRONG reservations and moved its path by a
-    # cell, which is exactly the size of error this bench exists to see.
-    shot_canvas.reserved = PortReservations(canvas.reserved)
-    shot_canvas.solid = set(canvas.solid)
-    shot_canvas.keep_out = set(canvas.keep_out)
-    # `_Canvas.free` reads these two as well, and BOTH grow after a capture --
-    # junction guards are staked as later nets are routed.  Sharing them replayed
-    # a `universe-matrix` capture with a start cell the live pass had guarded in
-    # the meantime: the search dropped that start, took a longer path, and the
-    # replay digest differed from the capture for a reason that had nothing to do
-    # with the router.
-    shot_canvas.guard = set(canvas.guard)
-    shot_canvas.belt_ban = dict(canvas.belt_ban)
-    shot_canvas.routing_ports = canvas.routing_ports
-    shot_grid = None
-    if grid is not None:
-        shot_grid = replace(
-            grid,
-            occ=bytearray(grid.occ),
-            hist=None if grid.hist is None else list(grid.hist),
-        )
-    return shot_canvas, shot_grid, dict(history)
+    """Own the exact inputs, retaining physical projection data, not callbacks."""
+    return CanvasSnapshot.capture(canvas), snapshot_grid(grid), dict(history)
 
 
 def capture(
@@ -109,7 +88,7 @@ def capture(
     ).candidates[0]
 
     orig = routing_domain._astar
-    cases: list[dict[str, Any]] = []
+    cases: list[RouteCase] = []
     seen = 0
 
     def spy(
@@ -134,6 +113,24 @@ def capture(
         want = seen % every == 0 and len(cases) < cap
         if want:
             shot_canvas, shot_grid, shot_hist = _snapshot(canvas, grid, history)
+            query = RouteQuerySnapshot(
+                seen,
+                shot_canvas,
+                shot_grid,
+                shot_hist,
+                tuple(starts),
+                tuple(goals),
+                pressure,
+                bounds,
+                tuple(owned_starts),
+                tuple(released_starts),
+                tuple(forbidden),
+                None if blocking_owners is None else dict(blocking_owners),
+                None if extra_edges is None else dict(extra_edges),
+                None if budget is None else budget["left"],
+                None if deadline is None else max(0.0, deadline - time.monotonic()),
+                None if blame is None else dict(blame),
+            )
         seen += 1
         out_path = orig(
             canvas,
@@ -154,21 +151,12 @@ def capture(
         )
         if want:
             cases.append(
-                {
-                    "canvas": shot_canvas,
-                    "grid": shot_grid,
-                    "history": shot_hist,
-                    "starts": list(starts),
-                    "goals": set(goals),
-                    "pressure": pressure,
-                    "bounds": bounds,
-                    "owned_starts": tuple(owned_starts),
-                    "released_starts": tuple(released_starts),
-                    "forbidden": tuple(forbidden),
-                    "blocking_owners": (None if blocking_owners is None else dict(blocking_owners)),
-                    "extra_edges": None if extra_edges is None else dict(extra_edges),
-                    "path": out_path,
-                }
+                RouteCase(
+                    query,
+                    out_path,
+                    None if budget is None else budget["left"],
+                    None if blame is None else dict(blame),
+                )
             )
         return out_path
 
@@ -185,7 +173,7 @@ def capture(
         routing_domain._astar = orig
     out.write_bytes(pickle.dumps(cases, protocol=5))
     # `_astar` returns a `_PathSearchResult`, whose `path` is the tuple of cells.
-    lens = [0 if c["path"].path is None else len(c["path"].path) for c in cases]
+    lens = [0 if c.result.path is None else len(c.result.path) for c in cases]
     print(
         f"captured {len(cases)} of {seen} searches -> {out} "
         f"({out.stat().st_size / 1e6:.1f} MB); "
@@ -214,8 +202,8 @@ def capture_clusters(
         candidate_policies=(policy,),
     ).candidates[0]
 
-    cases: list[dict[str, Any]] = []
-    pending: deque[dict[str, Any]] = deque()
+    cases: list[ClusterCase] = []
+    pending: deque[last_mile.ClusterCapture] = deque()
 
     def sink(shot: last_mile.ClusterCapture) -> None:
         if len(cases) + len(pending) >= cap:
@@ -224,26 +212,19 @@ def capture_clusters(
         grid = cast(routing_domain._Grid, shot.grid)
         shot_canvas, shot_grid, shot_hist = _snapshot(canvas, grid, dict(shot.history))
         pending.append(
-            {
-                "kind": "cluster",
-                "run": shot.run,
-                "canvas": shot_canvas,
-                "grid": shot_grid,
-                "history": shot_hist,
-                "problem": shot.problem,
-                "ends": {
+            replace(
+                shot,
+                canvas=shot_canvas,
+                grid=shot_grid,
+                history=shot_hist,
+                ends={
                     index: (list(starts), set(goals), ports)
                     for index, (starts, goals, ports) in shot.ends.items()
                 },
-                "pressure": shot.pressure,
-                "bounds": shot.bounds,
-                "budget_left": shot.budget_left,
-                "budget_floor": shot.budget_floor,
-                "deadline_remaining": shot.deadline_remaining,
-                "owned_starts": dict(shot.owned_starts),
-                "rejected": dict(shot.rejected),
-                "blocking_owners": dict(shot.blocking_owners),
-            }
+                owned_starts=dict(shot.owned_starts),
+                rejected=dict(shot.rejected),
+                blocking_owners=dict(shot.blocking_owners),
+            )
         )
 
     orig_solve = last_mile.solve_cluster
@@ -255,9 +236,7 @@ def capture_clusters(
         result = orig_solve(problem, environment)
         # `CAPTURE` fires before the solve, so the pending shot is this one's.
         while pending:
-            shot = pending.popleft()
-            shot["result"] = result
-            cases.append(shot)
+            cases.append(ClusterCase(pending.popleft(), result))
         return result
 
     last_mile.CAPTURE = sink
@@ -274,8 +253,8 @@ def capture_clusters(
         last_mile.CAPTURE = None
         last_mile.solve_cluster = orig_solve
     out.write_bytes(pickle.dumps(cases, protocol=5))
-    outcomes = Counter(case["result"].outcome.value for case in cases)
-    bounds_hit = Counter(case["result"].bound.value for case in cases)
+    outcomes = Counter(case.result.outcome.value for case in cases)
+    bounds_hit = Counter(case.result.bound.value for case in cases)
     print(
         f"captured {len(cases)} cluster searches -> {out} "
         f"({out.stat().st_size / 1e6:.1f} MB); "
@@ -293,60 +272,76 @@ def digest(paths: Iterable[Any]) -> str:
 
 
 def bench(path: Path, rounds: int, check: bool) -> int:
-    cases = pickle.loads(path.read_bytes())
-    best = None
+    cases: list[RouteCase] = pickle.loads(path.read_bytes())
+    if not cases:
+        print("NO_CAPTURE: no route queries; an empty digest is not a parity proof")
+        return 1
+    if rounds <= 0:
+        raise ValueError("rounds must be positive")
+    elapsed: list[float] = []
+    matched = True
+    want = digest(case.result for case in cases)
     for r in range(rounds):
-        # A fresh budget per round, sized so it can never bind: the point is to
-        # replay the SAME work, not to re-impose a cap the capture already had.
-        budget = {"left": 1 << 40}
-        got: list[Any] = []
+        got: list[routing_domain._PathSearchResult] = []
+        side_effects_match = True
+        # Restoration is outside timing. Each invocation receives fresh owned
+        # containers, including the exact original shared-ledger allowance.
+        restored = [(case.query.canvas.restore(), snapshot_grid(case.query.grid)) for case in cases]
         t0 = time.perf_counter()
-        for case in cases:
-            canvas = case["canvas"]
-            canvas.routing_ports = canvas.routing_ports
-            got.append(
-                routing_domain._astar(
-                    canvas,
-                    case["starts"],
-                    case["goals"],
-                    case["history"],
-                    case["pressure"],
-                    case["bounds"],
-                    budget,
-                    None,
-                    {},
-                    case["grid"],
-                    case.get("owned_starts", ()),
-                    case.get("released_starts", ()),
-                    case.get("forbidden", ()),
-                    case.get("blocking_owners"),
-                    extra_edges=case.get("extra_edges"),
-                )
+        for case, (canvas, grid) in zip(cases, restored, strict=True):
+            query = case.query
+            budget = None if query.budget_left is None else {"left": query.budget_left}
+            blame = None if query.blame is None else dict(query.blame)
+            deadline = (
+                None
+                if query.deadline_remaining is None
+                else time.monotonic() + query.deadline_remaining
             )
+            result = routing_domain._astar(
+                canvas,
+                list(query.starts),
+                query.goals,
+                dict(query.history),
+                query.pressure,
+                query.bounds,
+                budget,
+                deadline,
+                blame,
+                grid,
+                query.owned_starts,
+                query.released_starts,
+                query.forbidden,
+                query.blocking_owners,
+                extra_edges=query.extra_edges,
+            )
+            got.append(result)
+            effects_same = (None if budget is None else budget["left"]) == case.budget_left and (
+                None if blame is None else tuple(blame.items())
+            ) == (None if case.blame is None else tuple(case.blame.items()))
+            side_effects_match &= effects_same
+            if check and (result != case.result or not effects_same):
+                print(
+                    f"  search {query.ordinal} DIFFER: "
+                    f"captured {case.result!r}; replay {result!r}; "
+                    f"ledger/blame {'MATCH' if effects_same else 'DIFFER'}"
+                )
         dt = time.perf_counter() - t0
-        spent = (1 << 40) - budget["left"]
-        if best is None or dt < best[0]:
-            best = (dt, spent, got)
+        elapsed.append(dt)
+        spent = sum(result.expansions for result in got)
+        same = digest(got)
+        round_match = same == want and side_effects_match
+        matched &= round_match
         print(
             f"  round {r + 1}: {dt:.3f}s  {spent:,} charged work units  "
-            f"{1e6 * dt / max(spent, 1):.3f} us/unit"
+            f"digest {same}  {'MATCH' if round_match else 'DIFFER'}"
         )
-    if best is None:
-        raise ValueError("rounds must be positive")
-    dt, spent, got = best
     print(
-        f"BEST {dt:.3f}s  {spent:,} charged work units  "
-        f"{1e6 * dt / max(spent, 1):.3f} us/unit  digest {digest(got)}"
+        f"MEDIAN {statistics.median(elapsed):.3f}s  "
+        f"range {min(elapsed):.3f}-{max(elapsed):.3f}s; "
+        f"captured digest {want}; all {rounds} rounds "
+        f"{'MATCH' if matched else 'DIFFER'}"
     )
-    if check:
-        want = digest(case["path"] for case in cases)
-        same = digest(got)
-        print(
-            f"captured digest {want}   replay digest {same}   "
-            f"{'MATCH' if want == same else 'DIFFER'}"
-        )
-        return 0 if want == same else 1
-    return 0
+    return 0 if not check or matched else 1
 
 
 def build_parser() -> argparse.ArgumentParser:

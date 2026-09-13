@@ -32,6 +32,7 @@ class TransportRoutingLayout:
     ) -> None:
         self.belt_rules = belt_rules
         self.band_policy = band_policy
+        self._judgement: strategy_race._PlacementJudgement | None = None
 
     def lay_out(
         self,
@@ -40,6 +41,7 @@ class TransportRoutingLayout:
         time_budget_s: float = 15.0,
         absolute_deadline: float | None = None,
     ) -> Placement:
+        self._judgement = None
         if not math.isfinite(time_budget_s) or time_budget_s <= 0:
             raise ValueError("transport-routing requires a finite positive time budget")
         started = time.monotonic()
@@ -79,6 +81,7 @@ class TransportRoutingLayout:
             result = strategy_race._raced_result(outcome, spec.label, time_budget_s)
             if isinstance(result, NoValidLayout):
                 raise result
+            self._judgement = outcome.judgement
             return result
         finally:
             strategy_race._terminate_executor(executor, tuple(futures))
