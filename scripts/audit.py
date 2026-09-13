@@ -637,7 +637,8 @@ def build_jobs(
     jobs = []
     for e in entries:
         for name in strategies:
-            for i, _policy in enumerate(candidate_policies):
+            for i, policy in enumerate(candidate_policies):
+                floor = e.budget_floor_s(policy)
                 for budget in budgets:
                     jobs.append(
                         Job(
@@ -647,7 +648,11 @@ def build_jobs(
                             tier=e.tier.value,
                             spec_index=i,
                             candidate_policies=candidate_policies,
-                            budget=budget,
+                            # A cell that declares a floor is run at it. The row
+                            # then reports the budget the cell actually had, so
+                            # an overshoot check and a reader compare against
+                            # the same number.
+                            budget=max(budget, floor),
                             workers=workers,
                             machine_rank=machine_rank,
                             arrangements=arrangements,

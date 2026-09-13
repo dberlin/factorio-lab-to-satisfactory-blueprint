@@ -61,6 +61,7 @@ from flab2bp.layout.junction_admission import JunctionAdmissionMemo
 from flab2bp.layout.piling import LaneLoad, MergePlan, PilerPlan, plan_merges
 from flab2bp.layout.projection_world import FlatScreen
 from flab2bp.layout.route_feedback import (
+    BudgetCause,
     Cell,
     DetailedRouteResult,
     DetailedRouteStatus,
@@ -4667,6 +4668,14 @@ class _PathSearchResult:
     kind: RouteFailureKind | None
     wall: tuple[Cell, ...]
     expansions: int
+    #: Which bound produced a BUDGET kind.  See :class:`BudgetCause`: a reader
+    #: that cannot separate the clock from an expansion cap reads "give it more
+    #: seconds" into failures no clock ever touched.
+    cause: BudgetCause = BudgetCause.UNKNOWN
+
+    def __post_init__(self) -> None:
+        if self.cause is not BudgetCause.UNKNOWN and self.kind is not RouteFailureKind.BUDGET:
+            raise ValueError("only a BUDGET search result carries a budget cause")
 
 
 def _geometric_search(
@@ -4716,8 +4725,10 @@ def _geometric_search(
         for start in starts
     ):
         return _PathSearchResult(None, RouteFailureKind.DYNAMIC_ACCESS, (), 0)
-    if (budget is not None and budget["left"] <= 0) or _expired(deadline):
-        return _PathSearchResult(None, RouteFailureKind.BUDGET, (), 0)
+    if budget is not None and budget["left"] <= 0:
+        return _PathSearchResult(None, RouteFailureKind.BUDGET, (), 0, BudgetCause.ALLOWANCE)
+    if _expired(deadline):
+        return _PathSearchResult(None, RouteFailureKind.BUDGET, (), 0, BudgetCause.DEADLINE)
 
     # Start cells stay exempt from `bounds` -- an external input run begins on
     # the entry ring, outside the routing box, and works inward -- so they are
@@ -4806,13 +4817,14 @@ def _geometric_search(
     start_left = budget["left"] if budget is not None else 1 << 62
 
     world = GeometricWorld.from_grid(flat, flags, transitions)
+    max_work = min(_MAX_EXPANSIONS, start_left)
     result = geometric_router.route(
         geometric_router.GeometricQuery(
             world=world,
             starts=tuple(start_indices),
             goals=tuple(flat.index(cell) for cell in goal_list),
             pressure=pressure,
-            max_work=min(_MAX_EXPANSIONS, start_left),
+            max_work=max_work,
             deadline=deadline,
             extra_edges=admitted_edges,
         )
@@ -4821,7 +4833,16 @@ def _geometric_search(
     if budget is not None:
         budget["left"] = start_left - expansions
     if result.kind in ("budget", "cancelled"):
-        return _PathSearchResult(None, RouteFailureKind.BUDGET, (), expansions)
+        # The native search raises one limit for both bounds, so read them back
+        # here: it charges exactly `max_work` and stops only when the allowance
+        # is what ended it, and anything short of that with an expired clock was
+        # the clock.
+        cause = (
+            BudgetCause.ALLOWANCE
+            if expansions >= max_work or deadline is None
+            else BudgetCause.DEADLINE
+        )
+        return _PathSearchResult(None, RouteFailureKind.BUDGET, (), expansions, cause)
     path_indices = result.path
     if result.kind == "routed":
         assert path_indices is not None
@@ -6121,6 +6142,14 @@ def _route_all(
             raise ValueError("detailed routing requires stable net IDs")
         return net_id
 
+    def _pass_budget_cause() -> BudgetCause:
+        """Which bound stopped the pass, for the nets it never got to search."""
+        if _expired(deadline):
+            return BudgetCause.DEADLINE
+        if budget["left"] <= 0:
+            return BudgetCause.ALLOWANCE
+        return BudgetCause.BOUNDED
+
     def _endpoint_cells(net: _Net) -> tuple[Cell | None, Cell]:
         source = None if net.src is None else (net.src.x, net.src.y, net.src.z)
         return source, (net.dst.x, net.dst.y, net.dst.z)
@@ -6164,15 +6193,17 @@ def _route_all(
         blocking_nets: tuple[NetId, ...],
     ) -> NetFailure:
         source, destination = _endpoint_cells(nets[index])
+        kind = search.kind or RouteFailureKind.DYNAMIC_ACCESS
         return NetFailure(
             net_id=_net_id(index),
-            kind=search.kind or RouteFailureKind.DYNAMIC_ACCESS,
+            kind=kind,
             wall=search.wall,
             blocking_nets=blocking_nets,
             expansions=search.expansions,
             source=source,
             destination=destination,
             blocking_endpoints=_blocking_endpoint_cells(blocking_nets),
+            budget_cause=(search.cause if kind is RouteFailureKind.BUDGET else BudgetCause.UNKNOWN),
         )
 
     def _budget_result(
@@ -6213,6 +6244,7 @@ def _route_all(
                     index,
                     previous.expansions if previous is not None else 0,
                 ),
+                budget_cause=_pass_budget_cause(),
             )
         if settle is not None and not interrupted:
             selected_best = selected_paths is best_paths
@@ -6427,6 +6459,7 @@ def _route_all(
                         (),
                         (),
                         previous.expansions if previous is not None else 0,
+                        budget_cause=_pass_budget_cause(),
                     )
         for index in unlinked:
             detail = details.get(index)
@@ -6497,7 +6530,7 @@ def _route_all(
         except _PreparationDeadline:
             frame_bounds = None
         if frame_bounds is None:
-            missing = _PathSearchResult(None, RouteFailureKind.BUDGET, (), 0)
+            missing = _PathSearchResult(None, RouteFailureKind.BUDGET, (), 0, BudgetCause.DEADLINE)
             return DetailedRouteResult(
                 status=DetailedRouteStatus.BUDGET,
                 routed=(),
@@ -7643,7 +7676,7 @@ def _route_all(
         )
         allowance = min(_MAX_EXPANSIONS + 1, max(0, search_budget["left"] - connector_reserve))
         if _expired(deadline):
-            return _PathSearchResult(None, RouteFailureKind.BUDGET, (), 0)
+            return _PathSearchResult(None, RouteFailureKind.BUDGET, (), 0, BudgetCause.DEADLINE)
         if ordinary_deadline is None:
             ordinary_deadline = _ordinary_query_deadline()
         ordinary = None
@@ -7712,7 +7745,15 @@ def _route_all(
             # enrichment belongs to repair, after every net has had an opportunity.
             for retry in range(5):
                 if ordinary_only and ordinary is None:
-                    return _PathSearchResult(None, RouteFailureKind.BUDGET, (), total_expansions)
+                    return _PathSearchResult(
+                        None,
+                        RouteFailureKind.BUDGET,
+                        (),
+                        total_expansions,
+                        capped_ordinary.cause
+                        if capped_ordinary is not None
+                        else BudgetCause.BOUNDED,
+                    )
                 ordinary_attempt = ordinary is not None
                 if ordinary_attempt:
                     assert ordinary is not None
@@ -7721,7 +7762,11 @@ def _route_all(
                 else:
                     if _expired(deadline) or search_budget["left"] <= 0:
                         return _PathSearchResult(
-                            None, RouteFailureKind.BUDGET, (), total_expansions
+                            None,
+                            RouteFailureKind.BUDGET,
+                            (),
+                            total_expansions,
+                            BudgetCause.DEADLINE if _expired(deadline) else BudgetCause.ALLOWANCE,
                         )
                     connector_edges = primitives.edges(
                         canvas,
@@ -7764,12 +7809,28 @@ def _route_all(
                 if found.path is None:
                     # Connector siting is bounded and keeps one physical witness
                     # per directed edge. Exhausting this subset cannot prove the
-                    # complete physical routing problem impossible.
-                    return replace(found, kind=RouteFailureKind.BUDGET, expansions=total_expansions)
+                    # complete physical routing problem impossible -- but say so
+                    # as BOUNDED rather than borrowing the clock's name, unless
+                    # the inner search really did hit a limit and named one.
+                    return replace(
+                        found,
+                        kind=RouteFailureKind.BUDGET,
+                        expansions=total_expansions,
+                        cause=(
+                            found.cause
+                            if found.kind is RouteFailureKind.BUDGET
+                            and found.cause is not BudgetCause.UNKNOWN
+                            else BudgetCause.BOUNDED
+                        ),
+                    )
                 if not primitives.path_is_clear(found.path):
                     if retry == 4:
                         return _PathSearchResult(
-                            None, RouteFailureKind.BUDGET, (), total_expansions
+                            None,
+                            RouteFailureKind.BUDGET,
+                            (),
+                            total_expansions,
+                            BudgetCause.BOUNDED,
                         )
                     if ordinary_attempt:
                         continue
@@ -7788,7 +7849,11 @@ def _route_all(
                 ):
                     if retry == 4 or _expired(deadline):
                         return _PathSearchResult(
-                            None, RouteFailureKind.BUDGET, (), total_expansions
+                            None,
+                            RouteFailureKind.BUDGET,
+                            (),
+                            total_expansions,
+                            BudgetCause.BOUNDED,
                         )
                     if ordinary_attempt:
                         # Try another ordinary source inside the same allocation.
@@ -7841,7 +7906,9 @@ def _route_all(
                 if not illegal:
                     return replace(found, expansions=total_expansions)
                 if retry == 4:
-                    return _PathSearchResult(None, RouteFailureKind.BUDGET, (), total_expansions)
+                    return _PathSearchResult(
+                        None, RouteFailureKind.BUDGET, (), total_expansions, BudgetCause.BOUNDED
+                    )
                 if ordinary_attempt:
                     # Only this source owns these body constraints. Retrying it
                     # must not ban the same cells for another source or enrichment.
@@ -7970,7 +8037,7 @@ def _route_all(
                 grid.refresh_history(history)
             # Bounded alternatives did not preserve the family. This is not an
             # exhausted geometric search and cannot establish an impossibility.
-            return _PathSearchResult(None, RouteFailureKind.BUDGET, (), total)
+            return _PathSearchResult(None, RouteFailureKind.BUDGET, (), total, BudgetCause.BOUNDED)
         except _PreparationDeadline as error:
             error.expansions += total
             error.net_index = index
@@ -9223,10 +9290,13 @@ def _route_all(
                         i, ()
                     )
                     if access_wall:
+                        # A named pocket wall replaces the bound that was
+                        # reported for want of one, so the bound goes with it.
                         searched = replace(
                             searched,
                             kind=RouteFailureKind.SEALED_POCKET,
                             wall=access_wall,
+                            cause=BudgetCause.UNKNOWN,
                         )
                 canvas.routing_ports = frozenset()
                 expansions += search_expansions
@@ -12086,7 +12156,14 @@ def _route_boundary_nets(
         for done, (_belt, net) in enumerate(ordered):
             if _expired(deadline):
                 failures.extend(
-                    NetFailure(net_id(pending), RouteFailureKind.BUDGET, (), (), 0)
+                    NetFailure(
+                        net_id(pending),
+                        RouteFailureKind.BUDGET,
+                        (),
+                        (),
+                        0,
+                        budget_cause=BudgetCause.DEADLINE,
+                    )
                     for _pending_belt, pending in ordered[done:]
                 )
                 break
