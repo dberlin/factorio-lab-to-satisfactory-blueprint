@@ -29,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from route_records import CanvasSnapshot, ClusterCase, snapshot_grid
 
 from flab2bp.layout import last_mile  # noqa: E402
+from flab2bp.layout.budget import WorkBudget  # noqa: E402
 from flab2bp.layout.routing_domain import _geometric_search, _Grid, _PathSearchResult  # noqa: E402
 
 
@@ -48,7 +49,7 @@ def _environment(
             last_mile.B_LOW_LEVEL_WORK,
             max(0, budget["left"] - floor),
         )
-        private = {"left": allowance}
+        private = WorkBudget(left=allowance)
         found = _geometric_search(
             canvas,
             list(starts),
@@ -65,7 +66,7 @@ def _environment(
             case.rejected[index] | constraints,
             case.blocking_owners,
         )
-        budget["left"] -= allowance - private["left"]
+        budget["left"] -= allowance - (private.left if private.left is not None else allowance)
         return found
 
     return last_mile.ClusterEnvironment(

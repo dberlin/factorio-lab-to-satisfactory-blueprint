@@ -57,6 +57,7 @@ from flab2bp.layout import (  # noqa: E402
 )
 from flab2bp.layout.band_policy import BandPolicy  # noqa: E402
 from flab2bp.layout.base import NoValidLayout, Placement  # noqa: E402
+from flab2bp.layout.budget import WorkBudget  # noqa: E402
 from flab2bp.layout.route_feedback import (  # noqa: E402
     Cell,
     DetailedRouteResult,
@@ -211,7 +212,7 @@ def install(tally: Tally) -> Callable[[], None]:
         history: dict[Cell, float],
         pressure: float,
         bounds: tuple[int, int, int, int],
-        budget: dict[str, int] | None = None,
+        budget: WorkBudget | None = None,
         deadline: float | None = None,
         blame: dict[Cell, float] | None = None,
         grid: routing_domain._Grid | None = None,
