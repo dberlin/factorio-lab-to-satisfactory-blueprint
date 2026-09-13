@@ -225,6 +225,16 @@ def addon_supply_cell(
     return (round(position[0]), round(position[1]), round(position[2]))
 
 
+def _grid_offset(pose: cat.SlotPose, yaw: float) -> tuple[float, float, float]:
+    """A prefab pose relative to the building centre, in tiles and levels."""
+    wx, wy = to_world((pose.dx, pose.dy), yaw)
+    return (
+        wx / colliders.GRID_ARC,
+        wy / colliders.GRID_ARC,
+        pose.dz / WORLD_UNITS_PER_LEVEL,
+    )
+
+
 def slot_offset(item_id: int, yaw: float, slot: int) -> tuple[float, float, float]:
     """Slot ``slot``'s position relative to the building's centre.
 
@@ -239,13 +249,7 @@ def slot_offset(item_id: int, yaw: float, slot: int) -> tuple[float, float, floa
     the building's own position, rotated by its yaw.  Height is not affected by
     yaw.
     """
-    p = _pose(item_id, slot)
-    wx, wy = to_world((p.dx, p.dy), yaw)
-    return (
-        wx / colliders.GRID_ARC,
-        wy / colliders.GRID_ARC,
-        p.dz / WORLD_UNITS_PER_LEVEL,
-    )
+    return _grid_offset(_pose(item_id, slot), yaw)
 
 
 def slot_forward(item_id: int, yaw: float, slot: int) -> tuple[float, float, float]:
@@ -847,13 +851,7 @@ def port_offset(item_id: int, yaw: float, port: int) -> tuple[float, float, floa
     ``(tiles east, tiles north, altitude LEVELS)`` -- :func:`slot_offset`'s
     frame and conversions exactly, on the other array.
     """
-    p = _port_pose(item_id, port)
-    wx, wy = to_world((p.dx, p.dy), yaw)
-    return (
-        wx / colliders.GRID_ARC,
-        wy / colliders.GRID_ARC,
-        p.dz / WORLD_UNITS_PER_LEVEL,
-    )
+    return _grid_offset(_port_pose(item_id, port), yaw)
 
 
 def port_forward(item_id: int, yaw: float, port: int) -> tuple[float, float, float]:
