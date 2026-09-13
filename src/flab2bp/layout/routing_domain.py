@@ -70,6 +70,7 @@ from flab2bp.layout.junction_admission import JunctionAdmissionMemo
 from flab2bp.layout.piling import LaneLoad, MergePlan, PilerPlan, plan_merges
 from flab2bp.layout.projection_world import FlatScreen
 from flab2bp.layout.route_feedback import (
+    BudgetCause,
     Cell,
     DetailedRouteResult,
     DetailedRouteStatus,
@@ -206,6 +207,100 @@ def _crossing_ban_levels(b: PlacedBuilding) -> tuple[int, ...]:
     return tuple(range(max(0, spherical_overflight_limit(b.model_index, b.z))))
 
 
+@lru_cache(maxsize=512)
+def _crossing_ban_tiles(
+    model_index: int, yaw: float, width: int, height: int
+) -> tuple[tuple[int, int], ...]:
+    """Tiles around a building at which a PASTED belt probe hits its collider.
+
+    Offsets from the footprint's minimum corner, the frame
+    :meth:`PlacedBuilding.tiles` uses.  Measured, not asserted, by the same
+    probe-against-:func:`~flab2bp.dsp.colliders.target_boxes` question
+    ``game.belt_collide`` asks -- but at the tile spacing a PASTE has rather
+    than the flat one the lattice draws itself on.
+
+    WHY THE SPACING IS THE WHOLE OF IT.  A footprint is a count of tiles; a
+    collider is a length in world units, and the two meet through
+    :data:`~flab2bp.dsp.colliders.GRID_ARC`.  Measured flat, 56 of the 61
+    catalog models with a build collider need exactly their footprint and no
+    more, ``Miniature Particle Collider`` (model 69) among them: its envelope
+    reaches 5.85 units west of its anchor against a 9-tile footprint's 5.65, and
+    a belt one tile further out sits at 6.28 and clears by 0.20.  A paste does
+    not leave it there.  ``BlueprintUtils.RefreshBuildPreview`` evaluates the
+    longitude step once for the whole paste and then scales each row's arc by
+    ``cos(latitude)``, so on the equatorial band's most poleward row a column is
+    1.1023 units instead of 1.2566 -- and that belt is at 5.51, inside the
+    collider.  The game refuses it; the lattice, measuring flat, had called the
+    cell free and spent a whole routing pack on it.
+
+    :func:`~flab2bp.dsp.planet.projections_for` is why a layout is held to that
+    spacing: finalization checks EVERY anchor the band admits, so the most
+    compressed row is reachable and therefore binding.
+
+    ONLY ONE AXIS COMPRESSES, AND WHICH ONE IS THE PASTE'S TO CHOOSE.  The
+    longitude axis gets :func:`~flab2bp.dsp.planet.tightest_column_arc`; the
+    latitude axis gets :func:`~flab2bp.dsp.planet.row_arc`, a constant with no
+    ``cos`` in it.  ``TransitionWidthAndHeight`` swaps which lattice axis is
+    which at quadrant 1, and ``band_for_extent`` turns a blueprint whenever the
+    turn fits a narrower band -- measured over five corpus builds, 71 of 1,068
+    candidate extents came back rotated, 64 of them on ``casimir-crystal``. The
+    orientation follows from the FINAL extent, which does not exist until
+    routing has run, so this asks both ways and takes the union.
+
+    The union, and not one arc on both axes, which is what phase 3 shipped and
+    was wrong twice over.  It over-reserved, by 11 % of the banned tiles, for a
+    row compression that never happens.  It also UNDER-reserved: compression
+    moves a tile toward the origin, so a collider box that does not straddle the
+    origin on an axis can be stepped out of as well as into, and a Vertical
+    Launching Silo has two tiles per yaw that a single-axis paste hits and a
+    both-axes measurement misses.
+
+    THE BAND IS THE LOOSEST ONE A LAYOUT CAN REACH, not a conservative default.
+    :func:`~flab2bp.dsp.planet.band_for_extent` picks the SMALLEST band an
+    extent fits, and a narrower band compresses harder -- 0.857 at band 160,
+    0.852 at 100, 0.784 at 32 -- so measuring at the equatorial band's 0.877
+    makes this exact only for a layout large enough to need band 200, roughly
+    400 columns or 60 rows. Smaller layouts are certified against a TIGHTER arc
+    than this measures, and for them the rule is stronger than the flat one it
+    replaces but still weaker than the validator. The surviving case is narrow
+    and worth naming: an Assembling Machine bans nothing here and needs all
+    twelve of its orthogonal neighbours once the arc reaches 0.848, which is
+    band 80 and below, and ``belt_collisions`` excuses a belt chained to the
+    building, so it bites only an UNLINKED belt passing one in a small layout.
+    Closing it needs the layout's own band at reservation time; the extent is
+    not known until routing has run, and band 4's arc is 0, which no finite
+    keepout covers.
+
+    At these spacings 25 of the 61 models reach past their footprint and 36 do
+    not, so this is a per-model reading and not a ring nobody escapes: an
+    Assembling Machine keeps its neighbouring belt legal down to a 0.850 arc
+    ratio and the band's is 0.877, while a Chemical Plant breaks at 0.900 and
+    gains a column.
+    """
+    column = planet.tightest_column_arc(planet.widest_band().area_segments)
+    row = planet.row_arc()
+    reach = colliders.belt_keepout_reach(model_index, min(column, row))
+    levels = spherical_overflight_limit(model_index, Fraction(0))
+    offsets = colliders.belt_keepout_offsets(
+        model_index, yaw, reach, levels, column, row
+    ) | colliders.belt_keepout_offsets(model_index, yaw, reach, levels, row, column)
+    #: The measurement is about the footprint CENTRE, which is what
+    #: `codec.tile_to_local_offset` hands the collider; `tiles()` counts from
+    #: the minimum corner.  Every catalog footprint is odd, so the centre is a
+    #: tile and the shift is exact -- `codec.tile_to_local_offset` records that
+    #: the even case is unreachable rather than unverified.
+    ox, oy = (width - 1) // 2, (height - 1) // 2
+    return tuple(
+        sorted(
+            {
+                (dx + ox, dy + oy)
+                for dx, dy, dz in offsets
+                if dz >= 0 and not (0 <= dx + ox < width and 0 <= dy + oy < height)
+            }
+        )
+    )
+
+
 #: Rip-up-and-reroute iterations before a placement is declared unroutable.
 RRR_MAX = 8
 
@@ -260,12 +355,35 @@ _RRR_STALE_ROUNDS = 3
 #: :func:`_route_all`'s repair pass.
 _REPAIR_CROSSING = 60.0
 
-#: How many settled paths one stranded net may displace before the repair
-#: declines the trade.  Measured across five `universe-matrix` packs, every one
-#: of 31 stranded nets crossed between 1 and 11 paths, so this refuses only the
-#: cases the census never produced -- where re-routing the victims would cost
-#: more than the round it is replacing.
+#: FLOOR on how many settled paths one stranded net may displace before the
+#: repair declines the trade.  Measured across five `universe-matrix` packs,
+#: every one of 31 stranded nets crossed between 1 and 11 paths, so this refuses
+#: only the cases the census never produced -- where re-routing the victims
+#: would cost more than the round it is replacing.
+#:
+#: A floor and not the cap, because the census is a count over packs of one
+#: size: :data:`_REPAIR_VICTIM_SHARE` is what a larger pack gets instead.
 _REPAIR_MAX_VICTIMS = 16
+
+#: Share of a pack one stranded net may displace, once the pack outgrows the
+#: census :data:`_REPAIR_MAX_VICTIMS` came from.
+#:
+#: A quarter.  The census is a count and the thing it counts scales: a stranded
+#: net crosses the paths that lie between its ends, so a bigger pack on a longer
+#: canvas produces a longer crossing list for the same geometry.  On
+#: `universe-matrix` output-products a 180-tile net crosses 50 settled paths and
+#: is refused flat by 16, while the packs the census came from stranded nets
+#: crossing 1-11.
+#:
+#: The denominator here is NETS, which is what the cap is spent on: `victims`
+#: and `joint` hold indices into `_route_all`'s own `nets`, so cap and capped
+#: are in one unit.  The census above is quoted in PATHS because that is what
+#: was measured, and the two differ whenever a net settles more than one path --
+#: a quarter of 279 nets is 69, comfortably above the 50 that net needs, and a
+#: quarter of the 93-140-net packs the census came from is 23-35, comfortably
+#: above their 11.  The share is chosen to clear both, not to convert between
+#: the units.
+_REPAIR_VICTIM_SHARE = 4
 
 #: Repair sweeps per rip-up round.  Each is cheap (a crossing search is
 #: 0.001-0.025s against 3.1-4.0s for a round), and a displaced net that strands
@@ -2475,6 +2593,24 @@ class _Canvas:
     #: The addon's own raised area is deliberately absent: that cell carries the
     #: proliferator connection and a belt is REQUIRED there, one level up.
     belt_ban: dict[tuple[int, int], set[int]] = field(default_factory=dict)
+
+    #: ``(x, y)`` -> levels a MACHINE's build collider denies to belts alone.
+    #:
+    #: Separate from ``blocked`` because it is a narrower refusal than ``blocked``
+    #: means.  ``blocked`` is "nothing may be here", and the power planner, the
+    #: coater passes and the tap passes all read it that way through
+    #: :meth:`free`.  This is the belt probe's own verdict
+    #: (:func:`_crossing_ban_tiles`) and the game excuses everything that is not
+    #: a foreign belt: a sorter is excused at ``CheckBuildConditions`` 145871, a
+    #: belt addon at 145885, and a Tesla Tower is not a belt at all and answers
+    #: to the static collision rules instead.  Folding it into ``blocked`` cost
+    #: `broke6` its power coverage -- 13 tiles with no tower site in reach --
+    #: for cells no tower was ever going to be refused on.
+    #:
+    #: Separate from ``belt_ban`` because that one is not belt-only: the
+    #: hierarchy composer writes junction guards into it, and a junction's
+    #: collider is a real object that denies its cells to a tower too.
+    belt_keepout: dict[tuple[int, int], set[int]] = field(default_factory=dict)
     #: Exact static Splitter collision refusals, cached by actual routing level.
     #: Reserved power nodes are included even though their buildings are emitted
     #: only after routing.
@@ -2535,11 +2671,18 @@ class _Canvas:
             # belt with the altitude to clear that top may cross this building
             # -- which is what the game allows, what `spine` has always priced,
             # and what this router used to forbid on no authority at all.
+            #
             banned = _crossing_ban_levels(b)
             for x, y, _ in b.tiles():
                 self.solid.add((x, y))
                 for lvl in banned:
                     self.blocked[x, y, lvl] = idx
+            # NOR only its own tiles.  The collider of 25 of the 61 catalog
+            # models outreaches its footprint once a paste compresses the
+            # columns -- see :func:`_crossing_ban_tiles` -- and those tiles go
+            # to `belt_keepout`, which denies them to BELTS and to nothing else.
+            for x, y in _crossing_ban_tiles(b.model_index, b.yaw, b.width, b.height):
+                self.belt_keepout.setdefault((b.x + x, b.y + y), set()).update(banned)
         else:
             for x, y, _ in b.tiles():
                 for lvl in held:
@@ -2688,7 +2831,14 @@ class _Canvas:
         """
         return 0 <= z <= self.belt_rules.max_z and (x, y, z) not in self.world_taken
 
-    def free(self, cell: tuple[int, int, int]) -> bool:
+    def free(self, cell: tuple[int, int, int], *, belt: bool = True) -> bool:
+        """Whether a belt may stand here.
+
+        ``belt=False`` asks the narrower question a caller placing something
+        that is NOT a belt has -- a power tower, say.  It drops exactly one
+        refusal, ``belt_keepout``, whose whole content is the belt probe's
+        verdict; everything else this gate holds denies the cell to any object.
+        """
         x, y, z = cell
         if not 0 <= z < self.levels:
             return False
@@ -2702,6 +2852,8 @@ class _Canvas:
         # (a Spray Coater wants 1.8975), `guard` is a junction's own collider.
         # Either one alone would let the other's case through.
         if z in self.belt_ban.get((x, y), ()) or cell in self.guard:
+            return False
+        if belt and z in self.belt_keepout.get((x, y), ()):
             return False
         if self.limit is not None:
             min_x, min_y, max_x, max_y = self.limit
@@ -2726,9 +2878,15 @@ class _Canvas:
 
         A 1x1 tower makes this the single-cell test it replaces, tile for
         tile, which is why the default arm cannot move.
+
+        ``belt=False`` on the ``free`` term, because what this asks about is a
+        building: the machine belt keepout is the belt probe's verdict and a
+        power tower is not a belt.  Both callers are the power planner, and the
+        planner's own open-ground mask asks the same narrowed question -- the
+        two have to agree or a site it chose is a site this refuses.
         """
         return all(
-            self.free((tx, ty, 0)) and (tx, ty) not in self.solid
+            self.free((tx, ty, 0), belt=False) and (tx, ty) not in self.solid
             for tx in range(x, x + width)
             for ty in range(y, y + height)
         )
@@ -2746,7 +2904,7 @@ class _Canvas:
             return False
         if cell not in self.guard or cell in self.blocked or (x, y) in self.keep_out:
             return False
-        if z in self.belt_ban.get((x, y), ()):
+        if z in self.belt_ban.get((x, y), ()) or z in self.belt_keepout.get((x, y), ()):
             return False
         if self.limit is not None:
             min_x, min_y, max_x, max_y = self.limit
@@ -2783,6 +2941,7 @@ class _Canvas:
             keep_out=set(self.keep_out),
             guard=set(self.guard),
             belt_ban={column: set(levels) for column, levels in self.belt_ban.items()},
+            belt_keepout={column: set(levels) for column, levels in self.belt_keepout.items()},
             junction_ban=set(self.junction_ban),
             junction_geometry_prepared=self.junction_geometry_prepared,
             junction_projection=self.junction_projection,
@@ -4602,12 +4761,13 @@ def _make_grid(
     # `5 paths, 1 unlinked` and the one was always the same net, always refused
     # at the same cell -- `(6, 8)` at level 1, the tile a coater rides, banned
     # in `belt_ban` and passable in the grid.  The refusal named the PACKER.
-    for (cx, cy), banned_levels in canvas.belt_ban.items():
-        if lo_x <= cx <= hi_x and lo_y <= cy <= hi_y:
-            at = (cx - gx0) * xstep + (cy - gy0) * levels
-            for clvl in banned_levels:
-                if 0 <= clvl < levels:
-                    occ[at + clvl] = 0
+    for bans in (canvas.belt_ban, canvas.belt_keepout):
+        for (cx, cy), banned_levels in bans.items():
+            if lo_x <= cx <= hi_x and lo_y <= cy <= hi_y:
+                at = (cx - gx0) * xstep + (cy - gy0) * levels
+                for clvl in banned_levels:
+                    if 0 <= clvl < levels:
+                        occ[at + clvl] = 0
     for cx, cy, clvl in canvas.guard:
         if lo_x <= cx <= hi_x and lo_y <= cy <= hi_y and 0 <= clvl < levels:
             occ[(cx - gx0) * xstep + (cy - gy0) * levels + clvl] = 0
@@ -4660,6 +4820,14 @@ class _PathSearchResult:
     kind: RouteFailureKind | None
     wall: tuple[Cell, ...]
     expansions: int
+    #: Which bound produced a BUDGET kind.  See :class:`BudgetCause`: a reader
+    #: that cannot separate the clock from an expansion cap reads "give it more
+    #: seconds" into failures no clock ever touched.
+    cause: BudgetCause = BudgetCause.UNKNOWN
+
+    def __post_init__(self) -> None:
+        if self.cause is not BudgetCause.UNKNOWN and self.kind is not RouteFailureKind.BUDGET:
+            raise ValueError("only a BUDGET search result carries a budget cause")
 
 
 def _geometric_search(
@@ -4709,8 +4877,10 @@ def _geometric_search(
         for start in starts
     ):
         return _PathSearchResult(None, RouteFailureKind.DYNAMIC_ACCESS, (), 0)
-    if (budget is not None and budget["left"] <= 0) or _expired(deadline):
-        return _PathSearchResult(None, RouteFailureKind.BUDGET, (), 0)
+    if budget is not None and budget["left"] <= 0:
+        return _PathSearchResult(None, RouteFailureKind.BUDGET, (), 0, BudgetCause.ALLOWANCE)
+    if _expired(deadline):
+        return _PathSearchResult(None, RouteFailureKind.BUDGET, (), 0, BudgetCause.DEADLINE)
 
     # Start cells stay exempt from `bounds` -- an external input run begins on
     # the entry ring, outside the routing box, and works inward -- so they are
@@ -4799,13 +4969,14 @@ def _geometric_search(
     start_left = budget["left"] if budget is not None else 1 << 62
 
     world = GeometricWorld.from_grid(flat, flags, transitions)
+    max_work = min(_MAX_EXPANSIONS, start_left)
     result = geometric_router.route(
         geometric_router.GeometricQuery(
             world=world,
             starts=tuple(start_indices),
             goals=tuple(flat.index(cell) for cell in goal_list),
             pressure=pressure,
-            max_work=min(_MAX_EXPANSIONS, start_left),
+            max_work=max_work,
             deadline=deadline,
             extra_edges=admitted_edges,
         )
@@ -4814,7 +4985,16 @@ def _geometric_search(
     if budget is not None:
         budget["left"] = start_left - expansions
     if result.kind in ("budget", "cancelled"):
-        return _PathSearchResult(None, RouteFailureKind.BUDGET, (), expansions)
+        # The native search raises one limit for both bounds, so read them back
+        # here: it charges exactly `max_work` and stops only when the allowance
+        # is what ended it, and anything short of that with an expired clock was
+        # the clock.
+        cause = (
+            BudgetCause.ALLOWANCE
+            if expansions >= max_work or deadline is None
+            else BudgetCause.DEADLINE
+        )
+        return _PathSearchResult(None, RouteFailureKind.BUDGET, (), expansions, cause)
     path_indices = result.path
     if result.kind == "routed":
         assert path_indices is not None
@@ -5057,6 +5237,7 @@ class _PreparedRoutingProblem:
     belt_rules: catalog.BeltAltitudeRules = _DEFAULT_BELT_RULES
     world_taken: frozenset[tuple[int, int, Fraction]] = frozenset()
     belt_ban: tuple[tuple[tuple[int, int], frozenset[int]], ...] = ()
+    belt_keepout: tuple[tuple[tuple[int, int], frozenset[int]], ...] = ()
     junction_ban: frozenset[Cell] = frozenset()
     junction_frame_bans: tuple[frozenset[Cell], ...] = ()
     preparation_failures: tuple[NetFailure, ...] = ()
@@ -5124,6 +5305,7 @@ class _PreparedRoutingProblem:
             limit=self.limit,
             keep_out=set(self.keep_out),
             belt_ban={cell: set(levels) for cell, levels in self.belt_ban},
+            belt_keepout={cell: set(levels) for cell, levels in self.belt_keepout},
             guard=set(self.guard),
             junction_ban=set(self.junction_ban),
             junction_geometry_prepared=True,
@@ -5415,6 +5597,7 @@ def _merge_frontier(
     merged_cells: Collection[Cell] = frozenset(),
     protected_sinks: Collection[Cell] = frozenset(),
     source_feeds: Mapping[int, int] | None = None,
+    trace: list[tuple[Cell, Cell, tuple[Cell, ...]]] | None = None,
 ) -> set[Cell]:
     """Free cells beside a sibling net's path -- somewhere to merge into.
 
@@ -5466,6 +5649,10 @@ def _merge_frontier(
     ``source_choices`` retains competing tap identities until the endpoint
     owner can certify them before collapsing provenance. Unambiguous offers
     may defer projected-frame admission to the chosen-path search.
+
+    ``trace`` receives one entry per offering path cell, in walk order: the
+    cell ``junctionable`` was asked about, the tap recorded as provenance, and
+    the free cells offered.  `_SourceWalk` replays it.
     """
     out: set[Cell] = set()
     for sibling in siblings:
@@ -5572,9 +5759,77 @@ def _merge_frontier(
                     provenance.setdefault(cell, tap)
                     if source_choices is not None:
                         source_choices.setdefault(cell, set()).add(tap)
+            if trace is not None:
+                trace.append(((x, y, actual_level), (x, y, lvl), tuple(free)))
             if witness is not None:
                 return out
     return out
+
+
+@dataclass(slots=True)
+class _SourceWalk:
+    """One `_ends` source-side frontier walk, replayable when `project_taps` widens.
+
+    After a walk, `_ends` finds the source taps that compete for a start cell
+    and asks the same walk again with those taps added to ``project_taps``.
+    Nothing the walk reads changes between the two asks; only the ``project``
+    flag of the added cells does.  The second ask therefore re-asks the
+    admission predicate for those cells alone and replays every other answer,
+    including the reservation blame each ask contributed, and rebuilds the
+    offers in the original walk order so provenance keeps its first-wins
+    result.
+    """
+
+    project_taps: frozenset[Cell]
+    #: One entry per admission ask, in walk order: the asked cell, its answer,
+    #: and the blockers it blamed.
+    asks: list[tuple[Cell, bool, tuple[int, ...]]]
+    #: One entry per offering path cell, in walk order: the asked cell, the
+    #: tap recorded as provenance, and the free cells offered.
+    offers: list[tuple[Cell, Cell, tuple[Cell, ...]]]
+    neighborhood: JunctionNeighborhood | None
+    #: The prebuilt-source dock answers by tap: the docks, the occupied access
+    #: cells, and the blockers the tap's admission ask blamed.
+    docks: dict[Cell, tuple[tuple[Cell, ...], tuple[Cell, ...], tuple[int, ...]]] = field(
+        default_factory=dict
+    )
+
+    def replay(
+        self,
+        project_taps: frozenset[Cell],
+        ask: Callable[[int, int, int], bool],
+        *,
+        asks: list[tuple[Cell, bool, tuple[int, ...]]],
+        blame: set[int],
+        provenance: dict[Cell, Cell],
+        source_choices: dict[Cell, set[Cell]],
+    ) -> set[Cell]:
+        """The walk's frontier under a wider ``project_taps``.
+
+        ``ask`` must be the current walk's predicate: it records its own
+        entries into ``asks`` and blames into ``blame``; replayed entries are
+        recorded and blamed here.
+        """
+        if not project_taps >= self.project_taps:
+            raise ValueError("a source walk replays only a widened project_taps")
+        added = project_taps - self.project_taps
+        answers: dict[Cell, bool] = {}
+        for cell, admitted, blamed in self.asks:
+            if cell in added:
+                admitted = ask(*cell)
+            else:
+                blame.update(blamed)
+                asks.append((cell, admitted, blamed))
+            answers[cell] = admitted
+        out: set[Cell] = set()
+        for cell, tap, free in self.offers:
+            if not answers[cell]:
+                continue
+            out.update(free)
+            for offered in free:
+                provenance.setdefault(offered, tap)
+                source_choices.setdefault(offered, set()).add(tap)
+        return out
 
 
 @dataclass(frozen=True, slots=True)
@@ -6041,6 +6296,14 @@ def _route_all(
             raise ValueError("detailed routing requires stable net IDs")
         return net_id
 
+    def _pass_budget_cause() -> BudgetCause:
+        """Which bound stopped the pass, for the nets it never got to search."""
+        if _expired(deadline):
+            return BudgetCause.DEADLINE
+        if budget["left"] <= 0:
+            return BudgetCause.ALLOWANCE
+        return BudgetCause.BOUNDED
+
     def _endpoint_cells(net: _Net) -> tuple[Cell | None, Cell]:
         source = None if net.src is None else (net.src.x, net.src.y, net.src.z)
         return source, (net.dst.x, net.dst.y, net.dst.z)
@@ -6084,15 +6347,17 @@ def _route_all(
         blocking_nets: tuple[NetId, ...],
     ) -> NetFailure:
         source, destination = _endpoint_cells(nets[index])
+        kind = search.kind or RouteFailureKind.DYNAMIC_ACCESS
         return NetFailure(
             net_id=_net_id(index),
-            kind=search.kind or RouteFailureKind.DYNAMIC_ACCESS,
+            kind=kind,
             wall=search.wall,
             blocking_nets=blocking_nets,
             expansions=search.expansions,
             source=source,
             destination=destination,
             blocking_endpoints=_blocking_endpoint_cells(blocking_nets),
+            budget_cause=(search.cause if kind is RouteFailureKind.BUDGET else BudgetCause.UNKNOWN),
         )
 
     def _budget_result(
@@ -6133,6 +6398,7 @@ def _route_all(
                     index,
                     previous.expansions if previous is not None else 0,
                 ),
+                budget_cause=_pass_budget_cause(),
             )
         if settle is not None and not interrupted:
             selected_best = selected_paths is best_paths
@@ -6347,6 +6613,7 @@ def _route_all(
                         (),
                         (),
                         previous.expansions if previous is not None else 0,
+                        budget_cause=_pass_budget_cause(),
                     )
         for index in unlinked:
             detail = details.get(index)
@@ -6417,7 +6684,7 @@ def _route_all(
         except _PreparationDeadline:
             frame_bounds = None
         if frame_bounds is None:
-            missing = _PathSearchResult(None, RouteFailureKind.BUDGET, (), 0)
+            missing = _PathSearchResult(None, RouteFailureKind.BUDGET, (), 0, BudgetCause.DEADLINE)
             return DetailedRouteResult(
                 status=DetailedRouteStatus.BUDGET,
                 routed=(),
@@ -6539,6 +6806,9 @@ def _route_all(
     #: `try`/`finally`, so it cannot survive the run even on an exception.
     relaxed_junctions = False
     junction_reservation_blockers: set[int] = set()
+    #: The blockers the latest `_can_junction` ask blamed, so a replayed source
+    #: walk (`_SourceWalk`) can restore that side effect without asking again.
+    last_junction_blame: tuple[int, ...] = ()
 
     @cache
     def _junction_stacks_collide(existing: Cell, candidate: Cell) -> bool:
@@ -6575,6 +6845,8 @@ def _route_all(
         project: bool = True,
         neighborhood: JunctionNeighborhood | None = None,
     ) -> bool:
+        nonlocal last_junction_blame
+        last_junction_blame = ()
         cell = (x, y, level)
         planned_here = planned_taps.get(cell, ())
         if len(planned_here) >= 2:
@@ -6669,6 +6941,7 @@ def _route_all(
         keepout: list[Cell] = []
         reserved_values: list[Cell | None] = []
         denied = False
+        blamed: set[int] = set()
         for member in _splitter_stack_geometry(x, y, level):
             for guard_cell in junction.keepout_cells(
                 x, y, int(member.z), model_index=member.model_index, yaw=member.yaw
@@ -6687,12 +6960,14 @@ def _route_all(
                         ("dst", PortAccessKind.INTERNAL_ARRIVAL),
                     ):
                         if corridor.kind in (None, kind):
-                            junction_reservation_blockers.update(
+                            blamed.update(
                                 member for member, _net in net_index.payloads_in_role(key, role)
                             )
         if denied:
             # Carries blame that depends on corridor state the memo does not
             # follow; recomputed on every ask.
+            junction_reservation_blockers.update(blamed)
+            last_junction_blame = tuple(sorted(blamed))
             return False
         return remember(True, tuple(keepout), tuple(reserved_values))
 
@@ -7055,6 +7330,7 @@ def _route_all(
         witnessed_taps: dict[Cell, bool] | None = None,
         witness_ports: frozenset[Cell] | None = None,
         admit_source_tap: Callable[[Cell], bool] | None = None,
+        replay: _SourceWalk | None = None,
     ) -> tuple[
         list[Cell],
         set[Cell],
@@ -7067,6 +7343,9 @@ def _route_all(
         the committer cannot attach at either end -- which is precisely the class
         of bug `3f04239` and `00d1f78` were.  The caller clears
         ``canvas.routing_ports`` once its search returns.
+
+        ``replay`` is the source walk of the ask this one widens
+        ``project_taps`` from; only the widened cells are asked again.
         """
         junction_reservation_blockers.clear()
         net = nets[index]
@@ -7121,14 +7400,36 @@ def _route_all(
             canvas.buildings[source.belt].output_obj is not None
         )
         source_provenance: dict[Cell, Cell] = {}
-        starts, occupied_source_access = _prebuilt_source_starts(
-            index,
-            source,
-            siblings,
-            owned_guard,
-            needs_junction=needs_junction,
-            project=(source.x, source.y, source.z) in project_taps,
-            tentative_ok=tentative_ok,
+        # The cells whose `project` flag this ask widened; every other answer
+        # of the walk it replays still holds.
+        added = frozenset() if replay is None else project_taps - replay.project_taps
+        walk_docks: dict[Cell, tuple[tuple[Cell, ...], tuple[Cell, ...], tuple[int, ...]]] = {}
+
+        def prebuilt_starts(
+            tap: Cell, port: _Port, *, needs_junction: bool
+        ) -> tuple[list[Cell], list[Cell]]:
+            """`_prebuilt_source_starts` for ``tap``, replayed when its flag did not widen."""
+            nonlocal last_junction_blame
+            if replay is not None and tap not in added:
+                docks, occupied, blame = replay.docks[tap]
+                junction_reservation_blockers.update(blame)
+            else:
+                last_junction_blame = ()
+                found, taken = _prebuilt_source_starts(
+                    index,
+                    port,
+                    siblings,
+                    owned_guard,
+                    needs_junction=needs_junction,
+                    project=tap in project_taps,
+                    tentative_ok=tentative_ok,
+                )
+                docks, occupied, blame = tuple(found), tuple(taken), last_junction_blame
+            walk_docks[tap] = (docks, occupied, blame)
+            return list(docks), list(occupied)
+
+        starts, occupied_source_access = prebuilt_starts(
+            (source.x, source.y, source.z), source, needs_junction=needs_junction
         )
         if (
             starts
@@ -7188,8 +7489,10 @@ def _route_all(
         # This owner lives for exactly one frontier. No tap is staked or
         # unstaked while _merge_frontier calls its admission predicate.
         # Construct lazily so an empty/ranged/witness-expired frontier does
-        # not prepare geometry that it will never query.
-        neighborhood: JunctionNeighborhood | None = None
+        # not prepare geometry that it will never query.  A replayed walk
+        # shares the owner of the walk it replays: no tap moved in between.
+        neighborhood: JunctionNeighborhood | None = None if replay is None else replay.neighborhood
+        asks: list[tuple[Cell, bool, tuple[int, ...]]] = []
 
         def frontier_junctionable(x: int, y: int, level: int) -> bool:
             nonlocal neighborhood
@@ -7199,32 +7502,47 @@ def _route_all(
                 except TimeoutError as error:
                     # Incomplete preparation publishes no admission answer.
                     raise _PreparationDeadline from error
-            return _can_junction(
+            admitted = _can_junction(
                 x,
                 y,
                 level,
                 project=(x, y, level) in project_taps,
                 neighborhood=neighborhood,
             )
+            asks.append(((x, y, level), admitted, last_junction_blame))
+            return admitted
 
-        frontier = _merge_frontier(
-            canvas,
-            paths,
-            siblings,
-            frontier_junctionable,
-            provenance=source_provenance,
-            belt_prefab=(belt_id, belt_model),
-            tentative_ok=tentative_ok,
-            owned_guard=owned_guard,
-            primitives=primitives,
-            source_choices=source_choices,
-            witness=witness,
-            admit_tap=admit_source_tap,
-            deadline=deadline,
-            path_ranges=source_ranges,
-            merged_cells=existing_sink_targets,
-            source_feeds=source_feeds,
-        )
+        walk_offers: list[tuple[Cell, Cell, tuple[Cell, ...]]] = []
+        if replay is None:
+            frontier = _merge_frontier(
+                canvas,
+                paths,
+                siblings,
+                frontier_junctionable,
+                provenance=source_provenance,
+                belt_prefab=(belt_id, belt_model),
+                tentative_ok=tentative_ok,
+                owned_guard=owned_guard,
+                primitives=primitives,
+                source_choices=source_choices,
+                witness=witness,
+                admit_tap=admit_source_tap,
+                deadline=deadline,
+                path_ranges=source_ranges,
+                merged_cells=existing_sink_targets,
+                source_feeds=source_feeds,
+                trace=walk_offers,
+            )
+        else:
+            walk_offers = replay.offers
+            frontier = replay.replay(
+                project_taps,
+                frontier_junctionable,
+                asks=asks,
+                blame=junction_reservation_blockers,
+                provenance=source_provenance,
+                source_choices=source_choices,
+            )
         if witness is not None and frontier:
             cell = min(frontier)
             return [cell], set(), ({}, {}, {cell: source_provenance[cell]})
@@ -7257,15 +7575,7 @@ def _route_all(
             ):
                 continue
             selected_sources.add(tap)
-            docks, occupied = _prebuilt_source_starts(
-                index,
-                sibling_source,
-                siblings,
-                owned_guard,
-                needs_junction=True,
-                project=tap in project_taps,
-                tentative_ok=tentative_ok,
-            )
+            docks, occupied = prebuilt_starts(tap, sibling_source, needs_junction=True)
             occupied_source_access.extend(occupied)
             if docks and admit_source_tap is not None and not admit_source_tap(tap):
                 continue
@@ -7293,6 +7603,7 @@ def _route_all(
                 tentative_ok=tentative_ok,
                 project_taps=project_taps | competing,
                 admit_source_tap=admit_source_tap,
+                replay=_SourceWalk(project_taps, asks, walk_offers, neighborhood, walk_docks),
             )
         source_access_walls[index] = tuple(occupied_source_access) if not starts else ()
         # A shared source can become unusable without an occupied access cell:
@@ -7519,7 +7830,7 @@ def _route_all(
         )
         allowance = min(_MAX_EXPANSIONS + 1, max(0, search_budget["left"] - connector_reserve))
         if _expired(deadline):
-            return _PathSearchResult(None, RouteFailureKind.BUDGET, (), 0)
+            return _PathSearchResult(None, RouteFailureKind.BUDGET, (), 0, BudgetCause.DEADLINE)
         if ordinary_deadline is None:
             ordinary_deadline = _ordinary_query_deadline()
         ordinary = None
@@ -7588,7 +7899,15 @@ def _route_all(
             # enrichment belongs to repair, after every net has had an opportunity.
             for retry in range(5):
                 if ordinary_only and ordinary is None:
-                    return _PathSearchResult(None, RouteFailureKind.BUDGET, (), total_expansions)
+                    return _PathSearchResult(
+                        None,
+                        RouteFailureKind.BUDGET,
+                        (),
+                        total_expansions,
+                        capped_ordinary.cause
+                        if capped_ordinary is not None
+                        else BudgetCause.BOUNDED,
+                    )
                 ordinary_attempt = ordinary is not None
                 if ordinary_attempt:
                     assert ordinary is not None
@@ -7597,7 +7916,11 @@ def _route_all(
                 else:
                     if _expired(deadline) or search_budget["left"] <= 0:
                         return _PathSearchResult(
-                            None, RouteFailureKind.BUDGET, (), total_expansions
+                            None,
+                            RouteFailureKind.BUDGET,
+                            (),
+                            total_expansions,
+                            BudgetCause.DEADLINE if _expired(deadline) else BudgetCause.ALLOWANCE,
                         )
                     connector_edges = primitives.edges(
                         canvas,
@@ -7640,12 +7963,28 @@ def _route_all(
                 if found.path is None:
                     # Connector siting is bounded and keeps one physical witness
                     # per directed edge. Exhausting this subset cannot prove the
-                    # complete physical routing problem impossible.
-                    return replace(found, kind=RouteFailureKind.BUDGET, expansions=total_expansions)
+                    # complete physical routing problem impossible -- but say so
+                    # as BOUNDED rather than borrowing the clock's name, unless
+                    # the inner search really did hit a limit and named one.
+                    return replace(
+                        found,
+                        kind=RouteFailureKind.BUDGET,
+                        expansions=total_expansions,
+                        cause=(
+                            found.cause
+                            if found.kind is RouteFailureKind.BUDGET
+                            and found.cause is not BudgetCause.UNKNOWN
+                            else BudgetCause.BOUNDED
+                        ),
+                    )
                 if not primitives.path_is_clear(found.path):
                     if retry == 4:
                         return _PathSearchResult(
-                            None, RouteFailureKind.BUDGET, (), total_expansions
+                            None,
+                            RouteFailureKind.BUDGET,
+                            (),
+                            total_expansions,
+                            BudgetCause.BOUNDED,
                         )
                     if ordinary_attempt:
                         continue
@@ -7664,7 +8003,11 @@ def _route_all(
                 ):
                     if retry == 4 or _expired(deadline):
                         return _PathSearchResult(
-                            None, RouteFailureKind.BUDGET, (), total_expansions
+                            None,
+                            RouteFailureKind.BUDGET,
+                            (),
+                            total_expansions,
+                            BudgetCause.BOUNDED,
                         )
                     if ordinary_attempt:
                         # Try another ordinary source inside the same allocation.
@@ -7717,7 +8060,9 @@ def _route_all(
                 if not illegal:
                     return replace(found, expansions=total_expansions)
                 if retry == 4:
-                    return _PathSearchResult(None, RouteFailureKind.BUDGET, (), total_expansions)
+                    return _PathSearchResult(
+                        None, RouteFailureKind.BUDGET, (), total_expansions, BudgetCause.BOUNDED
+                    )
                 if ordinary_attempt:
                     # Only this source owns these body constraints. Retrying it
                     # must not ban the same cells for another source or enrichment.
@@ -7846,7 +8191,7 @@ def _route_all(
                 grid.refresh_history(history)
             # Bounded alternatives did not preserve the family. This is not an
             # exhausted geometric search and cannot establish an impossibility.
-            return _PathSearchResult(None, RouteFailureKind.BUDGET, (), total)
+            return _PathSearchResult(None, RouteFailureKind.BUDGET, (), total, BudgetCause.BOUNDED)
         except _PreparationDeadline as error:
             error.expansions += total
             error.net_index = index
@@ -7928,6 +8273,10 @@ def _route_all(
         """
         if not stranded:
             return stranded
+        #: The cap this repair trades under, sized to the pack rather than to
+        #: the census -- see :data:`_REPAIR_VICTIM_SHARE`.  Read once so every
+        #: test in the round asks the same question.
+        victim_cap = max(_REPAIR_MAX_VICTIMS, len(nets) // _REPAIR_VICTIM_SHARE)
         # A grid whose belts are passable but dear.  `base` is the occupancy
         # before any path settled, so restoring it opens exactly the cells this
         # pass has taken -- machines, keep-outs and the routing box stay shut.
@@ -8077,7 +8426,7 @@ def _route_all(
                         for hurt, closure in closures.items():
                             if _expired(deadline):
                                 return None
-                            if len(mandatory | closure) > _REPAIR_MAX_VICTIMS:
+                            if len(mandatory | closure) > victim_cap:
                                 excluded.add(hurt)
                         signature = frozenset(excluded)
                         signatures[mandatory] = signature
@@ -8146,7 +8495,7 @@ def _route_all(
                     if tap is not None:
                         contacts.update(_source_tap_guard_victims(index, tap))
                     joint = (_dependency_closure(contacts, dependents) | victims) - {index}
-                    if len(joint) <= _REPAIR_MAX_VICTIMS:
+                    if len(joint) <= victim_cap:
                         return found
                 return None
             finally:
@@ -8159,7 +8508,7 @@ def _route_all(
             repaired = False
             pending_proposal: tuple[Cell, ...] | None = None
             while not _expired(deadline) and budget["left"] > 0:
-                if len(victims) > _REPAIR_MAX_VICTIMS:
+                if len(victims) > victim_cap:
                     break
                 dependents = _endpoint_dependents()
                 rebuild_order = _route_order(victims, dependents)
@@ -8190,7 +8539,7 @@ def _route_all(
                     mandatory = _dependency_closure(
                         _source_tap_guard_victims(index, tap), dependents
                     )
-                    admitted = len((victims | mandatory) - {index}) <= _REPAIR_MAX_VICTIMS
+                    admitted = len((victims | mandatory) - {index}) <= victim_cap
                     policy_restricted |= not admitted
                     return admitted
 
@@ -8281,7 +8630,7 @@ def _route_all(
                                     joint = (
                                         _dependency_closure(discovered, dependents) | victims
                                     ) - {index}
-                                    if len(joint) > _REPAIR_MAX_VICTIMS:
+                                    if len(joint) > victim_cap:
                                         alternative = _grouped_overcap_alternative(
                                             index,
                                             starts,
@@ -9099,10 +9448,13 @@ def _route_all(
                         i, ()
                     )
                     if access_wall:
+                        # A named pocket wall replaces the bound that was
+                        # reported for want of one, so the bound goes with it.
                         searched = replace(
                             searched,
                             kind=RouteFailureKind.SEALED_POCKET,
                             wall=access_wall,
+                            cause=BudgetCause.UNKNOWN,
                         )
                 canvas.routing_ports = frozenset()
                 expansions += search_expansions
@@ -11946,7 +12298,14 @@ def _route_boundary_nets(
         for done, (_belt, net) in enumerate(ordered):
             if _expired(deadline):
                 failures.extend(
-                    NetFailure(net_id(pending), RouteFailureKind.BUDGET, (), (), 0)
+                    NetFailure(
+                        net_id(pending),
+                        RouteFailureKind.BUDGET,
+                        (),
+                        (),
+                        0,
+                        budget_cause=BudgetCause.DEADLINE,
+                    )
                     for _pending_belt, pending in ordered[done:]
                 )
                 break
@@ -14372,7 +14731,10 @@ def _power_plan(
                 canvas.limit[0] <= x <= canvas.limit[2] and canvas.limit[1] <= y <= canvas.limit[3]
             ):
                 continue
-            if not canvas.free((x, y, 0)) or (x, y) in canvas.solid:
+            # A tower is not a belt, so the machine belt keepout does not speak
+            # to it: `belt=False`.  Whether its collider clears its neighbours
+            # is the static projection's question and is asked below.
+            if not canvas.free((x, y, 0), belt=False) or (x, y) in canvas.solid:
                 continue
             if (x, y) in blocked_columns:
                 continue
@@ -15309,9 +15671,14 @@ def plan_power_infill(
             raise _PreparationDeadline
         tile_free[x - min_x] = np.fromiter(
             (
-                canvas.free((x, y, 0))
-                and (x, y) not in canvas.solid
-                and (x, y) not in blocked_columns
+                # `fits` and not `free` + `solid`, which is the same pair
+                # spelled out, so that this mask and `free_site`'s ask ONE
+                # question.  They were the same until `free` learned to answer
+                # a narrower one for a caller that is not placing a belt: this
+                # is a tower site, `free_site` goes through `fits` and gets
+                # `belt=False`, and a wider mask here would hand the composed
+                # canvas a starvation the split exists to prevent.
+                canvas.fits(x, y, 1, 1) and (x, y) not in blocked_columns
                 for y in range(min_y, max_y + 1)
             ),
             dtype=bool,
@@ -17009,6 +17376,9 @@ def _prepare_routing_problem(
         world_taken=frozenset(canvas.world_taken),
         belt_ban=tuple(
             sorted((cell, frozenset(levels)) for cell, levels in canvas.belt_ban.items())
+        ),
+        belt_keepout=tuple(
+            sorted((cell, frozenset(levels)) for cell, levels in canvas.belt_keepout.items())
         ),
         preparation_exhaustive=(
             bool(access_reservation.missing)

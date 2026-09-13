@@ -81,6 +81,32 @@ class RouteFailureKind(StrEnum):
     BUDGET = "budget"
 
 
+class BudgetCause(StrEnum):
+    """Which bound produced a :attr:`RouteFailureKind.BUDGET`.
+
+    BUDGET is the router's "no proof of impossibility" answer, and three very
+    different things reach it.  A reader that cannot tell them apart reads a
+    CLOCK bound into every one of them and concludes the cell only needs more
+    seconds -- which is wrong for the other two, and was wrong for
+    `universe-matrix` output-products, where the deciding failure never came
+    near either the clock or a cap.
+
+    ``DEADLINE`` is the routing clock: more seconds would have changed it.
+    ``ALLOWANCE`` is an expansion cap -- a per-query allowance, a coverage
+    pass's per-net share, or the pass ledger -- reached with time to spare;
+    more seconds change nothing, a larger allowance might.  ``BOUNDED`` is a
+    deliberately partial search that ended with neither: a connector-enriched
+    subset that cannot prove the full problem impossible, a retry budget spent
+    on physically rejected paths, or a repair that declined its trade.  Only
+    ``BOUNDED`` says the geometry, not a limit, is what refused.
+    """
+
+    UNKNOWN = ""
+    DEADLINE = "deadline"
+    ALLOWANCE = "allowance"
+    BOUNDED = "bounded"
+
+
 class DetailedRouteStatus(StrEnum):
     ROUTED = "routed"
     STRANDED = "stranded"
@@ -100,10 +126,17 @@ class NetFailure:
     source: Cell | None = None
     destination: Cell | None = None
     blocking_endpoints: tuple[tuple[Cell | None, Cell | None], ...] = ()
+    #: Which bound produced a BUDGET failure; empty for every other kind.
+    budget_cause: BudgetCause = BudgetCause.UNKNOWN
 
     def __post_init__(self) -> None:
         if self.blocking_endpoints and len(self.blocking_endpoints) != len(self.blocking_nets):
             raise ValueError("blocking endpoints must align with blocking net identities")
+        if (
+            self.budget_cause is not BudgetCause.UNKNOWN
+            and self.kind is not RouteFailureKind.BUDGET
+        ):
+            raise ValueError("only a BUDGET failure carries a budget cause")
         cells = (
             self.source,
             self.destination,

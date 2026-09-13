@@ -1345,13 +1345,37 @@ BELT_PROBE_RADIUS = 0.23
 BELT_PROBE_LIFT = 0.2
 
 
-def belt_probe(x: float, y: float, z: float) -> Vec3:
+def belt_probe(
+    x: float, y: float, z: float, arc: float = GRID_ARC, row_arc: float | None = None
+) -> Vec3:
     """Centre of the sphere the game tests a belt tile with, in the flat frame.
 
     ``lpos + lpos.normalized * BELT_PROBE_LIFT``, written in the local frame
     :func:`flat_pose` uses, where radial up is ``+y``.
+
+    ``arc`` and ``row_arc`` are how far apart two adjacent tiles stand along the
+    first and third coordinates.  :data:`GRID_ARC` is the flat grid's answer for
+    both and the default; ``row_arc`` defaults to ``arc`` so one spacing can be
+    passed alone.
+
+    THE TWO AXES ARE NOT ALIKE IN A PASTE.  ``RefreshBuildPreview`` fixes the
+    longitude step once and scales each row's arc by ``cos(latitude)``, so the
+    longitude axis compresses (to 0.877 of :data:`GRID_ARC` at the equatorial
+    band's most poleward row) while the latitude axis is a constant 1.001 of it.
+    WHICH lattice axis is which depends on the paste: ``TransitionWidthAndHeight``
+    swaps them at quadrant 1, so a blueprint that
+    :func:`flab2bp.dsp.planet.band_for_extent` fits turned has its ROW axis
+    compressed and its column axis constant.  A caller that does not know the
+    orientation must ask both ways and take the union, because neither answer
+    contains the other: compression moves a tile toward the origin, and a
+    collider box that does not straddle the origin on that axis can be stepped
+    OUT of as well as into.
     """
-    return (x * GRID_ARC, z * 4.0 / 3.0 + 0.2 + BELT_PROBE_LIFT, y * GRID_ARC)
+    return (
+        x * arc,
+        z * 4.0 / 3.0 + 0.2 + BELT_PROBE_LIFT,
+        y * (arc if row_arc is None else row_arc),
+    )
 
 
 def sphere_box_overlap(centre: Vec3, radius: float, box: Box) -> bool:
@@ -1406,9 +1430,14 @@ def belt_crossing_height(model_index: int) -> float:
     return (top + BELT_PROBE_RADIUS - BELT_PROBE_LIFT) * 3.0 / 4.0
 
 
-@lru_cache(maxsize=1)
+@lru_cache(maxsize=512)
 def belt_keepout_offsets(
-    model_index: int, yaw: float = 0.0, reach: int = 3, levels: int = 4
+    model_index: int,
+    yaw: float = 0.0,
+    reach: int = 3,
+    levels: int = 4,
+    arc: float = GRID_ARC,
+    row_arc: float | None = None,
 ) -> frozenset[tuple[int, int, int]]:
     """Tile offsets at which a belt's probe touches this model's build collider.
 
@@ -1430,6 +1459,13 @@ def belt_keepout_offsets(
     Negative ``dz`` is searched too -- a belt UNDER an elevated building -- and
     for every model in this catalog it comes back empty, because a collider
     starts at the ground and rises.
+
+    ``arc`` and ``row_arc`` are the tile spacings the offsets are measured at,
+    along the column and row axes, both defaulting to the flat :data:`GRID_ARC`.
+    Pass a paste's own spacings to get the set that paste enforces, and read
+    :func:`belt_probe` first: the two axes differ, which one compresses depends
+    on the paste's orientation, and neither orientation's answer contains the
+    other.
     """
     lpos, lrot = flat_pose(0.0, 0.0, 0.0, yaw)
     boxes = target_boxes(Placed(model_index, 0.0, 0.0, 0.0, yaw), lpos, lrot)
@@ -1439,10 +1475,29 @@ def belt_keepout_offsets(
     for dx in range(-reach, reach + 1):
         for dy in range(-reach, reach + 1):
             for dz in range(-levels, levels + 1):
-                probe = belt_probe(dx, dy, dz)
+                probe = belt_probe(dx, dy, dz, arc, row_arc)
                 if any(sphere_box_overlap(probe, BELT_PROBE_RADIUS, b) for b in boxes):
                     out.add((dx, dy, dz))
     return frozenset(out)
+
+
+def belt_keepout_reach(model_index: int, arc: float = GRID_ARC) -> int:
+    """A search box wide enough that :func:`belt_keepout_offsets` cannot clip.
+
+    The farthest a build collider's corner stands from the building's own tile,
+    plus the probe's radius, in tiles of ``arc`` -- rounded UP and then one
+    further, so the ring outside the answer is searched and comes back empty.
+    This sizes the search, not the answer; the answer is still every probe that
+    overlaps.
+
+    The horizontal RADIUS, not the per-axis span: yaw turns the collider inside
+    this box, so a bound that holds at one yaw has to hold at every yaw.
+    """
+    boxes = build_colliders(model_index)
+    if not boxes:
+        return 0
+    span = max(math.hypot(abs(pos[0]) + ext[0], abs(pos[2]) + ext[2]) for pos, ext, _q in boxes)
+    return math.ceil((span + BELT_PROBE_RADIUS) / arc) + 1
 
 
 def probe_inside_footprint(centre: Vec3, box: Box) -> bool:

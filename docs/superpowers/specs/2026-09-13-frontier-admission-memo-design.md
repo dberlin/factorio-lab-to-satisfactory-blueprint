@@ -28,8 +28,19 @@ into `_can_junction`), plus the sibling index in `_prebuilt_source_starts`.
 
 ## Why
 
-The two remaining sprayed Universe Freeform refusals at 15 s are routing-clock
-refusals. Tonight's profile of `universe-matrix` output-products (master
+> **Status note, 2026-09-13 (later the same day).** "Routing-clock refusals" was
+> the wrong reading and the refusal text is what sold it: it called every BUDGET
+> failure a ROUTING-CLOCK bound, and BUDGET is also what an expansion cap and a
+> bounded search return. Measured since (see
+> `.local-evidence/2026-09-13-session/sprayed-routing-report.md`, "Phase 2"),
+> neither sprayed cell was clock-bound at 15 s. all-products was bound by the
+> `lay_out` expansion ledger and is CLEAN in 16.7 s once that ledger is sized
+> against the rate the router actually runs at. output-products is bound by
+> neither clock nor ledger; it needs between 40 s and 60 s for reasons named in
+> that report. Both cells are now gated at **20 s**, declared as a
+> `CorpusEntry.budget_floors` entry that `scripts/audit.py` applies, and every
+> other cell in the corpus keeps its 15 s. `RouteFailureKind.BUDGET` now carries
+> a `BudgetCause`, so the refusal text names the bound instead of guessing it. Tonight's profile of `universe-matrix` output-products (master
 d6eb038d, `scripts/route_profile.py --budget 15 --workers 8`) puts the time
 here:
 

@@ -68,6 +68,7 @@ from flab2bp.layout.freeform import (
 from flab2bp.layout.observe import SearchEvent, SearchPhase
 from flab2bp.layout.piling import PilerPlan
 from flab2bp.layout.route_feedback import (
+    BudgetCause,
     Cell,
     ClusterRelationNoGood,
     DetailedRouteResult,
@@ -3892,6 +3893,7 @@ class TestObjectiveStaysLexicographic:
 def _routing_failures(
     *kinds: RouteFailureKind,
     exhaustive: bool = False,
+    causes: tuple[BudgetCause, ...] = (),
 ) -> DetailedRouteResult:
     failures = tuple(
         NetFailure(
@@ -3900,6 +3902,11 @@ def _routing_failures(
             (),
             (),
             0,
+            budget_cause=(
+                causes[ordinal]
+                if ordinal < len(causes) and kind is RouteFailureKind.BUDGET
+                else BudgetCause.UNKNOWN
+            ),
         )
         for ordinal, kind in enumerate(kinds)
     )
@@ -23401,26 +23408,80 @@ def test_lay_out_bounds_a_routed_refusal_to_the_recurring_net(
 
 
 @pytest.mark.parametrize(
-    ("kinds", "expected"),
+    ("kinds", "causes", "expected"),
     (
-        ((RouteFailureKind.BUDGET,), "ROUTING-CLOCK bound"),
+        (
+            (RouteFailureKind.BUDGET,),
+            (BudgetCause.DEADLINE,),
+            "BUDGET on the routing clock, so this is a ROUTING-CLOCK bound",
+        ),
+        (
+            (RouteFailureKind.BUDGET, RouteFailureKind.BUDGET),
+            (BudgetCause.ALLOWANCE, BudgetCause.BOUNDED),
+            "none of them is the clock, so more seconds cannot change this",
+        ),
+        (
+            (RouteFailureKind.BUDGET, RouteFailureKind.BUDGET),
+            (BudgetCause.DEADLINE, BudgetCause.ALLOWANCE),
+            "only some are the clock",
+        ),
+        (
+            (RouteFailureKind.BUDGET,),
+            (),
+            "not every one names its bound",
+        ),
         (
             (RouteFailureKind.BUDGET, RouteFailureKind.SEALED_POCKET),
+            (BudgetCause.DEADLINE,),
             "BUDGET and non-budget failures coexist",
         ),
     ),
 )
 def test_routing_clock_evidence_cannot_convict_geometry(
-    kinds: tuple[RouteFailureKind, ...], expected: str
+    kinds: tuple[RouteFailureKind, ...],
+    causes: tuple[BudgetCause, ...],
+    expected: str,
 ) -> None:
-    """Even repeated logical failures cannot establish geometry if work ran out."""
-    first = _proof_attempt(_routing_failures(*kinds), plan_strips(two_stage_spec()))
+    """Even repeated logical failures cannot establish geometry if work ran out.
+
+    And a BUDGET is only a CLOCK bound when the clock is what ended it: an
+    expansion allowance or a bounded search spends more seconds to no effect.
+    """
+    first = _proof_attempt(_routing_failures(*kinds, causes=causes), plan_strips(two_stage_spec()))
     bound = freeform._routing_failure_bound((first, replace(first, height=24)))
 
     assert bound is not None
     assert expected in bound
     assert "NET-LEVEL" not in bound
     assert "DENSITY/SEARCH-SPACE" not in bound
+
+
+def test_budget_causes_are_named_in_the_route_evidence() -> None:
+    """A reader can see which bound refused without re-running the cell."""
+    attempt = _proof_attempt(
+        _routing_failures(
+            RouteFailureKind.BUDGET,
+            RouteFailureKind.BUDGET,
+            causes=(BudgetCause.ALLOWANCE, BudgetCause.DEADLINE),
+        ),
+        plan_strips(two_stage_spec()),
+    )
+    bound = freeform._routing_failure_bound((attempt, replace(attempt, height=24)))
+
+    assert bound is not None
+    assert "budget causes allowance=2, deadline=2" in bound
+
+
+def test_a_budget_cause_never_rides_a_non_budget_failure() -> None:
+    with pytest.raises(ValueError, match="only a BUDGET failure"):
+        NetFailure(
+            NetId(0, 1, "item", NetRole.INTERNAL, 0),
+            RouteFailureKind.SEALED_POCKET,
+            (),
+            (),
+            0,
+            budget_cause=BudgetCause.DEADLINE,
+        )
 
 
 def test_different_logical_failures_bound_the_searched_space_not_one_net() -> None:

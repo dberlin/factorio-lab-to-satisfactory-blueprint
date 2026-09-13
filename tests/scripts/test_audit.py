@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from flab2bp.bench.corpus import URL_CORPUS, Tier
+from flab2bp.bench.corpus import entry as corpus_entry
 from flab2bp.layout import finalize, geometric_router, validate
 from flab2bp.layout.base import (
     ATOMIC_COMPLETION_GRACE_S,
@@ -65,6 +66,57 @@ def test_build_jobs_defaults_to_all_three_canonical_candidate_identities() -> No
     assert len(jobs) == 3
     assert all(job.candidate_policies == expected for job in jobs)
     assert tuple(job.candidate_policies[job.spec_index] for job in jobs) == expected
+
+
+def test_build_jobs_raises_a_cell_to_its_declared_budget_floor() -> None:
+    """A cell that cannot be measured at the sweep's budget declares its own."""
+    entry = corpus_entry("universe-matrix")
+    assert entry.budget_floor_s(CandidatePolicy.ALL_PRODUCTS) == 20.0
+    assert entry.budget_floor_s(CandidatePolicy.OUTPUT_PRODUCTS) == 20.0
+    assert entry.budget_floor_s(CandidatePolicy.NO_PROLIFERATOR) == 0.0
+
+    jobs = audit.build_jobs(
+        ["freeform"],
+        {entry.tier},
+        [15.0],
+        workers=1,
+        only={entry.url_id},
+    )
+
+    budgets = {job.candidate_policies[job.spec_index]: job.budget for job in jobs}
+    assert budgets == {
+        CandidatePolicy.NO_PROLIFERATOR: 15.0,
+        CandidatePolicy.ALL_PRODUCTS: 20.0,
+        CandidatePolicy.OUTPUT_PRODUCTS: 20.0,
+    }
+
+
+def test_a_budget_floor_never_lowers_a_larger_sweep_budget() -> None:
+    entry = corpus_entry("universe-matrix")
+
+    jobs = audit.build_jobs(
+        ["freeform"],
+        {entry.tier},
+        [45.0],
+        workers=1,
+        only={entry.url_id},
+    )
+
+    assert {job.budget for job in jobs} == {45.0}
+
+
+def test_cells_without_a_declared_floor_keep_the_sweep_budget() -> None:
+    entry = corpus_entry("quantum-chip")
+
+    jobs = audit.build_jobs(
+        ["freeform"],
+        {entry.tier},
+        [15.0],
+        workers=1,
+        only={entry.url_id},
+    )
+
+    assert {job.budget for job in jobs} == {15.0}
 
 
 def test_run_cell_persists_post_compaction_projection_failures(
