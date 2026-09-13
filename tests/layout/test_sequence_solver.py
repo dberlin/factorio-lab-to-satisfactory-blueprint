@@ -26,6 +26,7 @@ from flab2bp.layout.base import (
     PlacedBuilding,
     Placement,
 )
+from flab2bp.layout.budget import WorkBudget
 from flab2bp.layout.compact_seed import (
     CompactSeedConfig,
     CompactSeedDiagnostics,
@@ -3345,10 +3346,11 @@ def test_production_detailed_adapter_separates_charged_spend_from_raw_diagnostic
 
     def build_with_charged_spend(
         *_args: object,
-        budget: dict[str, int],
+        budget: WorkBudget,
         **_kwargs: object,
     ) -> freeform_module._BuildResult:
-        budget["left"] -= 18
+        assert budget.left is not None
+        budget.left -= 18
         return built
 
     monkeypatch.setattr(
@@ -3388,10 +3390,11 @@ def test_production_detailed_adapter_reports_charged_spend_when_unpowerable(
 
     def refuse_after_spend(
         *_args: object,
-        budget: dict[str, int],
+        budget: WorkBudget,
         **_kwargs: object,
     ) -> Never:
-        budget["left"] -= 7
+        assert budget.left is not None
+        budget.left -= 7
         raise routing_domain._Unpowerable("no legal tower placement")
 
     monkeypatch.setattr(
