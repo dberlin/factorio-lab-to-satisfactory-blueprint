@@ -27,7 +27,7 @@ def test_install_records_successful_path_result(monkeypatch: pytest.MonkeyPatch)
         path=((0, 0, 0),),
         kind=None,
         wall=(),
-        expansions=7,
+        work=7,
     )
 
     returned, tally = _run_profiled_geometric_search(monkeypatch, result)
@@ -36,7 +36,7 @@ def test_install_records_successful_path_result(monkeypatch: pytest.MonkeyPatch)
     assert tally.search_hit == 1
     assert tally.search_none == 0
     assert tally.path_cells == 1
-    assert tally.expansions == 7
+    assert tally.work == 7
 
 
 def test_install_records_failed_path_result(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -44,7 +44,7 @@ def test_install_records_failed_path_result(monkeypatch: pytest.MonkeyPatch) -> 
         path=None,
         kind=RouteFailureKind.SEALED_POCKET,
         wall=(),
-        expansions=11,
+        work=11,
     )
 
     returned, tally = _run_profiled_geometric_search(monkeypatch, result)
@@ -53,7 +53,7 @@ def test_install_records_failed_path_result(monkeypatch: pytest.MonkeyPatch) -> 
     assert tally.search_hit == 0
     assert tally.search_none == 1
     assert tally.path_cells == 0
-    assert tally.expansions == 11
+    assert tally.work == 11
 
 
 def test_last_mile_is_a_profiled_phase() -> None:

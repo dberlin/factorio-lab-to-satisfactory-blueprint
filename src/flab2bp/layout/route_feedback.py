@@ -92,7 +92,7 @@ class BudgetCause(StrEnum):
     near either the clock or a cap.
 
     ``DEADLINE`` is the routing clock: more seconds would have changed it.
-    ``ALLOWANCE`` is an expansion cap -- a per-query allowance, a coverage
+    ``ALLOWANCE`` is a charged work cap -- a per-query allowance, a coverage
     pass's per-net share, or the pass ledger -- reached with time to spare;
     more seconds change nothing, a larger allowance might.  ``BOUNDED`` is a
     deliberately partial search that ended with neither: a connector-enriched
@@ -122,7 +122,9 @@ class NetFailure:
     kind: RouteFailureKind
     wall: tuple[Cell, ...]
     blocking_nets: tuple[NetId, ...]
-    expansions: int
+    #: Charged geometric work units (see `GeometricMetrics.charged_work`), not
+    #: a count of expanded A* nodes.
+    work: int
     source: Cell | None = None
     destination: Cell | None = None
     blocking_endpoints: tuple[tuple[Cell | None, Cell | None], ...] = ()
@@ -165,7 +167,9 @@ class LastMileReport:
     #: condition the gate exists to measure.
     restore_mismatch: int
     nodes: int
-    expansions: int
+    #: Charged geometric work units (see `GeometricMetrics.charged_work`), not
+    #: a count of expanded A* nodes.
+    work: int
     seconds: float
     #: Ascending strip instances of a cluster proved unroutable in the relaxed
     #: environment, empty when no relation proof was established.
@@ -256,7 +260,7 @@ def combine_last_mile_reports(
         relation_skipped_siblings=sum(report.relation_skipped_siblings for report in present),
         restore_mismatch=sum(report.restore_mismatch for report in present),
         nodes=sum(report.nodes for report in present),
-        expansions=sum(report.expansions for report in present),
+        work=sum(report.work for report in present),
         seconds=sum(report.seconds for report in present),
         relation_strips=next(
             (report.relation_strips for report in present if report.relation_strips),
@@ -326,7 +330,9 @@ class DetailedRouteResult:
     routed: tuple[NetId, ...]
     failures: tuple[NetFailure, ...]
     iterations: int
-    expansions: int
+    #: Charged geometric work units (see `GeometricMetrics.charged_work`), not
+    #: a count of expanded A* nodes.
+    work: int
     exhaustive: bool = False
     last_mile: LastMileReport | None = None
     settlement: RouteSettlement | None = None

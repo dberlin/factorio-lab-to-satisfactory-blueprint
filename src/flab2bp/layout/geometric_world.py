@@ -9,7 +9,7 @@ either borrowed buffer while the synchronous query is running.
 from __future__ import annotations
 
 from array import array
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -18,6 +18,36 @@ if TYPE_CHECKING:
 
 # (dx, dy, dz, requires source-plane ramp via, forward base cost)
 GeometricTransition = tuple[int, int, int, bool, float]
+
+
+@dataclass(frozen=True, slots=True)
+class GridIndex:
+    """Flat index <-> cell for a box of ``rows * levels`` columns from ``(gx0, gy0)``.
+
+    THE ONE PLACE THAT KNOWS THE ROUTING GRID'S LAYOUT.  ``_Grid``, this world
+    and ``global_router`` all addressed the same flat array, each with its own
+    copy of the arithmetic; three copies of one x-major formula is three places
+    a level-major slip can hide, and a level-major index is measurably a
+    different router (see :class:`~flab2bp.layout.routing_domain._Grid`).
+
+    ``encode`` does NOT bounds-check.  A caller that must reject an outside
+    cell checks first -- see ``_Grid.index``, which raises, and
+    ``global_router._live_index``, which returns ``None``.
+    """
+
+    gx0: int
+    gy0: int
+    #: Cells per column in y; ``_Grid.gh``.
+    rows: int
+    levels: int
+
+    def encode(self, cell: Cell) -> int:
+        return ((cell[0] - self.gx0) * self.rows + (cell[1] - self.gy0)) * self.levels + cell[2]
+
+    def decode(self, index: int) -> Cell:
+        column, z = divmod(index, self.levels)
+        x, y = divmod(column, self.rows)
+        return x + self.gx0, y + self.gy0, z
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +62,12 @@ class GeometricWorld:
     flags: bytearray
     history: array[float] | list[float] | None
     transitions: tuple[tuple[GeometricTransition, ...], ...]
+    #: Derived, never passed: the world's extent and origin already fix it, and
+    #: a second way to supply it is a second way to disagree with the grid.
+    codec: GridIndex = field(init=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "codec", GridIndex(self.gx0, self.gy0, self.ny, self.nz))
 
     @classmethod
     def from_grid(
@@ -60,6 +96,4 @@ class GeometricWorld:
 
     def cell(self, index: int) -> Cell:
         """Decode the same flat index used by the routing grid."""
-        column, z = divmod(index, self.nz)
-        x, y = divmod(column, self.ny)
-        return x + self.gx0, y + self.gy0, z
+        return self.codec.decode(index)

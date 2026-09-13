@@ -262,14 +262,22 @@ def test_full_height_polar_fit_has_only_the_two_unpadded_hemisphere_anchors() ->
 
 
 def test_the_projection_agrees_with_colliders_at_the_equator() -> None:
-    """This module carries its own ``SphericalRotation``; it must be the same one.
+    """Two independent derivations of ``RefreshBuildPreview``, compared where they overlap.
 
     ``colliders.preview_pose`` is the existing, exercised port of the same
     ``RefreshBuildPreview`` arithmetic, and at ``anchor_lat = 0`` its longitude
     step resolves to ``segmentTable[200] = 200`` -- the one band where its band
-    index is right.  So the equator is where the two can be compared, and any
-    divergence in the quaternion maths or the direction convention shows up
-    here.
+    index is right.  So the equator is where the two can be compared.
+
+    Both now call the one ``SphericalRotation`` in
+    :mod:`flab2bp.dsp.quaternion`, so the quaternion maths is no longer what
+    this pins.  What remains independent is everything either side feeds it:
+    this module reaches the world position through a band's own longitude step
+    and ``Projection``'s row arithmetic, ``colliders`` through its flat
+    ``GRID_ARC`` model, and the two build the ``direction`` vector separately.
+    A divergence in either derivation or in the direction convention still
+    shows up here -- as a position mismatch, or as a nonzero angle between two
+    rotations taken about different axes.
     """
     projection = planet.Projection(
         band=planet.bands(SEGMENT)[0], anchor_row=0, segment=SEGMENT, radius=colliders.PLANET_RADIUS

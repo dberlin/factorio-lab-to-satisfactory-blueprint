@@ -1156,3 +1156,45 @@ def test_the_default_power_tower_is_the_tesla_tower_id() -> None:
     assert catalog.power_tower_building(catalog.DEFAULT_POWER_TOWER).item_id == (
         catalog.TESLA_TOWER_ID
     )
+
+
+def test_ids_table_kebabs_every_name_and_skips_an_unresolvable_alias(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The shared reader, against a table written out by hand.
+
+    Three rows: two display names that kebab straight through, and one whose
+    Roman tier suffix :func:`catalog._kebab` rewrites to a digit.  Two aliases:
+    one naming a display name the table has, one naming a name it does not.  The
+    ids are arbitrary, so nothing here can agree with the reader by accident.
+    """
+    path = tmp_path / "rows.json"
+    path.write_bytes(
+        json.dumps(
+            [
+                {"name": "Iron Ingot", "id": 7},
+                {"name": "Gear", "id": 11},
+                {"name": "Conveyor Belt Mk.I", "id": 42},
+            ]
+        ).encode()
+    )
+    aliases = {"iron-plate": "Iron Ingot", "storage-9": "Depot Mk.IX"}
+    assert catalog._ids_table(path, aliases) == {
+        "iron-ingot": 7,
+        "gear": 11,
+        "conveyor-belt-1": 42,
+        "iron-plate": 7,
+    }
+
+
+def test_both_real_id_tables_carry_their_known_ids() -> None:
+    """Spot checks that the one reader still serves both game tables.
+
+    The four ids are DSP's own, read off ``data/recipes.json`` and
+    ``data/items.json``; a recipe id and an item id for the same thing differ,
+    so a reader wired to the wrong file or the wrong alias map fails here.
+    """
+    assert catalog._recipe_ids()["iron-ingot"] == 1
+    assert catalog._recipe_ids()["conveyor-belt-1"] == 84
+    assert catalog._item_ids()["iron-ingot"] == 1101
+    assert catalog._item_ids()["conveyor-belt-1"] == 2001

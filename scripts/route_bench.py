@@ -327,7 +327,7 @@ def bench(path: Path, rounds: int, check: bool) -> int:
                 )
         dt = time.perf_counter() - t0
         elapsed.append(dt)
-        spent = sum(result.expansions for result in got)
+        spent = sum(result.work for result in got)
         same = digest(got)
         round_match = same == want and side_effects_match
         matched &= round_match

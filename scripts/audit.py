@@ -92,7 +92,7 @@ from flab2bp.dsp import catalog  # noqa: E402
 from flab2bp.lab.data import load_vendored  # noqa: E402
 from flab2bp.lab.techs import belt_rules_for_url  # noqa: E402
 from flab2bp.lab.url import parse_url  # noqa: E402
-from flab2bp.layout import finalize, route_kernel, validate  # noqa: E402
+from flab2bp.layout import finalize, geometric_router, validate  # noqa: E402
 from flab2bp.layout.band_policy import BandPolicy  # noqa: E402
 from flab2bp.layout.base import (  # noqa: E402
     ATOMIC_COMPLETION_GRACE_S,
@@ -217,12 +217,13 @@ class Result:
     projection_sorters: int = 0
     attempt_failures: tuple[LayoutAttemptFailure, ...] = ()
     projection_failures: tuple[ProjectionFailureRecord, ...] = ()
-    #: Routing kernel THIS WORKER PROCESS selected.  A property of the process,
-    #: not of a placement, so it is present on REFUSED and CRASH rows too --
-    #: which is the point: a refusal under the Python fallback is a different
-    #: fact from a refusal under Cython, and a JSONL that cannot tell them apart
-    #: cannot be compared against one taken with the other backend.
-    route_backend: str = field(default_factory=route_kernel.selected_backend)
+    #: Routing backend this build routes with.  A property of the build, not of
+    #: a placement, so it is present on REFUSED and CRASH rows too -- which is
+    #: the point: a refusal under one routing engine is a different fact from a
+    #: refusal under another, and a JSONL that cannot tell them apart cannot be
+    #: compared against one taken with the other engine.  Exactly one engine
+    #: ships, so this reads the constant rather than a runtime selection.
+    route_backend: str = geometric_router.BACKEND
     #: ``FLAB2BP_COATER_NODE`` arm census: coaters placed, coater bodies
     #: sitting over a belt with two predecessors, and belt tiles.  Zero on a
     #: row with no placement.

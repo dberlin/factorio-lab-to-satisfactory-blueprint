@@ -125,7 +125,7 @@ from functools import cache, lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
-from flab2bp.dsp import geometry_kernel
+from flab2bp.dsp import geometry_kernel, quaternion
 from flab2bp.indexed import BeltOverlap
 
 if TYPE_CHECKING:
@@ -163,8 +163,10 @@ __all__ = [
 
 _DATA = Path(__file__).parent / "data" / "colliders.json"
 
-Vec3 = tuple[float, float, float]
-Quat = tuple[float, float, float, float]
+#: Re-exported from :mod:`flab2bp.dsp.quaternion`, which owns the arithmetic;
+#: several modules already spell these ``colliders.Vec3`` / ``colliders.Quat``.
+Vec3 = quaternion.Vec3
+Quat = quaternion.Quat
 
 #: Grid rows are ``2 * pi / (segment * 5)`` radians apart and ``segment`` tracks
 #: the planet radius, so the arc between adjacent build-grid cells is this on
@@ -193,91 +195,6 @@ class Box:
     centre: Vec3
     half: Vec3
     rot: Quat
-
-
-# --- Unity quaternion arithmetic -------------------------------------------
-
-
-def _qmul(a: Quat, b: Quat) -> Quat:
-    ax, ay, az, aw = a
-    bx, by, bz, bw = b
-    return (
-        aw * bx + ax * bw + ay * bz - az * by,
-        aw * by - ax * bz + ay * bw + az * bx,
-        aw * bz + ax * by - ay * bx + az * bw,
-        aw * bw - ax * bx - ay * by - az * bz,
-    )
-
-
-def _qrot(q: Quat, v: Vec3) -> Vec3:
-    x, y, z, w = q
-    vx, vy, vz = v
-    tx = 2.0 * (y * vz - z * vy)
-    ty = 2.0 * (z * vx - x * vz)
-    tz = 2.0 * (x * vy - y * vx)
-    return (
-        vx + w * tx + (y * tz - z * ty),
-        vy + w * ty + (z * tx - x * tz),
-        vz + w * tz + (x * ty - y * tx),
-    )
-
-
-def _norm(v: Vec3) -> Vec3:
-    m = math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2])
-    return (v[0] / m, v[1] / m, v[2] / m)
-
-
-def _cross(a: Vec3, b: Vec3) -> Vec3:
-    return (
-        a[1] * b[2] - a[2] * b[1],
-        a[2] * b[0] - a[0] * b[2],
-        a[0] * b[1] - a[1] * b[0],
-    )
-
-
-def _dot(a: Vec3, b: Vec3) -> float:
-    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
-
-
-def _look_rotation(forward: Vec3, up: Vec3) -> Quat:
-    """``Quaternion.LookRotation``."""
-    f = _norm(forward)
-    r = _cross(up, f)
-    r = _norm(r) if _dot(r, r) > 1e-12 else (1.0, 0.0, 0.0)
-    u = _cross(f, r)
-    m00, m01, m02 = r[0], u[0], f[0]
-    m10, m11, m12 = r[1], u[1], f[1]
-    m20, m21, m22 = r[2], u[2], f[2]
-    tr = m00 + m11 + m22
-    if tr > 0.0:
-        s = math.sqrt(tr + 1.0) * 2.0
-        return ((m21 - m12) / s, (m02 - m20) / s, (m10 - m01) / s, 0.25 * s)
-    if m00 > m11 and m00 > m22:
-        s = math.sqrt(1.0 + m00 - m11 - m22) * 2.0
-        return (0.25 * s, (m01 + m10) / s, (m02 + m20) / s, (m21 - m12) / s)
-    if m11 > m22:
-        s = math.sqrt(1.0 + m11 - m00 - m22) * 2.0
-        return ((m01 + m10) / s, 0.25 * s, (m12 + m21) / s, (m02 - m20) / s)
-    s = math.sqrt(1.0 + m22 - m00 - m11) * 2.0
-    return ((m02 + m20) / s, (m12 + m21) / s, 0.25 * s, (m10 - m01) / s)
-
-
-def _spherical_rotation(pos: Vec3, angle_deg: float) -> Quat:
-    """``Maths.SphericalRotation``, decompiled line 17747."""
-    p = _norm(pos)
-    r = _cross(p, (0.0, 1.0, 0.0))
-    if _dot(r, r) < 1e-4:
-        sign = 1.0 if p[1] >= 0.0 else -1.0
-        r = (sign, 0.0, 0.0)
-        forward = (0.0, 0.0, sign)
-    else:
-        r = _norm(r)
-        forward = _norm(_cross(r, p))
-    q = _look_rotation(forward, p)
-    if angle_deg == 0.0:
-        return q
-    h = math.radians(angle_deg) * 0.5
-    return _qmul(q, (0.0, math.sin(h), 0.0, math.cos(h)))
 
 
 # --- the planet grid --------------------------------------------------------
@@ -862,7 +779,7 @@ def preview_pose(
     direction = (cos_lat * math.sin(lng), math.sin(lat), cos_lat * -math.cos(lng))
     scale = z * 4.0 / 3.0 + 0.2 + radius
     lpos = (direction[0] * scale, direction[1] * scale, direction[2] * scale)
-    return lpos, _spherical_rotation(direction, yaw)
+    return lpos, quaternion.spherical_rotation(direction, yaw)
 
 
 # --- collider table ---------------------------------------------------------
@@ -917,12 +834,12 @@ def own_centre_extent(model_index: int, yaw: float) -> tuple[float, float]:
     spin = (0.0, math.sin(half_turn), 0.0, math.cos(half_turn))
     ex = ez = 0.0
     for centre, half, rot in boxes:
-        turned = _qmul(spin, rot)
-        corner = _qrot(spin, centre)
+        turned = quaternion.multiply(spin, rot)
+        corner = quaternion.rotate(spin, centre)
         for sx in (-1.0, 1.0):
             for sy in (-1.0, 1.0):
                 for sz in (-1.0, 1.0):
-                    spun = _qrot(turned, (sx * half[0], sy * half[1], sz * half[2]))
+                    spun = quaternion.rotate(turned, (sx * half[0], sy * half[1], sz * half[2]))
                     ex = max(ex, abs(corner[0] + spun[0]))
                     ez = max(ez, abs(corner[2] + spun[2]))
     return (ex * 2.0, ez * 2.0)
@@ -934,9 +851,9 @@ def own_centre_extent(model_index: int, yaw: float) -> tuple[float, float]:
 @cache
 def _axes(q: Quat) -> tuple[Vec3, Vec3, Vec3]:
     return (
-        _qrot(q, (1.0, 0.0, 0.0)),
-        _qrot(q, (0.0, 1.0, 0.0)),
-        _qrot(q, (0.0, 0.0, 1.0)),
+        quaternion.rotate(q, (1.0, 0.0, 0.0)),
+        quaternion.rotate(q, (0.0, 1.0, 0.0)),
+        quaternion.rotate(q, (0.0, 0.0, 1.0)),
     )
 
 
@@ -963,11 +880,11 @@ def _obb_overlap_python(a: Box, b: Box) -> bool:
         return False
     ax = _axes(a.rot)
     bx = _axes(b.rot)
-    rot = [[_dot(ax[i], bx[j]) for j in range(3)] for i in range(3)]
+    rot = [[quaternion.dot(ax[i], bx[j]) for j in range(3)] for i in range(3)]
     # The epsilon guards the cross-product axes when two boxes are parallel,
     # which every axis-aligned pair here is.
     abs_rot = [[abs(rot[i][j]) + 1e-9 for j in range(3)] for i in range(3)]
-    t = (_dot(delta, ax[0]), _dot(delta, ax[1]), _dot(delta, ax[2]))
+    t = (quaternion.dot(delta, ax[0]), quaternion.dot(delta, ax[1]), quaternion.dot(delta, ax[2]))
     ea, eb = a.half, b.half
     for i in range(3):
         ra = ea[i]
@@ -1054,8 +971,10 @@ def _query_boxes(p: Placed, lpos: Vec3, lrot: Quat) -> list[Box]:
     """The overlap query, ``CheckBuildConditions`` lines 145751-145752."""
     out = []
     for pos, ext, q in build_colliders(p.model_index):
-        r = _qrot(lrot, pos)
-        out.append(Box((lpos[0] + r[0], lpos[1] + r[1], lpos[2] + r[2]), ext, _qmul(lrot, q)))
+        r = quaternion.rotate(lrot, pos)
+        out.append(
+            Box((lpos[0] + r[0], lpos[1] + r[1], lpos[2] + r[2]), ext, quaternion.multiply(lrot, q))
+        )
     return out
 
 
@@ -1067,7 +986,7 @@ def target_boxes(p: HasModel, lpos: Vec3, lrot: Quat) -> list[Box]:
     """
     out = []
     for pos, ext, _q in build_colliders(p.model_index):
-        r = _qrot(lrot, pos)
+        r = quaternion.rotate(lrot, pos)
         out.append(Box((lpos[0] + r[0], lpos[1] + r[1], lpos[2] + r[2]), ext, lrot))
     return out
 
@@ -1290,12 +1209,12 @@ def sorter_box(p: SorterPreview) -> Box:
     half_z = max(half_z, SORTER_HALF_LENGTH_MIN)
 
     forward = (lpos2[0] - lpos[0], lpos2[1] - lpos[1], lpos2[2] - lpos[2])
-    if _dot(forward, forward) < 1e-4:
+    if quaternion.dot(forward, forward) < 1e-4:
         # ``forward2 = Maths.SphericalRotation(lpos, 0f).Forward()``, which on
         # the flat model is local north.
         forward = (0.0, 0.0, 1.0)
-    rot = _look_rotation(forward, (0.0, 1.0, 0.0))
-    centre = _qrot(rot, (pos[0], pos[1], off_z))
+    rot = quaternion.look_rotation(forward, (0.0, 1.0, 0.0))
+    centre = quaternion.rotate(rot, (pos[0], pos[1], off_z))
     mid = (
         (lpos[0] + lpos2[0]) * 0.5,
         (lpos[1] + lpos2[1]) * 0.5,
@@ -1304,7 +1223,7 @@ def sorter_box(p: SorterPreview) -> Box:
     return Box(
         (mid[0] + centre[0], mid[1] + centre[1], mid[2] + centre[2]),
         (ext[0], ext[1], half_z),
-        _qmul(rot, q),
+        quaternion.multiply(rot, q),
     )
 
 
@@ -1474,7 +1393,7 @@ def _sphere_box_overlap_python(centre: Vec3, radius: float, box: Box) -> bool:
     narrow phase computes.  Touching exactly does not overlap.
     """
     inv = (-box.rot[0], -box.rot[1], -box.rot[2], box.rot[3])
-    d = _qrot(
+    d = quaternion.rotate(
         inv,
         (centre[0] - box.centre[0], centre[1] - box.centre[1], centre[2] - box.centre[2]),
     )
@@ -1584,7 +1503,7 @@ def belt_keepout_reach(model_index: int, arc: float = GRID_ARC) -> int:
 def probe_inside_footprint(centre: Vec3, box: Box) -> bool:
     """Whether a point is inside a box's footprint, ignoring height."""
     inv = (-box.rot[0], -box.rot[1], -box.rot[2], box.rot[3])
-    d = _qrot(
+    d = quaternion.rotate(
         inv,
         (centre[0] - box.centre[0], centre[1] - box.centre[1], centre[2] - box.centre[2]),
     )

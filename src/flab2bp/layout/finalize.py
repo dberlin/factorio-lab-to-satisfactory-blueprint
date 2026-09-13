@@ -9,7 +9,7 @@ from dataclasses import dataclass, field, replace
 from functools import cache, partial
 from typing import Literal, cast
 
-from flab2bp.dsp import catalog, codec, colliders, planet, rules
+from flab2bp.dsp import catalog, codec, colliders, planet, quaternion, rules
 from flab2bp.layout import slots
 from flab2bp.layout.band_policy import BandPolicy
 from flab2bp.layout.base import AreaFrame, PlacedBuilding, Placement, PlacementCompletion
@@ -647,18 +647,6 @@ class _ProjectionCache:
         if self._addon_splitter_misses == misses:
             self.counters.addon_splitter_result_cache_hits += 1
         return failure
-
-
-def _extent_fits(width: int, height: int) -> tuple[planet.Fit, ...]:
-    fits: list[planet.Fit] = []
-    for band in sorted(planet.bands(), key=lambda candidate: candidate.area_segments):
-        for rotated, (columns, rows) in (
-            (False, (width, height)),
-            (True, (height, width)),
-        ):
-            if rows <= band.rows and columns <= band.columns:
-                fits.append(planet.Fit(band, rotated, rows, columns))
-    return tuple(fits)
 
 
 def _collision_placed(building: PlacedBuilding) -> colliders.Placed:
@@ -1631,7 +1619,7 @@ def _projected_addon_failure_from_context(
         # Projecting (addon.x + area.dx, addon.y + area.dy) made a transverse
         # supply miss the game's center by ~0.314 units even at the equator.
         position, rotation = projection.pose(addon.x, addon.y, float(addon.z), addon.yaw)
-        offset = colliders._qrot(
+        offset = quaternion.rotate(
             rotation, (float(area.dx), float(area.dz) * 4.0 / 3.0, float(area.dy))
         )
         target = (

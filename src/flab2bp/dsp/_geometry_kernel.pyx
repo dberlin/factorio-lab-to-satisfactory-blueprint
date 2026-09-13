@@ -1,8 +1,9 @@
 # cython: language_level=3, wraparound=False, initializedcheck=False, cdivision=True
 """The oriented-box separating-axis test, compiled.
 
-A port of ``colliders._obb_overlap_python`` and its helpers ``_qrot``,
-``_axes``, ``_dot`` and ``_box_radius``, operation for operation.  The Python
+A port of ``colliders._obb_overlap_python`` and its helpers ``colliders._axes``,
+``colliders._box_radius``, ``quaternion.rotate`` and ``quaternion.dot``,
+operation for operation.  The Python
 body is the reference; this is only allowed to be faster, never different, and
 ``tests/dsp/test_colliders.py`` proves the two agree on a random sample and on
 the touching cases a random sample never lands on.
@@ -48,7 +49,7 @@ cdef inline void _qrot(
     double vx, double vy, double vz,
     double* out,
 ) noexcept nogil:
-    """``colliders._qrot``: rotate ``v`` by the quaternion ``(x, y, z, w)``."""
+    """``quaternion.rotate``: rotate ``v`` by the quaternion ``(x, y, z, w)``."""
     cdef double tx = 2.0 * (y * vz - z * vy)
     cdef double ty = 2.0 * (z * vx - x * vz)
     cdef double tz = 2.0 * (x * vy - y * vx)
@@ -99,7 +100,7 @@ cdef bint _overlap(CBox* a, CBox* b) noexcept nogil:
     cdef Py_ssize_t i, j, i1, i2, j1, j2
     for i in range(3):
         for j in range(3):
-            # ``_dot(ax[i], bx[j])``.
+            # ``quaternion.dot(ax[i], bx[j])``.
             rot[i][j] = (
                 a.axes[i][0] * b.axes[j][0]
                 + a.axes[i][1] * b.axes[j][1]
@@ -111,7 +112,7 @@ cdef bint _overlap(CBox* a, CBox* b) noexcept nogil:
 
     cdef double t[3]
     for i in range(3):
-        # ``_dot(delta, ax[i])``.
+        # ``quaternion.dot(delta, ax[i])``.
         t[i] = delta[0] * a.axes[i][0] + delta[1] * a.axes[i][1] + delta[2] * a.axes[i][2]
 
     cdef double ra, rb, span

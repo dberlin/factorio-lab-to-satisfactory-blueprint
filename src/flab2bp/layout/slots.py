@@ -225,6 +225,16 @@ def addon_supply_cell(
     return (round(position[0]), round(position[1]), round(position[2]))
 
 
+def _grid_offset(pose: cat.SlotPose, yaw: float) -> tuple[float, float, float]:
+    """A prefab pose relative to the building centre, in tiles and levels."""
+    wx, wy = to_world((pose.dx, pose.dy), yaw)
+    return (
+        wx / colliders.GRID_ARC,
+        wy / colliders.GRID_ARC,
+        pose.dz / WORLD_UNITS_PER_LEVEL,
+    )
+
+
 def slot_offset(item_id: int, yaw: float, slot: int) -> tuple[float, float, float]:
     """Slot ``slot``'s position relative to the building's centre.
 
@@ -239,13 +249,7 @@ def slot_offset(item_id: int, yaw: float, slot: int) -> tuple[float, float, floa
     the building's own position, rotated by its yaw.  Height is not affected by
     yaw.
     """
-    p = _pose(item_id, slot)
-    wx, wy = to_world((p.dx, p.dy), yaw)
-    return (
-        wx / colliders.GRID_ARC,
-        wy / colliders.GRID_ARC,
-        p.dz / WORLD_UNITS_PER_LEVEL,
-    )
+    return _grid_offset(_pose(item_id, slot), yaw)
 
 
 def slot_forward(item_id: int, yaw: float, slot: int) -> tuple[float, float, float]:
@@ -494,36 +498,6 @@ def probe_building(item_id: int, yaw: float) -> PlacedBuilding:
         height=h,
         yaw=yaw,
     )
-
-
-def direct_anchors(
-    src: PlacedBuilding, dst: PlacedBuilding, column: int
-) -> tuple[Attachment, Attachment] | None:
-    """Both ends of a machine-to-machine sorter on ``column``, or ``None``.
-
-    A direct insert has no belt to anchor against, so each end has to be found
-    against the OTHER machine's anchor rather than against a fixed tile -- and
-    those two answers depend on each other.  Two passes settle it: the producer
-    is placed against the consumer's near edge, the consumer against that, and
-    the producer re-checked against the consumer's final cell.  A third pass
-    cannot move anything, because the second already fixed the only tile the
-    first was approximating.
-
-    ``None`` is a refusal.  Direct insertion is an optimisation -- the same
-    connection can go by belt -- so a caller that cannot get an answer here has
-    somewhere to go, unlike one wiring a lane.
-    """
-    near = dst.y if dst.y > src.y else dst.y + dst.height - 1
-    first = attachment(src, (column, near))
-    if first is None:
-        return None
-    second = attachment(dst, (column, first.cell[1]))
-    if second is None:
-        return None
-    settled = attachment(src, (column, second.cell[1]))
-    if settled is None:
-        return None
-    return (settled, second)
 
 
 def lane_facing(item_id: int, yaw: float) -> tuple[bool, bool]:
@@ -877,13 +851,7 @@ def port_offset(item_id: int, yaw: float, port: int) -> tuple[float, float, floa
     ``(tiles east, tiles north, altitude LEVELS)`` -- :func:`slot_offset`'s
     frame and conversions exactly, on the other array.
     """
-    p = _port_pose(item_id, port)
-    wx, wy = to_world((p.dx, p.dy), yaw)
-    return (
-        wx / colliders.GRID_ARC,
-        wy / colliders.GRID_ARC,
-        p.dz / WORLD_UNITS_PER_LEVEL,
-    )
+    return _grid_offset(_port_pose(item_id, port), yaw)
 
 
 def port_forward(item_id: int, yaw: float, port: int) -> tuple[float, float, float]:

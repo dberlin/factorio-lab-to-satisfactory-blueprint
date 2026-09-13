@@ -107,6 +107,53 @@ def test_sub_spec_and_composed_spec_keep_the_power_tower_choice():
     assert composed.power_tower_item_id == "satellite-substation"
 
 
+def _rate_units() -> list[partition.Unit]:
+    """Three units over two recipes of ``_chain()``, at hand-picked rates.
+
+    Two units share the smelter group so the helpers have something to sum, and
+    ``ingot`` is made by one recipe and taken by the other so a helper that
+    reads the wrong side of the group shows up as a wrong item, not a wrong
+    number.  Every rate is a fraction, so a count dropped or double-counted
+    cannot land on the right total.
+    """
+    groups = {g.recipe_id: g for g in _chain().groups}
+    smelter = groups["ingot"].model_copy(
+        update={
+            "inputs_per_machine": {"ore": Fraction(3, 2)},
+            "outputs_per_machine": {"ingot": Fraction(1, 2)},
+        }
+    )
+    maker = groups["gear"].model_copy(
+        update={
+            "inputs_per_machine": {"ingot": Fraction(1, 4)},
+            "outputs_per_machine": {"gear": Fraction(1, 3)},
+        }
+    )
+    return [
+        partition.Unit(0, smelter, 4),
+        partition.Unit(1, maker, 9),
+        partition.Unit(2, smelter, 2),
+    ]
+
+
+def test_made_by_sums_each_unit_output_once() -> None:
+    # ingot: 4 smelters * 1/2 = 2, plus 2 smelters * 1/2 = 1, is 3.
+    # gear:  9 makers * 1/3 = 3.
+    assert dict(partition.made_by(_rate_units())) == {
+        "ingot": Fraction(3),
+        "gear": Fraction(3),
+    }
+
+
+def test_consumed_by_sums_each_unit_input_once() -> None:
+    # ore:   4 smelters * 3/2 = 6, plus 2 smelters * 3/2 = 3, is 9.
+    # ingot: 9 makers * 1/4 = 9/4, and none of the 3 ingot made above.
+    assert dict(partition.consumed_by(_rate_units())) == {
+        "ore": Fraction(9),
+        "ingot": Fraction(9, 4),
+    }
+
+
 def test_split_block_of_one_unit_splits_the_count():
     spec = _chain()
     ingot = next(g for g in spec.groups if g.recipe_id == "ingot")

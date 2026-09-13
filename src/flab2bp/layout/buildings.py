@@ -28,7 +28,15 @@ and ``tests/test_backend_containment.py`` fails if that boundary is breached.
 from __future__ import annotations
 
 import bisect
-from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, MutableSequence, Sequence
+from collections.abc import (
+    Callable,
+    Collection,
+    Iterable,
+    Iterator,
+    Mapping,
+    MutableSequence,
+    Sequence,
+)
 from enum import Enum
 from fractions import Fraction
 from typing import TYPE_CHECKING, overload

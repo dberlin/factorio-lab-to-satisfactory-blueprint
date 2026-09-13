@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Literal
 
-from flab2bp.dsp import catalog, colliders, planet
+from flab2bp.dsp import catalog, colliders, planet, quaternion
 from flab2bp.dsp.records import BlueprintBuilding
 from flab2bp.dsp.rules import (
     BELT_PORT_DRAW_TO_SLOT,
@@ -190,23 +190,6 @@ def _rotated_port(pose: catalog.SlotPose, yaw: float) -> tuple[float, float, flo
     )
 
 
-def _rotate_vector(
-    rotation: planet.Quat,
-    vector: planet.Vec3,
-) -> planet.Vec3:
-    """Apply one Unity quaternion to a vector."""
-    x, y, z, w = rotation
-    vx, vy, vz = vector
-    tx = 2.0 * (y * vz - z * vy)
-    ty = 2.0 * (z * vx - x * vz)
-    tz = 2.0 * (x * vy - y * vx)
-    return (
-        vx + w * tx + (y * tz - z * ty),
-        vy + w * ty + (z * tx - x * tz),
-        vz + w * tz + (x * ty - y * tx),
-    )
-
-
 def _inverse_projection(
     projection: planet.Projection,
     position: planet.Vec3,
@@ -282,7 +265,7 @@ def blueprint_port_anchor(
         centre, rotation = projection.pose(x, y, z, yaw)
         # SlotPose uses our (x, north, up) axes. Unity's local vector is
         # (x, up, forward).
-        offset = _rotate_vector(rotation, (pose.dx, pose.dz, pose.dy))
+        offset = quaternion.rotate(rotation, (pose.dx, pose.dz, pose.dy))
         world_port = (
             centre[0] + offset[0],
             centre[1] + offset[1],

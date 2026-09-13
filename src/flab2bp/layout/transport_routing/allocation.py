@@ -17,8 +17,6 @@ from .topology import SelectedTopology, verify_rates
 
 Order = Literal["captured", "nearest-bank", "reverse"]
 
-ORDERS: tuple[Order, ...] = ("captured", "nearest-bank", "reverse")
-
 Node = tuple[str, int, str]
 
 

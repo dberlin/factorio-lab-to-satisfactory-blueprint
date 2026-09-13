@@ -38,7 +38,16 @@ import numpy as np
 from ortools.linear_solver import pywraplp
 from ortools.sat.python import cp_model
 
-from flab2bp.dsp import catalog, codec, colliders, params, planet, rules, splitter_ports
+from flab2bp.dsp import (
+    catalog,
+    codec,
+    colliders,
+    params,
+    planet,
+    quaternion,
+    rules,
+    splitter_ports,
+)
 from flab2bp.indexed import Nets, PortReservations, StakedPaths, UnionFind
 from flab2bp.indexed.staked_paths import StakedPathSnapshot
 from flab2bp.layout import (
@@ -56,7 +65,7 @@ from flab2bp.layout.base import Facing, NoValidLayout, PlacedBuilding, Placement
 from flab2bp.layout.buildings import Buildings, MutableBuildings, bounds_of
 from flab2bp.layout.buildings import Kind as BuildingKind
 from flab2bp.layout.coater_mode import coater_mode
-from flab2bp.layout.geometric_world import GeometricWorld
+from flab2bp.layout.geometric_world import GeometricWorld, GridIndex
 from flab2bp.layout.junction_admission import JunctionAdmissionMemo
 from flab2bp.layout.piling import LaneLoad, MergePlan, PilerPlan, plan_merges
 from flab2bp.layout.projection_world import FlatScreen
@@ -385,10 +394,10 @@ _REPAIR_PASSES = 4
 
 #: Per-query work cap: newly prepared cells plus processed active intervals.
 #: Exhaustion refuses the route; it never relaxes physical admission.
-_MAX_EXPANSIONS = 200_000
+_MAX_SEARCH_WORK = 200_000
 
 #: Total geometric search work across ALL nets and ALL rip-up rounds of one routing
-#: pass.  `_MAX_EXPANSIONS` bounds a single search; this bounds their product,
+#: pass.  `_MAX_SEARCH_WORK` bounds a single search; this bounds their product,
 #: which is what actually runs away at scale.
 _ROUTING_BUDGET = 2_000_000
 
@@ -555,7 +564,7 @@ def _expired(deadline: float | None) -> bool:
     its own and nothing bounded their sum: the height sweep spent
     ``time_budget_s``, the escalated retry spent ``RETRY_BUDGET_S`` again, the
     loose sweep had a budget of its own, and the routing inside each of them was
-    bounded by an expansion count rather than a clock. A nominal 4-second budget
+    bounded by a charged work count rather than a clock. A nominal 4-second budget
     measured at 80 seconds on ``quantum-chip`` and over 400 on a refusing
     ``universe-matrix`` cell. Once every net is routed, the fixed five-second
     atomic completion grace covers compaction, projection, and certification;
@@ -936,14 +945,6 @@ class Strip:
             seen += len(other)
         raise KeyError(f"{lane!r} is not an input lane of {self.recipe_id!r}")
 
-    def input_is_shared(self, item: str) -> bool:
-        """Does ``item`` ride a lane with other items?
-
-        A sorter drawing from a shared lane MUST set a filter, or it takes
-        whatever passes and starves the machine that wanted the other item.
-        """
-        return len(self.lane_of_input(item)) > 1
-
     def _input_attachment_plan(self, item: str) -> LaneAttachmentPlan:
         for plan in self.attachment_plan:
             if plan.lane.kind == "input" and item in plan.lane.items:
@@ -1012,10 +1013,6 @@ class Strip:
         plan = self._input_attachment_plan(item)
         return next(attachment for attachment in plan.attachments if attachment.item == item)
 
-    def slot_of_input(self, item: str) -> int:
-        """Authoritative relative column selected for this ingredient."""
-        return self.attachment_of_input(item).column
-
     def row_of_input(self, item: str) -> int:
         """Row index carrying ``item``, relative to the strip's top."""
         if self.takes_belt_ports:
@@ -1083,10 +1080,6 @@ class Strip:
             raise ValueError("input lane does not match the selected attachment plan")
         last_column = max(attachment.column for attachment in plan.attachments)
         return (self.machines - 1) * self.pw + last_column + 1
-
-    def east_of_input(self, item: str) -> int:
-        """Offset from the strip's west edge to the last tile of ``item``'s lane."""
-        return self.input_lane_tiles(self.lane_of_input(item)) - 1
 
     @property
     def sid(self) -> str:
@@ -2534,11 +2527,11 @@ class _Canvas:
     #: A port is a lane's end tile, so it has at most three free neighbours and
     #: often one.  Without a reservation an earlier net's path takes the last
     #: one, and every net using that port is then handed an EMPTY start or goal
-    #: set: the geometric search reports dynamic access loss having expanded zero nodes.  That is
+    #: set: the geometric search reports dynamic access loss having charged zero work.  That is
     #: distinguishable from congestion in diagnostics but still cannot be
-    #: negotiated away, because a net that expands nothing never registers a
+    #: negotiated away, because a net that searches nothing never registers a
     #: conflict for the history term to price.  Measured on the magnetic-ring
-    #: spec: 48 of 128 searches failed at zero expansions, at every candidate
+    #: spec: 48 of 128 searches failed at zero charged work, at every candidate
     #: height, with two thirds of the routing budget still unspent.
     reserved: PortReservations = field(default_factory=PortReservations)
     #: Ports the net currently being routed owns; it may use their reservations.
@@ -4600,7 +4593,7 @@ class _Grid:
     equal-cost paths is taken.  ``x``, then ``y``, then ``lvl`` makes integer
     order the SAME total order as tuple order, so every tie falls the way it did
     when cells were tuples.  A level-major index -- the obvious layout -- is
-    measurably a different router: injected as a fault it left the expansion
+    measurably a different router: injected as a fault it left the charged work
     count byte-identical and moved the committed paths.
 
     ``span`` is the indexed extent and is padded two cells beyond anything the
@@ -4622,6 +4615,11 @@ class _Grid:
     vertical_construction: bool
     xstep: int
     size: int
+    #: The flat-index arithmetic above, as the one object every reader shares.
+    #: ``xstep`` is ``gh * levels``, so ``codec.encode`` IS the formula in this
+    #: docstring; the field stays because the transition tables and the history
+    #: flattener add whole-column strides rather than encoding cells.
+    codec: GridIndex
     base: bytes
     occ: bytearray
     #: Per-search passability scratch, exactly refreshed by :func:`_routing_flags`.
@@ -4638,7 +4636,7 @@ class _Grid:
         x0, y0, x1, y1 = self.span
         if not (x0 <= x <= x1 and y0 <= y <= y1 and 0 <= lvl < self.levels):
             raise IndexError(f"routing cell outside indexed domain: {cell}")
-        return (x - self.gx0) * self.xstep + (y - self.gy0) * self.levels + lvl
+        return self.codec.encode(cell)
 
     def block(self, cell: tuple[int, int, int]) -> None:
         """Mark a committed path cell impassable."""
@@ -4793,6 +4791,7 @@ def _make_grid(
         vertical_construction=canvas.belt_rules.vertical_construction,
         xstep=xstep,
         size=size,
+        codec=GridIndex(gx0, gy0, gh, levels),
         base=bytes(occ),
         occ=occ,
         routing_flags=bytearray(size),
@@ -4821,14 +4820,20 @@ def _routing_flags(
 
 @dataclass(frozen=True, slots=True)
 class _PathSearchResult:
-    """Detailed result; ``expansions`` records charged geometric work units."""
+    """Detailed result; ``work`` records charged geometric work units.
+
+    The unit is the kernel's, not A*'s: see
+    :attr:`~flab2bp.layout.geometric_router.GeometricMetrics.charged_work` --
+    scanned occupancy and history cells plus processed active intervals, which
+    is not a count of expanded nodes.
+    """
 
     path: tuple[Cell, ...] | None
     kind: RouteFailureKind | None
     wall: tuple[Cell, ...]
-    expansions: int
+    work: int
     #: Which bound produced a BUDGET kind.  See :class:`BudgetCause`: a reader
-    #: that cannot separate the clock from an expansion cap reads "give it more
+    #: that cannot separate the clock from a work cap reads "give it more
     #: seconds" into failures no clock ever touched.
     cause: BudgetCause = BudgetCause.UNKNOWN
 
@@ -4976,7 +4981,7 @@ def _geometric_search(
     start_left = budget["left"] if budget is not None else 1 << 62
 
     world = GeometricWorld.from_grid(flat, flags, transitions)
-    max_work = min(_MAX_EXPANSIONS, start_left)
+    max_work = min(_MAX_SEARCH_WORK, start_left)
     result = geometric_router.route(
         geometric_router.GeometricQuery(
             world=world,
@@ -4988,31 +4993,28 @@ def _geometric_search(
             extra_edges=admitted_edges,
         )
     )
-    expansions = result.metrics["charged_work"]
+    outcome = geometric_router.summarize(result)
+    work = outcome.work
     if budget is not None:
-        budget["left"] = start_left - expansions
-    if result.kind in ("budget", "cancelled"):
+        budget["left"] = start_left - work
+    if outcome.exhausted_budget or outcome.cancelled:
         # The native search raises one limit for both bounds, so read them back
         # here: it charges exactly `max_work` and stops only when the allowance
         # is what ended it, and anything short of that with an expired clock was
         # the clock.
         cause = (
-            BudgetCause.ALLOWANCE
-            if expansions >= max_work or deadline is None
-            else BudgetCause.DEADLINE
+            BudgetCause.ALLOWANCE if work >= max_work or deadline is None else BudgetCause.DEADLINE
         )
-        return _PathSearchResult(None, RouteFailureKind.BUDGET, (), expansions, cause)
-    path_indices = result.path
-    if result.kind == "routed":
+        return _PathSearchResult(None, RouteFailureKind.BUDGET, (), work, cause)
+    path_indices = outcome.path
+    if not outcome.exhausted:
         assert path_indices is not None
         cells = []
         for index in path_indices:
             q, lvl = divmod(index, levels)
             px, py = divmod(q, gh)
             cells.append((px + gx0, py + gy0, lvl))
-        return _PathSearchResult(
-            tuple(_cut_loops(cells, ramped=canvas.ramped)), None, (), expansions
-        )
+        return _PathSearchResult(tuple(_cut_loops(cells, ramped=canvas.ramped)), None, (), work)
 
     # Forward exhaustion keeps its existing cardinal ownership frontier.
     # Reverse exhaustion instead exposes predecessors of the goal component;
@@ -5080,7 +5082,7 @@ def _geometric_search(
             None,
             RouteFailureKind.SEALED_POCKET,
             owner_wall_cells,
-            expansions,
+            work,
         )
     wall_cells: tuple[Cell, ...] = ()
     if sum(hi - lo + 1 for _, _, lo, hi in reached) <= _BLAME_MAX_POCKET:
@@ -5094,7 +5096,7 @@ def _geometric_search(
             if blame is not None:
                 for cell in wall_cells:
                     blame[cell] = blame.get(cell, 0.0) + 1.0
-    return _PathSearchResult(None, RouteFailureKind.SEALED_POCKET, wall_cells, expansions)
+    return _PathSearchResult(None, RouteFailureKind.SEALED_POCKET, wall_cells, work)
 
 
 @dataclass(frozen=True, slots=True)
@@ -6196,8 +6198,8 @@ def _route_all(
     clothes.
 
     THIS LOOP IS THE OVERRUN.  Up to :data:`RRR_MAX` rounds, each re-routing
-    every net, each net allowed :data:`_MAX_EXPANSIONS` nodes -- bounded in
-    expansions by :data:`_ROUTING_BUDGET` and, until now, not bounded in seconds
+    every net, each net allowed :data:`_MAX_SEARCH_WORK` work units -- bounded in
+    total work by :data:`_ROUTING_BUDGET` and, until now, not bounded in seconds
     at all.  A caller asking for four seconds got ten of these per sweep and two
     sweeps, which is how ``quantum-chip`` measured at 80 seconds against a
     nominal 4.
@@ -6238,7 +6240,7 @@ def _route_all(
 
     history: dict[tuple[int, int, int], float] = defaultdict(float)
     primitives = RoutePrimitives(canvas.belt_rules)
-    geometry_world: projection_world.GeometricWorld | None = None
+    geometry_world: projection_world.ClearanceOracle | None = None
     geometry_screen: FlatScreen | None = None
     #: The live routing -- net index to path -- and the same cells the other way
     #: round.  ``owner`` is what makes a TARGETED rip-up possible: a repair
@@ -6249,12 +6251,12 @@ def _route_all(
     paths = StakedPaths(_STEPS)
     owner: dict[Cell, int] = {}
     iterations = 0
-    expansions = 0
-    # A TOTAL expansion budget across every net and every rip-up round.
+    work = 0
+    # A TOTAL work budget across every net and every rip-up round.
     #
-    # `_MAX_EXPANSIONS` bounds one search; nothing bounded the product. At
-    # 470-machine scale that is ~50 nets x 8 rounds x 200k = up to 80M
-    # expansions, which ran for over fifteen minutes -- not a hang, just work
+    # `_MAX_SEARCH_WORK` bounds one search; nothing bounded the product. At
+    # 470-machine scale that is ~50 nets x 8 rounds x 200k = up to 80M work
+    # units, which ran for over fifteen minutes -- not a hang, just work
     # nobody had bounded. A shared budget is deterministic (no wall clock, so
     # runs stay reproducible) and degrades honestly: an exhausted search returns
     # None, which is already the route-failure path the caller repairs from and
@@ -6275,7 +6277,7 @@ def _route_all(
     #: The BEST round's paths, not the last round's.
     #:
     #: What gets committed used to be whichever round the loop happened to stop
-    #: on, and the shared expansion budget makes the last round systematically
+    #: on, and the shared work budget makes the last round systematically
     #: the WORST one: round 1 spends the budget, every round after it has
     #: nothing left to search with, and `_geometric_search` reports budget exhaustion for
     #: every net before expanding a node. Committing that round throws away a
@@ -6290,7 +6292,7 @@ def _route_all(
     best_source_hints: dict[int, Cell] = {}
     best_path_taps: dict[int, Cell] = {}
     best_sink_hints: dict[int, Cell] = {}
-    round_expansions: dict[int, int] = {}
+    round_work: dict[int, int] = {}
     contextual_seen = False
     proposals: dict[int, _RouteProposal] = {}
     proposal_used = False
@@ -6360,7 +6362,7 @@ def _route_all(
             kind=kind,
             wall=search.wall,
             blocking_nets=blocking_nets,
-            expansions=search.expansions,
+            work=search.work,
             source=source,
             destination=destination,
             blocking_endpoints=_blocking_endpoint_cells(blocking_nets),
@@ -6401,9 +6403,9 @@ def _route_all(
                 RouteFailureKind.BUDGET,
                 (),
                 (),
-                round_expansions.get(
+                round_work.get(
                     index,
-                    previous.expansions if previous is not None else 0,
+                    previous.work if previous is not None else 0,
                 ),
                 budget_cause=_pass_budget_cause(),
             )
@@ -6427,7 +6429,7 @@ def _route_all(
             ),
             failures=tuple(failures[index] for index in range(len(nets)) if index in failures),
             iterations=iterations,
-            expansions=expansions,
+            work=work,
             last_mile=_last_mile_report(),
         )
 
@@ -6619,7 +6621,7 @@ def _route_all(
                         RouteFailureKind.BUDGET,
                         (),
                         (),
-                        previous.expansions if previous is not None else 0,
+                        previous.work if previous is not None else 0,
                         budget_cause=_pass_budget_cause(),
                     )
         for index in unlinked:
@@ -6674,7 +6676,7 @@ def _route_all(
             routed=routed,
             failures=ordered_failures,
             iterations=iterations,
-            expansions=expansions,
+            work=work,
             exhaustive=exhaustive,
             last_mile=_last_mile_report(),
             settlement=None if attempt is None else attempt.settlement,
@@ -6697,7 +6699,7 @@ def _route_all(
                 routed=(),
                 failures=tuple(_failure(index, missing, ()) for index in range(len(nets))),
                 iterations=0,
-                expansions=0,
+                work=0,
                 settlement=(
                     None
                     if _expired(deadline)
@@ -7659,7 +7661,7 @@ def _route_all(
         for cell in goals:
             sink_provenance.pop(cell, None)
         goals.update(cell for cell in frontier if cell not in rejected_goals[index])
-        # A zero-expansion access miss can still be congestion: earlier paths
+        # A zero-work access miss can still be congestion: earlier paths
         # may occupy every direct dock, leaving the geometric search no start or goal and therefore
         # no explored wall to attribute. Retain those exact owners so repair can
         # rip up the paths that closed either endpoint instead of repeating the
@@ -7768,7 +7770,7 @@ def _route_all(
         nonlocal geometry_world, geometry_screen
         try:
             if geometry_world is None:
-                geometry_world = projection_world.GeometricWorld(canvas, deadline=query_deadline)
+                geometry_world = projection_world.ClearanceOracle(canvas, deadline=query_deadline)
             world = geometry_world
             world.history = search_history
             world.pressure = pressure
@@ -7831,11 +7833,11 @@ def _route_all(
         search_tap = next(iter(source_choices)) if len(source_choices) == 1 else None
         rejected: set[Cell] | None = None
         rejected_edges: set[tuple[Cell, Cell]] = set()
-        total_expansions = 0
+        total_work = 0
         connector_reserve = (
-            0 if ordinary_only else min(_MAX_EXPANSIONS + 1, max(0, search_budget["left"]) // 2)
+            0 if ordinary_only else min(_MAX_SEARCH_WORK + 1, max(0, search_budget["left"]) // 2)
         )
-        allowance = min(_MAX_EXPANSIONS + 1, max(0, search_budget["left"] - connector_reserve))
+        allowance = min(_MAX_SEARCH_WORK + 1, max(0, search_budget["left"] - connector_reserve))
         if _expired(deadline):
             return _PathSearchResult(None, RouteFailureKind.BUDGET, (), 0, BudgetCause.DEADLINE)
         if ordinary_deadline is None:
@@ -7849,7 +7851,7 @@ def _route_all(
         def probe_ordinary(
             candidates: list[Cell], blocked: Collection[Cell]
         ) -> _PathSearchResult | None:
-            nonlocal ordinary_remaining, total_expansions, capped_ordinary
+            nonlocal ordinary_remaining, total_work, capped_ordinary
             if (
                 ordinary_remaining < 2
                 or _expired(ordinary_deadline)
@@ -7891,11 +7893,11 @@ def _route_all(
             )
             search_budget["left"] -= ordinary_remaining - private["left"]
             ordinary_remaining = private["left"]
-            total_expansions += result.expansions
+            total_work += result.work
             if result.path is not None:
                 return result
             if result.kind is RouteFailureKind.BUDGET and (
-                result.expansions >= _MAX_EXPANSIONS or ordinary_remaining <= 0
+                result.work >= _MAX_SEARCH_WORK or ordinary_remaining <= 0
             ):
                 capped_ordinary = result
             return None
@@ -7910,7 +7912,7 @@ def _route_all(
                         None,
                         RouteFailureKind.BUDGET,
                         (),
-                        total_expansions,
+                        total_work,
                         capped_ordinary.cause
                         if capped_ordinary is not None
                         else BudgetCause.BOUNDED,
@@ -7926,7 +7928,7 @@ def _route_all(
                             None,
                             RouteFailureKind.BUDGET,
                             (),
-                            total_expansions,
+                            total_work,
                             BudgetCause.DEADLINE if _expired(deadline) else BudgetCause.ALLOWANCE,
                         )
                     connector_edges = primitives.edges(
@@ -7945,10 +7947,10 @@ def _route_all(
                     )
                     if retry == 0 and not connector_edges and capped_ordinary is not None:
                         # No graph inputs changed. The fallback has no larger
-                        # expansion allowance than the exhausted ordinary search.
+                        # work allowance than the exhausted ordinary search.
                         # Repeating its bounded prefix cannot find a new path;
                         # retain the shared quota for other nets, still refusing.
-                        return replace(capped_ordinary, expansions=total_expansions)
+                        return replace(capped_ordinary, work=total_work)
                     found = _geometric_search(
                         canvas,
                         search_starts,
@@ -7966,7 +7968,7 @@ def _route_all(
                         blocking_owners=owner,
                         extra_edges=connector_edges,
                     )
-                    total_expansions += found.expansions
+                    total_work += found.work
                 if found.path is None:
                     # Connector siting is bounded and keeps one physical witness
                     # per directed edge. Exhausting this subset cannot prove the
@@ -7976,7 +7978,7 @@ def _route_all(
                     return replace(
                         found,
                         kind=RouteFailureKind.BUDGET,
-                        expansions=total_expansions,
+                        work=total_work,
                         cause=(
                             found.cause
                             if found.kind is RouteFailureKind.BUDGET
@@ -7990,7 +7992,7 @@ def _route_all(
                             None,
                             RouteFailureKind.BUDGET,
                             (),
-                            total_expansions,
+                            total_work,
                             BudgetCause.BOUNDED,
                         )
                     if ordinary_attempt:
@@ -8013,7 +8015,7 @@ def _route_all(
                             None,
                             RouteFailureKind.BUDGET,
                             (),
-                            total_expansions,
+                            total_work,
                             BudgetCause.BOUNDED,
                         )
                     if ordinary_attempt:
@@ -8044,7 +8046,7 @@ def _route_all(
                         ]
                     continue
                 if tap is None:
-                    return replace(found, expansions=total_expansions)
+                    return replace(found, work=total_work)
                 stack = _splitter_stack_geometry(*tap)
                 illegal: set[Cell] = set()
                 path_cells = set(found.path)
@@ -8065,10 +8067,10 @@ def _route_all(
                 if attachment in path_cells:
                     illegal.add(attachment)
                 if not illegal:
-                    return replace(found, expansions=total_expansions)
+                    return replace(found, work=total_work)
                 if retry == 4:
                     return _PathSearchResult(
-                        None, RouteFailureKind.BUDGET, (), total_expansions, BudgetCause.BOUNDED
+                        None, RouteFailureKind.BUDGET, (), total_work, BudgetCause.BOUNDED
                     )
                 if ordinary_attempt:
                     # Only this source owns these body constraints. Retrying it
@@ -8096,7 +8098,7 @@ def _route_all(
                 rejected.update(illegal)
             raise AssertionError("source admission retry must return")
         except _PreparationDeadline as error:
-            error.expansions += total_expansions
+            error.work += total_work
             raise
 
     def _preserves_source_frontier(
@@ -8180,7 +8182,7 @@ def _route_all(
                     ordinary_only=ordinary_only,
                     admit_proposal=admit_proposal,
                 )
-                total += found.expansions
+                total += found.work
                 # No routing state changes between proposal admission and this
                 # return. Reuse only the exact immutable path's witness; the geometric search and
                 # other proposals still receive their own family proof.
@@ -8190,7 +8192,7 @@ def _route_all(
                     offers,
                     proved_future=admitted_future if found.path is admitted_path else None,
                 ):
-                    return replace(found, expansions=total)
+                    return replace(found, work=total)
                 if retry == 4 or _expired(deadline) or search_budget["left"] <= 0:
                     break
                 for cell in found.path:
@@ -8200,7 +8202,7 @@ def _route_all(
             # exhausted geometric search and cannot establish an impossibility.
             return _PathSearchResult(None, RouteFailureKind.BUDGET, (), total, BudgetCause.BOUNDED)
         except _PreparationDeadline as error:
-            error.expansions += total
+            error.work += total
             error.net_index = index
             raise
 
@@ -8354,7 +8356,7 @@ def _route_all(
             # Role withdrawal/retirement rebinds the canonical reservation tuple.
             open_grid.reserved = grid.reserved
 
-        nonlocal expansions
+        nonlocal work
 
         def _rebuild_route(
             index: int,
@@ -8362,7 +8364,7 @@ def _route_all(
             *,
             constraints: Collection[Cell] = (),
         ) -> _PathSearchResult:
-            nonlocal expansions
+            nonlocal work
             starts, goals, offers = _ends(index)
             try:
                 found = _search_route(
@@ -8378,8 +8380,8 @@ def _route_all(
             finally:
                 canvas.routing_ports = frozenset()
             # Interrupted searches carry their partial work to _route_all.
-            expansions += found.expansions
-            round_expansions[index] = round_expansions.get(index, 0) + found.expansions
+            work += found.work
+            round_work[index] = round_work.get(index, 0) + found.work
             if found.path is not None:
                 _stake(index, found.path, hints=_selected_hints(found.path, offers))
             return found
@@ -8395,7 +8397,7 @@ def _route_all(
             query_deadline: float | None,
             query_ports: frozenset[Cell],
         ) -> _PathSearchResult | None:
-            nonlocal deadline, expansions
+            nonlocal deadline, work
             if remaining <= 0 or budget["left"] <= 0 or _expired(query_deadline):
                 return None
             saved_deadline = deadline
@@ -8493,8 +8495,8 @@ def _route_all(
                         raise
                     finally:
                         budget["left"] -= before - logical["left"]
-                    expansions += found.expansions
-                    round_expansions[index] = round_expansions.get(index, 0) + found.expansions
+                    work += found.work
+                    round_work[index] = round_work.get(index, 0) + found.work
                     if found.path is None:
                         continue
                     contacts = {owner[cell] for cell in found.path if cell in owner}
@@ -8592,7 +8594,7 @@ def _route_all(
                                 )
                             else:
                                 query_deadline = _ordinary_query_deadline()
-                                query_allowance = min(_MAX_EXPANSIONS, budget["left"])
+                                query_allowance = min(_MAX_SEARCH_WORK, budget["left"])
                                 query_ports = canvas.routing_ports
                                 through = _search(
                                     starts,
@@ -8609,10 +8611,8 @@ def _route_all(
                                     ordinary_deadline=query_deadline,
                                 )
                                 canvas.routing_ports = frozenset()
-                                expansions += through.expansions
-                                round_expansions[index] = (
-                                    round_expansions.get(index, 0) + through.expansions
-                                )
+                                work += through.work
+                                round_work[index] = round_work.get(index, 0) + through.work
                                 if through.path is None:
                                     # A policy-restricted query cannot replace the
                                     # canonical failure used by later repair passes.
@@ -8645,7 +8645,7 @@ def _route_all(
                                             through_offers,
                                             victims,
                                             dependents,
-                                            query_allowance - through.expansions,
+                                            query_allowance - through.work,
                                             query_deadline,
                                             query_ports,
                                         )
@@ -8751,11 +8751,11 @@ def _route_all(
         "relation_skipped_siblings": 0,
         "same_source_dropped": 0,
         "nodes": 0,
-        "expansions": 0,
+        "work": 0,
     }
     last_mile_seconds = 0.0
     last_mile_done = False
-    #: One expansion allowance for the whole pass, shared by both runs.  Set
+    #: One work allowance for the whole pass, shared by both runs.  Set
     #: once at pass entry so run 2 cannot re-derive a fresh quarter of whatever
     #: run 1 left behind.
     last_mile_floor = 0
@@ -8775,7 +8775,7 @@ def _route_all(
             relation_skipped_siblings=last_mile_counts["relation_skipped_siblings"],
             same_source_dropped=last_mile_counts["same_source_dropped"],
             nodes=last_mile_counts["nodes"],
-            expansions=last_mile_counts["expansions"],
+            work=last_mile_counts["work"],
             seconds=last_mile_seconds,
             relation_strips=relation_strips,
             relation_evidence=relation_evidence,
@@ -8839,7 +8839,7 @@ def _route_all(
     def _cluster_search(index: int, constraints: frozenset[Cell]) -> _PathSearchResult:
         """One cluster net's search: the round's own call, capped and constrained.
 
-        The private budget is the deadline discipline.  `_MAX_EXPANSIONS` lets
+        The private budget is the deadline discipline.  `_MAX_SEARCH_WORK` lets
         one search run for a large fraction of a second, and this pass makes
         hundreds of them at the end of an attempt that is already near its
         budget, so a quarter of that cap bounds how far past the last bound
@@ -8866,7 +8866,7 @@ def _route_all(
             for cell in constraints
         ), "a cluster constraint left the routing grid's indexed extent"
         allowance = min(
-            last_mile.B_LOW_LEVEL_EXPANSIONS,
+            last_mile.B_LOW_LEVEL_WORK,
             max(0, budget["left"] - last_mile_floor),
         )
         private = {"left": allowance}
@@ -8997,7 +8997,7 @@ def _route_all(
     def _tally(result: last_mile.ClusterResult) -> None:
         nonlocal last_mile_seconds
         last_mile_counts["nodes"] += result.nodes
-        last_mile_counts["expansions"] += result.expansions
+        last_mile_counts["work"] += result.work
         last_mile_seconds += result.seconds
 
     def _solve_cluster(
@@ -9013,7 +9013,7 @@ def _route_all(
             # No ClusterResult reaches _tally on interruption. The debited
             # allowance includes earlier completed CBS searches and the stopped
             # query; retain that work without inventing a closed tree or nodes.
-            last_mile_counts["expansions"] += entry_budget - budget["left"]
+            last_mile_counts["work"] += entry_budget - budget["left"]
             last_mile_counts["bounded"] += 1
             last_mile_seconds += time.perf_counter() - started
             raise
@@ -9170,7 +9170,7 @@ def _route_all(
 
     def _complete_source_dependents(stranded: list[int], providers: Collection[int]) -> list[int]:
         """Consume source taps established by a solved, thinned cluster."""
-        nonlocal commit_attempt, expansions
+        nonlocal commit_attempt, work
         remaining = list(stranded)
         for index in stranded:
             if not any(sibling in providers for sibling in src_group.get(index, ())):
@@ -9189,8 +9189,8 @@ def _route_all(
                     starts, goals, offers = _ends(index)
                     searched = _search_route(index, starts, goals, offers, pressure, budget, blame)
                     canvas.routing_ports = frozenset()
-                    expansions += searched.expansions
-                    round_expansions[index] = round_expansions.get(index, 0) + searched.expansions
+                    work += searched.work
+                    round_work[index] = round_work.get(index, 0) + searched.work
                     if searched.path is None:
                         search_failures[index] = searched
                         search_blockers[index] = _blocking_nets(
@@ -9239,7 +9239,7 @@ def _route_all(
             return round_stranded
         last_mile_done = True
         last_mile_counts["invocations"] += 1
-        last_mile_floor = budget["left"] - int(last_mile.B_CBS_EXPANSION_SHARE * budget["left"])
+        last_mile_floor = budget["left"] - int(last_mile.B_CBS_WORK_SHARE * budget["left"])
         index_by_id = {_net_id(index): index for index in range(len(nets))}
         problem = last_mile.build_cluster(
             sorted(round_stranded),
@@ -9402,7 +9402,7 @@ def _route_all(
             # and the remaining shared quota, under the same deadline.
             coverage_pass = coverage_first and it == 0
             iterations = it + 1
-            round_expansions.clear()
+            round_work.clear()
             for index in list(paths):
                 _unstake(index)
             # `history` gained a round's worth of use and blame at the end of the
@@ -9449,7 +9449,7 @@ def _route_all(
                 finally:
                     if coverage_pass:
                         budget["left"] -= allowance - net_budget["left"]
-                search_expansions = searched.expansions
+                search_work = searched.work
                 if searched.path is None and not searched.wall:
                     access_wall = source_access_walls.get(i, ()) + destination_access_walls.get(
                         i, ()
@@ -9464,8 +9464,8 @@ def _route_all(
                             cause=BudgetCause.UNKNOWN,
                         )
                 canvas.routing_ports = frozenset()
-                expansions += search_expansions
-                round_expansions[i] = round_expansions.get(i, 0) + search_expansions
+                work += search_work
+                round_work[i] = round_work.get(i, 0) + search_work
                 if searched.path is None:
                     search_failures[i] = searched
                     search_blockers[i] = _blocking_nets(
@@ -9649,10 +9649,8 @@ def _route_all(
                             constraints=constraints,
                         )
                         canvas.routing_ports = frozenset()
-                        expansions += searched.expansions
-                        round_expansions[index] = (
-                            round_expansions.get(index, 0) + searched.expansions
-                        )
+                        work += searched.work
+                        round_work[index] = round_work.get(index, 0) + searched.work
                         if searched.path is None:
                             stalled_now.append(index)
                             break
@@ -9824,7 +9822,7 @@ def _route_all(
                 best_attempt = commit_attempt
             else:
                 stale += 1
-            # An exhausted expansion budget ends the search as surely as a stale
+            # An exhausted work budget ends the search as surely as a stale
             # round does: every further round would re-run every net against a
             # budget of zero and fail all of them, and the counters would read as
             # congestion rather than as work nobody had left to do.
@@ -9845,11 +9843,9 @@ def _route_all(
     except _PreparationDeadline as error:
         # Interrupted exact projection/linking provides no geometry verdict.
         # Preserve only completed searches and failures recorded before it.
-        expansions += error.expansions
+        work += error.work
         if error.net_index is not None:
-            round_expansions[error.net_index] = (
-                round_expansions.get(error.net_index, 0) + error.expansions
-            )
+            round_work[error.net_index] = round_work.get(error.net_index, 0) + error.work
         current_failures = {
             index: _failure(index, failed_search, search_blockers.get(index, ()))
             for index, failed_search in search_failures.items()
@@ -10691,7 +10687,7 @@ def _reserve_port_access(
             probed_options[demand] = 0
             probe_options(demand, _PORT_ACCESS_PROBE_KEEP if demand in goal_by_demand else None)
 
-        def pending_expansion(
+        def pending_work(
             assigned: Mapping[PortAccessDemand, PortAccessCorridor],
         ) -> tuple[PortAccessDemand, ...]:
             """Follow local cell conflicts from missing claims to selected owners."""
@@ -10744,7 +10740,7 @@ def _reserve_port_access(
         ) -> tuple[Cell, ...] | None:
             """The wall between this corridor and its goal, or None if it reaches.
 
-            A ``BUDGET`` refusal is NOT a wall: the geometric search ran out of expansions, which
+            A ``BUDGET`` refusal is NOT a wall: the geometric search ran out of work, which
             says nothing about the ground, and convicting on it would drop
             corridors for the searcher's clock rather than for geometry.
             """
@@ -10775,7 +10771,7 @@ def _reserve_port_access(
                 return None
             # Do not spend validation probes on a knowingly truncated assignment.
             # The outer loop expands it before accepting any matcher verdict.
-            if pending_expansion(assigned):
+            if pending_work(assigned):
                 return None
             selected_cells, owner_index, owner_by_index = _selection(assigned)
             cell_owner_index = {cell: owner_index[owner] for cell, owner in selected_cells.items()}
@@ -10818,7 +10814,7 @@ def _reserve_port_access(
             # survey. It supplies no assignment whose conflict closure to follow.
             if not match.assigned and not match.converged:
                 break
-            pending = pending_expansion(match.assigned)
+            pending = pending_work(match.assigned)
             if not pending:
                 break
             for demand in pending:
@@ -11906,22 +11902,6 @@ def _belt_keepout_blockers(
     return tuple(blocked)
 
 
-def _belt_keepout_clear(
-    canvas: _Canvas,
-    x: int,
-    y: int,
-    level: int,
-    excused: Set[tuple[int, int, int]],
-) -> bool:
-    """Would a junction here stand beside a belt the paste would not excuse?
-
-    The commit-time twin of :func:`_junction_belt_clear`, asked of real
-    buildings rather than of staked paths.  ``excused`` is the junction's own
-    run, from :func:`_run_cells`.
-    """
-    return not _belt_keepout_blockers(canvas, x, y, level, excused)
-
-
 def _tap_source(
     canvas: _Canvas,
     belt_idx: int,
@@ -12284,7 +12264,7 @@ def _route_boundary_nets(
         budget = {"left": _ROUTING_BUDGET}
     routed: list[NetId] = []
     failures: list[NetFailure] = []
-    expansions = 0
+    work = 0
 
     def net_id(net: _Net) -> NetId:
         if net.net_id is None:
@@ -12299,7 +12279,7 @@ def _route_boundary_nets(
             search.kind or RouteFailureKind.DYNAMIC_ACCESS,
             search.wall,
             (),
-            search.expansions,
+            search.work,
             source=endpoint if outward else None,
             destination=None if outward else endpoint,
         )
@@ -12391,7 +12371,7 @@ def _route_boundary_nets(
                     budget,
                     deadline,
                 )
-                expansions += searched.expansions
+                work += searched.work
                 path = searched.path
                 if path is None:
                     failures.append(failed(net, searched))
@@ -12479,7 +12459,7 @@ def _route_boundary_nets(
         routed=tuple(routed),
         failures=tuple(failures),
         iterations=0,
-        expansions=expansions,
+        work=work,
         # A result with no failure has nothing left unproved.  This is the same
         # vacuous claim `_build_prepared` already makes for `empty_routing`, and
         # `_build_prepared` conjoins all four sub-routings, so without it an
@@ -12537,7 +12517,7 @@ class _PreparationDeadline(Exception):
         super().__init__()
         # A routing owner retains work and real refusals completed before the
         # interrupted query, without interpreting that query as a failed one.
-        self.expansions = 0
+        self.work = 0
         self.net_index: int | None = None
         self.failures: dict[int, NetFailure] = {}
 
@@ -13563,9 +13543,9 @@ class _CoaterJunctionCache:
         if pole is None:
             # Match spherical_rotation's actual fixed-global-forward branch.
             # That branch is not equivariant under a longitude translation.
-            direction = planet._norm(projection.direction(placed.x, placed.y))
-            tangent = planet._cross(direction, (0.0, 1.0, 0.0))
-            pole = planet._dot3(tangent, tangent) < 1e-4
+            direction = quaternion.normalize(projection.direction(placed.x, placed.y))
+            tangent = quaternion.cross(direction, (0.0, 1.0, 0.0))
+            pole = quaternion.dot(tangent, tangent) < 1e-4
             states[key] = pole
         return pole
 
@@ -13999,23 +13979,23 @@ class _CompositionProjection:
         self._projection_cache = finalize._ProjectionCache(
             finalize._ProjectionCounters(), cancelled=self.cancelled
         )
+        # ONE `Placement` for every consumer below, so the `Buildings` index
+        # `finalize._power_nodes` memoises onto it is the same index the two
+        # comprehensions in this constructor query. Two separate placements
+        # over identical records would each build their own.
+        placement = Placement(buildings=self.buildings)
         try:
             self._obstacles = _ProjectedObstacleIndex.build(
                 tuple(enumerate(self.buildings)), cancelled=cancelled
             )
-            self._cleanup = finalize._CleanupSurvivorGraph(
-                Placement(buildings=self.buildings), cancelled=cancelled
-            )
+            self._cleanup = finalize._CleanupSurvivorGraph(placement, cancelled=cancelled)
             self._bounds = self._cleanup.snapshot_bounds()
-            self._power = finalize._power_nodes(
-                Placement(buildings=self.buildings), cancelled=cancelled
-            )
+            self._power = finalize._power_nodes(placement, cancelled=cancelled)
         except finalize.ProjectionCancelled:
             raise _PreparationDeadline from None
+        indexed = Buildings.of(placement)
         self._coaters = tuple(
-            (index, building)
-            for index, building in enumerate(self.buildings)
-            if building.item_id == catalog.SPRAY_COATER_ID
+            (index, self.buildings[index]) for index in indexed.by_item(catalog.SPRAY_COATER_ID)
         )
         self._materialized_coaters: dict[
             tuple[tuple[int, int, int, int], finalize.FrameCandidate],
@@ -14045,10 +14025,13 @@ class _CompositionProjection:
         ] = {}
         self._addition_obstacles: dict[PlacedBuilding, _ProjectedObstacleIndex] = {}
         self._frame_bands: dict[_JunctionProjectionFrame, tuple[planet.Band, ...]] = {}
+        # `kind_for` assigns BELT to exactly `catalog.is_belt` and SORTER to
+        # exactly the remaining `catalog.is_sorter`, so MACHINE | OTHER is the
+        # complement this predicate accepted. `sorted` restores the ascending
+        # order `enumerate` yielded.
         self._static = tuple(
-            (index, building)
-            for index, building in enumerate(self.buildings)
-            if not catalog.is_belt(building.item_id) and not catalog.is_sorter(building.item_id)
+            (index, self.buildings[index])
+            for index in sorted((*indexed.machines(), *indexed.by_kind(BuildingKind.OTHER)))
         )
 
     def allows_buildings(
@@ -15522,11 +15505,16 @@ def plan_power_infill(
     # keeps the two sets from drifting.  Altitude is not in the predicate: a
     # stack of belts over one ground cell is one question, not three.
     dark: set[tuple[int, int]] = set()
-    for b in canvas.buildings:
+    for index in sorted(
+        (
+            *canvas.buildings.machines(),
+            *canvas.buildings.sorters(),
+            *canvas.buildings.by_kind(BuildingKind.OTHER),
+        )
+    ):
         if cancelled is not None and cancelled():
             raise _PreparationDeadline
-        if catalog.is_belt(b.item_id):
-            continue
+        b = canvas.buildings[index]
         for tx, ty, _tz in b.tiles():
             if (tx, ty) not in dark and not covered(tx, ty):
                 dark.add((tx, ty))
@@ -17966,9 +17954,8 @@ def _coater_candidate_has_ambiguous_supply(canvas: _Canvas, x: int, y: int, z: i
     anchor_x = math.floor(float(want[0]))
     anchor_y = math.floor(float(want[1]))
     candidates = 0
-    for b in canvas.buildings:
-        if not catalog.is_belt(b.item_id):
-            continue
+    for index in canvas.buildings.belts():
+        b = canvas.buildings[index]
         if not (anchor_x - reach <= b.x <= anchor_x + reach):
             continue
         if not (anchor_y - reach <= b.y <= anchor_y + reach):

@@ -183,7 +183,7 @@ class ComposeResult:
     #: gates: those tiles are already counted in `power_uncovered`.
     unrouted_cuts: int = 0
     settlement: RouteSettlement | None = None
-    route_expansions: int = 0
+    route_work: int = 0
     settlement_attempts: int = 0
     settlement_refusals: int = 0
     settlement_reuses: int = 0
@@ -1810,7 +1810,7 @@ def compose(
         result,
         routed=external_result.routed + result.routed,
         failures=external_result.failures + result.failures,
-        expansions=external_result.expansions + result.expansions,
+        work=external_result.work + result.work,
         status=(
             external_result.status
             if external_result.status is not DetailedRouteStatus.ROUTED
@@ -1896,7 +1896,7 @@ def compose(
         power_uncovered=power_uncovered,
         unrouted_cuts=routing_failures,
         settlement=outcome,
-        route_expansions=result.expansions,
+        route_work=result.work,
         settlement_attempts=settlement.attempts,
         settlement_refusals=settlement.refusals,
         settlement_reuses=settlement.reuses,

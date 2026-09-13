@@ -60,9 +60,10 @@ class FeatureIndex:
                 yield feature
 
 
-class GeometricWorld:
-    """Cache fixed collider geometry while consulting live routing masks each time.
+class ClearanceOracle:
+    """Canvas clearance oracle for source and cell admission during proposals.
 
+    Caches fixed collider geometry while consulting live routing masks each time.
     One instance belongs to one private routing canvas. Physical commits happen
     on separate clones, so tentative staking cannot stale the static cache.
     """
@@ -203,7 +204,7 @@ class GeometricWorld:
 
 class FlatScreen:
     def __init__(
-        self, blocked: Collection[Cell], deadline: float | None, world: GeometricWorld
+        self, blocked: Collection[Cell], deadline: float | None, world: ClearanceOracle
     ) -> None:
         self.world = world
         self.levels = world.canvas.levels

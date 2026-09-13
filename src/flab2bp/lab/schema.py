@@ -145,8 +145,6 @@ class _RawDataset(_RawModel):
 _DATASET_ADAPTER: Final[TypeAdapter[_RawDataset]] = TypeAdapter(_RawDataset)
 _HASH_INDEX_ADAPTER: Final[TypeAdapter[_RawHashIndex]] = TypeAdapter(_RawHashIndex)
 
-Number = Fraction
-
 
 def _frac(value: RawNumber | None) -> Fraction | None:
     """Coerce a parsed JSON number to an exact ``Fraction``."""
@@ -271,14 +269,6 @@ class Module:
             proliferator=raw.proliferator,
             limitation=raw.limitation,
         )
-
-    @property
-    def is_productivity(self) -> bool:
-        return self.productivity is not None
-
-    @property
-    def is_speed(self) -> bool:
-        return self.speed is not None
 
 
 @dataclass(frozen=True, slots=True)
@@ -563,10 +553,6 @@ class Dataset:
             raise KeyError(f"item {item_id!r} is not a machine")
         return machine
 
-    def get_machine(self, item_id: str) -> Machine | None:
-        item = self.get_item(item_id)
-        return item.machine if item else None
-
     def module(self, item_id: str) -> Module:
         module = self.item(item_id).module
         if module is None:
@@ -597,10 +583,6 @@ class Dataset:
     @property
     def machine_ids(self) -> tuple[str, ...]:
         return tuple(i.id for i in self.items if i.machine is not None)
-
-    @property
-    def belt_ids(self) -> tuple[str, ...]:
-        return tuple(i.id for i in self.items if i.belt is not None)
 
     def recipes_producing(self, item_id: str) -> list[Recipe]:
         """Every recipe with ``item_id`` in its outputs, excluded or not.

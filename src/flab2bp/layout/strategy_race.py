@@ -232,9 +232,6 @@ class RaceChannels:
     def publish_incumbent(self, message: IncumbentMessage) -> None:
         self._put(message)
 
-    def publish_no_good(self, message: NoGoodMessage) -> None:
-        self._put(message)
-
     def drain(self) -> tuple[RaceMessage, ...]:
         """Take at most ``RACE_DRAIN_MAX_MESSAGES`` items off the consume queue.
 

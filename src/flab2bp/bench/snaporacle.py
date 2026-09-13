@@ -22,11 +22,10 @@ absent, and :func:`unavailable_reason` names exactly which.
 from __future__ import annotations
 
 import json
-import math
 import os
 import shutil
 import subprocess
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar
 
@@ -40,10 +39,10 @@ __all__ = [
     "BeltPath",
     "Candidate",
     "Case",
+    "LadderVerdict",
     "OracleUnavailable",
     "SlotPose",
     "Step",
-    "Verdict",
     "ask",
     "dotnet_available",
     "game_managed_dir",
@@ -194,7 +193,7 @@ class Step:
 
 
 @dataclass(frozen=True, slots=True)
-class Verdict:
+class LadderVerdict:
     """What the ladder decided for one case."""
 
     name: str
@@ -387,8 +386,8 @@ def _step(raw: _StepWire) -> Step:
     )
 
 
-def _verdict(raw: _VerdictWire) -> Verdict:
-    return Verdict(
+def _verdict(raw: _VerdictWire) -> LadderVerdict:
+    return LadderVerdict(
         name=raw.name,
         condition=raw.condition,
         lpos=raw.lpos or (0.0, 0.0, 0.0),
@@ -485,7 +484,7 @@ def ask(
     *,
     tables: dict[str, tuple[SlotPose, ...]] | None = None,
     timeout_s: float = 200.0,
-) -> list[Verdict]:
+) -> list[LadderVerdict]:
     """Run every case through the transcribed ladder, one subprocess for all.
 
     A case whose transcription raised comes back with ``error`` set rather than
@@ -512,31 +511,3 @@ def ask(
 
 
 # --- reading the answers back into our own units ---------------------------
-
-
-def to_tiles(p: tuple[float, float, float]) -> tuple[float, float, float]:
-    """The inverse of :func:`unity_point`: Unity world point back to our grid."""
-    return (
-        p[0] / colliders.GRID_ARC,
-        p[2] / colliders.GRID_ARC,
-        p[1] / WORLD_UNITS_PER_LEVEL,
-    )
-
-
-def tile_gap(a: tuple[float, float, float], b: tuple[float, float, float]) -> float:
-    """Straight-line distance between two Unity world points, in WORLD UNITS."""
-    return math.dist(a, b)
-
-
-@dataclass(frozen=True, slots=True)
-class Disagreement:
-    """One case where our model and the game's ladder answered differently."""
-
-    case: str
-    what: str
-    ours: str
-    game: str
-    detail: dict[str, object] = field(default_factory=dict)
-
-    def __str__(self) -> str:
-        return f"{self.case}: {self.what} -- ours {self.ours}, game {self.game}"

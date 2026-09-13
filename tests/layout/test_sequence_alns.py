@@ -96,11 +96,11 @@ def _routing() -> DetailedRouteResult:
                 kind=RouteFailureKind.CONGESTION_WALL,
                 wall=((2, 2, 0), (2, 3, 0)),
                 blocking_nets=(NetId(2, 3, "copper-ore", NetRole.INTERNAL, 1),),
-                expansions=17,
+                work=17,
             ),
         ),
         iterations=1,
-        expansions=17,
+        work=17,
     )
 
 

@@ -248,7 +248,7 @@ def test_global_router_uses_relaxed_moves_deterministically() -> None:
     _assert_relaxed_legal_walk(path)
     assert second.paths == first.paths
     assert second.net_results == first.net_results
-    assert second.expansions == first.expansions
+    assert second.work == first.work
 
 
 def test_prepared_blocked_cells_and_foreign_reserved_ports_remain_impassable() -> None:
@@ -555,12 +555,12 @@ def test_feedback_history_prices_legal_cells_without_blocking_them() -> None:
     _assert_relaxed_legal_walk(path)
 
 
-def test_zero_budget_expands_nothing() -> None:
+def test_zero_budget_does_no_work() -> None:
     problem, _net_id = _one_net_problem()
 
     result = route_global_once(problem, _feedback(problem), budget=0)
 
-    assert result.expansions == 0
+    assert result.work == 0
     assert result.unreachable_ports == 1
     assert result.paths == {}
     assert result.rounds == 1
@@ -631,7 +631,7 @@ def test_global_routing_stops_when_the_hard_deadline_is_cancelled() -> None:
     assert result.cancelled
     assert result.rounds == 1
     assert result.paths == {}
-    assert result.expansions < 100_000
+    assert result.work < 100_000
 
 
 def test_global_negotiation_honours_configured_round_count() -> None:
@@ -647,16 +647,16 @@ def test_global_negotiation_honours_configured_round_count() -> None:
     assert multi.total_overflow > 0
 
 
-def test_negotiation_spends_one_exact_shared_expansion_budget() -> None:
+def test_negotiation_spends_one_exact_shared_work_budget() -> None:
     problem = _impossible_overflow_problem()
     first_round = route_global_once(problem, _feedback(problem), budget=100_000)
-    shared_budget = first_round.expansions + 1
+    shared_budget = first_round.work + 1
 
     result = route_global(problem, _feedback(problem), budget=shared_budget)
 
     assert result.rounds == 2
     assert result.exhausted_budget
-    assert result.expansions == shared_budget
+    assert result.work == shared_budget
 
 
 def test_global_route_is_deterministic_and_longest_first() -> None:
@@ -792,3 +792,26 @@ def test_reserved_owner_index_keeps_the_first_cell() -> None:
         (1, 2, 0): 7,
         (3, 4, 0): 9,
     }
+
+
+def test_router_cell_codecs_all_agree_with_the_grid_index() -> None:
+    """`_live_index`, `_decode_cell` and `GeometricWorld.cell` share one codec."""
+    from flab2bp.layout.geometric_world import GeometricWorld, GridIndex
+    from flab2bp.layout.global_router import _decode_cell, _live_index
+
+    box = (0, 0, 3, 2)
+    canvas = routing_domain._Canvas(limit=box, belt_rules=_BELT_RULES)
+    grid = routing_domain._make_grid(canvas, box, (-1, -1, 4, 3), {})
+
+    assert grid.codec == GridIndex(gx0=grid.gx0, gy0=grid.gy0, rows=grid.gh, levels=grid.levels)
+
+    flags = bytearray([1] * grid.size)
+    world = GeometricWorld.from_grid(grid, flags, ())
+    for cell in ((0, 0, 0), (1, 2, 1), (3, 1, 0), (-1, -1, 1)):
+        index = grid.index(cell)
+        assert _live_index(grid, flags, cell) == index
+        assert _decode_cell(grid, index) == cell
+        assert world.cell(index) == cell
+
+    # Outside the indexed span there is no live index at all.
+    assert _live_index(grid, flags, (99, 99, 0)) is None

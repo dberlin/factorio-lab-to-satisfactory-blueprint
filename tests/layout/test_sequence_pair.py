@@ -2163,7 +2163,7 @@ def _lns_failure(
         routed=(),
         failures=(NetFailure(net, kind, wall, blocking_nets, 10),),
         iterations=1,
-        expansions=10,
+        work=10,
     )
 
 

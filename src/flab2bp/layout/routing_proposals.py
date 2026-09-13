@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, NamedTuple
 from flab2bp.layout.route_feedback import Cell
 
 if TYPE_CHECKING:
-    from flab2bp.layout.projection_world import FlatScreen, GeometricWorld
+    from flab2bp.layout.projection_world import ClearanceOracle, FlatScreen
 
 Direction = tuple[int, int]
 Box = tuple[int, int, int, int]
@@ -235,7 +235,7 @@ def primitive_moves(
 def evaluate(
     state: State,
     construction: Construction,
-    world: GeometricWorld,
+    world: ClearanceOracle,
     scope: Box,
     counters: Counters,
     deadline: float | None,
@@ -327,7 +327,7 @@ def evaluate(
 def selected_path(
     edges: Sequence[MacroEdge],
     start: Cell,
-    world: GeometricWorld,
+    world: ClearanceOracle,
     counters: Counters,
     deadline: float | None,
 ) -> tuple[Cell, ...]:
@@ -437,7 +437,7 @@ def endpoint_pairs(
 
 
 def _approaches(
-    world: GeometricWorld,
+    world: ClearanceOracle,
     endpoint: Cell,
     height: int,
     bounds: Box,
@@ -545,7 +545,7 @@ def _leg_pairs(first: _Legs, second: _Legs) -> Iterator[tuple[MacroEdge, MacroEd
 
 
 def overhead_path(
-    world: GeometricWorld,
+    world: ClearanceOracle,
     starts: Sequence[Cell],
     goals: Collection[Cell],
     bounds: Box,
@@ -589,7 +589,7 @@ def overhead_path(
 
 
 def _candidate_edges(
-    world: GeometricWorld,
+    world: ClearanceOracle,
     starts: Sequence[Cell],
     goals: Collection[Cell],
     bounds: Box,

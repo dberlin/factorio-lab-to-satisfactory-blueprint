@@ -45,14 +45,14 @@ def test_detailed_result_counts_real_failures() -> None:
         kind=RouteFailureKind.SEALED_POCKET,
         wall=((4, 5, 0),),
         blocking_nets=(),
-        expansions=41,
+        work=41,
     )
     result = DetailedRouteResult(
         status=DetailedRouteStatus.STRANDED,
         routed=(),
         failures=(failure,),
         iterations=2,
-        expansions=41,
+        work=41,
     )
     assert result.failed_count == 1
     assert result.stranded == (net,)
@@ -65,7 +65,7 @@ def test_exhaustive_route_proof_must_be_explicit_and_non_budget() -> None:
         kind=RouteFailureKind.SEALED_POCKET,
         wall=((4, 5, 0),),
         blocking_nets=(),
-        expansions=41,
+        work=41,
     )
 
     exhaustive = DetailedRouteResult(
@@ -73,7 +73,7 @@ def test_exhaustive_route_proof_must_be_explicit_and_non_budget() -> None:
         routed=(),
         failures=(failure,),
         iterations=2,
-        expansions=41,
+        work=41,
         exhaustive=True,
     )
 
@@ -92,7 +92,7 @@ def test_exhaustive_route_proof_must_be_explicit_and_non_budget() -> None:
                 ),
             ),
             iterations=2,
-            expansions=41,
+            work=41,
             exhaustive=True,
         )
 
@@ -113,7 +113,7 @@ def _detailed_failure(
         routed=(),
         failures=(NetFailure(failed_net, kind, wall, (), 41),),
         iterations=2,
-        expansions=41,
+        work=41,
     )
 
 
@@ -157,7 +157,7 @@ def test_route_feedback_weights_exact_blocking_net_identities() -> None:
             ),
         ),
         iterations=2,
-        expansions=41,
+        work=41,
         exhaustive=True,
     )
 
@@ -192,7 +192,7 @@ def test_route_feedback_retains_exact_local_endpoint_offsets() -> None:
             ),
         ),
         iterations=2,
-        expansions=41,
+        work=41,
     )
 
     updated = update_feedback(

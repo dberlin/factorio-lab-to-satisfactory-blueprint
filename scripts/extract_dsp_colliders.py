@@ -64,38 +64,22 @@ import sys
 import UnityPy
 from UnityPy.helpers.TypeTreeGenerator import TypeTreeGenerator
 
-UNITY_VERSION = "2022.3.62f3c1"
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(_ROOT, "src"))
+
+# The quaternion arithmetic below must be the same arithmetic the runtime
+# applies to what this script writes, so it is imported rather than copied.
+# The module depends on nothing but ``math``, so it imports cleanly in the
+# isolated environment ``uv run`` builds from the header above.
+from flab2bp.dsp import quaternion  # noqa: E402
+
+UNITY_VERSION = "2022.3.62f3c1"
 OUT = os.path.join(_ROOT, "src", "flab2bp", "dsp", "data", "colliders.json")
 
 
 def fail(msg: str) -> None:
     print(f"ERROR: {msg}", file=sys.stderr)
     sys.exit(1)
-
-
-def qmul(a, b):  # noqa: ANN001, ANN201
-    ax, ay, az, aw = a
-    bx, by, bz, bw = b
-    return (
-        aw * bx + ax * bw + ay * bz - az * by,
-        aw * by - ax * bz + ay * bw + az * bx,
-        aw * bz + ax * by - ay * bx + az * bw,
-        aw * bw - ax * bx - ay * by - az * bz,
-    )
-
-
-def qrot(q, v):  # noqa: ANN001, ANN201
-    x, y, z, w = q
-    vx, vy, vz = v
-    tx = 2 * (y * vz - z * vy)
-    ty = 2 * (z * vx - x * vz)
-    tz = 2 * (x * vy - y * vx)
-    return (
-        vx + w * tx + (y * tz - z * ty),
-        vy + w * ty + (z * tx - x * tz),
-        vz + w * tz + (x * ty - y * tx),
-    )
 
 
 def main() -> int:
@@ -152,8 +136,8 @@ def main() -> int:
             t = trs[pid]
             lp, lr, ls = t["m_LocalPosition"], t["m_LocalRotation"], t["m_LocalScale"]
             lpv = (lp["x"] * ps[0], lp["y"] * ps[1], lp["z"] * ps[2])
-            wp = tuple(a + b for a, b in zip(pp, qrot(pr, lpv), strict=True))
-            wr = qmul(pr, (lr["x"], lr["y"], lr["z"], lr["w"]))
+            wp = tuple(a + b for a, b in zip(pp, quaternion.rotate(pr, lpv), strict=True))
+            wr = quaternion.multiply(pr, (lr["x"], lr["y"], lr["z"], lr["w"]))
             ws = (ps[0] * ls["x"], ps[1] * ls["y"], ps[2] * ls["z"])
             out.append((pid, wp, wr, ws))
             for ch in t["m_Children"]:
@@ -172,7 +156,7 @@ def main() -> int:
                 if cp in boxes:
                     bc = boxes[cp]
                     c, s = bc["m_Center"], bc["m_Size"]
-                    r = qrot(wr, (c["x"] * ws[0], c["y"] * ws[1], c["z"] * ws[2]))
+                    r = quaternion.rotate(wr, (c["x"] * ws[0], c["y"] * ws[1], c["z"] * ws[2]))
                     out.append(
                         {
                             "box": True,

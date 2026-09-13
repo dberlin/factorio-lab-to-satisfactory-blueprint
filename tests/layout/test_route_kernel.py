@@ -3,6 +3,7 @@ from __future__ import annotations
 from array import array
 from dataclasses import replace
 from fractions import Fraction
+from typing import Literal, cast
 
 import pytest
 
@@ -195,8 +196,8 @@ def test_goal_pocket_reports_incoming_ramp_via_owner_within_budget() -> None:
 
     assert result.kind is RouteFailureKind.SEALED_POCKET
     assert result.wall == (via,)
-    assert 0 < result.expansions < 1024
-    assert budget["left"] == 1024 - result.expansions
+    assert 0 < result.work < 1024
+    assert budget["left"] == 1024 - result.work
 
     del canvas.blocked[via]
     opened = routing_domain._geometric_search(canvas, [start], {goal}, {}, 1.0, bounds)
@@ -232,18 +233,18 @@ def test_detailed_search_charges_shared_budget_without_exceeding_its_cap(
     )
     assert exhausted.path is None
     assert exhausted.kind is RouteFailureKind.BUDGET
-    assert 0 < exhausted.expansions <= 3
-    assert budget["left"] == 3 - exhausted.expansions
+    assert 0 < exhausted.work <= 3
+    assert budget["left"] == 3 - exhausted.work
 
-    monkeypatch.setattr(routing_domain, "_MAX_EXPANSIONS", 2)
+    monkeypatch.setattr(routing_domain, "_MAX_SEARCH_WORK", 2)
     shared = {"left": 1000}
     capped = routing_domain._geometric_search(
         canvas, [(0, 0, 0)], {(7, 0, 0)}, {}, 1.0, bounds, shared
     )
     assert capped.path is None
     assert capped.kind is RouteFailureKind.BUDGET
-    assert 0 < capped.expansions <= 2
-    assert shared["left"] == 1000 - capped.expansions
+    assert 0 < capped.work <= 2
+    assert shared["left"] == 1000 - capped.work
 
 
 def test_expired_detailed_search_does_not_spend_shared_budget() -> None:
@@ -257,7 +258,7 @@ def test_expired_detailed_search_does_not_spend_shared_budget() -> None:
 
     assert result.path is None
     assert result.kind is RouteFailureKind.BUDGET
-    assert result.expansions == 0
+    assert result.work == 0
     assert budget["left"] == 1000
 
 
@@ -311,3 +312,40 @@ def test_overlapping_endpoints_need_no_work_to_certify_a_zero_edge_route() -> No
     assert result.path == (2,)
     assert result.cost == 0.0
     assert result.metrics["charged_work"] == 0
+
+
+def test_summarize_maps_each_kernel_outcome_to_one_flag() -> None:
+    from flab2bp.layout import geometric_router as gr
+
+    def result(kind: str) -> gr.GeometricResult:
+        metrics: gr.GeometricMetrics = {
+            "charged_work": 5,
+            "prepared_cells": 0,
+            "interval_pops": 0,
+            "labels": 0,
+            "offers": 0,
+            "intersections": 0,
+            "profile_scans": 0,
+            "certified_edges": 0,
+            "retained_native_bytes": 0,
+            "copied_history_cells": 0,
+            "preparation_s": 0.0,
+            "search_s": 0.0,
+            "certification_s": 0.0,
+        }
+        return gr.GeometricResult(
+            cast(Literal["routed", "budget", "exhausted", "cancelled"], kind),
+            (1, 2) if kind == "routed" else None,
+            None,
+            (),
+            None,
+            metrics,
+        )
+
+    routed = gr.summarize(result("routed"))
+    assert routed.path == (1, 2)
+    assert routed.work == 5
+    assert (routed.exhausted_budget, routed.cancelled, routed.exhausted) == (False, False, False)
+    assert gr.summarize(result("budget")).exhausted_budget
+    assert gr.summarize(result("cancelled")).cancelled
+    assert gr.summarize(result("exhausted")).exhausted

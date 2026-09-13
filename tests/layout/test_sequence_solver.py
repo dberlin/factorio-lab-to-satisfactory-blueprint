@@ -18,7 +18,7 @@ import flab2bp.layout.sequence_solver as sequence_solver_module
 import flab2bp.layout.strip_variants as strip_variants_module
 from flab2bp.dsp import catalog, rules
 from flab2bp.lab.techs import belt_rules_for_url
-from flab2bp.layout import finalize, route_kernel, routing_domain, slots, validate
+from flab2bp.layout import finalize, geometric_router, routing_domain, slots, validate
 from flab2bp.layout.band_policy import BandPolicy
 from flab2bp.layout.base import (
     AreaFrame,
@@ -301,7 +301,7 @@ def test_sequence_pair_routes_requested_outputs_to_the_boundary() -> None:
 def _routing(
     status: DetailedRouteStatus,
     *,
-    expansions: int = 0,
+    work: int = 0,
     geometric_failure: bool = False,
     failure_kind: RouteFailureKind | None = None,
     source: tuple[int, int, int] | None = None,
@@ -327,7 +327,7 @@ def _routing(
                     else ()
                 ),
                 blocking_nets=(),
-                expansions=expansions,
+                work=work,
                 source=source,
                 destination=destination,
             ),
@@ -337,14 +337,14 @@ def _routing(
         routed=(),
         failures=failures,
         iterations=1,
-        expansions=expansions,
+        work=work,
     )
 
 
 def _global(
     *,
     overflow: int = 0,
-    expansions: int = 0,
+    work: int = 0,
     exhausted_budget: bool = False,
     cancelled: bool = False,
 ) -> GlobalRouteResult:
@@ -356,7 +356,7 @@ def _global(
         max_overflow=overflow,
         unreachable_ports=0,
         rounds=1,
-        expansions=expansions,
+        work=work,
         exhausted_budget=exhausted_budget,
         hot_cells=(),
         hot_regions=(),
@@ -388,7 +388,7 @@ class _FakeRouting:
         del prepared
         self.feedback_seen.append(feedback)
         self.global_allowances.append(allowance)
-        return _global(expansions=allowance if self.spend_allowance else 0)
+        return _global(work=allowance if self.spend_allowance else 0)
 
     def exact_lower_bound(
         self,
@@ -406,7 +406,7 @@ class _FakeRouting:
             result = DetailedStageResult(
                 _routing(DetailedRouteStatus.BUDGET),
                 None,
-                charged_expansions=0,
+                charged_work=0,
             )
         else:
             result = self.detailed_results[
@@ -420,10 +420,10 @@ class _FakeRouting:
                     routed=result.routing.routed,
                     failures=result.routing.failures,
                     iterations=result.routing.iterations,
-                    expansions=allowance,
+                    work=allowance,
                 ),
                 placement=result.placement,
-                charged_expansions=allowance,
+                charged_work=allowance,
             )
         return result
 
@@ -590,13 +590,13 @@ def test_validated_initial_state_routes_raw_before_any_anneal_mutation(
                 DetailedStageResult(
                     _routing(DetailedRouteStatus.ROUTED),
                     exact,
-                    charged_expansions=0,
+                    charged_work=0,
                 )
                 if decoded == raw
                 else DetailedStageResult(
                     _routing(DetailedRouteStatus.STRANDED),
                     None,
-                    charged_expansions=0,
+                    charged_work=0,
                 )
             ),
             validate=lambda placement: ValidationVerdict(
@@ -638,12 +638,12 @@ def test_compact_seed_closure_preserves_expansions_for_followup_candidates() -> 
                     failure_kind=RouteFailureKind.CONGESTION_WALL,
                 ),
                 None,
-                charged_expansions=0,
+                charged_work=0,
             ),
             DetailedStageResult(
                 _routing(DetailedRouteStatus.BUDGET),
                 None,
-                charged_expansions=0,
+                charged_work=0,
             ),
         ),
         spend_allowance=True,
@@ -685,12 +685,12 @@ def test_exhausted_compact_restart_does_not_defer_feedback_or_double_settle() ->
             return DetailedStageResult(
                 _routing(DetailedRouteStatus.STRANDED, geometric_failure=True),
                 None,
-                charged_expansions=0,
+                charged_work=0,
             )
         return DetailedStageResult(
             _routing(DetailedRouteStatus.BUDGET),
             None,
-            charged_expansions=0,
+            charged_work=0,
         )
 
     budget = ExpansionBudget(100)
@@ -737,12 +737,12 @@ def test_compact_projection_refusal_closes_inside_its_replacement_stage(
             DetailedStageResult(
                 _routing(DetailedRouteStatus.ROUTED),
                 refused,
-                charged_expansions=0,
+                charged_work=0,
             ),
             DetailedStageResult(
                 _routing(DetailedRouteStatus.ROUTED),
                 exact,
-                charged_expansions=0,
+                charged_work=0,
             ),
         )
     )
@@ -812,7 +812,7 @@ def test_compact_seed_consumes_grouped_stage_for_every_restart() -> None:
                 DetailedStageResult(
                     _routing(DetailedRouteStatus.ROUTED),
                     exact,
-                    charged_expansions=0,
+                    charged_work=0,
                 ),
             )
         ),
@@ -843,17 +843,17 @@ def test_stable_observations_do_not_hide_a_later_better_candidate() -> None:
             DetailedStageResult(
                 _routing(DetailedRouteStatus.ROUTED),
                 compact_exact,
-                charged_expansions=0,
+                charged_work=0,
             ),
             DetailedStageResult(
                 _routing(DetailedRouteStatus.ROUTED),
                 worse,
-                charged_expansions=0,
+                charged_work=0,
             ),
             DetailedStageResult(
                 _routing(DetailedRouteStatus.ROUTED),
                 late_better,
-                charged_expansions=0,
+                charged_work=0,
             ),
         )
     )
@@ -886,22 +886,22 @@ def test_temporary_non_improvement_does_not_hide_later_better_candidate() -> Non
             DetailedStageResult(
                 _routing(DetailedRouteStatus.ROUTED),
                 compact,
-                charged_expansions=0,
+                charged_work=0,
             ),
             DetailedStageResult(
                 _routing(DetailedRouteStatus.ROUTED),
                 second_better,
-                charged_expansions=0,
+                charged_work=0,
             ),
             DetailedStageResult(
                 _routing(DetailedRouteStatus.ROUTED),
                 temporarily_stable,
-                charged_expansions=0,
+                charged_work=0,
             ),
             DetailedStageResult(
                 _routing(DetailedRouteStatus.ROUTED),
                 late_better,
-                charged_expansions=0,
+                charged_work=0,
             ),
         )
     )
@@ -929,9 +929,9 @@ def test_exact_decoded_closure_retains_coordinates_without_sequence_reencoding()
     fake = _FakeRouting(
         detailed_results=(
             DetailedStageResult(
-                _routing(DetailedRouteStatus.ROUTED, expansions=7),
+                _routing(DetailedRouteStatus.ROUTED, work=7),
                 exact,
-                charged_expansions=7,
+                charged_work=7,
             ),
         )
     )
@@ -967,9 +967,9 @@ def test_exact_decoded_closure_charges_authoritative_spend_not_raw_diagnostics()
     fake = _FakeRouting(
         detailed_results=(
             DetailedStageResult(
-                _routing(DetailedRouteStatus.ROUTED, expansions=42),
+                _routing(DetailedRouteStatus.ROUTED, work=42),
                 exact,
-                charged_expansions=7,
+                charged_work=7,
             ),
         )
     )
@@ -992,8 +992,8 @@ def test_exact_decoded_closure_charges_authoritative_spend_not_raw_diagnostics()
         reason="authoritative-spend",
     )
 
-    assert detailed.routing.expansions == 42
-    assert detailed.charged_expansions == 7
+    assert detailed.routing.work == 42
+    assert detailed.charged_work == 7
     assert budget.spent == 7
 
 
@@ -1003,14 +1003,14 @@ def test_equal_area_with_fewer_belts_remains_open() -> None:
     fake = _FakeRouting(
         detailed_results=(
             DetailedStageResult(
-                _routing(DetailedRouteStatus.ROUTED, expansions=3),
+                _routing(DetailedRouteStatus.ROUTED, work=3),
                 first,
-                charged_expansions=3,
+                charged_work=3,
             ),
             DetailedStageResult(
-                _routing(DetailedRouteStatus.ROUTED, expansions=5),
+                _routing(DetailedRouteStatus.ROUTED, work=5),
                 later_better,
-                charged_expansions=5,
+                charged_work=5,
             ),
         )
     )
@@ -1044,12 +1044,12 @@ def test_prepared_lower_bound_audit_records_dominated_work_without_skipping() ->
             DetailedStageResult(
                 _routing(DetailedRouteStatus.ROUTED),
                 first,
-                charged_expansions=0,
+                charged_work=0,
             ),
             DetailedStageResult(
                 _routing(DetailedRouteStatus.ROUTED),
                 dominated,
-                charged_expansions=0,
+                charged_work=0,
             ),
         ),
         exact_lower_bounds=((0, empty), (20, dominated_bound)),
@@ -1097,12 +1097,12 @@ def test_proof_dominated_prepared_skip_is_on_off_equivalent() -> None:
                 DetailedStageResult(
                     _routing(DetailedRouteStatus.ROUTED),
                     first,
-                    charged_expansions=0,
+                    charged_work=0,
                 ),
                 DetailedStageResult(
                     _routing(DetailedRouteStatus.ROUTED),
                     dominated,
-                    charged_expansions=0,
+                    charged_work=0,
                 ),
             ),
             exact_lower_bounds=((0, empty), (20, dominated_bound)),
@@ -1160,7 +1160,7 @@ def test_stateful_dominated_candidate_preserves_later_better_frontier() -> None:
             return DetailedStageResult(
                 _routing(DetailedRouteStatus.ROUTED),
                 placements[prepared_id],
-                charged_expansions=0,
+                charged_work=0,
             )
 
         def lower_bound(
@@ -1222,7 +1222,7 @@ def test_prepared_lower_bound_audit_flags_a_validator_clean_violation() -> None:
             DetailedStageResult(
                 _routing(DetailedRouteStatus.ROUTED),
                 exact,
-                charged_expansions=0,
+                charged_work=0,
             ),
         ),
         exact_lower_bounds=((20, unsound),),
@@ -1251,14 +1251,14 @@ def test_valid_topology_candidate_does_not_stop_better_exact_enumeration() -> No
     fake = _FakeRouting(
         detailed_results=(
             DetailedStageResult(
-                _routing(DetailedRouteStatus.ROUTED, expansions=7),
+                _routing(DetailedRouteStatus.ROUTED, work=7),
                 first,
-                charged_expansions=7,
+                charged_work=7,
             ),
             DetailedStageResult(
-                _routing(DetailedRouteStatus.ROUTED, expansions=11),
+                _routing(DetailedRouteStatus.ROUTED, work=11),
                 better,
-                charged_expansions=11,
+                charged_work=11,
             ),
         )
     )
@@ -1292,19 +1292,19 @@ def test_exact_candidate_caps_preserve_later_closures_and_fallback_discovery() -
     fake = _FakeRouting(
         detailed_results=(
             DetailedStageResult(
-                _routing(DetailedRouteStatus.BUDGET, expansions=10),
+                _routing(DetailedRouteStatus.BUDGET, work=10),
                 None,
-                charged_expansions=10,
+                charged_work=10,
             ),
             DetailedStageResult(
-                _routing(DetailedRouteStatus.ROUTED, expansions=5),
+                _routing(DetailedRouteStatus.ROUTED, work=5),
                 exact,
-                charged_expansions=5,
+                charged_work=5,
             ),
             DetailedStageResult(
-                _routing(DetailedRouteStatus.ROUTED, expansions=7),
+                _routing(DetailedRouteStatus.ROUTED, work=7),
                 fallback,
-                charged_expansions=7,
+                charged_work=7,
             ),
         )
     )
@@ -1356,7 +1356,7 @@ def test_exact_seed_routing_failure_becomes_shared_search_feedback() -> None:
                     destination=(6, 7, 0),
                 ),
                 None,
-                charged_expansions=0,
+                charged_work=0,
             ),
         )
     )
@@ -1393,7 +1393,7 @@ def test_owned_geometric_failures_remain_local_feedback_above_three_nets() -> No
             kind=RouteFailureKind.DYNAMIC_ACCESS,
             wall=(),
             blocking_nets=(NetId(1, 0, f"blocker-{ordinal}", NetRole.INTERNAL, ordinal),),
-            expansions=0,
+            work=0,
         )
         for ordinal in range(4)
     )
@@ -1402,7 +1402,7 @@ def test_owned_geometric_failures_remain_local_feedback_above_three_nets() -> No
         routed=(),
         failures=failures,
         iterations=1,
-        expansions=0,
+        work=0,
     )
 
     repaired, neighbourhood = sequence_solver_module._routing_feedback_substitution(
@@ -1439,11 +1439,11 @@ def _substitution_fixture() -> tuple[
                 kind=RouteFailureKind.CONGESTION_WALL,
                 wall=((2, 2, 0),),
                 blocking_nets=(NetId(2, 3, "copper-ore", NetRole.INTERNAL, 1),),
-                expansions=5,
+                work=5,
             ),
         ),
         iterations=1,
-        expansions=5,
+        work=5,
     )
     return problem, state, decoded, routing
 
@@ -1469,12 +1469,12 @@ def _applied_substitution_fixture() -> tuple[
                 kind=RouteFailureKind.DYNAMIC_ACCESS,
                 wall=(),
                 blocking_nets=(NetId(1, 0, f"blocker-{ordinal}", NetRole.INTERNAL, ordinal),),
-                expansions=0,
+                work=0,
             )
             for ordinal in range(4)
         ),
         iterations=1,
-        expansions=0,
+        work=0,
     )
     return problem, state, decoded, routing
 
@@ -1598,11 +1598,11 @@ def test_alns_substitution_ignores_budget_only_failures() -> None:
                 kind=RouteFailureKind.BUDGET,
                 wall=(),
                 blocking_nets=(),
-                expansions=9,
+                work=9,
             ),
         ),
         iterations=1,
-        expansions=9,
+        work=9,
     )
     session = OperatorSession()
     result_state, neighbourhood = sequence_solver_module._alns_substitution(
@@ -1648,11 +1648,11 @@ def test_alns_substitution_credits_an_empty_destroy_set_immediately() -> None:
                 kind=RouteFailureKind.CONGESTION_WALL,
                 wall=((1, 1, 0),),
                 blocking_nets=(),
-                expansions=2,
+                work=2,
             ),
         ),
         iterations=1,
-        expansions=2,
+        work=2,
     )
     sequence_solver_module._alns_substitution(
         routing,
@@ -1910,12 +1910,12 @@ def test_geometric_near_miss_substitutes_feedback_candidate_before_next_height()
                     failure_kind=RouteFailureKind.CONGESTION_WALL,
                 ),
                 None,
-                charged_expansions=0,
+                charged_work=0,
             ),
             DetailedStageResult(
                 _routing(DetailedRouteStatus.ROUTED),
                 exact,
-                charged_expansions=0,
+                charged_work=0,
             ),
         )
     )
@@ -1938,7 +1938,7 @@ def test_unseeded_solver_has_no_compact_closure() -> None:
                 DetailedStageResult(
                     _routing(DetailedRouteStatus.ROUTED),
                     exact,
-                    charged_expansions=0,
+                    charged_work=0,
                 ),
             )
         ),
@@ -1965,7 +1965,7 @@ def test_default_stage_limit_counts_grouped_discovery_as_one_routing_unit() -> N
             DetailedStageResult(
                 _routing(DetailedRouteStatus.ROUTED),
                 exact,
-                charged_expansions=0,
+                charged_work=0,
             ),
         )
     )
@@ -1994,7 +1994,7 @@ def test_zero_overflow_validator_clean_exact_enters_quality_mode() -> None:
             DetailedStageResult(
                 _routing(DetailedRouteStatus.ROUTED),
                 exact,
-                charged_expansions=0,
+                charged_work=0,
             ),
         )
     )
@@ -2034,12 +2034,12 @@ def test_quality_mode_requires_zero_overflow_and_validator_clean_exact(
             DetailedStageResult(
                 _routing(DetailedRouteStatus.ROUTED),
                 first,
-                charged_expansions=0,
+                charged_work=0,
             ),
             DetailedStageResult(
                 _routing(DetailedRouteStatus.ROUTED),
                 second,
-                charged_expansions=0,
+                charged_work=0,
             ),
         )
     )
@@ -2093,17 +2093,17 @@ def test_quality_geometric_failure_updates_feedback_and_repeated_signature() -> 
             DetailedStageResult(
                 _routing(DetailedRouteStatus.ROUTED),
                 exact,
-                charged_expansions=0,
+                charged_work=0,
             ),
             DetailedStageResult(
                 quality_failure,
                 None,
-                charged_expansions=0,
+                charged_work=0,
             ),
             DetailedStageResult(
                 quality_failure,
                 None,
-                charged_expansions=0,
+                charged_work=0,
             ),
         )
     )
@@ -2170,12 +2170,12 @@ def test_quality_static_and_budget_failures_add_no_feedback_or_signature(
             DetailedStageResult(
                 _routing(DetailedRouteStatus.ROUTED),
                 exact,
-                charged_expansions=0,
+                charged_work=0,
             ),
             DetailedStageResult(
                 _routing(status, failure_kind=kind),
                 None,
-                charged_expansions=0,
+                charged_work=0,
             ),
         )
     )
@@ -2210,7 +2210,7 @@ def test_best_height_scheduling_uses_complete_exact_key_before_stable_order() ->
         return DetailedStageResult(
             _routing(DetailedRouteStatus.ROUTED),
             _placement(area=100, belt_tiles=10 if height == 40 else 1),
-            charged_expansions=0,
+            charged_work=0,
         )
 
     fake = _FakeRouting()
@@ -2253,9 +2253,9 @@ def test_height_neighbor_gets_one_protected_followup_before_exact_key_best_first
             (26, 2): _placement(area=1728, belt_tiles=771),
         }[(height, detailed_calls[height])]
         return DetailedStageResult(
-            _routing(DetailedRouteStatus.ROUTED, expansions=min(1, allowance)),
+            _routing(DetailedRouteStatus.ROUTED, work=min(1, allowance)),
             exact,
-            charged_expansions=min(1, allowance),
+            charged_work=min(1, allowance),
         )
 
     budget = ExpansionBudget(100)
@@ -2335,7 +2335,7 @@ def test_detailed_route_retains_positive_work_when_global_spends_its_proxy_allow
             DetailedStageResult(
                 _routing(DetailedRouteStatus.ROUTED),
                 exact,
-                charged_expansions=0,
+                charged_work=0,
             ),
         ),
         spend_allowance=True,
@@ -2360,12 +2360,12 @@ def test_proxy_candidate_cannot_displace_exact_incumbent() -> None:
             DetailedStageResult(
                 _routing(DetailedRouteStatus.ROUTED),
                 exact,
-                charged_expansions=0,
+                charged_work=0,
             ),
             DetailedStageResult(
                 _routing(DetailedRouteStatus.STRANDED),
                 proxy,
-                charged_expansions=0,
+                charged_work=0,
             ),
         )
     )
@@ -2383,7 +2383,7 @@ def test_exact_incumbents_compare_only_area_then_belt_tiles() -> None:
             DetailedStageResult(
                 _routing(DetailedRouteStatus.ROUTED),
                 placement,
-                charged_expansions=0,
+                charged_work=0,
             )
             for placement in (first, better_belts, worse_area)
         )
@@ -2400,7 +2400,7 @@ def test_selected_score_reaches_stage_and_exact_incumbent_observations() -> None
             DetailedStageResult(
                 _routing(DetailedRouteStatus.ROUTED),
                 exact,
-                charged_expansions=0,
+                charged_work=0,
             ),
         )
     )
@@ -2431,7 +2431,7 @@ def test_observation_mutation_or_removal_cannot_change_selected_state_or_key() -
             DetailedStageResult(
                 _routing(DetailedRouteStatus.ROUTED),
                 exact,
-                charged_expansions=0,
+                charged_work=0,
             ),
         )
     )
@@ -2463,7 +2463,7 @@ def test_validator_rejection_never_establishes_an_exact_incumbent() -> None:
             DetailedStageResult(
                 _routing(DetailedRouteStatus.ROUTED),
                 invalid,
-                charged_expansions=0,
+                charged_work=0,
             ),
         )
     )
@@ -2478,7 +2478,7 @@ def test_refusal_accumulates_distinct_validation_failures() -> None:
             DetailedStageResult(
                 _routing(DetailedRouteStatus.ROUTED),
                 invalid,
-                charged_expansions=0,
+                charged_work=0,
             ),
         )
     )
@@ -2560,7 +2560,7 @@ def test_production_projection_refusals_reach_terminal_sequence_evidence(
             DetailedStageResult(
                 _routing(DetailedRouteStatus.ROUTED),
                 routed,
-                charged_expansions=0,
+                charged_work=0,
             ),
         )
     )
@@ -2686,7 +2686,7 @@ def test_measured_stage_admits_another_complete_stage_when_its_span_fits() -> No
             DetailedStageResult(
                 _routing(DetailedRouteStatus.ROUTED),
                 exact,
-                charged_expansions=0,
+                charged_work=0,
             ),
         )
     )
@@ -2973,7 +2973,7 @@ def test_first_ordinary_archive_preserves_unmeasured_detailed_completion(
         return DetailedStageResult(
             _routing(DetailedRouteStatus.ROUTED),
             exact,
-            charged_expansions=0,
+            charged_work=0,
         )
 
     def validate_exact(placement: Placement) -> ValidationVerdict:
@@ -3066,13 +3066,13 @@ def test_pending_routing_feedback_uses_zero_anneal_feedback_admission(
             return DetailedStageResult(
                 _routing(DetailedRouteStatus.STRANDED, geometric_failure=True),
                 None,
-                charged_expansions=0,
+                charged_work=0,
             )
         now += 0.2
         return DetailedStageResult(
             _routing(DetailedRouteStatus.ROUTED),
             exact,
-            charged_expansions=0,
+            charged_work=0,
         )
 
     def measured_validate(placement: Placement) -> ValidationVerdict:
@@ -3147,7 +3147,7 @@ def test_completion_reserve_stop_keeps_best_completed_global_candidate(
             DetailedStageResult(
                 _routing(DetailedRouteStatus.ROUTED),
                 exact,
-                charged_expansions=0,
+                charged_work=0,
             ),
         )
     )
@@ -3210,10 +3210,10 @@ def test_later_cancelled_proxy_closes_the_best_completed_candidate(
         if len(global_allowances) == 1:
             return _global(
                 overflow=1,
-                expansions=allowance,
+                work=allowance,
                 exhausted_budget=True,
             )
-        return _global(expansions=1, cancelled=True)
+        return _global(work=1, cancelled=True)
 
     def detailed_route(
         prepared: Prepared,
@@ -3222,9 +3222,9 @@ def test_later_cancelled_proxy_closes_the_best_completed_candidate(
         del prepared
         detailed_allowances.append(allowance)
         return DetailedStageResult(
-            _routing(DetailedRouteStatus.ROUTED, expansions=allowance),
+            _routing(DetailedRouteStatus.ROUTED, work=allowance),
             exact,
-            charged_expansions=allowance,
+            charged_work=allowance,
         )
 
     solver = SequenceSolver(
@@ -3301,10 +3301,10 @@ def test_unseatable_prepared_candidate_remains_searchable_refusal(
     assert candidate.preparation_error == "unseatable"
 
 
-@pytest.mark.parametrize("raw_expansions", (18, 19, 22))
+@pytest.mark.parametrize("raw_work", (18, 19, 22))
 def test_production_detailed_adapter_separates_charged_spend_from_raw_diagnostics(
     monkeypatch: pytest.MonkeyPatch,
-    raw_expansions: int,
+    raw_work: int,
 ) -> None:
     spec = two_stage_spec()
     strips = plan_strips(spec, strip_len=6)
@@ -3330,11 +3330,11 @@ def test_production_detailed_adapter_separates_charged_spend_from_raw_diagnostic
                 RouteFailureKind.BUDGET,
                 (),
                 (),
-                raw_expansions,
+                raw_work,
             ),
         ),
         iterations=1,
-        expansions=raw_expansions,
+        work=raw_work,
     )
     built = freeform_module._BuildResult(
         placement=None,
@@ -3367,8 +3367,8 @@ def test_production_detailed_adapter_separates_charged_spend_from_raw_diagnostic
     )
 
     assert result.routing is evidence
-    assert result.routing.expansions == raw_expansions
-    assert result.charged_expansions == 18
+    assert result.routing.work == raw_work
+    assert result.charged_work == 18
     assert result.placement is None
 
 
@@ -3410,8 +3410,8 @@ def test_production_detailed_adapter_reports_charged_spend_when_unpowerable(
     )
 
     assert result.routing.status is DetailedRouteStatus.UNPOWERABLE
-    assert result.routing.expansions == 7
-    assert result.charged_expansions == 7
+    assert result.routing.work == 7
+    assert result.charged_work == 7
     assert result.placement is None
 
 
@@ -3427,7 +3427,7 @@ def test_cancelled_proxy_without_an_exact_candidate_remains_an_honest_refusal() 
         return DetailedStageResult(
             _routing(DetailedRouteStatus.UNPOWERABLE),
             None,
-            charged_expansions=0,
+            charged_work=0,
         )
 
     solver = _solver(
@@ -3681,12 +3681,12 @@ def test_feedback_decays_once_then_adds_only_geometric_stage_evidence() -> None:
     geometric = DetailedStageResult(
         _routing(DetailedRouteStatus.STRANDED, geometric_failure=True),
         None,
-        charged_expansions=0,
+        charged_work=0,
     )
     budget_only = DetailedStageResult(
         _routing(DetailedRouteStatus.BUDGET),
         None,
-        charged_expansions=0,
+        charged_work=0,
     )
     fake = _FakeRouting(detailed_results=(geometric, budget_only, budget_only))
     with pytest.raises(NoValidLayout):
@@ -3706,7 +3706,7 @@ def test_deadline_returns_an_existing_exact_incumbent() -> None:
             DetailedStageResult(
                 _routing(DetailedRouteStatus.ROUTED),
                 exact,
-                charged_expansions=0,
+                charged_work=0,
             ),
         )
     )
@@ -4593,12 +4593,12 @@ def test_topology_budget_signature_only_tracks_incomplete_failure_cardinality() 
     budget = DetailedStageResult(
         _routing(DetailedRouteStatus.BUDGET),
         None,
-        charged_expansions=0,
+        charged_work=0,
     )
     stranded = DetailedStageResult(
         _routing(DetailedRouteStatus.STRANDED),
         None,
-        charged_expansions=0,
+        charged_work=0,
     )
 
     assert sequence_solver_module._topology_budget_signature(budget) == 1
@@ -6653,11 +6653,11 @@ def test_production_stage_boundary_rebuilds_preparation_for_children() -> None:
                 kind=RouteFailureKind.CONGESTION_WALL,
                 wall=((0, 0, 0),),
                 blocking_nets=(),
-                expansions=0,
+                work=0,
             ),
         ),
         iterations=1,
-        expansions=0,
+        work=0,
     )
     transform = run.solver.stage_boundary_transform
     assert transform is not None
@@ -6670,7 +6670,7 @@ def test_production_stage_boundary_rebuilds_preparation_for_children() -> None:
         DetailedStageResult(
             result,
             None,
-            charged_expansions=0,
+            charged_work=0,
         ),
         2,
         (),
@@ -6684,7 +6684,7 @@ def test_production_stage_boundary_rebuilds_preparation_for_children() -> None:
         DetailedStageResult(
             result,
             None,
-            charged_expansions=0,
+            charged_work=0,
         ),
         2,
         (),
@@ -6897,12 +6897,12 @@ def test_projection_pitch_feedback_rebuilds_failed_restart_and_rebases_siblings(
             DetailedStageResult(
                 _routing(DetailedRouteStatus.ROUTED),
                 placement,
-                charged_expansions=0,
+                charged_work=0,
             ),
             DetailedStageResult(
                 _routing(DetailedRouteStatus.BUDGET),
                 None,
-                charged_expansions=0,
+                charged_work=0,
             ),
         )
     )
@@ -6955,7 +6955,7 @@ def test_projection_pitch_feedback_rebuilds_failed_restart_and_rebases_siblings(
     assert height_state.stages == config.stages
     assert len(solver._stage_stats) == 2
     assert [stage.anneal_moves for stage in solver._stage_stats] == [2, 0]
-    assert all(stage.expansions == 0 for stage in solver._stage_stats)
+    assert all(stage.work == 0 for stage in solver._stage_stats)
     assert budget.spent == 0
     assert all(len(restart.archive) <= 3 for restart in height_state.restarts)
     observation = solver._stage_stats[0]
@@ -7318,7 +7318,7 @@ def _last_mile_relation_report() -> LastMileReport:
         restore_mismatch=0,
         relation_skipped_siblings=0,
         nodes=3,
-        expansions=10,
+        work=10,
         seconds=0.01,
         relation_strips=(0, 1),
         relation_evidence="cluster: nets=(0, 1)",
@@ -7343,7 +7343,7 @@ class _StageHarness:
         return DetailedStageResult(
             routing=routing,
             placement=self.placement,
-            charged_expansions=0,
+            charged_work=0,
         )
 
 
@@ -7540,7 +7540,7 @@ def test_relation_no_good_observation_includes_refused_detailed_routes(
         DetailedStageResult(
             routing=routing,
             placement=None,
-            charged_expansions=0,
+            charged_work=0,
         ),
         0,
         (),
@@ -7634,7 +7634,7 @@ def test_refusal_stats_publish_relation_no_good_observations() -> None:
         "best_stranded": -1.0,
         "best_overflow": 0.0,
         "backend": "sequence-pair",
-        "route_backend": route_kernel.selected_backend(),
+        "route_backend": geometric_router.BACKEND,
         "accelerator": "python",
     }
 
@@ -7648,7 +7648,7 @@ def test_clean_stats_publish_relation_no_good_observations() -> None:
                 DetailedStageResult(
                     _routing(DetailedRouteStatus.ROUTED),
                     exact,
-                    charged_expansions=0,
+                    charged_work=0,
                 ),
             )
         ),
@@ -7727,12 +7727,12 @@ def test_projection_pitch_feedback_single_restart_routes_padded_variant() -> Non
             DetailedStageResult(
                 _routing(DetailedRouteStatus.ROUTED),
                 placement,
-                charged_expansions=0,
+                charged_work=0,
             ),
             DetailedStageResult(
                 _routing(DetailedRouteStatus.BUDGET),
                 None,
-                charged_expansions=0,
+                charged_work=0,
             ),
         )
     )
@@ -7815,12 +7815,12 @@ def test_projection_pitch_feedback_runs_before_the_next_height_discovery(
             return DetailedStageResult(
                 _routing(DetailedRouteStatus.BUDGET),
                 None,
-                charged_expansions=0,
+                charged_work=0,
             )
         return DetailedStageResult(
             _routing(DetailedRouteStatus.ROUTED),
             placement,
-            charged_expansions=0,
+            charged_work=0,
         )
 
     def validate_projection(candidate: Placement) -> ValidationVerdict:
@@ -7900,7 +7900,7 @@ def test_zero_budget_projection_feedback_preserves_stage_and_marker(
         return DetailedStageResult(
             _routing(DetailedRouteStatus.BUDGET),
             None,
-            charged_expansions=0,
+            charged_work=0,
         )
 
     solver = SequenceSolver(
@@ -7955,7 +7955,7 @@ def test_production_padded_variant_transform_maps_same_strip_projection() -> Non
     detailed = DetailedStageResult(
         _routing(DetailedRouteStatus.ROUTED),
         placement,
-        charged_expansions=0,
+        charged_work=0,
     )
 
     selected = transform(
@@ -8010,7 +8010,7 @@ def test_projection_pitch_unmapped_control_does_not_enable_padded_variant() -> N
     detailed = DetailedStageResult(
         _routing(DetailedRouteStatus.ROUTED),
         replace(placement, buildings=tuple(buildings)),
-        charged_expansions=0,
+        charged_work=0,
     )
 
     assert (
@@ -8061,7 +8061,7 @@ def test_different_strip_feedback_rebuilds_production_stage(
     detailed = DetailedStageResult(
         _routing(DetailedRouteStatus.ROUTED),
         replace(placement, buildings=tuple(buildings)),
-        charged_expansions=0,
+        charged_work=0,
     )
     monkeypatch.setattr(
         finalize,
@@ -8161,7 +8161,7 @@ def test_feedback_stagnation_rebuilds_the_next_fixed_cardinality_stage() -> None
             detailed_route=lambda _prepared, _allowance: DetailedStageResult(
                 failure,
                 None,
-                charged_expansions=0,
+                charged_work=0,
             ),
             validate=lambda _placement: ValidationVerdict(False, ("unreachable",), None),
         ),
@@ -8219,7 +8219,7 @@ def test_production_boundary_does_not_merge_incompatible_or_implicated_children(
             ),
         ),
         iterations=1,
-        expansions=0,
+        work=0,
     )
     implicated = _routing(
         DetailedRouteStatus.STRANDED,
@@ -8274,7 +8274,7 @@ def test_topology_change_clears_stale_quality_archives_before_restart_fallback()
             DetailedStageResult(
                 _routing(DetailedRouteStatus.STRANDED, geometric_failure=True),
                 None,
-                charged_expansions=0,
+                charged_work=0,
             ),
         )
     )
@@ -8362,7 +8362,7 @@ def test_exact_problem_identity_transform_retains_restart_archive() -> None:
             DetailedStageResult(
                 _routing(DetailedRouteStatus.STRANDED, geometric_failure=True),
                 None,
-                charged_expansions=0,
+                charged_work=0,
             ),
         )
     )
@@ -8419,14 +8419,14 @@ def test_fixed_size_problem_skips_pose_boundary_transforms_without_metadata() ->
             ),
         ),
         iterations=1,
-        expansions=0,
+        work=0,
     )
     fake = _FakeRouting(
         detailed_results=(
             DetailedStageResult(
                 geometric_failure,
                 None,
-                charged_expansions=0,
+                charged_work=0,
             ),
         ),
     )
@@ -9839,7 +9839,7 @@ def test_validation_budget_status_cannot_install_exact_incumbent() -> None:
             DetailedStageResult(
                 _routing(DetailedRouteStatus.ROUTED),
                 exact,
-                charged_expansions=0,
+                charged_work=0,
             ),
         )
     )
@@ -9877,7 +9877,7 @@ def test_sequence_pair_refused_event_distinguishes_budget_from_a_real_refusal() 
             DetailedStageResult(
                 _routing(DetailedRouteStatus.ROUTED),
                 exact,
-                charged_expansions=0,
+                charged_work=0,
             ),
         )
     )
@@ -9919,7 +9919,7 @@ def test_sequence_pair_refused_event_reports_a_real_validation_failure() -> None
             DetailedStageResult(
                 _routing(DetailedRouteStatus.ROUTED),
                 exact,
-                charged_expansions=0,
+                charged_work=0,
             ),
         )
     )
@@ -10039,7 +10039,7 @@ def test_projection_crossing_deadline_returns_incomplete_budget(
     assert verdict.projection_failures == ()
 
 
-def _stranded_routing(expansions: int) -> DetailedRouteResult:
+def _stranded_routing(work: int) -> DetailedRouteResult:
     return DetailedRouteResult(
         status=DetailedRouteStatus.STRANDED,
         routed=(),
@@ -10049,11 +10049,11 @@ def _stranded_routing(expansions: int) -> DetailedRouteResult:
                 kind=RouteFailureKind.CONGESTION_WALL,
                 wall=((1, 1, 0),),
                 blocking_nets=(),
-                expansions=expansions,
+                work=work,
             ),
         ),
         iterations=1,
-        expansions=expansions,
+        work=work,
     )
 
 
@@ -10085,7 +10085,7 @@ def _staged_solver(
         routed=(),
         failures=(),
         iterations=1,
-        expansions=0,
+        work=0,
     )
     detailed_calls = 0
 
@@ -10097,13 +10097,13 @@ def _staged_solver(
             return DetailedStageResult(
                 routed,
                 exact,
-                charged_expansions=0,
+                charged_work=0,
             )
         spent = allowance if spend_allowance else 1
         return DetailedStageResult(
             _stranded_routing(spent),
             None,
-            charged_expansions=spent,
+            charged_work=spent,
         )
 
     def validate(placement: Placement) -> ValidationVerdict:
@@ -11185,7 +11185,7 @@ def test_the_portfolio_bound_is_re_read_at_every_selection_point() -> None:
                 DetailedStageResult(
                     _routing(DetailedRouteStatus.ROUTED),
                     _placement(area=20, belt_tiles=4),
-                    charged_expansions=0,
+                    charged_work=0,
                 ),
             )
         ),
@@ -11208,12 +11208,12 @@ def test_the_solver_publishes_every_exact_incumbent_it_records() -> None:
                 DetailedStageResult(
                     _routing(DetailedRouteStatus.ROUTED),
                     _placement(area=30, belt_tiles=8),
-                    charged_expansions=0,
+                    charged_work=0,
                 ),
                 DetailedStageResult(
                     _routing(DetailedRouteStatus.ROUTED),
                     _placement(area=20, belt_tiles=4),
-                    charged_expansions=0,
+                    charged_work=0,
                 ),
             )
         )

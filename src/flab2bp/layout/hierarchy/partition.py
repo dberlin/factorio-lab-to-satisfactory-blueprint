@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from fractions import Fraction
 
@@ -82,14 +83,29 @@ class _UidCounter:
         return uid
 
 
+def made_by(units: Iterable[Unit]) -> dict[str, Fraction]:
+    """Item production of a unit set, summed per item."""
+    made: dict[str, Fraction] = defaultdict(Fraction)
+    for u in units:
+        for item in u.group.outputs_per_machine:
+            made[item] += u.produces(item)
+    return made
+
+
+def consumed_by(units: Iterable[Unit]) -> dict[str, Fraction]:
+    """Item consumption of a unit set, summed per item."""
+    took: dict[str, Fraction] = defaultdict(Fraction)
+    for u in units:
+        for item in u.group.inputs_per_machine:
+            took[item] += u.consumes(item)
+    return took
+
+
 def _flow_between(a: list[Unit], b: list[Unit]) -> Fraction:
     """Rate-weighted coupling between two unit sets, both directions."""
     total = Fraction(0)
     for src, dst in ((a, b), (b, a)):
-        made: dict[str, Fraction] = defaultdict(Fraction)
-        for u in src:
-            for item in u.group.outputs_per_machine:
-                made[item] += u.produces(item)
+        made = made_by(src)
         for u in dst:
             for item in u.group.inputs_per_machine:
                 if item in made:
@@ -168,13 +184,8 @@ def derive_cuts(blocks: list[list[Unit]]) -> tuple[list[int], list[Cut]]:
     surplus: dict[str, dict[int, Fraction]] = defaultdict(dict)
     deficit: dict[str, dict[int, Fraction]] = defaultdict(dict)
     for i, block in enumerate(blocks):
-        made: dict[str, Fraction] = defaultdict(Fraction)
-        took: dict[str, Fraction] = defaultdict(Fraction)
-        for u in block:
-            for item in u.group.outputs_per_machine:
-                made[item] += u.produces(item)
-            for item in u.group.inputs_per_machine:
-                took[item] += u.consumes(item)
+        made = made_by(block)
+        took = consumed_by(block)
         for item in set(made) | set(took):
             net = made.get(item, Fraction(0)) - took.get(item, Fraction(0))
             if net > 0:
@@ -203,36 +214,6 @@ def _topo_order(n: int, edges: set[tuple[int, int]]) -> list[int]:
     return list(BlockGraph.of(n, edges).topological_order())
 
 
-def boundary_balances(
-    blocks: list[list[Unit]],
-) -> tuple[dict[str, dict[int, Fraction]], dict[str, dict[int, Fraction]]]:
-    """``(surplus, deficit)`` per item per block: exactly what crosses a cut.
-
-    The composed judgement needs these, not the aggregate production, so an item
-    handed back to the player is declared at the rate the CUTS carry rather than
-    at everything the factory makes of it.  Declaring the larger figure would
-    hand ``flow.conservation``'s lane balance a supply that does not exist and
-    quietly excuse lanes that are genuinely broken.
-    """
-    surplus: dict[str, dict[int, Fraction]] = defaultdict(dict)
-    deficit: dict[str, dict[int, Fraction]] = defaultdict(dict)
-    for i, block in enumerate(blocks):
-        made: dict[str, Fraction] = defaultdict(Fraction)
-        took: dict[str, Fraction] = defaultdict(Fraction)
-        for u in block:
-            for item in u.group.outputs_per_machine:
-                made[item] += u.produces(item)
-            for item in u.group.inputs_per_machine:
-                took[item] += u.consumes(item)
-        for item in set(made) | set(took):
-            net = made.get(item, Fraction(0)) - took.get(item, Fraction(0))
-            if net > 0:
-                surplus[item][i] = net
-            elif net < 0:
-                deficit[item][i] = -net
-    return surplus, deficit
-
-
 def sub_spec(spec: BuildSpec, block: list[Unit], index: int) -> BuildSpec:
     """A self-contained ``BuildSpec`` for one block.
 
@@ -252,13 +233,8 @@ def sub_spec(spec: BuildSpec, block: list[Unit], index: int) -> BuildSpec:
         )
         for u in block
     )
-    made: dict[str, Fraction] = defaultdict(Fraction)
-    took: dict[str, Fraction] = defaultdict(Fraction)
-    for u in block:
-        for item in u.group.outputs_per_machine:
-            made[item] += u.produces(item)
-        for item in u.group.inputs_per_machine:
-            took[item] += u.consumes(item)
+    made = made_by(block)
+    took = consumed_by(block)
 
     external_inputs: dict[str, Fraction] = {}
     for item, rate in sorted(took.items()):
