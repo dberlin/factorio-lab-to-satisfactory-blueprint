@@ -3639,7 +3639,7 @@ def _build(
     policy: BandPolicy,
     belt_rules: catalog.BeltAltitudeRules = routing_domain._DEFAULT_BELT_RULES,
     deadline: float | None = None,
-    budget: dict[str, int] | None = None,
+    budget: budget_module.WorkBudget | None = None,
     staged_static_cache: routing_domain._StagedStaticCache | None = None,
 ) -> _BuildResult:
     """Prepare one pack, then emit it through the reusable detailed entry point."""
@@ -3713,7 +3713,7 @@ def _build_prepared(
     power: bool,
     route: bool,
     deadline: float | None = None,
-    budget: dict[str, int] | None = None,
+    budget: budget_module.WorkBudget | None = None,
     prioritize_source_families: bool = True,
 ) -> _BuildResult:
     """Emit, route, and power one already-prepared immutable problem."""
@@ -4575,9 +4575,9 @@ class FreeformLayout:
         # is scaled to the ceiling so that it stays a backstop rather than
         # becoming the thing that ends the sweep. See
         # `_ROUTING_WORK_PER_SECOND`.
-        budget = {
-            "left": max(routing_domain._ROUTING_BUDGET, int(_ROUTING_WORK_PER_SECOND * ceiling))
-        }
+        budget = budget_module.WorkBudget(
+            left=max(routing_domain._ROUTING_BUDGET, int(_ROUTING_WORK_PER_SECOND * ceiling))
+        )
 
         def planning_cancelled() -> bool:
             return routing_domain._expired(deadline)
@@ -4949,7 +4949,7 @@ class FreeformLayout:
         strips: list[routing_domain.Strip],
         time_budget_s: float,
         deadline: float | None = None,
-        budget: dict[str, int] | None = None,
+        budget: budget_module.WorkBudget | None = None,
         rejected: list[_RefusalFinding] | None = None,
         attempts: list[PackAttempt] | None = None,
         skipped_heights: list[int] | None = None,

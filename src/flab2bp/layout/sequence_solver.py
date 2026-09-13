@@ -4795,7 +4795,7 @@ def _route_detailed_candidate(
     allowance: int,
 ) -> DetailedStageResult:
     """Route one exact prepared identity and withhold every partial build."""
-    attempt_budget = {"left": allowance}
+    attempt_budget = budget.WorkBudget(left=allowance)
     try:
         built = _build_prepared(
             spec,
@@ -4808,13 +4808,19 @@ def _route_detailed_candidate(
             prioritize_source_families=True,
         )
     except _Unpowerable:
-        work = allowance - attempt_budget["left"]
+        # The ledger was built with an int allowance, so `left` is never the
+        # "unbounded" `None`; narrow it rather than defaulting it.
+        unpowerable_left = attempt_budget.left
+        assert unpowerable_left is not None
+        work = allowance - unpowerable_left
         _check_spend(work, allowance)
         return _closed_detailed_result(
             DetailedRouteStatus.UNPOWERABLE,
             work=work,
         )
-    spent = allowance - attempt_budget["left"]
+    attempt_left = attempt_budget.left
+    assert attempt_left is not None
+    spent = allowance - attempt_left
     _check_spend(spent, allowance)
     routing = built.routing
     placement: Placement | None = None

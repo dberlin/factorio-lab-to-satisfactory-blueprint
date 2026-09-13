@@ -1784,7 +1784,7 @@ def compose(
     )
     external_nets = [net for net in nets if net.src is None]
     internal_nets = [net for net in nets if net.src is not None]
-    route_budget = {"left": _ROUTING_BUDGET}
+    route_budget = budget.WorkBudget(left=_ROUTING_BUDGET)
     external_result = _route_external_inputs(
         canvas, external_nets, belt_id, belt_model, bounds, deadline, route_budget
     )
