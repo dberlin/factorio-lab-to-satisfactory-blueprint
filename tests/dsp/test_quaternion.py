@@ -91,10 +91,13 @@ def _p_qmul(a: Quat, b: Quat) -> Quat:
     """Planet's summation order, which differs term for term from the collider port.
 
     On general quaternions the two disagree in the last ulp on about two thirds
-    of random pairs.  They agree exactly on the only product either module ever
-    forms -- a yaw about +Y, whose ``x`` and ``z`` are zero -- which is what
+    of random pairs.  They agree exactly on the only product planet.py's port
+    ever forms -- a yaw about +Y, whose ``x`` and ``z`` are zero -- which is what
     :func:`test_multiply_is_bit_exact_against_planets_order_for_a_yaw_about_up`
-    pins directly.
+    pins directly.  colliders.py's port forms three other products besides this
+    yaw, but :mod:`flab2bp.dsp.quaternion` takes colliders' term order verbatim,
+    so exactness against the collider port holds regardless of which product is
+    formed.
     """
     ax, ay, az, aw = a
     bx, by, bz, bw = b
@@ -169,7 +172,10 @@ def test_multiply_rotate_cross_match_the_collider_port() -> None:
 
 
 def test_multiply_is_bit_exact_against_planets_order_for_a_yaw_about_up() -> None:
-    """The only product either module forms, so the merge loses no bit of planet's port."""
+    """The only product planet.py's port ever forms, so the merge loses no bit of
+    planet's port.  colliders.py's port forms other products too, but the shared
+    module matches colliders' term order verbatim, so exactness there does not
+    depend on this."""
     rng = random.Random(4242)
     for _ in range(2000):
         a = _random_quat(rng)

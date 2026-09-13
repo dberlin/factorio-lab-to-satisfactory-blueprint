@@ -21004,11 +21004,11 @@ def test_a_cluster_search_that_drains_its_allowance_is_only_a_bound(
 ) -> None:
     """The private cap is a real cap, and a capped search decides nothing.
 
-    Shrinking `B_LOW_LEVEL_EXPANSIONS` puts the allowance one expansion above
+    Shrinking `B_LOW_LEVEL_WORK` puts the allowance one unit of work above
     the floor, so the cap drains INSIDE `_cluster_search` rather than at
     `solve_cluster`'s entry bound check -- which is the path that has to end as
     BOUNDED rather than as a closed tree.  `LastMileReport` does not carry the
-    `ClusterBound`, so the drain is evidenced by the expansions the pass spent.
+    `ClusterBound`, so the drain is evidenced by the work the pass spent.
     """
     monkeypatch.setattr(last_mile, "B_LOW_LEVEL_WORK", 1)
     canvas, nets, bounds = _one_stranded_net_fixture()
