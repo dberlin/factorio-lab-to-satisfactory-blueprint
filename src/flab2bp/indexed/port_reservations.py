@@ -17,7 +17,7 @@ Cell = tuple[int, int, int]
 class PortReservations(MutableMapping[Cell, Cell]):
     """One canvas's reservations, indexed by their owning port."""
 
-    __slots__ = ("_cells", "_next_order", "_order", "_ports")
+    __slots__ = ("_cells", "_next_order", "_order", "_ports", "version")
 
     def __init__(
         self, values: Mapping[Cell, Cell] | Iterable[tuple[Cell, Cell]] | None = None
@@ -26,6 +26,11 @@ class PortReservations(MutableMapping[Cell, Cell]):
         self._ports: dict[Cell, set[Cell]] = {}
         self._order: dict[Cell, int] = {}
         self._next_order: int = 0
+        #: Counts mutations that changed the mapping. A reader that cached an
+        #: answer derived from some cells' reservations compares this first and
+        #: re-reads those cells only when it moved; a reassignment to the same
+        #: port and a clear of an empty mapping change nothing and do not count.
+        self.version: int = 0
         if values is not None:
             self.update(values)
 
@@ -56,6 +61,7 @@ class PortReservations(MutableMapping[Cell, Cell]):
             self._next_order += 1
         self._cells[cell] = port
         self._ports.setdefault(port, set()).add(cell)
+        self.version += 1
 
     def __delitem__(self, cell: Cell) -> None:
         port = self._cells.pop(cell)
@@ -63,6 +69,7 @@ class PortReservations(MutableMapping[Cell, Cell]):
         self._ports[port].remove(cell)
         if not self._ports[port]:
             del self._ports[port]
+        self.version += 1
 
     def __iter__(self) -> Iterator[Cell]:
         return iter(self._cells)
@@ -71,6 +78,8 @@ class PortReservations(MutableMapping[Cell, Cell]):
         return len(self._cells)
 
     def clear(self) -> None:
+        if self._cells:
+            self.version += 1
         self._cells.clear()
         self._ports.clear()
         self._order.clear()

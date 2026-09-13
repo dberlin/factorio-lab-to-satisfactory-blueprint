@@ -37,3 +37,26 @@ def test_release_restore_and_copy_keep_independent_reverse_ownership() -> None:
     assert reserved.first_for(port) is None
     assert reserved.setdefault(second, port) == port
     assert reserved.first_for(port) == second
+
+
+def test_version_moves_only_when_the_mapping_actually_changes() -> None:
+    reserved = PortReservations()
+    assert reserved.version == 0
+    reserved[(0, 0, 0)] = (5, 5, 0)
+    assert reserved.version == 1
+    reserved[(0, 0, 0)] = (5, 5, 0)
+    assert reserved.version == 1, "reassigning the same port is not a change"
+    reserved[(0, 0, 0)] = (6, 6, 0)
+    assert reserved.version == 2
+    del reserved[(0, 0, 0)]
+    assert reserved.version == 3
+    reserved.clear()
+    assert reserved.version == 3, "clearing an empty mapping is not a change"
+    reserved.update({(1, 0, 0): (5, 5, 0), (2, 0, 0): (5, 5, 0)})
+    assert reserved.version == 5
+    reserved.popitem()
+    assert reserved.version == 6
+    reserved.clear()
+    assert reserved.version == 7
+    copied = PortReservations(reserved)
+    assert copied.version == 0, "a copy starts its own history"

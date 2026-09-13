@@ -57,6 +57,7 @@ from flab2bp.layout.buildings import Buildings, MutableBuildings, bounds_of
 from flab2bp.layout.buildings import Kind as BuildingKind
 from flab2bp.layout.coater_mode import coater_mode
 from flab2bp.layout.geometric_world import GeometricWorld
+from flab2bp.layout.junction_admission import JunctionAdmissionMemo
 from flab2bp.layout.piling import LaneLoad, MergePlan, PilerPlan, plan_merges
 from flab2bp.layout.projection_world import FlatScreen
 from flab2bp.layout.route_feedback import (
@@ -6521,6 +6522,12 @@ def _route_all(
     #: admissible only when the power plan covers every physical member: model
     #: 40 can place a member one tile beyond the logical routing cell.
     junction_ok: dict[Cell, bool] = {}
+    #: Whole-question answers of `_can_junction`, each pinned to the exact live
+    #: inputs it read (taps at and around the cell, guard membership, the
+    #: reservations on the splitter's keep-out cells, and the staked selection
+    #: when a projected proof was involved).  Lives for this pass only, like
+    #: `junction_ok`; see `junction_admission.JunctionAdmissionMemo`.
+    admission_memo = JunctionAdmissionMemo()
     #: True only while the relaxed cluster run is searching.  It relaxes ONE
     #: refusal below -- the conditional-guard one -- because that refusal reads
     #: `planned_taps`, and run 2 has to start with an empty tap table (see
@@ -6536,6 +6543,24 @@ def _route_all(
         return any(
             _building_collider_hits(nearby, member)
             for member in _splitter_stack_geometry(*candidate)
+        )
+
+    def _peer_taps(cell: Cell, neighborhood: JunctionNeighborhood | None) -> tuple[Cell, ...]:
+        """Planned taps the collision test considers for ``cell``, in a fixed order."""
+        if neighborhood is not None:
+            try:
+                return neighborhood.nearby(cell)
+            except TimeoutError as error:
+                # Interrupted filtering is not evidence of impossibility.
+                raise _PreparationDeadline from error
+        x, y, level = cell
+        return tuple(
+            tap
+            for tap in planned_taps
+            if tap != cell
+            and abs(tap[0] - x) <= 3
+            and abs(tap[1] - y) <= 3
+            and abs(tap[2] - level) <= 3
         )
 
     def _can_junction(
@@ -6561,15 +6586,46 @@ def _route_all(
         # it is supposed to bound.  Run 2 treats every cell as already tapped
         # for this one check; the two checks that read `planned_taps` around it
         # stay as they are, now over the cluster's own taps alone.
-        if cell in canvas.guard and not planned_here and not relaxed_junctions:
+        in_guard = cell in canvas.guard
+        if in_guard and not planned_here and not relaxed_junctions:
             return False
-        peers: Iterable[Cell] = planned_taps
-        if neighborhood is not None:
-            try:
-                peers = neighborhood.nearby(cell)
-            except TimeoutError as error:
-                # Interrupted filtering is not evidence of impossibility.
-                raise _PreparationDeadline from error
+        # Everything below is a function of this cell, the policy flags, the
+        # net's own ports, and live inputs the memo pins each answer to.
+        memo_key = (cell, project, relaxed_junctions, neighborhood is None)
+        remembered = admission_memo.lookup(
+            memo_key,
+            planned_here=len(planned_here),
+            in_guard=in_guard,
+            reserved_version=canvas.reserved.version,
+            read_reserved=canvas.reserved.get,
+            routing_ports=canvas.routing_ports,
+            paths_version=paths.version,
+            peers=lambda: _peer_taps(cell, neighborhood),
+        )
+        if remembered is not None:
+            return remembered
+        peers = _peer_taps(cell, neighborhood)
+        selection_dependent = False
+
+        def remember(
+            admitted: bool,
+            keepout: tuple[Cell, ...] = (),
+            reserved_values: tuple[Cell | None, ...] = (),
+        ) -> bool:
+            admission_memo.store(
+                memo_key,
+                admitted,
+                planned_here=len(planned_here),
+                in_guard=in_guard,
+                peers=peers,
+                keepout=keepout,
+                reserved_values=reserved_values,
+                reserved_version=canvas.reserved.version,
+                paths_version=paths.version,
+                selection_dependent=selection_dependent,
+            )
+            return admitted
+
         if any(
             (tx, ty, tz) != cell
             and abs(tx - x) <= 3
@@ -6578,7 +6634,7 @@ def _route_all(
             and _junction_stacks_collide((tx, ty, tz), cell)
             for tx, ty, tz in peers
         ):
-            return False
+            return remember(False)
         got = junction_ok.get(cell)
         if got is None:
             stack = _splitter_stack_geometry(x, y, level)
@@ -6587,31 +6643,35 @@ def _route_all(
             ) and (power_discs is None or _buildings_are_powered(stack, power_discs))
             junction_ok[cell] = got
         if not got:
-            return False
+            return remember(False)
         # Endpoint offers defer the whole-selection proof until _search knows
         # the chosen path and tap. Future-tap and cluster promises still ask it
         # here; speculative offers are not construction certificates.
         if project and canvas.junction_projection is not None:
+            selection_dependent = True
             selected = primitives.selection(paths, (*planned_taps, cell))
             if not canvas.projected_buildings_are_clear(selected, deadline=deadline):
-                return False
-        elif (
-            canvas.junction_projection is None
-            and junction_frame_bans
-            and not any(
+                return remember(False)
+        elif canvas.junction_projection is None and junction_frame_bans:
+            selection_dependent = True
+            if not any(
                 cell not in frame_ban and all(tap not in frame_ban for tap in planned_taps)
                 for frame_ban in junction_frame_bans
-            )
-        ):
-            return False
+            ):
+                return remember(False)
         # Reservations change with the active endpoints and rip-up; unlike
-        # physical clearance, ownership cannot be cached in junction_ok.
+        # physical clearance, ownership cannot be cached in junction_ok. The
+        # memo instead records which cells were read and what they held.
+        keepout: list[Cell] = []
+        reserved_values: list[Cell | None] = []
         denied = False
         for member in _splitter_stack_geometry(x, y, level):
             for guard_cell in junction.keepout_cells(
                 x, y, int(member.z), model_index=member.model_index, yaw=member.yaw
             ):
                 key = canvas.reserved.get(guard_cell)
+                keepout.append(guard_cell)
+                reserved_values.append(key)
                 if key is None or key in canvas.routing_ports:
                     continue
                 denied = True
@@ -6626,7 +6686,11 @@ def _route_all(
                             junction_reservation_blockers.update(
                                 member for member, _net in net_index.payloads_in_role(key, role)
                             )
-        return not denied
+        if denied:
+            # Carries blame that depends on corridor state the memo does not
+            # follow; recomputed on every ask.
+            return False
+        return remember(True, tuple(keepout), tuple(reserved_values))
 
     def _direct_tap_clear(
         source: _Port, siblings: tuple[int, ...], *, tentative_ok: bool = False
@@ -6702,6 +6766,7 @@ def _route_all(
         if tap is None:
             return
         planned_taps[tap].add(index)
+        admission_memo.taps_changed(tap)
         path_tap[index] = tap
         excused = set(paths[index])
         for sibling in src_group.get(index, ()):
@@ -6789,6 +6854,7 @@ def _route_all(
             planned.discard(index)
             if not planned:
                 del planned_taps[tap]
+            admission_memo.taps_changed(tap)
         for cell in path_guards.pop(index, ()):
             claims = guard_claims[cell]
             claims.discard(index)
@@ -8661,6 +8727,7 @@ def _route_all(
                 # as well so this world cannot be tighter than the strict run.
                 with corridor_reservations.temporarily_released():
                     planned_taps.clear()
+                    admission_memo.forget_all()
                     relaxed_junctions = True
                     _capture(2, problem)
                     return _solve_cluster(problem, _cluster_environment())
@@ -8668,6 +8735,7 @@ def _route_all(
                 relaxed_junctions = False
                 planned_taps.clear()
                 planned_taps.update(taps_before)
+                admission_memo.forget_all()
                 _restore_staked(staked, held_all, before_all, original)
                 for table, snapshot in zip(rejections, saved, strict=True):
                     for index, cells in snapshot.items():

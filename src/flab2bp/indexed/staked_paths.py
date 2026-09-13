@@ -28,6 +28,7 @@ class StakedPaths(Mapping[int, tuple[Cell, ...]]):
         "_paths",
         "_positions",
         "_steps",
+        "version",
     )
 
     def __init__(self, steps: Sequence[tuple[int, int]]) -> None:
@@ -38,6 +39,10 @@ class StakedPaths(Mapping[int, tuple[Cell, ...]]):
         self._order: dict[int, int] = {}
         self._next_order = 0
         self._linked_heads: dict[int, Cell] = {}
+        #: Counts every stake, unstake of a present net, and restore. A reader
+        #: whose cached answer depends on the whole staked set compares this
+        #: instead of the paths themselves.
+        self.version = 0
 
     def __getitem__(self, net: int) -> tuple[Cell, ...]:
         return self._paths[net]
@@ -62,6 +67,7 @@ class StakedPaths(Mapping[int, tuple[Cell, ...]]):
         self._next_order = 0
         for net, path, linked_head in snapshot:
             self.stake(net, path, linked_head=linked_head)
+        self.version += 1
 
     def _endpoint_neighbours(self, path: tuple[Cell, ...]) -> list[Cell]:
         if not path:
@@ -86,6 +92,7 @@ class StakedPaths(Mapping[int, tuple[Cell, ...]]):
             self._next_order += 1
         frozen = tuple(path)
         self._paths[net] = frozen
+        self.version += 1
         positions: dict[Cell, int] = {}
         for position, cell in enumerate(frozen):
             positions.setdefault(cell, position)
@@ -101,6 +108,7 @@ class StakedPaths(Mapping[int, tuple[Cell, ...]]):
         if path is None:
             return
         del self._order[net]
+        self.version += 1
         self._forget_indexes(net, path)
 
     def _forget_indexes(self, net: int, path: tuple[Cell, ...]) -> None:

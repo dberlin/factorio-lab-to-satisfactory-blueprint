@@ -170,3 +170,20 @@ def test_ordered_snapshot_restores_replaced_and_reinserted_paths() -> None:
     assert paths.linked_heads() == frozenset({(0, 0, 0)})
     assert paths.position_in(8, (0, 0, 0)) == 0
     assert paths.nets() == (3, 8)
+
+
+def test_version_counts_stakes_unstakes_of_present_nets_and_restores() -> None:
+    staked = StakedPaths(_STEPS)
+    assert staked.version == 0
+    staked.stake(1, [(0, 0, 0), (1, 0, 0)])
+    assert staked.version == 1
+    staked.stake(1, [(0, 0, 0), (1, 0, 0), (2, 0, 0)])
+    assert staked.version == 2, "replacing a stake is a change"
+    staked.unstake(7)
+    assert staked.version == 2, "unstaking an absent net changes nothing"
+    snapshot = staked.snapshot()
+    staked.unstake(1)
+    assert staked.version == 3
+    staked.restore(snapshot)
+    assert staked.version > 3
+    assert staked.path(1) == ((0, 0, 0), (1, 0, 0), (2, 0, 0))
