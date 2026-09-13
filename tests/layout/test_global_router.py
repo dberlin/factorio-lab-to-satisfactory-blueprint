@@ -555,7 +555,7 @@ def test_feedback_history_prices_legal_cells_without_blocking_them() -> None:
     _assert_relaxed_legal_walk(path)
 
 
-def test_zero_budget_expands_nothing() -> None:
+def test_zero_budget_does_no_work() -> None:
     problem, _net_id = _one_net_problem()
 
     result = route_global_once(problem, _feedback(problem), budget=0)
@@ -647,7 +647,7 @@ def test_global_negotiation_honours_configured_round_count() -> None:
     assert multi.total_overflow > 0
 
 
-def test_negotiation_spends_one_exact_shared_expansion_budget() -> None:
+def test_negotiation_spends_one_exact_shared_work_budget() -> None:
     problem = _impossible_overflow_problem()
     first_round = route_global_once(problem, _feedback(problem), budget=100_000)
     shared_budget = first_round.work + 1
