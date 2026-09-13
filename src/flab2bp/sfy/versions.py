@@ -14,6 +14,7 @@ __all__ = [
     "BLUEPRINT_CONFIG_VERSION",
     "BLUEPRINT_HEADER_VERSION",
     "LATEST",
+    "MODERN_TAG_UE5_VERSION",
     "SAVE_CUSTOM_VERSION_GUID",
     "SaveCustomVersion",
 ]
@@ -21,6 +22,14 @@ __all__ = [
 BLUEPRINT_HEADER_VERSION = 2  # FBlueprintHeader::AddedUsedRecipes
 BLUEPRINT_CONFIG_VERSION = 6  # FBlueprintConfigVersion::RemovedFilteredProfanityName
 SAVE_CUSTOM_VERSION_GUID = struct.pack("<4I", 0x21043E2F, 0x13E61FD6, 0x513B9D51, 0x3636A230)
+
+# EUnrealEngineObjectUE5Version::PROPERTY_TAG_EXTENSION_AND_OVERRIDABLE_SERIALIZATION
+# (Unreal Engine 5.4). From this FileVersionUE5 on, ``UObject::Serialize`` writes a
+# leading uint8 serialization-control byte and property tags take the
+# ``FPropertyTypeName`` shape. Evidence in the fixture corpus: the save-version-58
+# and -60 blueprints carry a version block with ``ue5 == 1017`` and have both; the
+# save-version-46 and -52 ones carry no version block at all and have neither.
+MODERN_TAG_UE5_VERSION = 1011
 
 
 class SaveCustomVersion(IntEnum):

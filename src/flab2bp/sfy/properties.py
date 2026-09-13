@@ -12,11 +12,13 @@ The corpus spans an engine change. ``UObject::Serialize`` writes a
 ``FileVersionUE5`` reaches 1011, and at 1012 (UE 5.4) the property tag was
 replaced by one carrying a full ``FPropertyTypeName`` tree. Both arrive
 together: every object at save version 58 and 60 has the control byte and a
-modern tag, every object at save version 46 and 52 has neither. That byte
-belongs to the object envelope, so :mod:`flab2bp.sfy.objects` reads it and
-passes the format down as the ``modern`` argument of
-:func:`read_property_list`. Writing needs no such argument: each :class:`Tag`
-remembers its own format.
+modern tag, every object at save version 46 and 52 has neither, so the package
+treats one boundary, :data:`flab2bp.sfy.versions.MODERN_TAG_UE5_VERSION`, as
+selecting both. Which one a file uses is decided from its header by
+:func:`flab2bp.sfy.codec.tag_format` and threaded down; this module takes it as
+the ``modern`` argument of :func:`read_property_list` and never infers it from
+the bytes. Writing needs no such argument: each :class:`Tag` remembers its own
+format.
 
 Classic tag (save version 46, 52): ``FString name`` -- the FString ``"None"``
 ends the list; ``FString type``; ``int32 size``; ``int32 index``; then per type

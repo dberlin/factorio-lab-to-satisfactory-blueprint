@@ -9,6 +9,7 @@ from flab2bp.sfy.codec import read_sbp
 from flab2bp.sfy.objects import (
     ObjectData,
     ObjectHeader,
+    TagFormat,
     Transform,
     read_object_data,
     read_toc,
@@ -18,6 +19,8 @@ from flab2bp.sfy.trailers import BuildableTrailer, ComponentTrailer
 from tests.sfy.conftest import FIXTURES
 
 TERMINATOR = b"\x05\x00\x00\x00None\x00"
+MODERN = TagFormat(modern=True, control_byte=True)
+CLASSIC = TagFormat(modern=False, control_byte=False)
 
 
 def _component_header(name: str) -> ObjectHeader:
@@ -83,18 +86,26 @@ def test_body_with_a_control_byte_round_trips_through_object_data():
     """The serialization-control byte lives on ``ObjectData``, in front of the properties."""
     h = _component_header("FGFactoryConnectionComponent")
     d = ObjectData(None, None, 0, (), ComponentTrailer())
-    raw = write_object_data(d, h)
+    raw = write_object_data(d, h, MODERN)
     assert raw == b"\x00" + TERMINATOR + bytes(8)
-    assert read_object_data(raw, h) == d
+    assert read_object_data(raw, h, MODERN) == d
 
 
 def test_body_without_a_control_byte_round_trips_through_object_data():
     """The older saves have no such byte, and ``control`` is None rather than 0."""
     h = _actor_header("Build_ConstructorMk1")
     d = ObjectData(ObjectRef.NULL, (), None, (), BuildableTrailer())
-    raw = write_object_data(d, h)
+    raw = write_object_data(d, h, CLASSIC)
     assert raw.endswith(TERMINATOR + bytes(4))
-    assert read_object_data(raw, h) == d
+    assert read_object_data(raw, h, CLASSIC) == d
+
+
+def test_a_body_missing_its_control_byte_is_rejected_by_the_writer():
+    """The format says the byte is there, so a body without one cannot be written."""
+    h = _component_header("FGFactoryConnectionComponent")
+    d = ObjectData(None, None, None, (), ComponentTrailer())
+    with pytest.raises(ArchiveError):
+        write_object_data(d, h, MODERN)
 
 
 def test_unknown_object_kind_is_rejected():

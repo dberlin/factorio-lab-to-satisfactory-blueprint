@@ -1,7 +1,7 @@
 from collections import Counter
 
 from flab2bp.sfy.archive import ObjectRef, Reader, Writer
-from flab2bp.sfy.codec import read_sbp
+from flab2bp.sfy.codec import read_sbp, tag_format
 from flab2bp.sfy.properties import (
     TAG_BOOL_TRUE,
     Array,
@@ -134,11 +134,12 @@ def test_every_fixture_object_body_parses_with_a_trailer():
     seen = Counter()
     for path in fixture_paths():
         bp = read_sbp(path.read_bytes())
+        modern = tag_format(bp.header).modern
         for h, d in bp.objects:
             w = Writer()
             write_property_list(w, d.properties)
             r = Reader(w.getvalue())
-            assert read_property_list(r, d.control is not None) == d.properties, (
+            assert read_property_list(r, modern) == d.properties, (
                 path.name,
                 h.path,
             )

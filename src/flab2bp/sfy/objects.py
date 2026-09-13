@@ -12,10 +12,10 @@ int32 component count, that many references; then the object body -- a
 list, and a class-specific trailer.
 
 The control byte is ``UObject::Serialize``'s, written from FileVersionUE5 1011
-and always 0 in this corpus. It arrives with the UE 5.4 property tag, so its
-presence is what tells :mod:`flab2bp.sfy.properties` which tag format to read.
-A tag name is an FString of at least five bytes, so the low byte of a real
-first tag is never zero and the two cannot be confused.
+and always 0 in this corpus. Whether it is there, and which tag format follows
+it, is not guessed from the bytes: both come from the file header as a
+:class:`TagFormat`, which :func:`flab2bp.sfy.codec.tag_format` derives once per
+file and every caller passes down.
 
 The object-flags field was probed on the fixture corpus: it is present at
 SaveVersion 52, 58 and 60 and absent at SaveVersion 46, so the boundary
@@ -36,6 +36,7 @@ __all__ = [
     "COMPONENT",
     "ObjectData",
     "ObjectHeader",
+    "TagFormat",
     "Transform",
     "read_object_data",
     "read_toc",
@@ -45,6 +46,19 @@ __all__ = [
 
 ACTOR = 1
 COMPONENT = 0
+
+
+@dataclass(frozen=True, slots=True)
+class TagFormat:
+    """How one file's object bodies are laid out, as derived from its header.
+
+    ``modern`` selects the UE 5.4 ``FPropertyTypeName`` tag over the classic one
+    and ``control_byte`` says whether a body starts with ``UObject``'s
+    serialization-control byte. :func:`flab2bp.sfy.codec.tag_format` computes it.
+    """
+
+    modern: bool
+    control_byte: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,20 +167,20 @@ def write_toc(w: Writer, headers: tuple[ObjectHeader, ...], save_version: int) -
             w.fstring(h.parent or "")
 
 
-def read_object_data(raw: bytes, header: ObjectHeader) -> ObjectData:
+def read_object_data(raw: bytes, header: ObjectHeader, fmt: TagFormat) -> ObjectData:
     r = Reader(raw)
     parent: ObjectRef | None = None
     components: tuple[ObjectRef, ...] | None = None
     if header.kind == ACTOR:
         parent = r.object_ref()
         components = tuple(r.object_ref() for _ in range(r.i32()))
-    control = r.u8() if r.remaining() and r.data[r.pos] == 0 else None
-    properties = read_property_list(r, control is not None)
+    control = r.u8() if fmt.control_byte else None
+    properties = read_property_list(r, fmt.modern)
     trailer = read_trailer(r, header.class_name, header.kind)
     return ObjectData(parent, components, control, properties, trailer)
 
 
-def write_object_data(d: ObjectData, header: ObjectHeader) -> bytes:
+def write_object_data(d: ObjectData, header: ObjectHeader, fmt: TagFormat) -> bytes:
     w = Writer()
     if header.kind == ACTOR:
         if d.parent is None or d.components is None:
@@ -175,7 +189,9 @@ def write_object_data(d: ObjectData, header: ObjectHeader) -> bytes:
         w.i32(len(d.components))
         for c in d.components:
             w.object_ref(c)
-    if d.control is not None:
+    if fmt.control_byte:
+        if d.control is None:
+            raise ArchiveError(f"{header.path} has no control byte and the file format wants one")
         w.u8(d.control)
     write_property_list(w, d.properties)
     write_trailer(w, d.trailer)
