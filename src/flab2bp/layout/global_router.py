@@ -475,7 +475,9 @@ def _live_index(grid: _Grid, flags: bytearray, cell: Cell) -> int | None:
     x0, y0, x1, y1 = grid.span
     if not (x0 <= x <= x1 and y0 <= y <= y1 and 0 <= level < grid.levels):
         return None
-    index = grid.index(cell)
+    # The span check above is the bounds check, so encode directly rather than
+    # paying `_Grid.index`'s identical check a second time.
+    index = grid.codec.encode(cell)
     return index if flags[index] else None
 
 
@@ -581,6 +583,4 @@ def _search_relaxed(
 
 
 def _decode_cell(grid: _Grid, index: int) -> Cell:
-    column, level = divmod(index, grid.levels)
-    x, y = divmod(column, grid.gh)
-    return x + grid.gx0, y + grid.gy0, level
+    return grid.codec.decode(index)

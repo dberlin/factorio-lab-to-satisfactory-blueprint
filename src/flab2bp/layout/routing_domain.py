@@ -65,7 +65,7 @@ from flab2bp.layout.base import Facing, NoValidLayout, PlacedBuilding, Placement
 from flab2bp.layout.buildings import Buildings, MutableBuildings, bounds_of
 from flab2bp.layout.buildings import Kind as BuildingKind
 from flab2bp.layout.coater_mode import coater_mode
-from flab2bp.layout.geometric_world import GeometricWorld
+from flab2bp.layout.geometric_world import GeometricWorld, GridIndex
 from flab2bp.layout.junction_admission import JunctionAdmissionMemo
 from flab2bp.layout.piling import LaneLoad, MergePlan, PilerPlan, plan_merges
 from flab2bp.layout.projection_world import FlatScreen
@@ -4615,6 +4615,11 @@ class _Grid:
     vertical_construction: bool
     xstep: int
     size: int
+    #: The flat-index arithmetic above, as the one object every reader shares.
+    #: ``xstep`` is ``gh * levels``, so ``codec.encode`` IS the formula in this
+    #: docstring; the field stays because the transition tables and the history
+    #: flattener add whole-column strides rather than encoding cells.
+    codec: GridIndex
     base: bytes
     occ: bytearray
     #: Per-search passability scratch, exactly refreshed by :func:`_routing_flags`.
@@ -4631,7 +4636,7 @@ class _Grid:
         x0, y0, x1, y1 = self.span
         if not (x0 <= x <= x1 and y0 <= y <= y1 and 0 <= lvl < self.levels):
             raise IndexError(f"routing cell outside indexed domain: {cell}")
-        return (x - self.gx0) * self.xstep + (y - self.gy0) * self.levels + lvl
+        return self.codec.encode(cell)
 
     def block(self, cell: tuple[int, int, int]) -> None:
         """Mark a committed path cell impassable."""
@@ -4786,6 +4791,7 @@ def _make_grid(
         vertical_construction=canvas.belt_rules.vertical_construction,
         xstep=xstep,
         size=size,
+        codec=GridIndex(gx0, gy0, gh, levels),
         base=bytes(occ),
         occ=occ,
         routing_flags=bytearray(size),

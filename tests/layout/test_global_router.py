@@ -792,3 +792,26 @@ def test_reserved_owner_index_keeps_the_first_cell() -> None:
         (1, 2, 0): 7,
         (3, 4, 0): 9,
     }
+
+
+def test_router_cell_codecs_all_agree_with_the_grid_index() -> None:
+    """`_live_index`, `_decode_cell` and `GeometricWorld.cell` share one codec."""
+    from flab2bp.layout.geometric_world import GeometricWorld, GridIndex
+    from flab2bp.layout.global_router import _decode_cell, _live_index
+
+    box = (0, 0, 3, 2)
+    canvas = routing_domain._Canvas(limit=box, belt_rules=_BELT_RULES)
+    grid = routing_domain._make_grid(canvas, box, (-1, -1, 4, 3), {})
+
+    assert grid.codec == GridIndex(gx0=grid.gx0, gy0=grid.gy0, rows=grid.gh, levels=grid.levels)
+
+    flags = bytearray([1] * grid.size)
+    world = GeometricWorld.from_grid(grid, flags, ())
+    for cell in ((0, 0, 0), (1, 2, 1), (3, 1, 0), (-1, -1, 1)):
+        index = grid.index(cell)
+        assert _live_index(grid, flags, cell) == index
+        assert _decode_cell(grid, index) == cell
+        assert world.cell(index) == cell
+
+    # Outside the indexed span there is no live index at all.
+    assert _live_index(grid, flags, (99, 99, 0)) is None
