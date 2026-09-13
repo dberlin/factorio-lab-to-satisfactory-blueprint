@@ -26,7 +26,7 @@ from flab2bp.layout.base import (
     PlacedBuilding,
     Placement,
 )
-from flab2bp.layout.budget import WorkBudget
+from flab2bp.layout.budget import StagedWorkBudget, WorkBudget
 from flab2bp.layout.compact_seed import (
     CompactSeedConfig,
     CompactSeedDiagnostics,
@@ -108,7 +108,6 @@ from flab2bp.layout.sequence_pair import (
 )
 from flab2bp.layout.sequence_solver import (
     DetailedStageResult,
-    StagedWorkBudget,
     SequencePairLayout,
     SequenceSearchResult,
     SequenceSolver,

@@ -321,3 +321,35 @@ def test_every_routing_budget_seed_goes_through_one_factory() -> None:
     assert offenders == [], (
         "import _routing_pass_budget instead of the floor constant: " + ", ".join(offenders)
     )
+
+
+def test_the_staged_ledger_partitions_and_returns_unspent_discovery() -> None:
+    from fractions import Fraction
+
+    from flab2bp.layout.budget import StagedWorkBudget
+
+    ledger = StagedWorkBudget(total=100)
+    assert ledger.final_reserved == 25
+    assert ledger.shared_left == 75
+
+    ledger.configure((3, 4), Fraction(1, 5))
+    assert ledger.final_reserved == 20
+    assert ledger.discovery_by_height == {3: 40, 4: 40}
+    assert ledger.shared_left == 0
+
+    ledger.charge_discovery(3, 10)
+    assert ledger.discovery_allowance(3) == 30
+    assert ledger.spent == 10
+
+    ledger.settle_discovery(3, 5)
+    ledger.settle_discovery(4, 0)
+    assert ledger.discovery_complete is True
+    assert ledger.shared_allowance() == 25 + 40
+    assert ledger.spent == 15
+
+
+def test_the_staged_ledger_rejects_a_negative_total() -> None:
+    from flab2bp.layout.budget import StagedWorkBudget
+
+    with pytest.raises(ValueError):
+        StagedWorkBudget(total=-1)
