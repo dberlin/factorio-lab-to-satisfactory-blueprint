@@ -70,6 +70,7 @@ flab2bp = [
     "layout/*.pyx",
     "dsp/*.pyx",
 ]
+"flab2bp.sfy" = ["data/*.json"]
 
 
 [tool.pytest.ini_options]
