@@ -132,6 +132,23 @@ def test_check_deadline_raises_the_proposals_deadline_from_the_shared_rule(
     assert issubclass(routing_proposals.Deadline, work.BudgetExhausted)
 
 
+def test_the_three_deadline_types_stay_distinct_under_one_base() -> None:
+    from flab2bp.layout import routing_domain, routing_proposals
+    from flab2bp.layout.hierarchy import compose
+
+    types = (
+        routing_proposals.Deadline,
+        routing_domain._PreparationDeadline,
+        compose._PackingDeadline,
+    )
+    for kind in types:
+        assert issubclass(kind, work.BudgetExhausted), kind.__name__
+    # Distinct: the router converts one into another on purpose.
+    for kind in types:
+        others = [other for other in types if other is not kind]
+        assert not any(issubclass(kind, other) for other in others), kind.__name__
+
+
 def test_a_preparation_deadline_still_carries_its_partial_result() -> None:
     from flab2bp.layout import routing_domain
 

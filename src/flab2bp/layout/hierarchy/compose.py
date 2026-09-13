@@ -245,7 +245,7 @@ class PackedCanvas:
     external_access: frozenset[Cell] = frozenset()
 
 
-class _PackingDeadline(Exception):
+class _PackingDeadline(budget.BudgetExhausted):
     """The clock ran out before any rung of the ladder returned a verdict.
 
     Carries the packing it died on, because the caller still owes its own
