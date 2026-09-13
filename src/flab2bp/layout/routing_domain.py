@@ -346,12 +346,27 @@ _RRR_STALE_ROUNDS = 3
 #: :func:`_route_all`'s repair pass.
 _REPAIR_CROSSING = 60.0
 
-#: How many settled paths one stranded net may displace before the repair
-#: declines the trade.  Measured across five `universe-matrix` packs, every one
-#: of 31 stranded nets crossed between 1 and 11 paths, so this refuses only the
-#: cases the census never produced -- where re-routing the victims would cost
-#: more than the round it is replacing.
+#: FLOOR on how many settled paths one stranded net may displace before the
+#: repair declines the trade.  Measured across five `universe-matrix` packs,
+#: every one of 31 stranded nets crossed between 1 and 11 paths, so this refuses
+#: only the cases the census never produced -- where re-routing the victims
+#: would cost more than the round it is replacing.
+#:
+#: A floor and not the cap, because the census is a count over packs of one
+#: size: :data:`_REPAIR_VICTIM_SHARE` is what a larger pack gets instead.
 _REPAIR_MAX_VICTIMS = 16
+
+#: Share of a pack one stranded net may displace, once the pack outgrows the
+#: census :data:`_REPAIR_MAX_VICTIMS` came from.
+#:
+#: A quarter.  The census is a count and the thing it counts scales: a stranded
+#: net crosses the paths that lie between its ends, so a longer canvas with more
+#: paths on it produces a longer crossing list for the same geometry.  On
+#: `universe-matrix` output-products a 180-tile net across a 54-strip canvas
+#: crosses 50 of the 278 paths already down -- 18 %, and refused flat by 16 --
+#: while the packs the census came from were 93-140 paths whose stranded nets
+#: crossed 1-11, which a quarter leaves untouched at 23-35.
+_REPAIR_VICTIM_SHARE = 4
 
 #: Repair sweeps per rip-up round.  Each is cheap (a crossing search is
 #: 0.001-0.025s against 3.1-4.0s for a round), and a displaced net that strands
@@ -8257,6 +8272,10 @@ def _route_all(
         """
         if not stranded:
             return stranded
+        #: The cap this repair trades under, sized to the pack rather than to
+        #: the census -- see :data:`_REPAIR_VICTIM_SHARE`.  Read once so every
+        #: test in the round asks the same question.
+        victim_cap = max(_REPAIR_MAX_VICTIMS, len(nets) // _REPAIR_VICTIM_SHARE)
         # A grid whose belts are passable but dear.  `base` is the occupancy
         # before any path settled, so restoring it opens exactly the cells this
         # pass has taken -- machines, keep-outs and the routing box stay shut.
@@ -8406,7 +8425,7 @@ def _route_all(
                         for hurt, closure in closures.items():
                             if _expired(deadline):
                                 return None
-                            if len(mandatory | closure) > _REPAIR_MAX_VICTIMS:
+                            if len(mandatory | closure) > victim_cap:
                                 excluded.add(hurt)
                         signature = frozenset(excluded)
                         signatures[mandatory] = signature
@@ -8475,7 +8494,7 @@ def _route_all(
                     if tap is not None:
                         contacts.update(_source_tap_guard_victims(index, tap))
                     joint = (_dependency_closure(contacts, dependents) | victims) - {index}
-                    if len(joint) <= _REPAIR_MAX_VICTIMS:
+                    if len(joint) <= victim_cap:
                         return found
                 return None
             finally:
@@ -8488,7 +8507,7 @@ def _route_all(
             repaired = False
             pending_proposal: tuple[Cell, ...] | None = None
             while not _expired(deadline) and budget["left"] > 0:
-                if len(victims) > _REPAIR_MAX_VICTIMS:
+                if len(victims) > victim_cap:
                     break
                 dependents = _endpoint_dependents()
                 rebuild_order = _route_order(victims, dependents)
@@ -8519,7 +8538,7 @@ def _route_all(
                     mandatory = _dependency_closure(
                         _source_tap_guard_victims(index, tap), dependents
                     )
-                    admitted = len((victims | mandatory) - {index}) <= _REPAIR_MAX_VICTIMS
+                    admitted = len((victims | mandatory) - {index}) <= victim_cap
                     policy_restricted |= not admitted
                     return admitted
 
@@ -8610,7 +8629,7 @@ def _route_all(
                                     joint = (
                                         _dependency_closure(discovered, dependents) | victims
                                     ) - {index}
-                                    if len(joint) > _REPAIR_MAX_VICTIMS:
+                                    if len(joint) > victim_cap:
                                         alternative = _grouped_overcap_alternative(
                                             index,
                                             starts,
