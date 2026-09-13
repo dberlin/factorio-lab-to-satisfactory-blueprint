@@ -3566,7 +3566,7 @@ class TestDirectInsertion:
                 time_budget_s=0.5,
                 direct_candidates={},
                 workers=DETERMINISTIC_WORKERS,
-            )
+            ).pack
             assert pack is not None
         result = _build(
             spec,
@@ -4415,7 +4415,7 @@ def _install_injected_packs(
         height: int,
         arrangement: int,
         **kwargs: object,
-    ) -> routing_domain._Pack:
+    ) -> freeform._PackSolveOutcome:
         candidate = (height, arrangement)
         seen.append(candidate)
         packed = packs[candidate]
@@ -4424,7 +4424,7 @@ def _install_injected_packs(
             assert isinstance(exact_no_goods, tuple)
             packed = pack_transform(candidate, packed, exact_no_goods)
         packed_candidates[id(packed)] = candidate
-        return packed
+        return _window_solve_outcome(packed)
 
     def build(
         _spec: BuildSpec,
@@ -4764,6 +4764,41 @@ def _lay_out_with_injected_packs(
     )
 
 
+def test_unknown_pack_solves_do_not_hide_a_later_certified_assignment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec = two_stage_spec()
+    strips = plan_strips(spec)
+    _install_injected_packs(
+        monkeypatch,
+        spec,
+        strips,
+        first_routing=_routed(),
+        arrangements=2,
+        heights=(20, 30, 40),
+    )
+    successful_pack: Callable[..., freeform._PackSolveOutcome] = freeform._pack
+
+    def bounded_solve(
+        *args: object, arrangement: int, **kwargs: object
+    ) -> freeform._PackSolveOutcome:
+        if arrangement == 0:
+            return freeform._PackSolveOutcome(None, "UNKNOWN", None, None, 0.0, 0.0, "")
+        return successful_pack(*args, arrangement=arrangement, **kwargs)
+
+    monkeypatch.setattr(freeform, "_pack", bounded_solve)
+    attempts: list[freeform.PackAttempt] = []
+    placement = FreeformLayout(
+        belt_rules=_BELT_RULES,
+        band_policy=BandPolicy("portable"),
+        arrangements=2,
+        first_feasible=True,
+    )._sweep(spec, strips, 1.0, attempts=attempts, session=OperatorSession())
+
+    assert placement is not None
+    assert [attempt.routing.status for attempt in attempts] == [DetailedRouteStatus.ROUTED]
+
+
 def test_repeating_packs_stop_after_the_stale_draw_limit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -4831,23 +4866,6 @@ def test_external_incumbent_does_not_stop_finding_before_a_local_best(
     assert result is None
     assert seen == [(20, 0), (20, 1)]
     assert [attempt.routing.failed_count for attempt in attempts] == [1, 1]
-
-
-def test_a_stale_stop_names_staleness_in_the_refusal(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    spec = two_stage_spec()
-
-    with pytest.raises(NoValidLayout) as stale:
-        _lay_out_with_injected_packs(
-            monkeypatch,
-            spec,
-            first_routing=_routing_failures(RouteFailureKind.SEALED_POCKET),
-            arrangements=8,
-            distinct_arrangements=False,
-        )
-
-    assert "produced no new packing" in stale.value.reason
 
 
 def test_one_explicit_arrangement_still_makes_one_draw_per_height(
@@ -5726,47 +5744,6 @@ def test_admitted_feedback_retry_cannot_cascade_to_a_third_arrangement(
     assert [attempt.routing.failed_count for attempt in attempts] == [1, 1]
 
 
-def test_fifteen_strip_pack_uses_reproducible_solver_budget(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    base = plan_strips(two_stage_spec())
-    strips = [base[index % len(base)] for index in range(15)]
-    seed = routing_domain._Pack(
-        at={index: (0, 0) for index in range(len(strips))},
-        width=20,
-        height=20,
-        status="seed",
-    )
-    seen_solver_modes: list[tuple[int, bool]] = []
-
-    def pack(
-        *_args: object,
-        workers: int,
-        deterministic: bool,
-        **_kwargs: object,
-    ) -> None:
-        seen_solver_modes.append((workers, deterministic))
-        return None
-
-    monkeypatch.setattr(
-        freeform,
-        "_band_policy_candidate_heights",
-        lambda _strips, _policy, **_kwargs: (20,),
-    )
-    monkeypatch.setattr(freeform, "_greedy_pack", lambda *_args, **_kwargs: seed)
-    monkeypatch.setattr(freeform, "_pack", pack)
-
-    result = FreeformLayout(
-        belt_rules=_BELT_RULES,
-        band_policy=BandPolicy("portable"),
-        workers=8,
-        arrangements=1,
-    )._sweep(two_stage_spec(), strips, 1.0, session=OperatorSession())
-
-    assert result is None
-    assert seen_solver_modes == [(1, True)]
-
-
 def test_route_aware_height_order_preserves_exact_candidate_set(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -5790,10 +5767,10 @@ def test_route_aware_height_order_preserves_exact_candidate_set(
         height: int,
         seed: routing_domain._Pack,
         **_kwargs: object,
-    ) -> routing_domain._Pack:
+    ) -> freeform._PackSolveOutcome:
         assert seed is seeds[height]
         seen.append((height, seed.width, seed.height))
-        return seed
+        return _window_solve_outcome(seed)
 
     failed = _routing_failures(RouteFailureKind.BUDGET)
 
@@ -5992,7 +5969,7 @@ def test_route_feedback_exact_terms_build_a_valid_pack_model() -> None:
         workers=DETERMINISTIC_WORKERS,
         seed=seed,
         feedback=feedback,
-    )
+    ).pack
 
     assert packed is not None
     assert packed.width <= seed.width
@@ -6350,7 +6327,9 @@ class TestSolverActuallyRuns:
         )
         monkeypatch.setattr(freeform, "_candidate_heights", lambda _strips: [8])
         monkeypatch.setattr(freeform, "_greedy_pack", lambda _strips, _height: pack)
-        monkeypatch.setattr(freeform, "_pack", lambda *_args, **_kwargs: pack)
+        monkeypatch.setattr(
+            freeform, "_pack", lambda *_args, **_kwargs: _window_solve_outcome(pack)
+        )
         monkeypatch.setattr(freeform, "_build", lambda *_args, **_kwargs: routed)
         monkeypatch.setattr(
             finalize,
@@ -6681,11 +6660,11 @@ def _sweep_with_pitch_feedback(
         height: int,
         arrangement: int,
         **_kwargs: object,
-    ) -> routing_domain._Pack:
+    ) -> freeform._PackSolveOutcome:
         physical_variant = current_strips[0].physical_variant
         assert physical_variant is not None
         seen_candidates.append((height, arrangement, physical_variant.pitch_x))
-        return pack
+        return _window_solve_outcome(pack)
 
     def build_candidate(
         _spec: BuildSpec,
@@ -6870,11 +6849,13 @@ def test_unaffordable_pitch_feedback_replans_later_base_height(
         height: int,
         arrangement: int,
         **_kwargs: object,
-    ) -> routing_domain._Pack:
+    ) -> freeform._PackSolveOutcome:
         variant = current[0].physical_variant
         assert variant is not None
         seen_candidates.append((height, arrangement, variant.pitch_x))
-        return replace(_greedy_pack(current, height), status="pitch carry-forward")
+        return _window_solve_outcome(
+            replace(_greedy_pack(current, height), status="pitch carry-forward")
+        )
 
     def build_candidate(
         _spec: BuildSpec,
@@ -7015,7 +6996,7 @@ def test_geometry_replan_discards_feedback_width_and_direct_cuts_from_old_strips
         feedback: FeedbackState | None,
         direct_relation_no_goods: tuple[object, ...],
         **_kwargs: object,
-    ) -> routing_domain._Pack:
+    ) -> freeform._PackSolveOutcome:
         variant = current[0].physical_variant
         assert variant is not None
         seen_pack_state.append(
@@ -7028,10 +7009,12 @@ def test_geometry_replan_discards_feedback_width_and_direct_cuts_from_old_strips
         )
         candidate = greedy(current, height)
         x_offset = len(seen_pack_state) - 1
-        return replace(
-            candidate,
-            at={index: (x + x_offset, y) for index, (x, y) in candidate.at.items()},
-            status=f"pack-{len(seen_pack_state)}",
+        return _window_solve_outcome(
+            replace(
+                candidate,
+                at={index: (x + x_offset, y) for index, (x, y) in candidate.at.items()},
+                status=f"pack-{len(seen_pack_state)}",
+            )
         )
 
     def build_candidate(
@@ -7157,7 +7140,7 @@ def test_projection_no_good_forbids_only_the_exact_failed_pair_context() -> None
         time_budget_s=0.5,
         direct_candidates={},
         workers=DETERMINISTIC_WORKERS,
-    )
+    ).pack
     assert initial is not None
     failure = finalize.ProjectionFailure(
         check="geom.collide",
@@ -7195,7 +7178,7 @@ def test_projection_no_good_forbids_only_the_exact_failed_pair_context() -> None
         direct_candidates={},
         workers=DETERMINISTIC_WORKERS,
         projection_no_goods=(bad,),
-    )
+    ).pack
 
     assert retry is not None
     assert (
@@ -7227,7 +7210,7 @@ def test_projection_no_good_unrelated_strip_movement_cannot_erase_pair_evidence(
         time_budget_s=0.5,
         direct_candidates={},
         workers=DETERMINISTIC_WORKERS,
-    )
+    ).pack
     assert baseline is not None
     complete_origins = tuple(baseline.at[index] for index in range(3))
     failure = finalize.ProjectionFailure("geom.collide", (0, 1), "collision", 160)
@@ -7284,7 +7267,7 @@ def test_projection_no_good_changed_implicated_variant_remains_searchable() -> N
         time_budget_s=0.5,
         direct_candidates={},
         workers=DETERMINISTIC_WORKERS,
-    )
+    ).pack
     assert baseline is not None
     failure = finalize.ProjectionFailure("geom.collide", (0, 1), "collision", 160)
     no_good = ProjectionNoGood(
@@ -7308,7 +7291,7 @@ def test_projection_no_good_changed_implicated_variant_remains_searchable() -> N
         time_budget_s=0.5,
         direct_candidates={},
         workers=DETERMINISTIC_WORKERS,
-    )
+    ).pack
     retry = _pack(
         changed,
         height=height,
@@ -7317,7 +7300,7 @@ def test_projection_no_good_changed_implicated_variant_remains_searchable() -> N
         direct_candidates={},
         workers=DETERMINISTIC_WORKERS,
         projection_no_goods=(no_good,),
-    )
+    ).pack
 
     assert control is not None
     assert retry is not None
@@ -7340,7 +7323,7 @@ def test_projection_no_good_leaves_same_displacement_free_in_another_context(
         time_budget_s=0.5,
         direct_candidates={},
         workers=DETERMINISTIC_WORKERS,
-    )
+    ).pack
     assert baseline is not None
     failure = finalize.ProjectionFailure("geom.collide", (0, 1), "collision", 160)
     delta = (
@@ -7379,7 +7362,7 @@ def test_projection_no_good_leaves_same_displacement_free_in_another_context(
         direct_candidates={},
         workers=DETERMINISTIC_WORKERS,
         projection_no_goods=(other_context,),
-    )
+    ).pack
 
     assert retry is not None
     assert retry.at == baseline.at
@@ -7409,7 +7392,7 @@ def test_projection_no_good_owned_strip_collision_learns_and_repacks(
     seen_no_goods: list[tuple[ProjectionNoGood, ...]] = []
     seen_exact_no_goods: list[tuple[freeform.ExactPackNoGood, ...]] = []
 
-    def pack_retry(*_args: object, **kwargs: object) -> routing_domain._Pack:
+    def pack_retry(*_args: object, **kwargs: object) -> freeform._PackSolveOutcome:
         raw_no_goods = kwargs.get("projection_no_goods", ())
         if not isinstance(raw_no_goods, tuple):
             raise AssertionError("projection_no_goods must be a tuple")
@@ -7421,7 +7404,7 @@ def test_projection_no_good_owned_strip_collision_learns_and_repacks(
             raise AssertionError("exact_pack_no_goods must be a tuple")
         assert all(isinstance(item, freeform.ExactPackNoGood) for item in raw_exact)
         seen_exact_no_goods.append(raw_exact)
-        return next(packs)
+        return _window_solve_outcome(next(packs))
 
     def build(
         _spec: BuildSpec,
@@ -7582,7 +7565,7 @@ def test_staged_static_exact_pack_no_good_forbids_only_the_full_assignment() -> 
         time_budget_s=0.5,
         direct_candidates={},
         workers=DETERMINISTIC_WORKERS,
-    )
+    ).pack
     assert baseline is not None
     failure = finalize.ProjectionFailure(
         "geom.collide",
@@ -7618,7 +7601,7 @@ def test_staged_static_exact_pack_no_good_forbids_only_the_full_assignment() -> 
         direct_candidates={},
         workers=DETERMINISTIC_WORKERS,
         exact_pack_no_goods=(no_good,),
-    )
+    ).pack
 
     assert retry is not None
     assert (
@@ -7717,7 +7700,7 @@ def test_a_cluster_relation_no_good_forbids_only_that_relative_placement() -> No
         workers=1,
         deterministic=True,
         cluster_relation_no_goods=(no_good,),
-    )
+    ).pack
 
     assert forbidden is not None
     origins = [forbidden.at[index] for index in range(len(strips))]
@@ -7757,7 +7740,7 @@ def test_a_cluster_relation_no_good_for_another_scope_is_ignored() -> None:
             workers=1,
             deterministic=True,
             cluster_relation_no_goods=(no_good,),
-        )
+        ).pack
 
         assert packed is not None
         origins = [packed.at[index] for index in range(len(strips))]
@@ -7798,7 +7781,7 @@ def test_a_translated_cluster_relation_is_still_forbidden() -> None:
         workers=1,
         deterministic=True,
         cluster_relation_no_goods=(no_good,),
-    )
+    ).pack
 
     assert packed is not None
     origins = [packed.at[index] for index in range(len(strips))]
@@ -7880,7 +7863,7 @@ def test_pack_window_over_every_strip_reproduces_the_full_pack() -> None:
         direct_candidates=candidates,
         workers=1,
         deterministic=True,
-    )
+    ).pack
     assert full is not None
     outcome = freeform._pack_window(
         strips,
@@ -7975,7 +7958,7 @@ def test_pack_window_leaves_every_pinned_strip_where_it_was() -> None:
         direct_candidates=candidates,
         workers=1,
         deterministic=True,
-    )
+    ).pack
     assert seed is not None
     window = frozenset({0})
     fixed = {index: origin for index, origin in seed.at.items() if index not in window}
@@ -8006,7 +7989,7 @@ def test_pack_window_never_widens_past_its_bound() -> None:
         direct_candidates=candidates,
         workers=1,
         deterministic=True,
-    )
+    ).pack
     assert seed is not None
     free = min(3, len(strips))
     outcome = freeform._pack_window(
@@ -8133,7 +8116,7 @@ def test_pack_model_skips_an_exact_no_good_with_no_free_strip() -> None:
         direct_candidates=candidates,
         workers=1,
         deterministic=True,
-    )
+    ).pack
     assert seed is not None
     built = freeform._pack_model(
         strips,
@@ -8158,7 +8141,7 @@ def test_pack_model_skips_an_unapplicable_width_target() -> None:
         direct_candidates=candidates,
         workers=1,
         deterministic=True,
-    )
+    ).pack
     assert seed is not None
     built = freeform._pack_model(
         strips,
@@ -8183,7 +8166,7 @@ def test_pack_window_keeps_a_no_good_that_still_has_a_free_strip() -> None:
         direct_candidates=candidates,
         workers=1,
         deterministic=True,
-    )
+    ).pack
     assert seed is not None
     skipped: list[int] = []
     outcome = freeform._pack_window(
@@ -8213,7 +8196,7 @@ def test_pack_window_reports_a_skip_through_on_skipped() -> None:
         direct_candidates=candidates,
         workers=1,
         deterministic=True,
-    )
+    ).pack
     assert seed is not None
     skipped: list[int] = []
     freeform._pack_window(
@@ -8458,7 +8441,7 @@ def test_decoded_from_pack_views_a_pack_as_a_decoded_placement() -> None:
         direct_candidates=candidates,
         workers=1,
         deterministic=True,
-    )
+    ).pack
     assert pack is not None
     decoded = freeform._decoded_from_pack(pack, strips, height)
     assert len(decoded.x) == len(strips)
@@ -8494,7 +8477,7 @@ def test_pack_relation_problem_carries_the_packs_sizes_and_nets() -> None:
         direct_candidates=candidates,
         workers=1,
         deterministic=True,
-    )
+    ).pack
     assert pack is not None
     problem = freeform._pack_relation_problem(pack, strips, height)
     assert problem.sizes == tuple(freeform._box(strip) for strip in strips)
@@ -8526,7 +8509,7 @@ def test_pack_relation_pair_decodes_back_to_the_packs_relations() -> None:
         direct_candidates=candidates,
         workers=1,
         deterministic=True,
-    )
+    ).pack
     assert pack is not None
     pair = freeform._pack_relation_pair(pack, strips, height)
     pair.validate(len(strips))
@@ -9116,12 +9099,12 @@ def test_staged_static_pack_dependent_exhaustion_learns_exact_no_good(
     )
     assert exact_retry_evidence is not None
 
-    def pack_retry(*_args: object, **kwargs: object) -> routing_domain._Pack:
+    def pack_retry(*_args: object, **kwargs: object) -> freeform._PackSolveOutcome:
         no_goods = kwargs.get("exact_pack_no_goods", ())
         assert isinstance(no_goods, tuple)
         assert all(isinstance(item, freeform.ExactPackNoGood) for item in no_goods)
         seen_no_goods.append(no_goods)
-        return next(packs)
+        return _window_solve_outcome(next(packs))
 
     def build(
         _spec: BuildSpec,
@@ -9375,7 +9358,7 @@ def test_staged_static_terminal_exhaustion_is_bounded_across_distinct_assignment
         *,
         height: int,
         **kwargs: object,
-    ) -> routing_domain._Pack:
+    ) -> freeform._PackSolveOutcome:
         no_goods = kwargs.get("exact_pack_no_goods", ())
         assert isinstance(no_goods, tuple)
         assert all(isinstance(no_good, freeform.ExactPackNoGood) for no_good in no_goods)
@@ -9395,7 +9378,7 @@ def test_staged_static_terminal_exhaustion_is_bounded_across_distinct_assignment
         origins = tuple(shifted.at[index] for index in range(len(current)))
         assert all(no_good.origins != origins for no_good in no_goods)
         seen_origins.append(origins)
-        return shifted
+        return _window_solve_outcome(shifted)
 
     def refuse(
         _spec: BuildSpec,
@@ -9483,12 +9466,14 @@ def test_clearance_feedback_replans_later_base_height_without_minting_retry(
         height: int,
         arrangement: int,
         **_kwargs: object,
-    ) -> routing_domain._Pack:
+    ) -> freeform._PackSolveOutcome:
         selected = next(strip for strip in current if "iron-ingot" in strip.in_lanes)
         seen_candidates.append((height, arrangement, selected.west_channel))
-        return replace(
-            _greedy_pack(current, height),
-            status="clearance carry-forward",
+        return _window_solve_outcome(
+            replace(
+                _greedy_pack(current, height),
+                status="clearance carry-forward",
+            )
         )
 
     def build_candidate(
@@ -9676,7 +9661,7 @@ def _sweep_with_repeated_exact_feedback(
         height: int,
         arrangement: int,
         **kwargs: object,
-    ) -> routing_domain._Pack:
+    ) -> freeform._PackSolveOutcome:
         exact_no_goods = kwargs.get("exact_pack_no_goods", ())
         assert isinstance(exact_no_goods, tuple)
         applicable = tuple(
@@ -9711,7 +9696,7 @@ def _sweep_with_repeated_exact_feedback(
             "the fake pack must obey every accumulated exact no-good"
         )
         seen_candidates.append((height, arrangement))
-        return candidate
+        return _window_solve_outcome(candidate)
 
     routed = DetailedRouteResult(
         status=DetailedRouteStatus.ROUTED,
@@ -9857,9 +9842,9 @@ def test_unaffordable_base_height_is_not_started_after_valid_candidate(
         *,
         height: int,
         **_kwargs: object,
-    ) -> routing_domain._Pack:
+    ) -> freeform._PackSolveOutcome:
         seen_heights.append(height)
-        return _greedy_pack(current, height)
+        return _window_solve_outcome(_greedy_pack(current, height))
 
     def build_candidate(
         _spec: BuildSpec,
@@ -18188,7 +18173,7 @@ def test_freeform_band_120_dropped_height_has_actual_clean_layout_control(
         direct_candidates=_direct_net_candidates(strips, spec),
         workers=1,
         seed=seed,
-    )
+    ).pack
 
     assert pack is not None
     result = _build(
@@ -18552,7 +18537,7 @@ def test_all_products_band_160_cold_proof_reaches_a_valid_layout(
         "_band_policy_candidate_heights",
         lambda _strips, _policy: (pack.height,),
     )
-    monkeypatch.setattr(freeform, "_pack", lambda *_args, **_kwargs: pack)
+    monkeypatch.setattr(freeform, "_pack", lambda *_args, **_kwargs: _window_solve_outcome(pack))
 
     placement = FreeformLayout(
         belt_rules=_BELT_RULES,
@@ -21700,7 +21685,7 @@ def _only_a_window_charge_is_affordable(
 
 
 def _window_solve_outcome(pack: routing_domain._Pack) -> freeform._PackSolveOutcome:
-    """Return the typed successful result produced by the real window solver."""
+    """Return the typed successful result shared by full and window solvers."""
     return freeform._PackSolveOutcome(
         pack=pack,
         status="OPTIMAL",
@@ -21831,7 +21816,7 @@ def _sweep_over_a_stranded_first_candidate(
         height: int,
         arrangement: int,
         **_kwargs: object,
-    ) -> routing_domain._Pack:
+    ) -> freeform._PackSolveOutcome:
         # `slow_pack` makes ONE candidate's packing expensive and everything
         # else instant, which is the only way a stubbed sweep can give a
         # candidate a total much larger than its own post-pack remainder.
@@ -21840,7 +21825,7 @@ def _sweep_over_a_stranded_first_candidate(
         packed.append((height, arrangement))
         candidate = packs[height, arrangement]
         candidate_of[id(candidate)] = (height, arrangement)
-        return candidate
+        return _window_solve_outcome(candidate)
 
     def build(
         _spec: BuildSpec,

@@ -3550,7 +3550,7 @@ def _direct_pack_adapter_scene() -> tuple[
         time_budget_s=0.5,
         direct_candidates=candidates,
         workers=1,
-    )
+    ).pack
     assert pack is not None and pack.direct
     sizes = tuple(_box(strip) for strip in strips)
     problem = PlacementProblem(
@@ -9546,7 +9546,7 @@ def test_sequence_band_120_dropped_height_has_actual_clean_layout_control(
         direct_candidates=direct_candidates,
         workers=1,
         seed=seed,
-    )
+    ).pack
     assert pack is not None
     run = _production_run(
         spec,
@@ -9678,9 +9678,9 @@ def test_sequence_band_policy_height_derives_shared_pack_role_after_substitution
         *,
         height: int,
         **_kwargs: object,
-    ) -> None:
+    ) -> freeform_module._PackSolveOutcome:
         selected.append(height)
-        return None
+        return freeform_module._PackSolveOutcome(None, "UNKNOWN", None, None, 0.0, 0.0, "")
 
     monkeypatch.setattr(sequence_solver_module, "_pack", capture_shared_pack)
 

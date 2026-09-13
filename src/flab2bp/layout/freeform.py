@@ -222,8 +222,9 @@ OUTER_MAX = 3
 #: the A/B compares against; see ``audit.py --arrangements``.
 _ARRANGEMENTS = 3
 
-#: Consecutive draws that may add no new entry to ``routed_assignments`` before
-#: the sweep stops looking, when nothing has wired yet.
+#: Repeated actual assignments since the last new packing before the sweep
+#: stops looking, when nothing has wired yet. A solve without an incumbent
+#: supplies no assignment and therefore cannot count as repetition.
 #:
 #: MEASURED, not guessed.  R2 §6b bypassed the arrangement gate on
 #: `universe-matrix` at `--arrangements 16`: EIGHTY candidate slots produced FIVE
@@ -231,9 +232,8 @@ _ARRANGEMENTS = 3
 #: arrangement 0 returned a byte-identical CP-SAT assignment and hit the
 #: duplicate-assignment skip.  Three draws is enough to see that the draw is not
 #: moving -- each costs one bounded CP-SAT solve at 0.06 to 0.09 s on those cells
-#: -- and it bounds the continuation's cost at the cost of PROVING there is
-#: nothing new, which is the only thing that makes it affordable at the audit's
-#: `--jobs 16`.
+#: -- and bounds redundant continuation. It is not a proof that the packing
+#: domain is exhausted; every remaining draw still pays the shared deadline.
 C_SWEEP_STALE_DRAWS = 3
 
 #: CP-SAT's random seed for arrangement 0 -- the constant this always used.
@@ -3295,8 +3295,8 @@ def _pack(
     cluster_relation_no_goods: tuple[ClusterRelationNoGood, ...] = (),
     feedback: FeedbackState | None = None,
     stop_when_seed_admissible: bool = False,
-) -> routing_domain._Pack | None:
-    """Minimise width at a fixed height with CP-SAT.
+) -> _PackSolveOutcome:
+    """Minimise width at a fixed height, retaining CP status even without a pack.
 
     Height is swept outside rather than multiplied inside: ``W * H`` is a product
     of two variables, whose CP-SAT relaxation is weak enough that the search
@@ -3329,7 +3329,15 @@ def _pack(
         seed=seed,
     )
     if built is None or time_budget_s <= 0:
-        return None
+        return _PackSolveOutcome(
+            pack=None,
+            status=("INFEASIBLE" if strips else "MODEL_INVALID") if built is None else "UNKNOWN",
+            objective_value=None,
+            best_objective_bound=None,
+            wall_time_s=0.0,
+            deterministic_time_s=0.0,
+            model_fingerprint="",
+        )
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = time_budget_s
     # Determinism is load-bearing for the bake-off: multi-worker CP-SAT would
@@ -3369,7 +3377,7 @@ def _pack(
         direct_candidates,
         height,
         admission,
-    ).pack
+    )
 
 
 class _BuildBudgetStage(Enum):
@@ -5764,7 +5772,7 @@ class FreeformLayout:
                     pack = pending_pack
                 else:
                     pack_started = time.monotonic()
-                    pack = _pack(
+                    solve = _pack(
                         strips,
                         height=height,
                         width_bound=width_bound,
@@ -5791,10 +5799,13 @@ class FreeformLayout:
                             )
                         ),
                     )
+                    pack = solve.pack
                     candidate_pack_s = time.monotonic() - pack_started
                     pack_time_s += candidate_pack_s
                 if pack is None:
-                    stale_draws += 1
+                    # UNKNOWN exhausted a solve allowance, not the assignment
+                    # domain. INFEASIBLE answers this submodel, not a draw of an
+                    # already routed assignment. Neither is a stale packing.
                     continue
                 assignment = (
                     pack.height,

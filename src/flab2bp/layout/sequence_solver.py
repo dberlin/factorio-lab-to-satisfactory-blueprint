@@ -6023,7 +6023,7 @@ def _production_run(
                 direct_candidates=direct_candidates,
                 workers=DETERMINISTIC_WORKERS,
                 seed=shared_seed,
-            )
+            ).pack
             if shared_left > 0.05
             else None
         )

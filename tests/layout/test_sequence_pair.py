@@ -433,7 +433,7 @@ def test_two_stage_alignment_retains_cp_sat_direct_opportunity() -> None:
         time_budget_s=0.5,
         direct_candidates=candidates,
         workers=DETERMINISTIC_WORKERS,
-    )
+    ).pack
     assert oracle is not None
     assert oracle.direct
 
