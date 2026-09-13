@@ -4103,7 +4103,7 @@ def _speculative_exact_allowance(
 ) -> int:
     """Reserve at least half the routing ledger after every speculative closure."""
     if type(work_total) is not int or work_total <= 0:
-        raise ValueError("expansion total must be a positive integer")
+        raise ValueError("work total must be a positive integer")
     if type(speculative_candidates) is not int or speculative_candidates <= 0:
         raise ValueError("speculative candidate count must be a positive integer")
     return max(1, work_total // (2 * speculative_candidates))

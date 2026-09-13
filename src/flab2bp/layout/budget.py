@@ -126,7 +126,7 @@ class StagedWorkBudget:
 
     def __post_init__(self) -> None:
         if type(self.total) is not int or self.total < 0:
-            raise ValueError("total expansion budget must be a non-negative integer")
+            raise ValueError("total work budget must be a non-negative integer")
         self.final_reserved = fraction_ceiling(self.total, Fraction(1, 4))
         self.final_left = self.final_reserved
         self.shared_left = self.total - self.final_reserved
@@ -144,7 +144,7 @@ class StagedWorkBudget:
         """Partition searchable expansions equally across first height stages."""
         if self._configured:
             if tuple(self.discovery_by_height) != heights:
-                raise ValueError("expansion budget is already configured for other heights")
+                raise ValueError("work budget is already configured for other heights")
             return
         if not heights or len(set(heights)) != len(heights):
             raise ValueError("candidate heights must be a non-empty tuple of unique values")
@@ -238,7 +238,7 @@ class StagedWorkBudget:
 
     def shared_allowance(self) -> int:
         if not self.discovery_complete:
-            raise ValueError("shared expansion budget is locked until discovery completes")
+            raise ValueError("shared work budget is locked until discovery completes")
         return self.shared_left
 
     def settle_shared(self, spent: int) -> None:
@@ -255,4 +255,4 @@ def fraction_ceiling(total: int, fraction: Fraction) -> int:
 
 def check_spend(spent: int, allowance: int) -> None:
     if type(spent) is not int or not 0 <= spent <= allowance:
-        raise ValueError("adapter expansion spend must be within its allowance")
+        raise ValueError("adapter work spend must be within its allowance")
