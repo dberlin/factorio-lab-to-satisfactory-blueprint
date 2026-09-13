@@ -4227,7 +4227,7 @@ def _port_seating_refusal(attempts: Sequence[PackAttempt]) -> str | None:
     """The refusal for a sweep whose router never ran, or ``None``.
 
     Every retained attempt failed at PREPARATION with static access only and
-    expanded zero search nodes: `_build` substitutes a synthetic STRANDED result and
+    charged zero search work: `_build` substitutes a synthetic STRANDED result and
     skips routing entirely when `prepared.preparation_failures` is non-empty, so
     "the packer produced packs its own router cannot wire" is false twice over --
     nothing was routed and the packer is blameless.  Measured on all three

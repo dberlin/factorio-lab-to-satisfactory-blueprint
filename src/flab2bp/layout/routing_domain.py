@@ -2400,9 +2400,9 @@ class _Canvas:
     #: A port is a lane's end tile, so it has at most three free neighbours and
     #: often one.  Without a reservation an earlier net's path takes the last
     #: one, and every net using that port is then handed an EMPTY start or goal
-    #: set: the geometric search reports dynamic access loss having expanded zero nodes.  That is
+    #: set: the geometric search reports dynamic access loss having charged zero work.  That is
     #: distinguishable from congestion in diagnostics but still cannot be
-    #: negotiated away, because a net that expands nothing never registers a
+    #: negotiated away, because a net that searches nothing never registers a
     #: conflict for the history term to price.  Measured on the magnetic-ring
     #: spec: 48 of 128 searches failed at zero expansions, at every candidate
     #: height, with two thirds of the routing budget still unspent.
@@ -5925,7 +5925,7 @@ def _route_all(
     clothes.
 
     THIS LOOP IS THE OVERRUN.  Up to :data:`RRR_MAX` rounds, each re-routing
-    every net, each net allowed :data:`_MAX_EXPANSIONS` nodes -- bounded in
+    every net, each net allowed :data:`_MAX_EXPANSIONS` work units -- bounded in
     expansions by :data:`_ROUTING_BUDGET` and, until now, not bounded in seconds
     at all.  A caller asking for four seconds got ten of these per sweep and two
     sweeps, which is how ``quantum-chip`` measured at 80 seconds against a
