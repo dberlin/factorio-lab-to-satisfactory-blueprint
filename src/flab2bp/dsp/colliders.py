@@ -1426,13 +1426,20 @@ BELT_PROBE_RADIUS = 0.23
 BELT_PROBE_LIFT = 0.2
 
 
-def belt_probe(x: float, y: float, z: float) -> Vec3:
+def belt_probe(x: float, y: float, z: float, arc: float = GRID_ARC) -> Vec3:
     """Centre of the sphere the game tests a belt tile with, in the flat frame.
 
     ``lpos + lpos.normalized * BELT_PROBE_LIFT``, written in the local frame
     :func:`flat_pose` uses, where radial up is ``+y``.
+
+    ``arc`` is how far apart two adjacent tiles stand.  :data:`GRID_ARC` is the
+    flat grid's own answer and the default; a caller asking what a PASTE would
+    do passes the tighter spacing that paste has
+    (:func:`flab2bp.dsp.planet.tightest_column_arc`), because a pasted column is
+    ``cos(latitude)`` of a flat one and a collider that clears a flat neighbour
+    by less than that difference does not clear the pasted one.
     """
-    return (x * GRID_ARC, z * 4.0 / 3.0 + 0.2 + BELT_PROBE_LIFT, y * GRID_ARC)
+    return (x * arc, z * 4.0 / 3.0 + 0.2 + BELT_PROBE_LIFT, y * arc)
 
 
 def sphere_box_overlap(centre: Vec3, radius: float, box: Box) -> bool:
@@ -1487,9 +1494,9 @@ def belt_crossing_height(model_index: int) -> float:
     return (top + BELT_PROBE_RADIUS - BELT_PROBE_LIFT) * 3.0 / 4.0
 
 
-@lru_cache(maxsize=1)
+@lru_cache(maxsize=512)
 def belt_keepout_offsets(
-    model_index: int, yaw: float = 0.0, reach: int = 3, levels: int = 4
+    model_index: int, yaw: float = 0.0, reach: int = 3, levels: int = 4, arc: float = GRID_ARC
 ) -> frozenset[tuple[int, int, int]]:
     """Tile offsets at which a belt's probe touches this model's build collider.
 
@@ -1511,6 +1518,10 @@ def belt_keepout_offsets(
     Negative ``dz`` is searched too -- a belt UNDER an elevated building -- and
     for every model in this catalog it comes back empty, because a collider
     starts at the ground and rises.
+
+    ``arc`` is the tile spacing the offsets are measured at, defaulting to the
+    flat :data:`GRID_ARC`.  Pass a paste's own tighter spacing to get the set
+    that paste enforces: see :func:`belt_probe`.
     """
     lpos, lrot = flat_pose(0.0, 0.0, 0.0, yaw)
     boxes = target_boxes(Placed(model_index, 0.0, 0.0, 0.0, yaw), lpos, lrot)
@@ -1520,10 +1531,29 @@ def belt_keepout_offsets(
     for dx in range(-reach, reach + 1):
         for dy in range(-reach, reach + 1):
             for dz in range(-levels, levels + 1):
-                probe = belt_probe(dx, dy, dz)
+                probe = belt_probe(dx, dy, dz, arc)
                 if any(sphere_box_overlap(probe, BELT_PROBE_RADIUS, b) for b in boxes):
                     out.add((dx, dy, dz))
     return frozenset(out)
+
+
+def belt_keepout_reach(model_index: int, arc: float = GRID_ARC) -> int:
+    """A search box wide enough that :func:`belt_keepout_offsets` cannot clip.
+
+    The farthest a build collider's corner stands from the building's own tile,
+    plus the probe's radius, in tiles of ``arc`` -- rounded UP and then one
+    further, so the ring outside the answer is searched and comes back empty.
+    This sizes the search, not the answer; the answer is still every probe that
+    overlaps.
+
+    The horizontal RADIUS, not the per-axis span: yaw turns the collider inside
+    this box, so a bound that holds at one yaw has to hold at every yaw.
+    """
+    boxes = build_colliders(model_index)
+    if not boxes:
+        return 0
+    span = max(math.hypot(abs(pos[0]) + ext[0], abs(pos[2]) + ext[2]) for pos, ext, _q in boxes)
+    return math.ceil((span + BELT_PROBE_RADIUS) / arc) + 1
 
 
 def probe_inside_footprint(centre: Vec3, box: Box) -> bool:
