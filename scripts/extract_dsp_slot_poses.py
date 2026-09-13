@@ -53,9 +53,17 @@ import sys
 import UnityPy
 from UnityPy.helpers.TypeTreeGenerator import TypeTreeGenerator
 
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(_ROOT, "src"))
+
+# The quaternion arithmetic below must be the same arithmetic the runtime
+# applies to what this script writes, so it is imported rather than copied.
+# The module depends on nothing but ``math``, so it imports cleanly in the
+# isolated environment ``uv run`` builds from the header above.
+from flab2bp.dsp import quaternion  # noqa: E402
+
 UNITY_VERSION = "2022.3.62f3c1"
 
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(_ROOT, "src", "flab2bp", "dsp", "data")
 
 #: Prefabs that must come back with slot poses. Every one is a production
@@ -78,29 +86,6 @@ REQUIRED = {
 def fail(msg: str) -> None:
     print(f"ERROR: {msg}", file=sys.stderr)
     sys.exit(1)
-
-
-def qmul(a: tuple[float, float, float, float], b: tuple[float, float, float, float]):
-    ax, ay, az, aw = a
-    bx, by, bz, bw = b
-    return (
-        aw * bx + ax * bw + ay * bz - az * by,
-        aw * by - ax * bz + ay * bw + az * bx,
-        aw * bz + ax * by - ay * bx + az * bw,
-        aw * bw - ax * bx - ay * by - az * bz,
-    )
-
-
-def qrot(q: tuple[float, float, float, float], v: tuple[float, float, float]):
-    """``q * v``, the Unity quaternion-times-vector product."""
-    x, y, z, w = q
-    vx, vy, vz = v
-    tx, ty, tz = 2 * (y * vz - z * vy), 2 * (z * vx - x * vz), 2 * (x * vy - y * vx)
-    return (
-        vx + w * tx + (y * tz - z * ty),
-        vy + w * ty + (z * tx - x * tz),
-        vz + w * tz + (x * ty - y * tx),
-    )
 
 
 def local_trs(tr) -> tuple[tuple, tuple, tuple]:
@@ -139,9 +124,9 @@ def world_pose(tr, objs) -> tuple[tuple, tuple]:
     for node in chain_to_root(tr, objs):
         lp, lr, ls = local_trs(node)
         scaled = (lp[0] * scale[0], lp[1] * scale[1], lp[2] * scale[2])
-        turned = qrot(rot, scaled)
+        turned = quaternion.rotate(rot, scaled)
         pos = (pos[0] + turned[0], pos[1] + turned[1], pos[2] + turned[2])
-        rot = qmul(rot, lr)
+        rot = quaternion.multiply(rot, lr)
         scale = (scale[0] * ls[0], scale[1] * ls[1], scale[2] * ls[2])
     return pos, rot
 
@@ -221,7 +206,7 @@ def main() -> int:
                 out.append(
                     {
                         "pos": [round(v, 4) for v in p],
-                        "fwd": [round(v, 6) for v in qrot(r, (0.0, 0.0, 1.0))],
+                        "fwd": [round(v, 6) for v in quaternion.rotate(r, (0.0, 0.0, 1.0))],
                     }
                 )
             return out
