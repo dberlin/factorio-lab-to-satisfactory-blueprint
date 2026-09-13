@@ -6495,6 +6495,17 @@ def _route_all(
         )
         for i, net in enumerate(nets)
     }
+    #: Which nets declare each cell as their own source, fixed for the pass, and
+    #: which nets currently hint at each cell as their selected source tap,
+    #: maintained beside `source_hint`.  Together they answer "which siblings
+    #: selected this tap" without scanning every sibling per query.
+    declared_sources: dict[Cell, set[int]] = defaultdict(set)
+    for i, net in enumerate(nets):
+        if net.src is not None:
+            declared_sources[net.src.x, net.src.y, net.src.z].add(i)
+    own_source_nets = {cell: frozenset(members) for cell, members in declared_sources.items()}
+    hinted_to: dict[Cell, set[int]] = defaultdict(set)
+    src_group_set = {i: frozenset(group) for i, group in src_group.items()}
     # Chained nets -- one net leaving the belt another delivers to, which is what
     # `_proliferator_nets` builds -- used to be allowed to merge into each
     # other's paths in both directions. Neither direction survives inspection.
@@ -6806,6 +6817,18 @@ def _route_all(
             guard_offers.get(path[0]),
         )
 
+    def _set_source_hint(index: int, tap: Cell | None) -> None:
+        """Record or withdraw ``index``'s selected source tap and its reverse index."""
+        previous = source_hint.pop(index, None)
+        if previous is not None:
+            holders = hinted_to[previous]
+            holders.discard(index)
+            if not holders:
+                del hinted_to[previous]
+        if tap is not None:
+            source_hint[index] = tap
+            hinted_to[tap].add(index)
+
     def _stake(
         index: int,
         path: tuple[Cell, ...],
@@ -6815,10 +6838,7 @@ def _route_all(
         """Put a path down with the exact sibling endpoints it selected."""
         selected = hints
         paths.stake(index, path, linked_head=selected[2] is not None or index in path_tap)
-        if selected[0] is not None:
-            source_hint[index] = selected[0]
-        else:
-            source_hint.pop(index, None)
+        _set_source_hint(index, selected[0])
         if selected[1] is not None:
             sink_hint[index] = selected[1]
         else:
@@ -6872,7 +6892,7 @@ def _route_all(
                 and _inside_grid(cell)
             ):
                 grid.restore(cell)
-        source_hint.pop(index, None)
+        _set_source_hint(index, None)
         sink_hint.pop(index, None)
         path = paths[index]
         paths.unstake(index)
@@ -6967,7 +6987,16 @@ def _route_all(
                     direct_ports_valid = False
                 else:
                     direct_ports.add(carry_port)
-            for sibling in sorted(set(siblings) | planned_taps.get(tap, set())):
+            # Only a net that hints at this tap, or declares it and hints at
+            # nothing, can have selected it; the indexes name those directly
+            # and the exact test below still decides.
+            tapped = planned_taps.get(tap, ())
+            group = src_group_set[index]
+            for sibling in sorted(
+                candidate
+                for candidate in hinted_to.get(tap, set()) | own_source_nets.get(tap, frozenset())
+                if candidate in group or candidate in tapped
+            ):
                 sibling_path = paths.path(sibling)
                 if not sibling_path:
                     continue
