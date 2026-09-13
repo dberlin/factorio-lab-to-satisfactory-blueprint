@@ -34,7 +34,7 @@ from flab2bp.layout.routing_domain import _geometric_search, _Grid, _PathSearchR
 
 
 def _environment(
-    case: last_mile.ClusterCapture, budget: dict[str, int]
+    case: last_mile.ClusterCapture, budget: WorkBudget
 ) -> last_mile.ClusterEnvironment:
     canvas = cast(CanvasSnapshot, case.canvas).restore()
     grid = snapshot_grid(cast(_Grid, case.grid))
@@ -42,12 +42,18 @@ def _environment(
     remaining = case.deadline_remaining
     deadline = None if remaining is None else time.monotonic() + float(remaining)
 
+    def pass_left() -> int:
+        """The replayed pass ledger, which the capture always bounds."""
+        left = budget.left
+        assert left is not None
+        return left
+
     def search(index: int, constraints: frozenset[tuple[int, int, int]]) -> _PathSearchResult:
         starts, goals, routing_ports = case.ends[index]
         canvas.routing_ports = routing_ports
         allowance = min(
             last_mile.B_LOW_LEVEL_WORK,
-            max(0, budget["left"] - floor),
+            max(0, pass_left() - floor),
         )
         private = WorkBudget(left=allowance)
         found = _geometric_search(
@@ -66,13 +72,15 @@ def _environment(
             case.rejected[index] | constraints,
             case.blocking_owners,
         )
-        budget["left"] -= allowance - (private.left if private.left is not None else allowance)
+        private_left = private.left
+        assert private_left is not None
+        budget.left = pass_left() - (allowance - private_left)
         return found
 
     return last_mile.ClusterEnvironment(
         search=search,
         offers=lambda _index: ({}, {}, {}),
-        budget_left=lambda: budget["left"],
+        budget_left=pass_left,
         budget_floor=floor,
         expired=lambda: False,
     )
@@ -108,7 +116,7 @@ def bench(path: Path, rounds: int, check: bool) -> int:
         got: list[last_mile.ClusterResult] = []
         t0 = time.perf_counter()
         for case in replayable:
-            budget = {"left": case.capture.budget_left}
+            budget = WorkBudget(left=case.capture.budget_left)
             got.append(
                 last_mile.solve_cluster(case.capture.problem, _environment(case.capture, budget))
             )

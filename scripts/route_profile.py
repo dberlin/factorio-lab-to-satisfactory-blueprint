@@ -259,7 +259,7 @@ def install(tally: Tally) -> Callable[[], None]:
         belt_model: int,
         bounds: tuple[int, int, int, int],
         deadline: float | None = None,
-        budget: dict[str, int] | None = None,
+        budget: WorkBudget | None = None,
         planned_power_sites: Sequence[tuple[int, int]] | None = None,
         junction_frame_bans: Sequence[frozenset[Cell]] = (),
         *,
@@ -537,7 +537,7 @@ def heights(
         policy: BandPolicy,
         belt_rules: catalog.BeltAltitudeRules = routing_domain._DEFAULT_BELT_RULES,
         deadline: float | None = None,
-        budget: dict[str, int] | None = None,
+        budget: WorkBudget | None = None,
         staged_static_cache: routing_domain._StagedStaticCache | None = None,
     ) -> freeform._BuildResult:
         t0 = time.perf_counter()
