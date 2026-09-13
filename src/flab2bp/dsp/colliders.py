@@ -1430,7 +1430,21 @@ def belt_crossing_height(model_index: int) -> float:
     return (top + BELT_PROBE_RADIUS - BELT_PROBE_LIFT) * 3.0 / 4.0
 
 
-@lru_cache(maxsize=512)
+#: Measured, not chosen.  ``scripts/measure_geometry_cache_working_sets.py``
+#: replays every fixture blueprint and projection placement, records the keys
+#: each caller asks for, and picks the smallest power of two that covers the
+#: worst single case and retains 99 % of the unbounded hits; the answer and the
+#: hit curve behind it live in ``tests/fixtures/geometry_cache_working_sets.json``
+#: and ``tests/dsp/test_geometry_cache_bounds.py`` holds this constant to it.
+#:
+#: It was 1 while a Splitter's keepout was the only caller, which asked one key
+#: for the whole corpus.  A machine's keepout asks two per (model, yaw) -- one
+#: per paste orientation -- for every solid building placed, which is 1,613
+#: distinct keys over the fixtures and 1,176 in the worst single case.
+_BELT_KEEPOUT_CACHE_MAXSIZE = 2048
+
+
+@lru_cache(maxsize=_BELT_KEEPOUT_CACHE_MAXSIZE)
 def belt_keepout_offsets(
     model_index: int,
     yaw: float = 0.0,
