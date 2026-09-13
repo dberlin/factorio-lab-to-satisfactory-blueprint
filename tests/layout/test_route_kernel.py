@@ -3,6 +3,7 @@ from __future__ import annotations
 from array import array
 from dataclasses import replace
 from fractions import Fraction
+from typing import Literal, cast
 
 import pytest
 
@@ -333,7 +334,7 @@ def test_summarize_maps_each_kernel_outcome_to_one_flag() -> None:
             "certification_s": 0.0,
         }
         return gr.GeometricResult(
-            kind,  # type: ignore[arg-type]
+            cast(Literal["routed", "budget", "exhausted", "cancelled"], kind),
             (1, 2) if kind == "routed" else None,
             None,
             (),
