@@ -13608,23 +13608,23 @@ class _CompositionProjection:
         self._projection_cache = finalize._ProjectionCache(
             finalize._ProjectionCounters(), cancelled=self.cancelled
         )
+        # ONE `Placement` for every consumer below, so the `Buildings` index
+        # `finalize._power_nodes` memoises onto it is the same index the two
+        # comprehensions in this constructor query. Two separate placements
+        # over identical records would each build their own.
+        placement = Placement(buildings=self.buildings)
         try:
             self._obstacles = _ProjectedObstacleIndex.build(
                 tuple(enumerate(self.buildings)), cancelled=cancelled
             )
-            self._cleanup = finalize._CleanupSurvivorGraph(
-                Placement(buildings=self.buildings), cancelled=cancelled
-            )
+            self._cleanup = finalize._CleanupSurvivorGraph(placement, cancelled=cancelled)
             self._bounds = self._cleanup.snapshot_bounds()
-            self._power = finalize._power_nodes(
-                Placement(buildings=self.buildings), cancelled=cancelled
-            )
+            self._power = finalize._power_nodes(placement, cancelled=cancelled)
         except finalize.ProjectionCancelled:
             raise _PreparationDeadline from None
+        indexed = Buildings.of(placement)
         self._coaters = tuple(
-            (index, building)
-            for index, building in enumerate(self.buildings)
-            if building.item_id == catalog.SPRAY_COATER_ID
+            (index, self.buildings[index]) for index in indexed.by_item(catalog.SPRAY_COATER_ID)
         )
         self._materialized_coaters: dict[
             tuple[tuple[int, int, int, int], finalize.FrameCandidate],
@@ -13654,10 +13654,13 @@ class _CompositionProjection:
         ] = {}
         self._addition_obstacles: dict[PlacedBuilding, _ProjectedObstacleIndex] = {}
         self._frame_bands: dict[_JunctionProjectionFrame, tuple[planet.Band, ...]] = {}
+        # `kind_for` assigns BELT to exactly `catalog.is_belt` and SORTER to
+        # exactly the remaining `catalog.is_sorter`, so MACHINE | OTHER is the
+        # complement this predicate accepted. `sorted` restores the ascending
+        # order `enumerate` yielded.
         self._static = tuple(
-            (index, building)
-            for index, building in enumerate(self.buildings)
-            if not catalog.is_belt(building.item_id) and not catalog.is_sorter(building.item_id)
+            (index, self.buildings[index])
+            for index in sorted((*indexed.machines(), *indexed.by_kind(BuildingKind.OTHER)))
         )
 
     def allows_buildings(
@@ -15128,11 +15131,16 @@ def plan_power_infill(
     # keeps the two sets from drifting.  Altitude is not in the predicate: a
     # stack of belts over one ground cell is one question, not three.
     dark: set[tuple[int, int]] = set()
-    for b in canvas.buildings:
+    for index in sorted(
+        (
+            *canvas.buildings.machines(),
+            *canvas.buildings.sorters(),
+            *canvas.buildings.by_kind(BuildingKind.OTHER),
+        )
+    ):
         if cancelled is not None and cancelled():
             raise _PreparationDeadline
-        if catalog.is_belt(b.item_id):
-            continue
+        b = canvas.buildings[index]
         for tx, ty, _tz in b.tiles():
             if (tx, ty) not in dark and not covered(tx, ty):
                 dark.add((tx, ty))
@@ -17564,9 +17572,8 @@ def _coater_candidate_has_ambiguous_supply(canvas: _Canvas, x: int, y: int, z: i
     anchor_x = math.floor(float(want[0]))
     anchor_y = math.floor(float(want[1]))
     candidates = 0
-    for b in canvas.buildings:
-        if not catalog.is_belt(b.item_id):
-            continue
+    for index in canvas.buildings.belts():
+        b = canvas.buildings[index]
         if not (anchor_x - reach <= b.x <= anchor_x + reach):
             continue
         if not (anchor_y - reach <= b.y <= anchor_y + reach):
