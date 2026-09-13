@@ -1,0 +1,138 @@
+{
+  "downloaded": "2026-09-13",
+  "entries": [
+    {
+      "name": "biofuel",
+      "uuid": "eb6c5f88-ea48-45ec-9342-52c1c909fcf5",
+      "sbp": "biofuel.sbp",
+      "sbpcfg": "biofuel.sbpcfg",
+      "source": "https://satisfactoryblueprints.com/blueprint/eb6c5f88-ea48-45ec-9342-52c1c909fcf5"
+    },
+    {
+      "name": "logistics-10",
+      "uuid": "1f46c06c-3aaa-4473-9268-1f0bf67ad995",
+      "sbp": "logistics-10.sbp",
+      "sbpcfg": "logistics-10.sbpcfg",
+      "source": "https://satisfactoryblueprints.com/blueprint/1f46c06c-3aaa-4473-9268-1f0bf67ad995"
+    },
+    {
+      "name": "logistics-11",
+      "uuid": "22a521fa-8b97-45cc-93c1-0d311586d715",
+      "sbp": "logistics-11.sbp",
+      "sbpcfg": "logistics-11.sbpcfg",
+      "source": "https://satisfactoryblueprints.com/blueprint/22a521fa-8b97-45cc-93c1-0d311586d715"
+    },
+    {
+      "name": "logistics-12",
+      "uuid": "23877a24-afe2-433e-a3f6-5cfdbb51381e",
+      "sbp": "logistics-12.sbp",
+      "sbpcfg": "logistics-12.sbpcfg",
+      "source": "https://satisfactoryblueprints.com/blueprint/23877a24-afe2-433e-a3f6-5cfdbb51381e"
+    },
+    {
+      "name": "logistics-7",
+      "uuid": "09ff2e50-555a-4b6a-bda3-78324815a77a",
+      "sbp": "logistics-7.sbp",
+      "sbpcfg": "logistics-7.sbpcfg",
+      "source": "https://satisfactoryblueprints.com/blueprint/09ff2e50-555a-4b6a-bda3-78324815a77a"
+    },
+    {
+      "name": "logistics-8",
+      "uuid": "108dbdc8-f5bd-4178-afa9-1eeda8138b5e",
+      "sbp": "logistics-8.sbp",
+      "sbpcfg": "logistics-8.sbpcfg",
+      "source": "https://satisfactoryblueprints.com/blueprint/108dbdc8-f5bd-4178-afa9-1eeda8138b5e"
+    },
+    {
+      "name": "logistics-9",
+      "uuid": "170a8571-a1ff-4f06-b86c-750e021248bd",
+      "sbp": "logistics-9.sbp",
+      "sbpcfg": "logistics-9.sbpcfg",
+      "source": "https://satisfactoryblueprints.com/blueprint/170a8571-a1ff-4f06-b86c-750e021248bd"
+    },
+    {
+      "name": "power-generation-13",
+      "uuid": "0553547a-4ac7-4501-a050-dd84bb29403f",
+      "sbp": "power-generation-13.sbp",
+      "sbpcfg": "power-generation-13.sbpcfg",
+      "source": "https://satisfactoryblueprints.com/blueprint/0553547a-4ac7-4501-a050-dd84bb29403f"
+    },
+    {
+      "name": "power-generation-14",
+      "uuid": "071caeaa-b1f1-48dc-a15d-bd84378bb0ef",
+      "sbp": "power-generation-14.sbp",
+      "sbpcfg": "power-generation-14.sbpcfg",
+      "source": "https://satisfactoryblueprints.com/blueprint/071caeaa-b1f1-48dc-a15d-bd84378bb0ef"
+    },
+    {
+      "name": "power-generation-15",
+      "uuid": "0a17560d-a8d3-453e-86f9-e71df685063b",
+      "sbp": "power-generation-15.sbp",
+      "sbpcfg": "power-generation-15.sbpcfg",
+      "source": "https://satisfactoryblueprints.com/blueprint/0a17560d-a8d3-453e-86f9-e71df685063b"
+    },
+    {
+      "name": "power-generation-16",
+      "uuid": "0ffb219d-ba25-4179-a43e-9b2f18718082",
+      "sbp": "power-generation-16.sbp",
+      "sbpcfg": "power-generation-16.sbpcfg",
+      "source": "https://satisfactoryblueprints.com/blueprint/0ffb219d-ba25-4179-a43e-9b2f18718082"
+    },
+    {
+      "name": "power-generation-17",
+      "uuid": "12c6612e-57c0-4ad8-823c-74d44269b12d",
+      "sbp": "power-generation-17.sbp",
+      "sbpcfg": "power-generation-17.sbpcfg",
+      "source": "https://satisfactoryblueprints.com/blueprint/12c6612e-57c0-4ad8-823c-74d44269b12d"
+    },
+    {
+      "name": "power-generation-18",
+      "uuid": "1337dbd1-e35e-4a13-9f37-c16f54228dac",
+      "sbp": "power-generation-18.sbp",
+      "sbpcfg": "power-generation-18.sbpcfg",
+      "source": "https://satisfactoryblueprints.com/blueprint/1337dbd1-e35e-4a13-9f37-c16f54228dac"
+    },
+    {
+      "name": "production-1",
+      "uuid": "00b2c08f-7b00-441c-902e-6716c684295d",
+      "sbp": "production-1.sbp",
+      "sbpcfg": "production-1.sbpcfg",
+      "source": "https://satisfactoryblueprints.com/blueprint/00b2c08f-7b00-441c-902e-6716c684295d"
+    },
+    {
+      "name": "production-2",
+      "uuid": "015df9cd-7dbc-49b5-8f8e-2fad07e6d91c",
+      "sbp": "production-2.sbp",
+      "sbpcfg": "production-2.sbpcfg",
+      "source": "https://satisfactoryblueprints.com/blueprint/015df9cd-7dbc-49b5-8f8e-2fad07e6d91c"
+    },
+    {
+      "name": "production-3",
+      "uuid": "06ba05ed-5181-4786-8ec3-58fc1fe15351",
+      "sbp": "production-3.sbp",
+      "sbpcfg": "production-3.sbpcfg",
+      "source": "https://satisfactoryblueprints.com/blueprint/06ba05ed-5181-4786-8ec3-58fc1fe15351"
+    },
+    {
+      "name": "production-4",
+      "uuid": "0b3c4fea-5fdf-4808-b28f-e096867d3ab7",
+      "sbp": "production-4.sbp",
+      "sbpcfg": "production-4.sbpcfg",
+      "source": "https://satisfactoryblueprints.com/blueprint/0b3c4fea-5fdf-4808-b28f-e096867d3ab7"
+    },
+    {
+      "name": "production-5",
+      "uuid": "0cfa7ed9-7ba5-4331-ad50-53b993582735",
+      "sbp": "production-5.sbp",
+      "sbpcfg": "production-5.sbpcfg",
+      "source": "https://satisfactoryblueprints.com/blueprint/0cfa7ed9-7ba5-4331-ad50-53b993582735"
+    },
+    {
+      "name": "production-6",
+      "uuid": "15d94ef2-aa42-4cef-b6e2-d0e4fab76ae9",
+      "sbp": "production-6.sbp",
+      "sbpcfg": "production-6.sbpcfg",
+      "source": "https://satisfactoryblueprints.com/blueprint/15d94ef2-aa42-4cef-b6e2-d0e4fab76ae9"
+    }
+  ]
+}
