@@ -8,6 +8,7 @@ import statistics
 import sys
 import time
 from collections.abc import Mapping, Sequence
+from fractions import Fraction
 from pathlib import Path
 from typing import NotRequired, Protocol, TypedDict, cast
 
@@ -18,6 +19,7 @@ sys.path.insert(0, str(_ROOT / "src"))
 from flab2bp.dsp import catalog, colliders, planet  # noqa: E402
 from flab2bp.dsp.codec import decode  # noqa: E402
 from flab2bp.dsp.envelope import BlueprintFormatError  # noqa: E402
+from flab2bp.layout.routing_domain import spherical_overflight_limit  # noqa: E402
 
 _FUNCTION_NAMES = (
     "catalog.collider_span",
@@ -143,6 +145,26 @@ def recommended_maxsize(case_traces: list[list[CacheKey]], combined: list[CacheK
     raise AssertionError("candidate range must include an evidence-backed bound")
 
 
+def _machine_keepout_keys(model_index: int, yaw: float) -> tuple[CacheKey, ...]:
+    """The two ``belt_keepout_offsets`` keys one packed machine asks for.
+
+    `routing_domain._crossing_ban_tiles` measures a machine's keepout once per
+    paste ORIENTATION -- the column arc on the longitude axis and the row arc on
+    the other, then the two swapped -- because which lattice axis a paste
+    compresses depends on an extent that does not exist until routing has run.
+    Both keys are reproduced here rather than approximated, so the working set
+    this script measures is the one the cache actually sees.
+    """
+    column = planet.tightest_column_arc(planet.widest_band().area_segments)
+    row = planet.row_arc()
+    reach = colliders.belt_keepout_reach(model_index, min(column, row))
+    levels = spherical_overflight_limit(model_index, Fraction(0))
+    return (
+        (model_index, yaw, reach, levels, column, row),
+        (model_index, yaw, reach, levels, row, column),
+    )
+
+
 def _empty_function_traces() -> FunctionTraces:
     return {name: [] for name in _FUNCTION_NAMES}
 
@@ -158,6 +180,11 @@ def _record_catalog_building(
     traces["catalog.clearance"].append((item_id, yaw))
     traces["colliders.own_centre_extent"].append((model_index, yaw))
     traces["colliders.own_centre_extent"].append((model_index, 0.0))
+    if not catalog.is_belt(item_id) and not catalog.is_sorter(item_id):
+        # `_Canvas.add(solid=True)` reserves a machine's belt keepout, and every
+        # solid building goes through it.  Belts and sorters do not: they are
+        # placed unsolid, and the game excuses them from the belt probe anyway.
+        traces["colliders.belt_keepout_offsets"].extend(_machine_keepout_keys(model_index, yaw))
 
 
 def _object(value: object, *, label: str) -> Mapping[str, object]:

@@ -90,14 +90,31 @@ def _yaw_eviction_args(name: str, identifier: int) -> tuple[_CallArgs, ...]:
     return tuple((identifier, float(yaw)) for yaw in range(1, maxsize + 2))
 
 
-def _model_eviction_args(name: str, canonical_model: int) -> tuple[_CallArgs, ...]:
+def _model_yaw_eviction_args(name: str, canonical_model: int) -> tuple[_CallArgs, ...]:
+    """Distinct ``(model, yaw)`` keys, enough of them to push past the bound.
+
+    Both components, because both are part of the key: a model alone cannot
+    reach a bound larger than the catalog, and this cache's bound is now larger
+    than the catalog. The canonical call is a ONE-argument key, so none of these
+    can collide with it whatever the model.
+    """
     maxsize = _REPORT["functions"][name]["recommended_maxsize"]
-    models = tuple(
-        building.model_index
-        for building in catalog.all_buildings()
-        if building.model_index != canonical_model
+    models = sorted(
+        {
+            building.model_index
+            for building in catalog.all_buildings()
+            if building.model_index != canonical_model
+        }
     )
-    return tuple((model_index,) for model_index in models[: maxsize + 1])
+    args: list[_CallArgs] = []
+    yaw = 1
+    while len(args) <= maxsize:
+        for model_index in models:
+            args.append((model_index, float(yaw)))
+            if len(args) > maxsize:
+                break
+        yaw += 1
+    return tuple(args)
 
 
 _EVICTION_CALLS: tuple[tuple[str, _CacheFunction, _CallArgs, tuple[_CallArgs, ...]], ...] = (
@@ -111,7 +128,7 @@ _EVICTION_CALLS: tuple[tuple[str, _CacheFunction, _CallArgs, tuple[_CallArgs, ..
         "colliders.belt_keepout_offsets",
         cast(_CacheFunction, cast(object, colliders.belt_keepout_offsets)),
         (_SPLITTER_MODEL,),
-        _model_eviction_args("colliders.belt_keepout_offsets", _SPLITTER_MODEL),
+        _model_yaw_eviction_args("colliders.belt_keepout_offsets", _SPLITTER_MODEL),
     ),
 )
 
