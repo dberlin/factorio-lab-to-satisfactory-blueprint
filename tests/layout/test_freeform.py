@@ -11976,7 +11976,7 @@ class TestPortAccessIsReservedForEveryRole:
         assert first == (1, ((1, 0, 0), (2, 0, 0)), True)
 
 
-def test_boundary_goal_search_reaches_exit_without_exhausting_expansion_budget() -> None:
+def test_boundary_goal_search_reaches_exit_without_exhausting_work_budget() -> None:
     bounds = (-40, -40, 40, 40)
     canvas = _Canvas(limit=bounds)
     boundary = {
@@ -20924,7 +20924,7 @@ def _last_mile_route(
         )
 
 
-def test_an_exhausted_expansion_budget_never_reaches_the_cluster_search(
+def test_an_exhausted_work_budget_never_reaches_the_cluster_search(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A pass with nothing left to spend cannot start a search that spends."""

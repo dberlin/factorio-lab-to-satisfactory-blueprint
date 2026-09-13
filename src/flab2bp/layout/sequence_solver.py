@@ -858,7 +858,7 @@ class SequenceSolver[PreparedT]:
         heights: tuple[int, ...],
         problem_for_height: Callable[[int], PlacementProblem],
         adapters: StageAdapters[PreparedT],
-        expansion_budget: StagedWorkBudget,
+        work_budget: StagedWorkBudget,
         protected_followup_heights: tuple[int, ...] = (),
         config: SequenceSolverConfig | None = None,
         deadline_reached: Callable[[], bool] | None = None,
@@ -912,7 +912,7 @@ class SequenceSolver[PreparedT]:
             raise ValueError("prepared-bound pruning mode must be a bool")
         self.config = config or SequenceSolverConfig()
         self.adapters = adapters
-        self.budget = expansion_budget
+        self.budget = work_budget
         self.deadline_reached = deadline_reached or (lambda: False)
         self.routing_seed_allowance_cap = routing_seed_allowance_cap
         self.stage_admission = stage_admission
@@ -4097,16 +4097,16 @@ def _retain_refinement_hint(
 
 
 def _speculative_exact_allowance(
-    expansion_total: int,
+    work_total: int,
     *,
     speculative_candidates: int,
 ) -> int:
     """Reserve at least half the routing ledger after every speculative closure."""
-    if type(expansion_total) is not int or expansion_total <= 0:
+    if type(work_total) is not int or work_total <= 0:
         raise ValueError("expansion total must be a positive integer")
     if type(speculative_candidates) is not int or speculative_candidates <= 0:
         raise ValueError("speculative candidate count must be a positive integer")
-    return max(1, expansion_total // (2 * speculative_candidates))
+    return max(1, work_total // (2 * speculative_candidates))
 
 
 def _small_direct_seed_role(
@@ -5767,10 +5767,10 @@ def _production_run(
 
     # The same floor-or-scaled arithmetic every routing pass seeds with, taken
     # from the one factory rather than spelled out again here.
-    expansion_total = routing_domain._routing_pass_budget(seconds=ceiling).left
-    assert expansion_total is not None, "the factory always seeds an int allowance"
+    work_total = routing_domain._routing_pass_budget(seconds=ceiling).left
+    assert work_total is not None, "the factory always seeds an int allowance"
     exact_candidate_allowance = _speculative_exact_allowance(
-        expansion_total,
+        work_total,
         speculative_candidates=(1 + _TOPOLOGY_BEAM_CANDIDATES + _TOPOLOGY_REFINEMENT_CANDIDATES),
     )
 
@@ -5812,14 +5812,14 @@ def _production_run(
             ),
             exact_lower_bound=exact_lower_bound,
         ),
-        expansion_budget=StagedWorkBudget(expansion_total),
+        work_budget=StagedWorkBudget(work_total),
         borrow_first_discovery=(bool(initial_states) or use_topology_beam or use_shared_pack),
         protected_followup_heights=protected_followup_heights,
         config=config,
         prune_dominated_prepared=prepared_bound_pruning,
         deadline_reached=deadline_reached,
         initial_states=initial_states,
-        routing_seed_allowance_cap=max(1, expansion_total // 12),
+        routing_seed_allowance_cap=max(1, work_total // 12),
         direct_targets=direct_targets,
         direct_targets_for_state=direct_targets_for_state,
         stage_boundary_transform=transform_stage,
@@ -5888,7 +5888,7 @@ def _production_run(
                 ),
                 reason="shared-pack",
                 allowance_cap=(
-                    expansion_total // 2 if complete_initial_seed else exact_candidate_allowance
+                    work_total // 2 if complete_initial_seed else exact_candidate_allowance
                 ),
             )
             telemetry.shared_pack_candidates = 1
@@ -6032,7 +6032,7 @@ def _production_run(
                 decoded,
                 reason="topology-beam",
                 allowance_cap=(
-                    expansion_total // 2
+                    work_total // 2
                     if complete_initial_seed and telemetry.detailed_routes == 0
                     else topology_allowance
                 ),
