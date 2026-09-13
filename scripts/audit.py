@@ -788,6 +788,14 @@ def _run_started_cell(job_id: int, job: Job, belt_rules: catalog.BeltAltitudeRul
     return run_cell(job, belt_rules=belt_rules)
 
 
+#: Seconds the teardown waits for SIGKILLed worker groups to be reaped. One
+#: second was enough on an idle box and failed three times in one evening with
+#: two audits and a test suite sharing the machine: every cell had completed,
+#: and the RuntimeError below discarded the whole run's JSON. Reaping a killed
+#: process is not work the workers do, so a generous bound costs nothing.
+_TEARDOWN_JOIN_S = 15.0
+
+
 def _stop_audit_workers(
     pool: ProcessPoolExecutor, groups: MutableSequence[int], prior_children: frozenset[int]
 ) -> None:
@@ -804,7 +812,7 @@ def _stop_audit_workers(
             with suppress(ProcessLookupError):
                 os.killpg(pid, signal.SIGKILL)
     pool.kill_workers()
-    stop_by = perf_counter() + 1.0
+    stop_by = perf_counter() + _TEARDOWN_JOIN_S
     for child in children:
         child.join(timeout=max(0.0, stop_by - perf_counter()))
     # Close the initializer-registration race: all direct workers have now
