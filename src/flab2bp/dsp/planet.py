@@ -352,6 +352,66 @@ def bands_by_segment(segment: int = colliders.PLANET_SEGMENT) -> Mapping[int, Ba
     return MappingProxyType({band.area_segments: band for band in bands(segment)})
 
 
+@lru_cache(maxsize=32)
+def tightest_column_arc(
+    area_segments: int,
+    segment: int = colliders.PLANET_SEGMENT,
+    radius: float = colliders.PLANET_RADIUS,
+) -> float:
+    """World units between adjacent COLUMNS at this band's most compressed row.
+
+    :data:`~flab2bp.dsp.colliders.GRID_ARC` is what a flat grid assumes a column
+    is worth; a paste gets ``shell * cos(latitude) * longitude_step``
+    (:meth:`Projection.column_arc`), and the band's own longitude step is one
+    constant, so the arc is smallest at the band's most POLEWARD row.  ``cos``
+    falls monotonically in ``|latitude|`` and :meth:`Projection.latitude` clamps
+    at a pole, so that row is ``grid_hi`` and no scan is needed to find it.
+
+    Taken on the GROUND shell, ``z = 0``: a higher shell is a longer arc, so the
+    ground is the tightest a belt over this band can be spaced.
+
+    THIS IS WHAT MAKES A FLAT KEEPOUT UNSOUND.  On a segment-200 planet the
+    equatorial band's tightest arc is 1.1023 against a flat 1.2566 -- 87.7% --
+    so a collider that clears a flat tile by less than 12.3% of the distance to
+    it does NOT clear the pasted one.  :func:`projections_for` enumerates the
+    anchors that reach this row, so a layout is certified against it.
+    """
+    band = bands_by_segment(segment)[area_segments]
+    latitude = min(band.grid_hi * latitude_rad_per_grid(segment), math.pi / 2.0)
+    shell = radius + 0.2
+    return shell * math.cos(latitude) * longitude_rad_per_grid(band.area_segments)
+
+
+def row_arc(
+    segment: int = colliders.PLANET_SEGMENT, radius: float = colliders.PLANET_RADIUS
+) -> float:
+    """World units between adjacent ROWS, anywhere on the planet.
+
+    ``shell * latitude_rad_per_grid`` (:meth:`Projection.row_arc`), and there is
+    no ``cos`` in it: :func:`latitude_rad_per_grid` is constant over the whole
+    planet, so unlike a column a row never compresses.  On the ground shell of a
+    terrestrial planet it is 1.25789, which is 1.001 TIMES
+    :data:`~flab2bp.dsp.colliders.GRID_ARC` rather than 0.877 of it.
+
+    The contrast with :func:`tightest_column_arc` is the whole reason both
+    exist: a rule that spaces rows the way a paste spaces columns reserves
+    against a compression that never happens on that axis.
+    """
+    return (radius + 0.2) * latitude_rad_per_grid(segment)
+
+
+def widest_band(segment: int = colliders.PLANET_SEGMENT) -> Band:
+    """The band holding the most latitude rows -- the equatorial one.
+
+    Every band is a legal paste target and :func:`band_for_extent` picks the
+    SMALLEST one an extent fits, so there is no single band a layout is known to
+    land in before its extent exists.  This is the one that holds every extent
+    the others can, and it is where every layout too tall for a narrow band must
+    go.
+    """
+    return max(bands(segment), key=lambda band: band.rows)
+
+
 class BandRefusal(ValueError):
     """No band on this planet can hold the extent, in either orientation.
 

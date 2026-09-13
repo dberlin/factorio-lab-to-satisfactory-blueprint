@@ -198,6 +198,100 @@ def _crossing_ban_levels(b: PlacedBuilding) -> tuple[int, ...]:
     return tuple(range(max(0, spherical_overflight_limit(b.model_index, b.z))))
 
 
+@lru_cache(maxsize=512)
+def _crossing_ban_tiles(
+    model_index: int, yaw: float, width: int, height: int
+) -> tuple[tuple[int, int], ...]:
+    """Tiles around a building at which a PASTED belt probe hits its collider.
+
+    Offsets from the footprint's minimum corner, the frame
+    :meth:`PlacedBuilding.tiles` uses.  Measured, not asserted, by the same
+    probe-against-:func:`~flab2bp.dsp.colliders.target_boxes` question
+    ``game.belt_collide`` asks -- but at the tile spacing a PASTE has rather
+    than the flat one the lattice draws itself on.
+
+    WHY THE SPACING IS THE WHOLE OF IT.  A footprint is a count of tiles; a
+    collider is a length in world units, and the two meet through
+    :data:`~flab2bp.dsp.colliders.GRID_ARC`.  Measured flat, 56 of the 61
+    catalog models with a build collider need exactly their footprint and no
+    more, ``Miniature Particle Collider`` (model 69) among them: its envelope
+    reaches 5.85 units west of its anchor against a 9-tile footprint's 5.65, and
+    a belt one tile further out sits at 6.28 and clears by 0.20.  A paste does
+    not leave it there.  ``BlueprintUtils.RefreshBuildPreview`` evaluates the
+    longitude step once for the whole paste and then scales each row's arc by
+    ``cos(latitude)``, so on the equatorial band's most poleward row a column is
+    1.1023 units instead of 1.2566 -- and that belt is at 5.51, inside the
+    collider.  The game refuses it; the lattice, measuring flat, had called the
+    cell free and spent a whole routing pack on it.
+
+    :func:`~flab2bp.dsp.planet.projections_for` is why a layout is held to that
+    spacing: finalization checks EVERY anchor the band admits, so the most
+    compressed row is reachable and therefore binding.
+
+    ONLY ONE AXIS COMPRESSES, AND WHICH ONE IS THE PASTE'S TO CHOOSE.  The
+    longitude axis gets :func:`~flab2bp.dsp.planet.tightest_column_arc`; the
+    latitude axis gets :func:`~flab2bp.dsp.planet.row_arc`, a constant with no
+    ``cos`` in it.  ``TransitionWidthAndHeight`` swaps which lattice axis is
+    which at quadrant 1, and ``band_for_extent`` turns a blueprint whenever the
+    turn fits a narrower band -- measured over five corpus builds, 71 of 1,068
+    candidate extents came back rotated, 64 of them on ``casimir-crystal``. The
+    orientation follows from the FINAL extent, which does not exist until
+    routing has run, so this asks both ways and takes the union.
+
+    The union, and not one arc on both axes, which is what phase 3 shipped and
+    was wrong twice over.  It over-reserved, by 11 % of the banned tiles, for a
+    row compression that never happens.  It also UNDER-reserved: compression
+    moves a tile toward the origin, so a collider box that does not straddle the
+    origin on an axis can be stepped out of as well as into, and a Vertical
+    Launching Silo has two tiles per yaw that a single-axis paste hits and a
+    both-axes measurement misses.
+
+    THE BAND IS THE LOOSEST ONE A LAYOUT CAN REACH, not a conservative default.
+    :func:`~flab2bp.dsp.planet.band_for_extent` picks the SMALLEST band an
+    extent fits, and a narrower band compresses harder -- 0.857 at band 160,
+    0.852 at 100, 0.784 at 32 -- so measuring at the equatorial band's 0.877
+    makes this exact only for a layout large enough to need band 200, roughly
+    400 columns or 60 rows. Smaller layouts are certified against a TIGHTER arc
+    than this measures, and for them the rule is stronger than the flat one it
+    replaces but still weaker than the validator. The surviving case is narrow
+    and worth naming: an Assembling Machine bans nothing here and needs all
+    twelve of its orthogonal neighbours once the arc reaches 0.848, which is
+    band 80 and below, and ``belt_collisions`` excuses a belt chained to the
+    building, so it bites only an UNLINKED belt passing one in a small layout.
+    Closing it needs the layout's own band at reservation time; the extent is
+    not known until routing has run, and band 4's arc is 0, which no finite
+    keepout covers.
+
+    At these spacings 25 of the 61 models reach past their footprint and 36 do
+    not, so this is a per-model reading and not a ring nobody escapes: an
+    Assembling Machine keeps its neighbouring belt legal down to a 0.850 arc
+    ratio and the band's is 0.877, while a Chemical Plant breaks at 0.900 and
+    gains a column.
+    """
+    column = planet.tightest_column_arc(planet.widest_band().area_segments)
+    row = planet.row_arc()
+    reach = colliders.belt_keepout_reach(model_index, min(column, row))
+    levels = spherical_overflight_limit(model_index, Fraction(0))
+    offsets = colliders.belt_keepout_offsets(
+        model_index, yaw, reach, levels, column, row
+    ) | colliders.belt_keepout_offsets(model_index, yaw, reach, levels, row, column)
+    #: The measurement is about the footprint CENTRE, which is what
+    #: `codec.tile_to_local_offset` hands the collider; `tiles()` counts from
+    #: the minimum corner.  Every catalog footprint is odd, so the centre is a
+    #: tile and the shift is exact -- `codec.tile_to_local_offset` records that
+    #: the even case is unreachable rather than unverified.
+    ox, oy = (width - 1) // 2, (height - 1) // 2
+    return tuple(
+        sorted(
+            {
+                (dx + ox, dy + oy)
+                for dx, dy, dz in offsets
+                if dz >= 0 and not (0 <= dx + ox < width and 0 <= dy + oy < height)
+            }
+        )
+    )
+
+
 #: Rip-up-and-reroute iterations before a placement is declared unroutable.
 RRR_MAX = 8
 
@@ -252,12 +346,35 @@ _RRR_STALE_ROUNDS = 3
 #: :func:`_route_all`'s repair pass.
 _REPAIR_CROSSING = 60.0
 
-#: How many settled paths one stranded net may displace before the repair
-#: declines the trade.  Measured across five `universe-matrix` packs, every one
-#: of 31 stranded nets crossed between 1 and 11 paths, so this refuses only the
-#: cases the census never produced -- where re-routing the victims would cost
-#: more than the round it is replacing.
+#: FLOOR on how many settled paths one stranded net may displace before the
+#: repair declines the trade.  Measured across five `universe-matrix` packs,
+#: every one of 31 stranded nets crossed between 1 and 11 paths, so this refuses
+#: only the cases the census never produced -- where re-routing the victims
+#: would cost more than the round it is replacing.
+#:
+#: A floor and not the cap, because the census is a count over packs of one
+#: size: :data:`_REPAIR_VICTIM_SHARE` is what a larger pack gets instead.
 _REPAIR_MAX_VICTIMS = 16
+
+#: Share of a pack one stranded net may displace, once the pack outgrows the
+#: census :data:`_REPAIR_MAX_VICTIMS` came from.
+#:
+#: A quarter.  The census is a count and the thing it counts scales: a stranded
+#: net crosses the paths that lie between its ends, so a bigger pack on a longer
+#: canvas produces a longer crossing list for the same geometry.  On
+#: `universe-matrix` output-products a 180-tile net crosses 50 settled paths and
+#: is refused flat by 16, while the packs the census came from stranded nets
+#: crossing 1-11.
+#:
+#: The denominator here is NETS, which is what the cap is spent on: `victims`
+#: and `joint` hold indices into `_route_all`'s own `nets`, so cap and capped
+#: are in one unit.  The census above is quoted in PATHS because that is what
+#: was measured, and the two differ whenever a net settles more than one path --
+#: a quarter of 279 nets is 69, comfortably above the 50 that net needs, and a
+#: quarter of the 93-140-net packs the census came from is 23-35, comfortably
+#: above their 11.  The share is chosen to clear both, not to convert between
+#: the units.
+_REPAIR_VICTIM_SHARE = 4
 
 #: Repair sweeps per rip-up round.  Each is cheap (a crossing search is
 #: 0.001-0.025s against 3.1-4.0s for a round), and a displaced net that strands
@@ -2483,6 +2600,24 @@ class _Canvas:
     #: The addon's own raised area is deliberately absent: that cell carries the
     #: proliferator connection and a belt is REQUIRED there, one level up.
     belt_ban: dict[tuple[int, int], set[int]] = field(default_factory=dict)
+
+    #: ``(x, y)`` -> levels a MACHINE's build collider denies to belts alone.
+    #:
+    #: Separate from ``blocked`` because it is a narrower refusal than ``blocked``
+    #: means.  ``blocked`` is "nothing may be here", and the power planner, the
+    #: coater passes and the tap passes all read it that way through
+    #: :meth:`free`.  This is the belt probe's own verdict
+    #: (:func:`_crossing_ban_tiles`) and the game excuses everything that is not
+    #: a foreign belt: a sorter is excused at ``CheckBuildConditions`` 145871, a
+    #: belt addon at 145885, and a Tesla Tower is not a belt at all and answers
+    #: to the static collision rules instead.  Folding it into ``blocked`` cost
+    #: `broke6` its power coverage -- 13 tiles with no tower site in reach --
+    #: for cells no tower was ever going to be refused on.
+    #:
+    #: Separate from ``belt_ban`` because that one is not belt-only: the
+    #: hierarchy composer writes junction guards into it, and a junction's
+    #: collider is a real object that denies its cells to a tower too.
+    belt_keepout: dict[tuple[int, int], set[int]] = field(default_factory=dict)
     #: Exact static Splitter collision refusals, cached by actual routing level.
     #: Reserved power nodes are included even though their buildings are emitted
     #: only after routing.
@@ -2543,11 +2678,18 @@ class _Canvas:
             # belt with the altitude to clear that top may cross this building
             # -- which is what the game allows, what `spine` has always priced,
             # and what this router used to forbid on no authority at all.
+            #
             banned = _crossing_ban_levels(b)
             for x, y, _ in b.tiles():
                 self.solid.add((x, y))
                 for lvl in banned:
                     self.blocked[x, y, lvl] = idx
+            # NOR only its own tiles.  The collider of 25 of the 61 catalog
+            # models outreaches its footprint once a paste compresses the
+            # columns -- see :func:`_crossing_ban_tiles` -- and those tiles go
+            # to `belt_keepout`, which denies them to BELTS and to nothing else.
+            for x, y in _crossing_ban_tiles(b.model_index, b.yaw, b.width, b.height):
+                self.belt_keepout.setdefault((b.x + x, b.y + y), set()).update(banned)
         else:
             for x, y, _ in b.tiles():
                 for lvl in held:
@@ -2696,7 +2838,14 @@ class _Canvas:
         """
         return 0 <= z <= self.belt_rules.max_z and (x, y, z) not in self.world_taken
 
-    def free(self, cell: tuple[int, int, int]) -> bool:
+    def free(self, cell: tuple[int, int, int], *, belt: bool = True) -> bool:
+        """Whether a belt may stand here.
+
+        ``belt=False`` asks the narrower question a caller placing something
+        that is NOT a belt has -- a power tower, say.  It drops exactly one
+        refusal, ``belt_keepout``, whose whole content is the belt probe's
+        verdict; everything else this gate holds denies the cell to any object.
+        """
         x, y, z = cell
         if not 0 <= z < self.levels:
             return False
@@ -2710,6 +2859,8 @@ class _Canvas:
         # (a Spray Coater wants 1.8975), `guard` is a junction's own collider.
         # Either one alone would let the other's case through.
         if z in self.belt_ban.get((x, y), ()) or cell in self.guard:
+            return False
+        if belt and z in self.belt_keepout.get((x, y), ()):
             return False
         if self.limit is not None:
             min_x, min_y, max_x, max_y = self.limit
@@ -2734,9 +2885,15 @@ class _Canvas:
 
         A 1x1 tower makes this the single-cell test it replaces, tile for
         tile, which is why the default arm cannot move.
+
+        ``belt=False`` on the ``free`` term, because what this asks about is a
+        building: the machine belt keepout is the belt probe's verdict and a
+        power tower is not a belt.  Both callers are the power planner, and the
+        planner's own open-ground mask asks the same narrowed question -- the
+        two have to agree or a site it chose is a site this refuses.
         """
         return all(
-            self.free((tx, ty, 0)) and (tx, ty) not in self.solid
+            self.free((tx, ty, 0), belt=False) and (tx, ty) not in self.solid
             for tx in range(x, x + width)
             for ty in range(y, y + height)
         )
@@ -2754,7 +2911,7 @@ class _Canvas:
             return False
         if cell not in self.guard or cell in self.blocked or (x, y) in self.keep_out:
             return False
-        if z in self.belt_ban.get((x, y), ()):
+        if z in self.belt_ban.get((x, y), ()) or z in self.belt_keepout.get((x, y), ()):
             return False
         if self.limit is not None:
             min_x, min_y, max_x, max_y = self.limit
@@ -2791,6 +2948,7 @@ class _Canvas:
             keep_out=set(self.keep_out),
             guard=set(self.guard),
             belt_ban={column: set(levels) for column, levels in self.belt_ban.items()},
+            belt_keepout={column: set(levels) for column, levels in self.belt_keepout.items()},
             junction_ban=set(self.junction_ban),
             junction_geometry_prepared=self.junction_geometry_prepared,
             junction_projection=self.junction_projection,
@@ -4610,12 +4768,13 @@ def _make_grid(
     # `5 paths, 1 unlinked` and the one was always the same net, always refused
     # at the same cell -- `(6, 8)` at level 1, the tile a coater rides, banned
     # in `belt_ban` and passable in the grid.  The refusal named the PACKER.
-    for (cx, cy), banned_levels in canvas.belt_ban.items():
-        if lo_x <= cx <= hi_x and lo_y <= cy <= hi_y:
-            at = (cx - gx0) * xstep + (cy - gy0) * levels
-            for clvl in banned_levels:
-                if 0 <= clvl < levels:
-                    occ[at + clvl] = 0
+    for bans in (canvas.belt_ban, canvas.belt_keepout):
+        for (cx, cy), banned_levels in bans.items():
+            if lo_x <= cx <= hi_x and lo_y <= cy <= hi_y:
+                at = (cx - gx0) * xstep + (cy - gy0) * levels
+                for clvl in banned_levels:
+                    if 0 <= clvl < levels:
+                        occ[at + clvl] = 0
     for cx, cy, clvl in canvas.guard:
         if lo_x <= cx <= hi_x and lo_y <= cy <= hi_y and 0 <= clvl < levels:
             occ[(cx - gx0) * xstep + (cy - gy0) * levels + clvl] = 0
@@ -5085,6 +5244,7 @@ class _PreparedRoutingProblem:
     belt_rules: catalog.BeltAltitudeRules = _DEFAULT_BELT_RULES
     world_taken: frozenset[tuple[int, int, Fraction]] = frozenset()
     belt_ban: tuple[tuple[tuple[int, int], frozenset[int]], ...] = ()
+    belt_keepout: tuple[tuple[tuple[int, int], frozenset[int]], ...] = ()
     junction_ban: frozenset[Cell] = frozenset()
     junction_frame_bans: tuple[frozenset[Cell], ...] = ()
     preparation_failures: tuple[NetFailure, ...] = ()
@@ -5152,6 +5312,7 @@ class _PreparedRoutingProblem:
             limit=self.limit,
             keep_out=set(self.keep_out),
             belt_ban={cell: set(levels) for cell, levels in self.belt_ban},
+            belt_keepout={cell: set(levels) for cell, levels in self.belt_keepout},
             guard=set(self.guard),
             junction_ban=set(self.junction_ban),
             junction_geometry_prepared=True,
@@ -8119,6 +8280,10 @@ def _route_all(
         """
         if not stranded:
             return stranded
+        #: The cap this repair trades under, sized to the pack rather than to
+        #: the census -- see :data:`_REPAIR_VICTIM_SHARE`.  Read once so every
+        #: test in the round asks the same question.
+        victim_cap = max(_REPAIR_MAX_VICTIMS, len(nets) // _REPAIR_VICTIM_SHARE)
         # A grid whose belts are passable but dear.  `base` is the occupancy
         # before any path settled, so restoring it opens exactly the cells this
         # pass has taken -- machines, keep-outs and the routing box stay shut.
@@ -8268,7 +8433,7 @@ def _route_all(
                         for hurt, closure in closures.items():
                             if _expired(deadline):
                                 return None
-                            if len(mandatory | closure) > _REPAIR_MAX_VICTIMS:
+                            if len(mandatory | closure) > victim_cap:
                                 excluded.add(hurt)
                         signature = frozenset(excluded)
                         signatures[mandatory] = signature
@@ -8337,7 +8502,7 @@ def _route_all(
                     if tap is not None:
                         contacts.update(_source_tap_guard_victims(index, tap))
                     joint = (_dependency_closure(contacts, dependents) | victims) - {index}
-                    if len(joint) <= _REPAIR_MAX_VICTIMS:
+                    if len(joint) <= victim_cap:
                         return found
                 return None
             finally:
@@ -8350,7 +8515,7 @@ def _route_all(
             repaired = False
             pending_proposal: tuple[Cell, ...] | None = None
             while not _expired(deadline) and budget["left"] > 0:
-                if len(victims) > _REPAIR_MAX_VICTIMS:
+                if len(victims) > victim_cap:
                     break
                 dependents = _endpoint_dependents()
                 rebuild_order = _route_order(victims, dependents)
@@ -8381,7 +8546,7 @@ def _route_all(
                     mandatory = _dependency_closure(
                         _source_tap_guard_victims(index, tap), dependents
                     )
-                    admitted = len((victims | mandatory) - {index}) <= _REPAIR_MAX_VICTIMS
+                    admitted = len((victims | mandatory) - {index}) <= victim_cap
                     policy_restricted |= not admitted
                     return admitted
 
@@ -8472,7 +8637,7 @@ def _route_all(
                                     joint = (
                                         _dependency_closure(discovered, dependents) | victims
                                     ) - {index}
-                                    if len(joint) > _REPAIR_MAX_VICTIMS:
+                                    if len(joint) > victim_cap:
                                         alternative = _grouped_overcap_alternative(
                                             index,
                                             starts,
@@ -14586,7 +14751,10 @@ def _power_plan(
                 canvas.limit[0] <= x <= canvas.limit[2] and canvas.limit[1] <= y <= canvas.limit[3]
             ):
                 continue
-            if not canvas.free((x, y, 0)) or (x, y) in canvas.solid:
+            # A tower is not a belt, so the machine belt keepout does not speak
+            # to it: `belt=False`.  Whether its collider clears its neighbours
+            # is the static projection's question and is asked below.
+            if not canvas.free((x, y, 0), belt=False) or (x, y) in canvas.solid:
                 continue
             if (x, y) in blocked_columns:
                 continue
@@ -15518,9 +15686,14 @@ def plan_power_infill(
             raise _PreparationDeadline
         tile_free[x - min_x] = np.fromiter(
             (
-                canvas.free((x, y, 0))
-                and (x, y) not in canvas.solid
-                and (x, y) not in blocked_columns
+                # `fits` and not `free` + `solid`, which is the same pair
+                # spelled out, so that this mask and `free_site`'s ask ONE
+                # question.  They were the same until `free` learned to answer
+                # a narrower one for a caller that is not placing a belt: this
+                # is a tower site, `free_site` goes through `fits` and gets
+                # `belt=False`, and a wider mask here would hand the composed
+                # canvas a starvation the split exists to prevent.
+                canvas.fits(x, y, 1, 1) and (x, y) not in blocked_columns
                 for y in range(min_y, max_y + 1)
             ),
             dtype=bool,
@@ -17218,6 +17391,9 @@ def _prepare_routing_problem(
         world_taken=frozenset(canvas.world_taken),
         belt_ban=tuple(
             sorted((cell, frozenset(levels)) for cell, levels in canvas.belt_ban.items())
+        ),
+        belt_keepout=tuple(
+            sorted((cell, frozenset(levels)) for cell, levels in canvas.belt_keepout.items())
         ),
         preparation_exhaustive=(
             bool(access_reservation.missing)

@@ -673,8 +673,14 @@ _COLLIDERS: tuple[Entry, ...] = (
     _e(
         "colliders.belt_keepout_offsets",
         Kind.RULE,
-        depends_on=("building model index", "yaw", "reach", "levels"),
-        note="The other compiled projection Phase 2 cites as the good case.",
+        depends_on=("building model index", "yaw", "reach", "levels", "column arc", "row arc"),
+        note=(
+            "The other compiled projection Phase 2 cites as the good case.  The two "
+            "ARCS are the inputs that decide the answer's width: a paste spaces its "
+            "columns at cos(latitude) of the flat GRID_ARC and its rows at a "
+            "constant, so a keepout measured flat under-reserves by up to 12.3 % of "
+            "the distance involved."
+        ),
     ),
 )
 
@@ -1093,6 +1099,16 @@ class LintException:
 #: The teeth are still there.  These suppress a value AT A SITE, not the value.
 #: A new ``0.8`` anywhere else in ``layout/`` still fails.
 LINT_EXCEPTIONS: tuple[LintException, ...] = (
+    LintException(
+        "flab2bp.bench.corpus",
+        "<module>",
+        20.0,
+        "universe-matrix's per-policy budget FLOOR in seconds; not "
+        "CHEMICAL_OUTPUT_BUFFER_CRAFTS, which is a count of crafts. A corpus "
+        "cell's clock is a property of this repository's gate, not of the game, "
+        "and it is measured: the two sprayed policies pack 53-54 strips and "
+        "neither finishes one inside the 15s the rest of the corpus uses",
+    ),
     LintException(
         "flab2bp.layout.transport_routing.composition",
         "construct",
