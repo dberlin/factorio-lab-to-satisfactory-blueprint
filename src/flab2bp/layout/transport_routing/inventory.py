@@ -9,10 +9,9 @@ from flab2bp.dsp import catalog
 from flab2bp.layout import freeform
 from flab2bp.layout import routing_domain as rd
 from flab2bp.layout.band_policy import BandPolicy
+from flab2bp.layout.budget import TransportRefusal, WorkBudget
 from flab2bp.layout.strip_variants import CargoDomain
 from flab2bp.spec import BuildSpec
-
-from .budget import TransportRefusal, WorkBudget
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,7 +82,7 @@ def prepare_inventory(
         spec,
         strip_len=48,
         band_policy=policy,
-        cancelled=lambda: budget.clock() >= budget.deadline,
+        cancelled=budget.expired,
     )
     if not strips:
         raise TransportRefusal("UNSUPPORTED_INTERFACE", "no physical machine strips to connect")
@@ -100,7 +99,7 @@ def prepare_inventory(
         strips,
         rd._Pack(at, 1000 * len(strips), 50, "transport-inventory"),
         belt_rules=rules,
-        cancelled=lambda: budget.clock() >= budget.deadline,
+        cancelled=budget.expired,
         coater_node_sites={
             (index, item): (bases[index], -6 * (lane + 1))
             for index, strip in enumerate(strips)

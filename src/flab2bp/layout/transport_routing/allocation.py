@@ -9,9 +9,9 @@ from fractions import Fraction
 from typing import Literal
 
 from flab2bp.layout import routing_domain as rd
+from flab2bp.layout.budget import TransportRefusal, WorkBudget
 from flab2bp.spec import BuildSpec
 
-from .budget import TransportRefusal, WorkBudget
 from .inventory import Inventory, TransportDemand
 from .topology import SelectedTopology, verify_rates
 

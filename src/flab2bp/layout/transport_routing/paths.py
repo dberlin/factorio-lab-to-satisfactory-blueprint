@@ -12,7 +12,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from fractions import Fraction
 
-from .budget import TransportRefusal, WorkBudget
+from flab2bp.layout.budget import TransportRefusal, WorkBudget
 
 Cell = tuple[int, int, int]
 

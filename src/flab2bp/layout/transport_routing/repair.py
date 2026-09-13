@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from .budget import WorkBudget
+from flab2bp.layout.budget import WorkBudget
+
 from .cnf import FactorCNF
 
 

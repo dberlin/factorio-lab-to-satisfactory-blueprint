@@ -10,10 +10,10 @@ from typing import override
 from flab2bp.dsp import catalog
 from flab2bp.layout import junction
 from flab2bp.layout import routing_domain as rd
+from flab2bp.layout.budget import TransportRefusal, WorkBudget
 from flab2bp.spec import BuildSpec
 
 from .allocation import Order
-from .budget import TransportRefusal, WorkBudget
 from .flights import ReusingConstructor
 from .paths import Endpoint, FixedPath, Obligation, TemplateProblem
 from .solver import SolveStats, select

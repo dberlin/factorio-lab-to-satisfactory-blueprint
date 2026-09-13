@@ -17,10 +17,9 @@ from flab2bp.layout.base import (
     ProjectionFailureRecord,
 )
 from flab2bp.layout.belt_tiers import retier_belts
+from flab2bp.layout.budget import TransportRefusal, WorkBudget
 from flab2bp.layout.strategy_race import _PlacementJudgement
 from flab2bp.spec import BuildSpec
-
-from .budget import TransportRefusal, WorkBudget
 
 
 class TransportRoutingKernel:
@@ -84,7 +83,7 @@ class TransportRoutingKernel:
                 placement = finalize.finalize_placement(
                     placement,
                     self.band_policy,
-                    cancelled=lambda: budget.clock() >= budget.deadline,
+                    cancelled=budget.expired,
                 )
             except finalize.ProjectionRefusal:
                 stage = previous_stage
