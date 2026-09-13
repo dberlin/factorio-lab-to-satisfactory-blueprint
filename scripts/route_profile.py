@@ -743,13 +743,13 @@ def main() -> int:
             print("      prepare per call: " + ", ".join(f"{s:.2f}" for s in tally.prepare_calls))
         print(
             f"    Geometric search: {tally.search_hit} found / {tally.search_none} none, "
-            f"{tally.work:,} expansions, "
+            f"{tally.work:,} work, "
             f"{tally.path_cells:,} path cells"
         )
         if tally.work:
             print(
-                f"    {tally.work / max(inner, 1e-9):,.0f} expansions/s, "
-                f"{1e6 * inner / tally.work:.2f} us/expansion"
+                f"    {tally.work / max(inner, 1e-9):,.0f} work/s, "
+                f"{1e6 * inner / tally.work:.2f} us/work"
             )
         # WHERE THE WORK GOES -- a search that finds nothing still spends it,
         # and a cap-sized failure spends `_MAX_SEARCH_WORK` of it.
@@ -770,7 +770,7 @@ def main() -> int:
             exp = work_by_bucket[bucket]
             sec = seconds[bucket]
             print(
-                f"      {name}: n={counts[bucket]:<5} {exp:>10,} exp "
+                f"      {name}: n={counts[bucket]:<5} {exp:>10,} work "
                 f"({100 * exp / max(tally.work, 1):4.1f}%)  {sec:6.2f}s "
                 f"({100 * sec / max(inner, 1e-9):4.1f}%)"
             )
@@ -779,13 +779,13 @@ def main() -> int:
             exps = sorted(r[0] for r in found)
             mid = len(found) // 2
             print(
-                f"      found: median {exps[mid]:,} exp, p90 "
+                f"      found: median {exps[mid]:,} work, p90 "
                 f"{exps[int(0.9 * len(exps))]:,}, max {exps[-1]:,}; "
-                f"median exp/cell {ratio[mid]:.1f}"
+                f"median work/cell {ratio[mid]:.1f}"
             )
         top = heapq.nsmallest(10, tally.calls, key=lambda r: -r[0])
         print(
-            "      ten dearest searches (exp, s, len): "
+            "      ten dearest searches (work, s, len): "
             + ", ".join(f"({e:,},{s:.2f},{n})" for e, s, n in top)
         )
         if prof is not None:
