@@ -360,12 +360,20 @@ _REPAIR_MAX_VICTIMS = 16
 #: census :data:`_REPAIR_MAX_VICTIMS` came from.
 #:
 #: A quarter.  The census is a count and the thing it counts scales: a stranded
-#: net crosses the paths that lie between its ends, so a longer canvas with more
-#: paths on it produces a longer crossing list for the same geometry.  On
-#: `universe-matrix` output-products a 180-tile net across a 54-strip canvas
-#: crosses 50 of the 278 paths already down -- 18 %, and refused flat by 16 --
-#: while the packs the census came from were 93-140 paths whose stranded nets
-#: crossed 1-11, which a quarter leaves untouched at 23-35.
+#: net crosses the paths that lie between its ends, so a bigger pack on a longer
+#: canvas produces a longer crossing list for the same geometry.  On
+#: `universe-matrix` output-products a 180-tile net crosses 50 settled paths and
+#: is refused flat by 16, while the packs the census came from stranded nets
+#: crossing 1-11.
+#:
+#: The denominator here is NETS, which is what the cap is spent on: `victims`
+#: and `joint` hold indices into `_route_all`'s own `nets`, so cap and capped
+#: are in one unit.  The census above is quoted in PATHS because that is what
+#: was measured, and the two differ whenever a net settles more than one path --
+#: a quarter of 279 nets is 69, comfortably above the 50 that net needs, and a
+#: quarter of the 93-140-net packs the census came from is 23-35, comfortably
+#: above their 11.  The share is chosen to clear both, not to convert between
+#: the units.
 _REPAIR_VICTIM_SHARE = 4
 
 #: Repair sweeps per rip-up round.  Each is cheap (a crossing search is
