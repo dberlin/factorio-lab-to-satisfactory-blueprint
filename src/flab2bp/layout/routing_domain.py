@@ -818,14 +818,6 @@ class Strip:
             seen += len(other)
         raise KeyError(f"{lane!r} is not an input lane of {self.recipe_id!r}")
 
-    def input_is_shared(self, item: str) -> bool:
-        """Does ``item`` ride a lane with other items?
-
-        A sorter drawing from a shared lane MUST set a filter, or it takes
-        whatever passes and starves the machine that wanted the other item.
-        """
-        return len(self.lane_of_input(item)) > 1
-
     def _input_attachment_plan(self, item: str) -> LaneAttachmentPlan:
         for plan in self.attachment_plan:
             if plan.lane.kind == "input" and item in plan.lane.items:
@@ -894,10 +886,6 @@ class Strip:
         plan = self._input_attachment_plan(item)
         return next(attachment for attachment in plan.attachments if attachment.item == item)
 
-    def slot_of_input(self, item: str) -> int:
-        """Authoritative relative column selected for this ingredient."""
-        return self.attachment_of_input(item).column
-
     def row_of_input(self, item: str) -> int:
         """Row index carrying ``item``, relative to the strip's top."""
         if self.takes_belt_ports:
@@ -965,10 +953,6 @@ class Strip:
             raise ValueError("input lane does not match the selected attachment plan")
         last_column = max(attachment.column for attachment in plan.attachments)
         return (self.machines - 1) * self.pw + last_column + 1
-
-    def east_of_input(self, item: str) -> int:
-        """Offset from the strip's west edge to the last tile of ``item``'s lane."""
-        return self.input_lane_tiles(self.lane_of_input(item)) - 1
 
     @property
     def sid(self) -> str:
@@ -11552,22 +11536,6 @@ def _belt_keepout_blockers(
         if building is not None and catalog.is_belt(building.item_id):
             blocked.append(cell)
     return tuple(blocked)
-
-
-def _belt_keepout_clear(
-    canvas: _Canvas,
-    x: int,
-    y: int,
-    level: int,
-    excused: Set[tuple[int, int, int]],
-) -> bool:
-    """Would a junction here stand beside a belt the paste would not excuse?
-
-    The commit-time twin of :func:`_junction_belt_clear`, asked of real
-    buildings rather than of staked paths.  ``excused`` is the junction's own
-    run, from :func:`_run_cells`.
-    """
-    return not _belt_keepout_blockers(canvas, x, y, level, excused)
 
 
 def _tap_source(

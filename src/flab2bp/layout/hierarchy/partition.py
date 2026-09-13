@@ -203,36 +203,6 @@ def _topo_order(n: int, edges: set[tuple[int, int]]) -> list[int]:
     return list(BlockGraph.of(n, edges).topological_order())
 
 
-def boundary_balances(
-    blocks: list[list[Unit]],
-) -> tuple[dict[str, dict[int, Fraction]], dict[str, dict[int, Fraction]]]:
-    """``(surplus, deficit)`` per item per block: exactly what crosses a cut.
-
-    The composed judgement needs these, not the aggregate production, so an item
-    handed back to the player is declared at the rate the CUTS carry rather than
-    at everything the factory makes of it.  Declaring the larger figure would
-    hand ``flow.conservation``'s lane balance a supply that does not exist and
-    quietly excuse lanes that are genuinely broken.
-    """
-    surplus: dict[str, dict[int, Fraction]] = defaultdict(dict)
-    deficit: dict[str, dict[int, Fraction]] = defaultdict(dict)
-    for i, block in enumerate(blocks):
-        made: dict[str, Fraction] = defaultdict(Fraction)
-        took: dict[str, Fraction] = defaultdict(Fraction)
-        for u in block:
-            for item in u.group.outputs_per_machine:
-                made[item] += u.produces(item)
-            for item in u.group.inputs_per_machine:
-                took[item] += u.consumes(item)
-        for item in set(made) | set(took):
-            net = made.get(item, Fraction(0)) - took.get(item, Fraction(0))
-            if net > 0:
-                surplus[item][i] = net
-            elif net < 0:
-                deficit[item][i] = -net
-    return surplus, deficit
-
-
 def sub_spec(spec: BuildSpec, block: list[Unit], index: int) -> BuildSpec:
     """A self-contained ``BuildSpec`` for one block.
 

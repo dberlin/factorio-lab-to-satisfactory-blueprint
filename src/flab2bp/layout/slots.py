@@ -496,36 +496,6 @@ def probe_building(item_id: int, yaw: float) -> PlacedBuilding:
     )
 
 
-def direct_anchors(
-    src: PlacedBuilding, dst: PlacedBuilding, column: int
-) -> tuple[Attachment, Attachment] | None:
-    """Both ends of a machine-to-machine sorter on ``column``, or ``None``.
-
-    A direct insert has no belt to anchor against, so each end has to be found
-    against the OTHER machine's anchor rather than against a fixed tile -- and
-    those two answers depend on each other.  Two passes settle it: the producer
-    is placed against the consumer's near edge, the consumer against that, and
-    the producer re-checked against the consumer's final cell.  A third pass
-    cannot move anything, because the second already fixed the only tile the
-    first was approximating.
-
-    ``None`` is a refusal.  Direct insertion is an optimisation -- the same
-    connection can go by belt -- so a caller that cannot get an answer here has
-    somewhere to go, unlike one wiring a lane.
-    """
-    near = dst.y if dst.y > src.y else dst.y + dst.height - 1
-    first = attachment(src, (column, near))
-    if first is None:
-        return None
-    second = attachment(dst, (column, first.cell[1]))
-    if second is None:
-        return None
-    settled = attachment(src, (column, second.cell[1]))
-    if settled is None:
-        return None
-    return (settled, second)
-
-
 def lane_facing(item_id: int, yaw: float) -> tuple[bool, bool]:
     """Can a building at ``yaw`` be served from the north, and from the south?
 

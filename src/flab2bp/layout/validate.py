@@ -383,34 +383,11 @@ class Context:
     #: Scratch space for indexes several checks want; see :class:`_Cache`.
     cache: _Cache = field(default_factory=lambda: _Cache(), compare=False, repr=False)
 
-    def junctions_feeding(self, run: int) -> tuple[int, ...]:
-        """Splitter or piler boundaries that put items onto ``run``.
-
-        A run is fed by a boundary when its HEAD draws from one.  Only the head
-        can: every other belt in a run has exactly one belt predecessor, which
-        is what made it part of the run rather than the start of a new one.
-        """
-        head = self.runs[run].head
-        b = self.placement.buildings[head]
-        if b.input_obj is None:
-            return ()
-        if self.kinds[b.input_obj] not in (Kind.SPLITTER, Kind.PILER):
-            return ()
-        return (b.input_obj,)
-
     def runs_feeding_junction(self, junction: int) -> tuple[int, ...]:
         """Runs that put items into ``junction``."""
         return tuple(
             dict.fromkeys(
                 self.run_of[b] for b in self.junction_in.get(junction, ()) if b in self.run_of
-            )
-        )
-
-    def runs_drawing_from_junction(self, junction: int) -> tuple[int, ...]:
-        """Runs that take items out of ``junction``."""
-        return tuple(
-            dict.fromkeys(
-                self.run_of[b] for b in self.junction_out.get(junction, ()) if b in self.run_of
             )
         )
 
@@ -5959,16 +5936,6 @@ def _lane_balance(ctx: Context) -> Iterable[Finding]:
                 f"{item}: native flow result has no exact feasibility or shortfall certificate"
             )
         yield Finding("flow.conservation", Severity.ERROR, message, consumers[:5], detail)
-
-
-def _belt_run_rate(ctx: Context, run: BeltRun) -> Fraction | None:
-    """Cargo/second sustained by a run's slowest catalogued belt tile."""
-    rates = [
-        rate
-        for index in run.indices
-        if (rate := cat.BELT_RATE.get(ctx.placement.buildings[index].item_id)) is not None
-    ]
-    return min(rates) if rates else None
 
 
 @check("flow.belt_capacity", needs_spec=True, needs_groups=True)

@@ -67,9 +67,6 @@ class AdjustedRecipe:
         """Items/second one machine produces of ``item_id``."""
         return self.outputs_per_craft.get(item_id, Fraction(0)) / self.craft_time
 
-    def net_rate(self, item_id: str) -> Fraction:
-        return self.output_rate(item_id) - self.input_rate(item_id)
-
     @property
     def proliferator_rate(self) -> Fraction:
         """Items/second of proliferator one machine's coaters draw."""

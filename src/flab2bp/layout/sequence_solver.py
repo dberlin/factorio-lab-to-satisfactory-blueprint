@@ -454,11 +454,6 @@ class ExpansionBudget:
         return self._spent
 
     @property
-    def searchable_total(self) -> int:
-        """Budget visible to discovery/proxy stages before authoritative borrowing."""
-        return self.total - self.final_reserved
-
-    @property
     def discovery_complete(self) -> bool:
         return self._configured and not self._unsettled_discovery
 
@@ -887,11 +882,6 @@ class SequenceSearchResult:
     #: Continuation batches appended after the derived schedule ended without an
     #: exact incumbent.  Observational only; nothing branches on it.
     feasibility_restart_batches: int = 0
-
-    @property
-    def exact_energy(self) -> SearchEnergy:
-        """Return the selected exact incumbent's observed blended energy."""
-        return self.exact_breakdown.energy
 
 
 @dataclass(slots=True)

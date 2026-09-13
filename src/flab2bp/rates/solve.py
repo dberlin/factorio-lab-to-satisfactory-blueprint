@@ -97,11 +97,6 @@ class SolvedGroup:
     proliferator_rate: Fraction = Fraction(0)
 
     @property
-    def utilisation(self) -> Fraction:
-        capacity = self.machines * self.adjusted.crafts_per_second
-        return self.crafts_per_second / capacity if capacity else Fraction(0)
-
-    @property
     def area(self) -> int:
         return self.machines * self.adjusted.footprint_area
 

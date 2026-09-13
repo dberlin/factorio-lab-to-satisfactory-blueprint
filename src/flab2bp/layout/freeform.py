@@ -196,9 +196,6 @@ def _deterministic_pack_work(strip_count: int) -> float:
     return _DETERMINISTIC_PACK_WORK_AT_CALIBRATED_SIZE * scale
 
 
-#: Outer repair iterations before falling back.
-OUTER_MAX = 3
-
 #: How many ARRANGEMENTS of each height the sweep may ask CP-SAT for.
 #:
 #: One was the whole search until this was measured.  ROUTABILITY IS A PROPERTY

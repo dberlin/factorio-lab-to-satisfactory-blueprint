@@ -649,18 +649,6 @@ class _ProjectionCache:
         return failure
 
 
-def _extent_fits(width: int, height: int) -> tuple[planet.Fit, ...]:
-    fits: list[planet.Fit] = []
-    for band in sorted(planet.bands(), key=lambda candidate: candidate.area_segments):
-        for rotated, (columns, rows) in (
-            (False, (width, height)),
-            (True, (height, width)),
-        ):
-            if rows <= band.rows and columns <= band.columns:
-                fits.append(planet.Fit(band, rotated, rows, columns))
-    return tuple(fits)
-
-
 def _collision_placed(building: PlacedBuilding) -> colliders.Placed:
     return colliders.Placed(
         building.model_index,

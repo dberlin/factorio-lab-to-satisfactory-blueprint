@@ -1427,10 +1427,6 @@ class Building:
         return not self.is_belt_addon
 
     @property
-    def has_explicit_slots(self) -> bool:
-        return bool(self.slots)
-
-    @property
     def takes_belt_ports(self) -> bool:
         """Does a BELT dock into this building instead of a sorter serving it?
 

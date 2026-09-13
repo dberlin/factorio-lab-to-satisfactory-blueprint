@@ -86,16 +86,6 @@ class CellResult:
         """
         return self.used_tiles / self.area if self.area else 0.0
 
-    @property
-    def verified(self) -> bool:
-        """Valid *and* nothing important went unchecked.
-
-        ``valid`` alone overstates confidence: it means "no check that ran
-        failed", which for a build with no ``BuildSpec`` excludes every
-        throughput check.
-        """
-        return self.valid and not self.skipped_checks
-
     def to_json(self) -> CellResultJson:
         return {
             "strategy": self.strategy,

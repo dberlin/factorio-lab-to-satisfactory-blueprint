@@ -22,11 +22,10 @@ absent, and :func:`unavailable_reason` names exactly which.
 from __future__ import annotations
 
 import json
-import math
 import os
 import shutil
 import subprocess
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar
 
@@ -512,31 +511,3 @@ def ask(
 
 
 # --- reading the answers back into our own units ---------------------------
-
-
-def to_tiles(p: tuple[float, float, float]) -> tuple[float, float, float]:
-    """The inverse of :func:`unity_point`: Unity world point back to our grid."""
-    return (
-        p[0] / colliders.GRID_ARC,
-        p[2] / colliders.GRID_ARC,
-        p[1] / WORLD_UNITS_PER_LEVEL,
-    )
-
-
-def tile_gap(a: tuple[float, float, float], b: tuple[float, float, float]) -> float:
-    """Straight-line distance between two Unity world points, in WORLD UNITS."""
-    return math.dist(a, b)
-
-
-@dataclass(frozen=True, slots=True)
-class Disagreement:
-    """One case where our model and the game's ladder answered differently."""
-
-    case: str
-    what: str
-    ours: str
-    game: str
-    detail: dict[str, object] = field(default_factory=dict)
-
-    def __str__(self) -> str:
-        return f"{self.case}: {self.what} -- ours {self.ours}, game {self.game}"
