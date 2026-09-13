@@ -311,3 +311,40 @@ def test_overlapping_endpoints_need_no_work_to_certify_a_zero_edge_route() -> No
     assert result.path == (2,)
     assert result.cost == 0.0
     assert result.metrics["charged_work"] == 0
+
+
+def test_summarize_maps_each_kernel_outcome_to_one_flag() -> None:
+    from flab2bp.layout import geometric_router as gr
+
+    def result(kind: str) -> gr.GeometricResult:
+        metrics: gr.GeometricMetrics = {
+            "charged_work": 5,
+            "prepared_cells": 0,
+            "interval_pops": 0,
+            "labels": 0,
+            "offers": 0,
+            "intersections": 0,
+            "profile_scans": 0,
+            "certified_edges": 0,
+            "retained_native_bytes": 0,
+            "copied_history_cells": 0,
+            "preparation_s": 0.0,
+            "search_s": 0.0,
+            "certification_s": 0.0,
+        }
+        return gr.GeometricResult(
+            kind,  # type: ignore[arg-type]
+            (1, 2) if kind == "routed" else None,
+            None,
+            (),
+            None,
+            metrics,
+        )
+
+    routed = gr.summarize(result("routed"))
+    assert routed.path == (1, 2)
+    assert routed.work == 5
+    assert (routed.exhausted_budget, routed.cancelled, routed.exhausted) == (False, False, False)
+    assert gr.summarize(result("budget")).exhausted_budget
+    assert gr.summarize(result("cancelled")).cancelled
+    assert gr.summarize(result("exhausted")).exhausted

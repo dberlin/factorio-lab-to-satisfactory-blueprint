@@ -4993,10 +4993,11 @@ def _geometric_search(
             extra_edges=admitted_edges,
         )
     )
-    work = result.metrics["charged_work"]
+    outcome = geometric_router.summarize(result)
+    work = outcome.work
     if budget is not None:
         budget["left"] = start_left - work
-    if result.kind in ("budget", "cancelled"):
+    if outcome.exhausted_budget or outcome.cancelled:
         # The native search raises one limit for both bounds, so read them back
         # here: it charges exactly `max_work` and stops only when the allowance
         # is what ended it, and anything short of that with an expired clock was
@@ -5005,8 +5006,8 @@ def _geometric_search(
             BudgetCause.ALLOWANCE if work >= max_work or deadline is None else BudgetCause.DEADLINE
         )
         return _PathSearchResult(None, RouteFailureKind.BUDGET, (), work, cause)
-    path_indices = result.path
-    if result.kind == "routed":
+    path_indices = outcome.path
+    if not outcome.exhausted:
         assert path_indices is not None
         cells = []
         for index in path_indices:

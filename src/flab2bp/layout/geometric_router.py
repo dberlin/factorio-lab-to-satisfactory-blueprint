@@ -93,6 +93,42 @@ class GeometricResult:
     metrics: GeometricMetrics
 
 
+@dataclass(frozen=True, slots=True)
+class SearchOutcome:
+    """A kernel result as its two callers read it: a path, a charge, a reason.
+
+    Both routers reached into :class:`GeometricResult` the same way -- pull
+    ``metrics["charged_work"]``, compare ``kind`` against the same string
+    literals -- so the kernel's status encoding was spelled out at every call
+    site. The three flags are mutually exclusive and exactly one is set when
+    ``path`` is ``None``.
+
+    This says WHICH bound the kernel hit, not which the CALLER should report:
+    only the caller knows whether its own clock or allowance was the tighter
+    one, so it still derives its
+    :class:`~flab2bp.layout.route_feedback.BudgetCause` from these flags plus
+    the limits it passed in.
+    """
+
+    path: tuple[int, ...] | None
+    #: ``GeometricMetrics.charged_work``, the kernel's own exact charge.
+    work: int
+    exhausted_budget: bool
+    cancelled: bool
+    exhausted: bool
+
+
+def summarize(result: GeometricResult) -> SearchOutcome:
+    """Read a kernel result once, for every caller that asks the same things."""
+    return SearchOutcome(
+        path=result.path,
+        work=result.metrics["charged_work"],
+        exhausted_budget=result.kind == "budget",
+        cancelled=result.kind == "cancelled",
+        exhausted=result.kind == "exhausted",
+    )
+
+
 def route(query: GeometricQuery) -> GeometricResult:
     """Search the query without changing the caller's occupancy or budget."""
     world = query.world

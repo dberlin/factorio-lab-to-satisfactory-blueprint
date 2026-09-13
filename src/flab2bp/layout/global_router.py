@@ -564,22 +564,18 @@ def _search_relaxed(
             cancelled=cancelled,
         )
     )
+    outcome = geometric_router.summarize(result)
     path = (
         None
-        if result.path is None
+        if outcome.path is None
         else tuple(
             _cut_loops(
-                [world.cell(index) for index in result.path],
+                [world.cell(index) for index in outcome.path],
                 ramped=not grid.vertical_construction,
             )
         )
     )
-    return _SearchResult(
-        path,
-        result.metrics["charged_work"],
-        result.kind == "budget",
-        result.kind == "cancelled",
-    )
+    return _SearchResult(path, outcome.work, outcome.exhausted_budget, outcome.cancelled)
 
 
 def _decode_cell(grid: _Grid, index: int) -> Cell:
