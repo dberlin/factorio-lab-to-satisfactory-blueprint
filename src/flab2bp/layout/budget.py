@@ -4,12 +4,32 @@ Before this module the concept had five named predicates, three closures,
 eight inline comparisons, three "clock ran out" exception types and an
 untyped ledger dict at 42 sites, keyed ``"left"`` (see
 ``docs/superpowers/specs/2026-09-13-abstraction-review.md`` section 5, P1).
-That dict is now :class:`WorkBudget` and its ``left`` is a field.
+All of it is here now:
+
+* :func:`expired` is *the* deadline predicate. The five named survivors --
+  ``routing_domain._expired``, ``compact_seed._deadline_reached``,
+  ``finalize._completion_expired``, ``routing_proposals.check_deadline`` and
+  ``hierarchy.compose._spent`` -- keep their names because tests and scripts
+  patch them, but each is now a one-line delegation to it.
+* :class:`WorkBudget` is what the dict was: ``left`` is a field. It is
+  mutable and shared by reference, because that is what the dict was too.
+  ``routing_domain._routing_pass_budget`` is the only place a pass-sized one
+  is born; a few named carve sites slice a child's allowance out of a parent
+  and reconcile the unspent remainder back.
+* :class:`StagedWorkBudget` is the staged ledger with a closure reserve,
+  formerly ``sequence_solver.ExpansionBudget``.
+* :class:`BudgetExhausted` is the base of every "ran out" signal. Its three
+  concrete subclasses stay distinguishable on purpose: ``_route_all``
+  converts a caught ``_PreparationDeadline`` into the proposals ``Deadline``
+  precisely so a different handler fires.
+
 Two rules hold everything together:
 
 * a ``None`` deadline never expires, and the comparison is always ``>=``;
 * the clock is resolved at the moment it is read, never captured, so a test
   that patches ``time.monotonic`` is seen by a budget built before the patch.
+
+``tests/test_one_deadline_rule.py`` fails if any of it spreads back out.
 """
 
 from __future__ import annotations
