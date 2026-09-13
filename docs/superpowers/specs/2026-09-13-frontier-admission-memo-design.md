@@ -1,6 +1,30 @@
 # Frontier admission memo: design
 
-Status: proposed 2026-09-13, measured, not implemented.
+Status: Phase 1 implemented 2026-09-13 on branch `frontier-admission-memo`
+(`JunctionAdmissionMemo` in `flab2bp/layout/junction_admission.py`, wired
+into `_can_junction`), plus the sibling index in `_prebuilt_source_starts`.
+
+## Outcome so far (2026-09-13)
+
+- Validation instead of listeners: an entry pins the inputs it read and a
+  lookup re-reads the cheap ones; `PortReservations.version` and
+  `StakedPaths.version` plus a log of changed taps make the common case a
+  few integer comparisons. Denied-by-reservation answers are recomputed.
+- The net's own routing ports had to leave the key: with them in it, no
+  cross-net hit ever happened (predicate time unchanged at 2.86 s). With
+  ports moved into validation the hit rate is 85 %.
+- Measured on output-products at 15 s: frontier 4.77 s to 4.04 s, predicate
+  2.93 s to 2.50 s, whole `_route_all` 11.2 s to 10.7 s. Both sprayed
+  Universe cells still refuse at 15 s; the 180-cell audit shows 167/13 with
+  no status change other than the two typed-pack improvements.
+- The residual inside the predicate is the projected-frame proof
+  (`_CompositionProjection.allows`), a whole-selection property with its
+  own verdict cache; it cannot be made cell-local and is not memoised here.
+- Exact repeats: 172 of 1,037 frontier calls per pass have identical
+  inputs and cost 1.9 s, all on the source side, produced by `_ends`
+  recursing with a widened `project_taps`. Per-cell answers already hit the
+  memo; the walk repeats. A walk-level memo is the next lever, worth about
+  as much again as Phase 1.
 
 ## Why
 
