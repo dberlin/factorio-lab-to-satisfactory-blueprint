@@ -402,6 +402,31 @@ _MAX_SEARCH_WORK = 200_000
 #: which is what actually runs away at scale.
 _ROUTING_BUDGET = 2_000_000
 
+
+def _routing_pass_budget(
+    deadline: float | None = None, seconds: float | None = None
+) -> budget_module.WorkBudget:
+    """One routing pass's clock and ledger.
+
+    ``_ROUTING_BUDGET`` is the floor: it bounds one pass deterministically so a
+    re-run reproduces. When the caller knows how many seconds the pass may have,
+    the ledger scales with ``freeform._ROUTING_WORK_PER_SECOND`` so that it stays
+    a backstop rather than becoming the thing that ends the sweep.
+
+    Every seed goes through here so that the three callers cannot disagree. They
+    did, latently: ``freeform`` reached the floor through the module object and
+    saw it live, while ``sequence_solver`` and ``hierarchy.compose`` bound it in
+    a ``from ... import`` list at import time. The constant is read here, inside
+    the body, so all three see one value whenever they were imported.
+    """
+    from flab2bp.layout.freeform import _ROUTING_WORK_PER_SECOND
+
+    left = _ROUTING_BUDGET
+    if seconds is not None:
+        left = max(left, int(_ROUTING_WORK_PER_SECOND * seconds))
+    return budget_module.WorkBudget(deadline=deadline, left=left)
+
+
 #: Toll a path pays per tile for occupying GROUND LEVEL.
 #:
 #: A belt at z=0 leaves z=1 and z=2 open above it -- only a machine denies all

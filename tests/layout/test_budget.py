@@ -264,3 +264,39 @@ def test_a_non_coverage_net_charges_the_pass_ledger_directly() -> None:
     assert direct.left == 750
     direct.left = 500  # the net spent 250 out of the pass ledger itself
     assert budget.left == 500  # charged once, with no reconciliation at all
+
+
+def test_the_factory_floor_is_the_routing_budget_constant() -> None:
+    seeded = routing_domain._routing_pass_budget()
+    assert seeded.left == routing_domain._ROUTING_BUDGET
+    assert seeded.deadline is None
+
+
+def test_the_factory_scales_with_seconds_but_never_below_the_floor() -> None:
+    from flab2bp.layout import freeform
+
+    generous = routing_domain._routing_pass_budget(deadline=1234.0, seconds=20.0)
+    assert generous.left == int(freeform._ROUTING_WORK_PER_SECOND * 20.0)
+    assert generous.deadline == 1234.0
+
+    stingy = routing_domain._routing_pass_budget(deadline=None, seconds=0.5)
+    assert stingy.left == routing_domain._ROUTING_BUDGET
+
+
+def test_the_factory_reads_the_floor_at_call_time_not_at_import() -> None:
+    """Every seed must see the same floor, whenever its module was imported.
+
+    `freeform` reached the constant through the module object and got the value
+    live; `sequence_solver` and `hierarchy.compose` bound it in a `from ...
+    import` list and got whatever it was when they were first imported. Nothing
+    patches it today, so the disagreement was latent -- the factory removes it
+    by reading the global inside its own body, which this pins.
+    """
+    floor = routing_domain._ROUTING_BUDGET
+    try:
+        routing_domain._ROUTING_BUDGET = 3
+        assert routing_domain._routing_pass_budget().left == 3
+        assert routing_domain._routing_pass_budget(seconds=0.0).left == 3
+    finally:
+        routing_domain._ROUTING_BUDGET = floor
+    assert routing_domain._routing_pass_budget().left == floor
