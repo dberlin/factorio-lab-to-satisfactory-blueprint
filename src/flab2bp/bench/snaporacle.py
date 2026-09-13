@@ -39,10 +39,10 @@ __all__ = [
     "BeltPath",
     "Candidate",
     "Case",
+    "LadderVerdict",
     "OracleUnavailable",
     "SlotPose",
     "Step",
-    "Verdict",
     "ask",
     "dotnet_available",
     "game_managed_dir",
@@ -193,7 +193,7 @@ class Step:
 
 
 @dataclass(frozen=True, slots=True)
-class Verdict:
+class LadderVerdict:
     """What the ladder decided for one case."""
 
     name: str
@@ -386,8 +386,8 @@ def _step(raw: _StepWire) -> Step:
     )
 
 
-def _verdict(raw: _VerdictWire) -> Verdict:
-    return Verdict(
+def _verdict(raw: _VerdictWire) -> LadderVerdict:
+    return LadderVerdict(
         name=raw.name,
         condition=raw.condition,
         lpos=raw.lpos or (0.0, 0.0, 0.0),
@@ -484,7 +484,7 @@ def ask(
     *,
     tables: dict[str, tuple[SlotPose, ...]] | None = None,
     timeout_s: float = 200.0,
-) -> list[Verdict]:
+) -> list[LadderVerdict]:
     """Run every case through the transcribed ladder, one subprocess for all.
 
     A case whose transcription raised comes back with ``error`` set rather than
