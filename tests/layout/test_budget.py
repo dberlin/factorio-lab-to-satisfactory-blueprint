@@ -221,3 +221,46 @@ def test_a_ledger_without_a_left_is_unbounded_like_no_ledger_at_all() -> None:
 def test_no_budget_still_means_unbounded() -> None:
     canvas, start, goal, bounds = _tiny_open_canvas()
     assert routing_domain._geometric_search(canvas, [start], {goal}, {}, 1.0, bounds).path
+
+
+def test_a_carved_child_ledger_returns_its_unspent_work_to_the_parent() -> None:
+    """The carve sites all reconcile parent -= allowance - child.left."""
+    parent = work.WorkBudget(left=1_000)
+    allowance = 400
+    child = work.WorkBudget(left=allowance, deadline=parent.deadline, clock=parent.clock)
+    child.left = 150  # the child spent 250
+    assert parent.left is not None
+    parent.left -= allowance - child.left
+    assert parent.left == 750
+
+
+def test_a_non_coverage_net_charges_the_pass_ledger_directly() -> None:
+    """`net_budget` is the pass ledger itself when the pass is not a coverage pass.
+
+    The shape of `_route_all`'s per-net ledger choice, with the numbers worked
+    by hand: a coverage pass carves a FRESH child and reconciles it against the
+    parent afterwards; any other pass hands the net the parent OBJECT, so the
+    net's spend is already charged and the reconciliation must not run. A copy
+    on the second branch would silently drop every net's charge.
+    """
+
+    def net_budget(budget: work.WorkBudget, allowance: int, coverage_pass: bool) -> work.WorkBudget:
+        """`_route_all`'s per-net ledger choice, verbatim."""
+        return work.WorkBudget(left=allowance) if coverage_pass else budget
+
+    budget = work.WorkBudget(left=1_000)
+    allowance = 400
+
+    carved = net_budget(budget, allowance, True)
+    assert carved is not budget
+    assert carved.left == 400
+    carved.left = 150  # the carved child spent 250
+    assert budget.left is not None
+    budget.left -= allowance - carved.left  # only a coverage pass reconciles
+    assert budget.left == 750
+
+    direct = net_budget(budget, allowance, False)
+    assert direct is budget
+    assert direct.left == 750
+    direct.left = 500  # the net spent 250 out of the pass ledger itself
+    assert budget.left == 500  # charged once, with no reconciliation at all
