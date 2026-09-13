@@ -408,6 +408,18 @@ def _grid_environment(
     """A CBS environment whose low level is the real router's the geometric search."""
     left = WorkBudget(left=1 << 30) if budget is None else budget
 
+    def budget_left() -> int:
+        """What the ledger has left. Both ledgers this can see are bounded.
+
+        ``WorkBudget.left`` is ``int | None`` because ``None`` means
+        "unbounded", and a plain ``or 0`` would report that as exhausted --
+        the opposite -- where the dict read this replaced could only ever
+        return the number the caller put there.
+        """
+        remaining = left.left
+        assert remaining is not None
+        return remaining
+
     def search(index: int, constraints: frozenset[Cell]) -> _PathSearchResult:
         starts, goals = ends[index]
         return _geometric_search(
@@ -430,7 +442,7 @@ def _grid_environment(
     return last_mile.ClusterEnvironment(
         search=search,
         offers=_offers_stub,
-        budget_left=lambda: left.left or 0,
+        budget_left=budget_left,
         budget_floor=0,
         expired=lambda: False,
         max_nodes=max_nodes,

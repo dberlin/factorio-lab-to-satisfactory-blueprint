@@ -231,11 +231,11 @@ def test_scheduler_preserves_real_connector_only_capability(allowance: int) -> N
     bounds = (0, 1, 0, 1)
     grid = routing_domain._make_grid(canvas, bounds, (-3, -3, 3, 3), {})
     search, primitives = _scheduler(canvas, bounds)
-    ledger = {"left": allowance}
+    ledger = WorkBudget(left=allowance)
     blame = {}
     result = search([start], {goal}, {}, {}, 1.0, ledger, blame, grid)
     assert result.path == (start, goal)
-    assert ledger["left"] == allowance - result.work
+    assert ledger.left == allowance - result.work
     assert blame == {}
     (candidate,) = primitives.on_path(result.path)
     assert candidate.stack_members[-1].model_index == 39
@@ -273,10 +273,10 @@ def test_scheduler_restores_source_after_contextual_ordinary_refusal(
         return allowed and original(self, candidates, selected=selected, deadline=deadline)
 
     monkeypatch.setattr(routing_domain._Canvas, "projected_buildings_are_clear", changed_frame)
-    ledger = {"left": 400_002}
+    ledger = WorkBudget(left=400_002)
     result = search([start], {goal}, {start: tap}, history, 1.0, ledger, {}, grid)
     assert result.path == (start, goal)
-    assert ledger["left"] == 400_002 - result.work
+    assert ledger.left == 400_002 - result.work
     assert checked[0] is False
     assert checked[-1] is True
     (candidate,) = primitives.on_path(result.path)
@@ -294,10 +294,11 @@ def test_capped_empty_graph_retry_preserves_quota_for_next_net(
     canvas.limit = bounds
     grid = routing_domain._make_grid(canvas, bounds, (-3, -3, 73, 3), {})
     search, _primitives = _scheduler(canvas, bounds)
-    ledger = {"left": allowance}
+    ledger = WorkBudget(left=allowance)
     capped = search([(0, 0, 0)], {(70, 0, 0)}, {}, {}, 1.0, ledger, {}, grid)
     assert capped.kind is RouteFailureKind.BUDGET
-    assert capped.work >= allowance - ledger["left"]
+    assert ledger.left is not None
+    assert capped.work >= allowance - ledger.left
     following = search([(0, 0, 0)], {(4, 0, 0)}, {}, {}, 1.0, ledger, {}, grid)
     assert following.path == tuple((x, 0, 0) for x in range(5))
 
@@ -323,7 +324,7 @@ def test_capped_ordinary_search_still_uses_new_connector_edges(
     )
     assert ordinary.kind is RouteFailureKind.BUDGET
     assert ordinary.work == routing_domain._MAX_SEARCH_WORK
-    result = search([start], {goal}, {}, history, 1.0, {"left": 20}, {}, grid)
+    result = search([start], {goal}, {}, history, 1.0, WorkBudget(left=20), {}, grid)
     assert result.path == (start, goal)
     (connector,) = primitives.on_path(result.path)
     assert connector.stack_members[-1].model_index == 39
@@ -336,12 +337,12 @@ def test_scheduler_charges_only_its_immediate_private_ledger(
     canvas = _canvas(0, False)
     bounds = (0, 0, 70, 0)
     grid = routing_domain._make_grid(canvas, bounds, (-3, -3, 73, 3), {})
-    outer = {"left": 1_000_000}
+    outer = WorkBudget(left=1_000_000)
     search, _primitives = _scheduler(canvas, bounds, outer_budget=outer)
-    private = {"left": 204}
+    private = WorkBudget(left=204)
     result = search([(0, 0, 0)], {(70, 0, 0)}, {}, {}, 1.0, private, {}, grid)
-    assert private["left"] == 204 - result.work
-    assert outer["left"] == 1_000_000
+    assert private.left == 204 - result.work
+    assert outer.left == 1_000_000
     assert result.path == tuple((x, 0, 0) for x in range(71))
 
 
@@ -353,7 +354,7 @@ def test_scheduler_subdeadline_returns_to_live_parent(monkeypatch: pytest.Monkey
     search, _primitives = _scheduler(canvas, bounds, deadline=now + 80.0)
     ticks = iter((now, now, now + 11.0))
     monkeypatch.setattr(routing_domain.time, "monotonic", lambda: next(ticks, now + 11.0))
-    ledger = {"left": 400_002}
+    ledger = WorkBudget(left=400_002)
     result = search([(0, 0, 0)], {(70, 0, 0)}, {}, {}, 1.0, ledger, {}, grid)
     assert result.path == tuple((x, 0, 0) for x in range(71))
 
@@ -370,11 +371,11 @@ def test_scheduler_expired_parent_does_no_probe_or_enumeration(
         pytest.fail("an expired parent must not begin connector generation")
 
     monkeypatch.setattr(RoutePrimitives, "edges", expired_work)
-    ledger = {"left": 400_002}
+    ledger = WorkBudget(left=400_002)
     result = search([(0, 1, 0)], {(0, 1, 1)}, {}, {}, 1.0, ledger, {}, grid)
     assert result.kind is RouteFailureKind.BUDGET
     assert result.work == 0
-    assert ledger["left"] == 400_002
+    assert ledger.left == 400_002
 
 
 def test_ordinary_source_retry_routes_around_its_own_splitter() -> None:
@@ -384,12 +385,12 @@ def test_ordinary_source_retry_routes_around_its_own_splitter() -> None:
     grid = routing_domain._make_grid(canvas, bounds, bounds, {})
     search, _primitives = _scheduler(canvas, bounds)
     start, goal, tap = (1, 0, 0), (2, -2, 0), (2, 0, 1)
-    ledger = {"left": 2000}
+    ledger = WorkBudget(left=2000)
     result = search([start], {goal}, {start: tap}, {}, 1.0, ledger, {}, grid, ordinary_only=True)
     assert result.path is not None
     assert result.path[0] == start and result.path[-1] == goal
     assert (2, 0, 0) not in result.path
-    assert ledger["left"] == 2000 - result.work
+    assert ledger.left == 2000 - result.work
 
 
 def test_coverage_pass_defers_but_does_not_remove_connector_capability() -> None:
@@ -398,7 +399,7 @@ def test_coverage_pass_defers_but_does_not_remove_connector_capability() -> None
     grid = routing_domain._make_grid(canvas, bounds, (-3, -3, 3, 3), {})
     search, primitives = _scheduler(canvas, bounds)
     start, goal = (0, 1, 0), (0, 1, 1)
-    ledger = {"left": 20}
+    ledger = WorkBudget(left=20)
     deferred = search([start], {goal}, {}, {}, 1.0, ledger, {}, grid, ordinary_only=True)
     assert deferred.kind is RouteFailureKind.BUDGET
     repaired = search([start], {goal}, {}, {}, 1.0, ledger, {}, grid)
@@ -424,10 +425,11 @@ def test_small_remaining_quota_routes_before_connector_work_expires(
     monkeypatch.setattr(routing_domain.time, "monotonic", lambda: clock[0])
     monkeypatch.setattr(RoutePrimitives, "edges", charged)
     search, _primitives = _scheduler(canvas, bounds, deadline=deadline)
-    ledger = {"left": 128}
+    ledger = WorkBudget(left=128)
     result = search([(0, 0, 0)], {(2, 0, 0)}, {}, {}, 1.0, ledger, {}, grid)
     assert result.path == ((0, 0, 0), (1, 0, 0), (2, 0, 0))
-    assert 128 - ledger["left"] == result.work
+    assert ledger.left is not None
+    assert 128 - ledger.left == result.work
 
 
 def test_cost_plateau_reaches_goal_before_shared_quota_exhaustion() -> None:

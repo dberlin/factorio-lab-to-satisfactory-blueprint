@@ -351,7 +351,7 @@ def test_source_body_rejection_keeps_other_ordinary_taps_available() -> None:
         2003,
         37,
         bounds,
-        budget={"left": 10_000},
+        budget=WorkBudget(left=10_000),
         flow_limits=domain.RoutingFlowLimits((Fraction(1), Fraction(1)), Fraction(30)),
     )
     assert result.status is DetailedRouteStatus.ROUTED
@@ -409,7 +409,7 @@ def test_supplied_head_can_branch_without_excusing_foreign_belts(foreign_belt: b
         2001,
         35,
         bounds,
-        budget={"left": 10_000},
+        budget=WorkBudget(left=10_000),
         flow_limits=domain.RoutingFlowLimits((Fraction(1), Fraction(1)), Fraction(6)),
     )
     if foreign_belt:
@@ -467,13 +467,19 @@ def test_ordinary_routing_cannot_escape_the_composition_frame() -> None:
         )
     ]
     before = tuple(canvas.buildings)
-    refused = domain._route_all(canvas, nets, 2003, 37, bounds, budget={"left": 100_000})
+    refusal_budget = WorkBudget(left=100_000)
+    refused = domain._route_all(canvas, nets, 2003, 37, bounds, budget=refusal_budget)
     assert refused.status is not DetailedRouteStatus.ROUTED
     assert tuple(canvas.buildings) == before
+    assert refusal_budget.left is not None
+    assert 0 <= refusal_budget.left < 100_000, "a refused pass still charges its ledger"
 
     canvas.guard.remove((100, 80, 0))
-    accepted = domain._route_all(canvas, nets, 2003, 37, bounds, budget={"left": 100_000})
+    accept_budget = WorkBudget(left=100_000)
+    accepted = domain._route_all(canvas, nets, 2003, 37, bounds, budget=accept_budget)
     assert accepted.status is DetailedRouteStatus.ROUTED
+    assert accept_budget.left is not None
+    assert 0 <= accept_budget.left < 100_000
     x0, y0, x1, y1 = Placement(buildings=tuple(canvas.buildings)).bounds
     assert finalize.band_policy_search_envelope(policy, perimeter=0).frame_candidates(
         x1 - x0 + 1, y1 - y0 + 1
@@ -530,7 +536,7 @@ def test_source_witness_rollback_preserves_another_routes_guard(
         2001,
         35,
         bounds,
-        budget={"left": 10_000},
+        budget=WorkBudget(left=10_000),
         flow_limits=domain.RoutingFlowLimits((Fraction(1),) * len(nets), Fraction(6)),
     )
     assert not leaked_guards
@@ -604,7 +610,7 @@ def test_cluster_provider_hands_its_new_tap_to_the_dropped_sibling(
         2001,
         35,
         bounds,
-        budget={"left": 20_000},
+        budget=WorkBudget(left=20_000),
         settle=refuse_candidate if refuse_completion else None,
     )
     reached: set[int] = set()
@@ -705,7 +711,7 @@ def test_repair_moves_a_route_blocking_only_the_future_splitter(
         2001,
         35,
         bounds,
-        budget={"left": 100_000},
+        budget=WorkBudget(left=100_000),
         prioritize_source_families=False,
         flow_limits=domain.RoutingFlowLimits((Fraction(6), Fraction(3), Fraction(3)), Fraction(6)),
     )
@@ -828,7 +834,13 @@ def test_repair_reselects_source_after_displacing_its_provider(
     monkeypatch.setattr(domain, "_REPAIR_PASSES", 1)
     monkeypatch.setattr(domain.last_mile, "B_MAX_STRANDED", 0)
     result = domain._route_all(
-        canvas, nets, 2001, 35, bounds, budget={"left": 100_000}, prioritize_source_families=False
+        canvas,
+        nets,
+        2001,
+        35,
+        bounds,
+        budget=WorkBudget(left=100_000),
+        prioritize_source_families=False,
     )
     reached: set[int] = set()
     pending = [source.belt]
