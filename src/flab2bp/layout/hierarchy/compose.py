@@ -31,7 +31,15 @@ from functools import partial
 from typing import NamedTuple
 
 from flab2bp.dsp import catalog
-from flab2bp.layout import budget, finalize, junction, physical_flow, slots, validate
+from flab2bp.layout import (
+    budget,
+    finalize,
+    junction,
+    physical_flow,
+    routing_domain,
+    slots,
+    validate,
+)
 from flab2bp.layout.band_policy import BandPolicy
 from flab2bp.layout.base import PlacedBuilding, Placement
 from flab2bp.layout.buildings import Buildings
@@ -50,7 +58,6 @@ from flab2bp.layout.route_feedback import (
     RouteSettlementRefused,
 )
 from flab2bp.layout.routing_domain import (
-    _ROUTING_BUDGET,
     PortAccessDemand,
     PortAccessEvidence,
     PortAccessReservation,
@@ -1784,7 +1791,7 @@ def compose(
     )
     external_nets = [net for net in nets if net.src is None]
     internal_nets = [net for net in nets if net.src is not None]
-    route_budget = budget.WorkBudget(left=_ROUTING_BUDGET)
+    route_budget = routing_domain._routing_pass_budget()
     external_result = _route_external_inputs(
         canvas, external_nets, belt_id, belt_model, bounds, deadline, route_budget
     )

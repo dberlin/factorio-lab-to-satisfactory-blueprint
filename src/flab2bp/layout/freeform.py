@@ -4575,9 +4575,7 @@ class FreeformLayout:
         # is scaled to the ceiling so that it stays a backstop rather than
         # becoming the thing that ends the sweep. See
         # `_ROUTING_WORK_PER_SECOND`.
-        budget = budget_module.WorkBudget(
-            left=max(routing_domain._ROUTING_BUDGET, int(_ROUTING_WORK_PER_SECOND * ceiling))
-        )
+        budget = routing_domain._routing_pass_budget(seconds=ceiling)
 
         def planning_cancelled() -> bool:
             return routing_domain._expired(deadline)

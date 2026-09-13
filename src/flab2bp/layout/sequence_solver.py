@@ -20,7 +20,7 @@ from typing import Protocol, TypedDict
 
 from flab2bp.dsp import catalog
 from flab2bp.indexed import Stages, StripPositions
-from flab2bp.layout import budget, finalize, geometric_router, last_mile
+from flab2bp.layout import budget, finalize, geometric_router, last_mile, routing_domain
 from flab2bp.layout.band_policy import BandPolicy
 from flab2bp.layout.base import (
     ATOMIC_COMPLETION_GRACE_S as ATOMIC_COMPLETION_GRACE_S,
@@ -44,7 +44,6 @@ from flab2bp.layout.compact_seed import (
 )
 from flab2bp.layout.freeform import (
     _COATER_WEST_CHANNEL,
-    _ROUTING_WORK_PER_SECOND,
     C_WINDOW_DEADLINE_SAFETY_SECONDS,
     C_WINDOW_SECONDS,
     DirectAlignmentMemo,
@@ -90,7 +89,6 @@ from flab2bp.layout.route_feedback import (
 )
 from flab2bp.layout.routing_domain import (
     _ENTRY_RING,
-    _ROUTING_BUDGET,
     WEST_CHANNEL,
     DirectInsertId,
     PreparedRoutingLowerBound,
@@ -5911,10 +5909,10 @@ def _production_run(
             telemetry.alns_window_accepted += 1
             window_repair.clear()
 
-    expansion_total = max(
-        _ROUTING_BUDGET,
-        int(_ROUTING_WORK_PER_SECOND * ceiling),
-    )
+    # The same floor-or-scaled arithmetic every routing pass seeds with, taken
+    # from the one factory rather than spelled out again here.
+    expansion_total = routing_domain._routing_pass_budget(seconds=ceiling).left
+    assert expansion_total is not None, "the factory always seeds an int allowance"
     exact_candidate_allowance = _speculative_exact_allowance(
         expansion_total,
         speculative_candidates=(1 + _TOPOLOGY_BEAM_CANDIDATES + _TOPOLOGY_REFINEMENT_CANDIDATES),

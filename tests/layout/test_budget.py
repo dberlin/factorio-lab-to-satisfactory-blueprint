@@ -300,3 +300,24 @@ def test_the_factory_reads_the_floor_at_call_time_not_at_import() -> None:
     finally:
         routing_domain._ROUTING_BUDGET = floor
     assert routing_domain._routing_pass_budget().left == floor
+
+
+def test_every_routing_budget_seed_goes_through_one_factory() -> None:
+    """No module may bind the floor constant by value: they would drift."""
+    import ast
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parents[2] / "src" / "flab2bp"
+    offenders: list[str] = []
+    for path in sorted(src.rglob("*.py")):
+        if path.name == "routing_domain.py":
+            continue
+        tree = ast.parse(path.read_text(), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and any(
+                alias.name == "_ROUTING_BUDGET" for alias in node.names
+            ):
+                offenders.append(f"{path.name}:{node.lineno}")
+    assert offenders == [], (
+        "import _routing_pass_budget instead of the floor constant: " + ", ".join(offenders)
+    )

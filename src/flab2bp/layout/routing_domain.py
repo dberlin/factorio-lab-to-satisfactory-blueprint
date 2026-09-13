@@ -6296,7 +6296,7 @@ def _route_all(
     # `_ROUTING_BUDGET` afresh. A caller reaching in directly gets a pass of its
     # own, which is what the tests and the probes want.
     if budget is None:
-        budget = budget_module.WorkBudget(left=_ROUTING_BUDGET)
+        budget = _routing_pass_budget()
     # The only new runtime check this conversion adds, and it cannot fire: the
     # default above supplies an int allowance and every caller that passes a
     # ledger builds it with one. It states the pass invariant -- a routing pass
@@ -12340,7 +12340,7 @@ def _route_boundary_nets(
     )
     history: dict[Cell, float] = defaultdict(float)
     if budget is None:
-        budget = budget_module.WorkBudget(left=_ROUTING_BUDGET)
+        budget = _routing_pass_budget()
     routed: list[NetId] = []
     failures: list[NetFailure] = []
     work = 0
