@@ -108,7 +108,7 @@ from flab2bp.layout.sequence_pair import (
 )
 from flab2bp.layout.sequence_solver import (
     DetailedStageResult,
-    ExpansionBudget,
+    StagedWorkBudget,
     SequencePairLayout,
     SequenceSearchResult,
     SequenceSolver,
@@ -452,7 +452,7 @@ def _solver(
     fake: _FakeRouting,
     *,
     heights: tuple[int, ...] = (40, 60, 80),
-    budget: ExpansionBudget | None = None,
+    budget: StagedWorkBudget | None = None,
     config: SequenceSolverConfig | None = None,
     deadline_reached: Callable[[], bool] | None = None,
     initial_states: dict[int, AnnealState] | None = None,
@@ -471,7 +471,7 @@ def _solver(
             area_lower_bound=1,
         ),
         adapters=fake.adapters(),
-        expansion_budget=budget or ExpansionBudget(total=1_000),
+        expansion_budget=budget or StagedWorkBudget(total=1_000),
         config=config
         or SequenceSolverConfig(
             stages=6,
@@ -606,7 +606,7 @@ def test_validated_initial_state_routes_raw_before_any_anneal_mutation(
                 placement=placement,
             ),
         ),
-        expansion_budget=ExpansionBudget(100),
+        expansion_budget=StagedWorkBudget(100),
         config=SequenceSolverConfig(
             stages=1,
             moves_per_stage=1,
@@ -649,7 +649,7 @@ def test_compact_seed_closure_preserves_expansions_for_followup_candidates() -> 
         ),
         spend_allowance=True,
     )
-    budget = ExpansionBudget(total=1_000)
+    budget = StagedWorkBudget(total=1_000)
     solver = _solver(
         fake,
         heights=(40,),
@@ -694,7 +694,7 @@ def test_exhausted_compact_restart_does_not_defer_feedback_or_double_settle() ->
             charged_work=0,
         )
 
-    budget = ExpansionBudget(100)
+    budget = StagedWorkBudget(100)
     solver = _solver(
         _FakeRouting(),
         heights=(40,),
@@ -778,7 +778,7 @@ def test_compact_projection_refusal_closes_inside_its_replacement_stage(
             detailed_route=lambda _prepared, _allowance: next(detailed_results),
             validate=lambda _placement: next(validations),
         ),
-        expansion_budget=ExpansionBudget(100),
+        expansion_budget=StagedWorkBudget(100),
         config=SequenceSolverConfig(
             stages=1,
             moves_per_stage=1,
@@ -936,7 +936,7 @@ def test_exact_decoded_closure_retains_coordinates_without_sequence_reencoding()
             ),
         )
     )
-    budget = ExpansionBudget(total=100)
+    budget = StagedWorkBudget(total=100)
     solver = _solver(fake, heights=(40,), budget=budget)
     decoded = DecodedPlacement(
         x=(7,),
@@ -974,7 +974,7 @@ def test_exact_decoded_closure_charges_authoritative_spend_not_raw_diagnostics()
             ),
         )
     )
-    budget = ExpansionBudget(total=100)
+    budget = StagedWorkBudget(total=100)
     solver = _solver(fake, heights=(40,), budget=budget)
     decoded = DecodedPlacement(
         x=(7,),
@@ -1185,7 +1185,7 @@ def test_stateful_dominated_candidate_preserves_later_better_frontier() -> None:
                 validate=lambda placement: ValidationVerdict(True, (), placement),
                 exact_lower_bound=lower_bound,
             ),
-            expansion_budget=ExpansionBudget(1_000),
+            expansion_budget=StagedWorkBudget(1_000),
             config=SequenceSolverConfig(
                 stages=3,
                 moves_per_stage=1,
@@ -1263,7 +1263,7 @@ def test_valid_topology_candidate_does_not_stop_better_exact_enumeration() -> No
             ),
         )
     )
-    budget = ExpansionBudget(total=100)
+    budget = StagedWorkBudget(total=100)
     solver = _solver(fake, heights=(40,), budget=budget)
     decoded = DecodedPlacement(
         x=(0,),
@@ -1309,7 +1309,7 @@ def test_exact_candidate_caps_preserve_later_closures_and_fallback_discovery() -
             ),
         )
     )
-    budget = ExpansionBudget(total=100)
+    budget = StagedWorkBudget(total=100)
     solver = _solver(fake, heights=(40,), budget=budget)
     decoded = DecodedPlacement(
         x=(0,),
@@ -2065,7 +2065,7 @@ def test_quality_mode_requires_zero_overflow_and_validator_clean_exact(
             area_lower_bound=1,
         ),
         adapters=replace(fake.adapters(), global_route=global_route),
-        expansion_budget=ExpansionBudget(100),
+        expansion_budget=StagedWorkBudget(100),
         config=SequenceSolverConfig(
             stages=2,
             moves_per_stage=1,
@@ -2224,7 +2224,7 @@ def test_best_height_scheduling_uses_complete_exact_key_before_stable_order() ->
             area_lower_bound=1,
         ),
         adapters=replace(fake.adapters(), detailed_route=detailed_route),
-        expansion_budget=ExpansionBudget(100),
+        expansion_budget=StagedWorkBudget(100),
         config=SequenceSolverConfig(
             stages=2,
             moves_per_stage=1,
@@ -2259,7 +2259,7 @@ def test_height_neighbor_gets_one_protected_followup_before_exact_key_best_first
             charged_work=min(1, allowance),
         )
 
-    budget = ExpansionBudget(100)
+    budget = StagedWorkBudget(100)
     solver = SequenceSolver(
         heights=(31, 26),
         problem_for_height=lambda height: PlacementProblem(
@@ -2345,7 +2345,7 @@ def test_detailed_route_retains_positive_work_when_global_spends_its_proxy_allow
     result = _solver(
         fake,
         heights=(40,),
-        budget=ExpansionBudget(total=100),
+        budget=StagedWorkBudget(total=100),
     ).search(max_stages=1)
 
     assert result.placement is exact
@@ -2590,7 +2590,7 @@ def test_production_projection_refusals_reach_terminal_sequence_evidence(
 
 
 def test_stage_routes_preserve_the_final_twenty_five_percent() -> None:
-    budget = ExpansionBudget(total=100)
+    budget = StagedWorkBudget(total=100)
     fake = _FakeRouting(spend_allowance=True)
     with pytest.raises(NoValidLayout):
         _solver(fake, heights=(40,), budget=budget).search(max_stages=20)
@@ -2602,7 +2602,7 @@ def test_stage_routes_preserve_the_final_twenty_five_percent() -> None:
 
 
 def test_detailed_discovery_borrows_future_slices_in_stable_height_order() -> None:
-    budget = ExpansionBudget(total=100)
+    budget = StagedWorkBudget(total=100)
     budget.configure((40, 60, 80), Fraction(1, 4))
 
     assert budget.detailed_discovery_allowance(40) == 100
@@ -2623,7 +2623,7 @@ def test_detailed_discovery_borrows_future_slices_in_stable_height_order() -> No
 
 
 def test_terminal_seed_fallback_borrows_only_for_detailed_closure() -> None:
-    budget = ExpansionBudget(total=100)
+    budget = StagedWorkBudget(total=100)
     fake = _FakeRouting(spend_allowance=True)
     solver = _solver(
         fake,
@@ -2644,7 +2644,7 @@ def test_casimir_sized_discovery_slices_conserve_900k_and_protect_detailed_work(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _repeat_merged_elite(monkeypatch, 4)
-    budget = ExpansionBudget(total=6_000_000)
+    budget = StagedWorkBudget(total=6_000_000)
     fake = _FakeRouting(spend_allowance=True)
     config = SequenceSolverConfig(
         stages=1,
@@ -2668,7 +2668,7 @@ def test_casimir_sized_discovery_slices_conserve_900k_and_protect_detailed_work(
 
 
 def test_discovery_reservations_are_equal_and_unused_budget_is_shared_afterward() -> None:
-    budget = ExpansionBudget(total=101)
+    budget = StagedWorkBudget(total=101)
     fake = _FakeRouting()
     with pytest.raises(NoValidLayout):
         _solver(fake, budget=budget).search(max_stages=4)
@@ -3242,7 +3242,7 @@ def test_later_cancelled_proxy_closes_the_best_completed_candidate(
             detailed_route=detailed_route,
             validate=lambda placement: ValidationVerdict(True, (), placement),
         ),
-        expansion_budget=ExpansionBudget(100),
+        expansion_budget=StagedWorkBudget(100),
         config=SequenceSolverConfig(
             stages=1,
             moves_per_stage=1,
@@ -3436,7 +3436,7 @@ def test_cancelled_proxy_without_an_exact_candidate_remains_an_honest_refusal() 
     solver = _solver(
         _FakeRouting(),
         heights=(40,),
-        budget=ExpansionBudget(100),
+        budget=StagedWorkBudget(100),
         config=SequenceSolverConfig(
             stages=1,
             moves_per_stage=1,
@@ -3462,7 +3462,7 @@ def test_parent_deadline_after_proxy_closure_is_not_proxy_cancellation() -> None
     solver = _solver(
         fake,
         heights=(40,),
-        budget=ExpansionBudget(100),
+        budget=StagedWorkBudget(100),
         config=SequenceSolverConfig(
             stages=1,
             moves_per_stage=1,
@@ -6830,7 +6830,7 @@ def test_projection_pitch_feedback_rebuilds_failed_restart_and_rebases_siblings(
         restarts_per_height=2,
         global_elites=1,
     )
-    budget = ExpansionBudget(17)
+    budget = StagedWorkBudget(17)
     transform_calls: list[
         tuple[
             tuple[finalize.ProjectionFailure, ...],
@@ -7772,7 +7772,7 @@ def test_projection_pitch_feedback_single_restart_routes_padded_variant() -> Non
                 (failure,),
             ),
         ),
-        expansion_budget=ExpansionBudget(17),
+        expansion_budget=StagedWorkBudget(17),
         config=SequenceSolverConfig(
             stages=1,
             moves_per_stage=32,
@@ -7869,7 +7869,7 @@ def test_projection_pitch_feedback_runs_before_the_next_height_discovery(
             detailed_route=detailed_route,
             validate=validate_projection,
         ),
-        expansion_budget=ExpansionBudget(17),
+        expansion_budget=StagedWorkBudget(17),
         config=SequenceSolverConfig(
             stages=2,
             moves_per_stage=1,
@@ -7915,7 +7915,7 @@ def test_zero_budget_projection_feedback_preserves_stage_and_marker(
             detailed_route=detailed_route,
             validate=lambda _placement: pytest.fail("zero-budget feedback validated"),
         ),
-        expansion_budget=ExpansionBudget(17),
+        expansion_budget=StagedWorkBudget(17),
         config=SequenceSolverConfig(
             stages=2,
             moves_per_stage=1,
@@ -8168,7 +8168,7 @@ def test_feedback_stagnation_rebuilds_the_next_fixed_cardinality_stage() -> None
             ),
             validate=lambda _placement: ValidationVerdict(False, ("unreachable",), None),
         ),
-        expansion_budget=ExpansionBudget(100),
+        expansion_budget=StagedWorkBudget(100),
         config=SequenceSolverConfig(
             stages=3,
             moves_per_stage=1,
@@ -8307,7 +8307,7 @@ def test_topology_change_clears_stale_quality_archives_before_restart_fallback()
         heights=(40,),
         problem_for_height=lambda _height: original,
         adapters=fake.adapters(),
-        expansion_budget=ExpansionBudget(100),
+        expansion_budget=StagedWorkBudget(100),
         config=SequenceSolverConfig(
             stages=2,
             moves_per_stage=1,
@@ -8386,7 +8386,7 @@ def test_exact_problem_identity_transform_retains_restart_archive() -> None:
         heights=(40,),
         problem_for_height=lambda _height: problem,
         adapters=fake.adapters(),
-        expansion_budget=ExpansionBudget(100),
+        expansion_budget=StagedWorkBudget(100),
         config=SequenceSolverConfig(
             stages=1,
             moves_per_stage=1,
@@ -8459,7 +8459,7 @@ def test_fixed_size_problem_skips_pose_boundary_transforms_without_metadata() ->
         heights=(40,),
         problem_for_height=lambda _height: problem,
         adapters=fake.adapters(),
-        expansion_budget=ExpansionBudget(100),
+        expansion_budget=StagedWorkBudget(100),
         config=SequenceSolverConfig(
             stages=2,
             moves_per_stage=1,
@@ -10124,7 +10124,7 @@ def _staged_solver(
         heights=heights,
         problem_for_height=problems.__getitem__,
         adapters=adapters,
-        expansion_budget=ExpansionBudget(total=total_expansions),
+        expansion_budget=StagedWorkBudget(total=total_expansions),
         config=SequenceSolverConfig.test(),
         deadline_reached=deadline_reached,
         alns_adapters=alns_adapters,
@@ -11124,7 +11124,7 @@ def _two_height_solver(
             area_lower_bound=bounds[height],
         ),
         adapters=fake.adapters(),
-        expansion_budget=ExpansionBudget(total=1_000),
+        expansion_budget=StagedWorkBudget(total=1_000),
         config=SequenceSolverConfig(
             stages=6, moves_per_stage=1, restarts_per_height=2, global_elites=1
         ),

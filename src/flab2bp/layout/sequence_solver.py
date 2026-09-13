@@ -425,7 +425,7 @@ def _topology_budget_is_broad(
 
 
 @dataclass(slots=True)
-class ExpansionBudget:
+class StagedWorkBudget:
     """One deterministic ledger with a proxy-inaccessible closure reserve."""
 
     total: int
@@ -1002,7 +1002,7 @@ class SequenceSolver[PreparedT]:
         heights: tuple[int, ...],
         problem_for_height: Callable[[int], PlacementProblem],
         adapters: StageAdapters[PreparedT],
-        expansion_budget: ExpansionBudget,
+        expansion_budget: StagedWorkBudget,
         protected_followup_heights: tuple[int, ...] = (),
         config: SequenceSolverConfig | None = None,
         deadline_reached: Callable[[], bool] | None = None,
@@ -5956,7 +5956,7 @@ def _production_run(
             ),
             exact_lower_bound=exact_lower_bound,
         ),
-        expansion_budget=ExpansionBudget(expansion_total),
+        expansion_budget=StagedWorkBudget(expansion_total),
         borrow_first_discovery=(bool(initial_states) or use_topology_beam or use_shared_pack),
         protected_followup_heights=protected_followup_heights,
         config=config,
