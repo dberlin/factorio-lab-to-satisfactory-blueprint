@@ -1100,22 +1100,31 @@ def _kebab(name: str) -> str:
     return s
 
 
-@cache
-def _recipe_ids() -> dict[str, int]:
-    values = _array(_json(_RECIPES), str(_RECIPES))
+def _ids_table(path: Path, aliases: Mapping[str, str]) -> dict[str, int]:
+    """``{FactorioLab id: DSP numeric id}`` from one of the extracted tables.
+
+    The recipe and item tables have the same two columns and the same alias
+    fixup, so they are read once here rather than twice.
+    """
+    values = _array(_json(path), str(path))
     table: dict[str, int] = {}
     by_name: dict[str, int] = {}
     for index, value in enumerate(values):
-        path = f"{_RECIPES}[{index}]"
-        row = _mapping(value, path)
-        name = _string(_required(row, "name", path), f"{path}.name")
-        dsp_id = _integer(_required(row, "id", path), f"{path}.id")
+        row_path = f"{path}[{index}]"
+        row = _mapping(value, row_path)
+        name = _string(_required(row, "name", row_path), f"{row_path}.name")
+        dsp_id = _integer(_required(row, "id", row_path), f"{row_path}.id")
         table[_kebab(name)] = dsp_id
         by_name[name] = dsp_id
-    for factoriolab_id, dsp_name in _RECIPE_ALIASES.items():
+    for factoriolab_id, dsp_name in aliases.items():
         if dsp_name in by_name:
             table[factoriolab_id] = by_name[dsp_name]
     return table
+
+
+@cache
+def _recipe_ids() -> dict[str, int]:
+    return _ids_table(_RECIPES, _RECIPE_ALIASES)
 
 
 @cache
@@ -1199,20 +1208,7 @@ _ITEMS = Path(__file__).parent / "data" / "items.json"
 
 @cache
 def _item_ids() -> dict[str, int]:
-    values = _array(_json(_ITEMS), str(_ITEMS))
-    table: dict[str, int] = {}
-    by_name: dict[str, int] = {}
-    for index, value in enumerate(values):
-        path = f"{_ITEMS}[{index}]"
-        row = _mapping(value, path)
-        name = _string(_required(row, "name", path), f"{path}.name")
-        dsp_id = _integer(_required(row, "id", path), f"{path}.id")
-        table[_kebab(name)] = dsp_id
-        by_name[name] = dsp_id
-    for factoriolab_id, dsp_name in _ITEM_ALIASES.items():
-        if dsp_name in by_name:
-            table[factoriolab_id] = by_name[dsp_name]
-    return table
+    return _ids_table(_ITEMS, _ITEM_ALIASES)
 
 
 _OBSERVED_ITEM_ALIASES: Final = {

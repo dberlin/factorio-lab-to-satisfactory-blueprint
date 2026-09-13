@@ -1156,3 +1156,8 @@ def test_the_default_power_tower_is_the_tesla_tower_id() -> None:
     assert catalog.power_tower_building(catalog.DEFAULT_POWER_TOWER).item_id == (
         catalog.TESLA_TOWER_ID
     )
+
+
+def test_recipe_and_item_tables_share_one_reader() -> None:
+    assert catalog._recipe_ids() == catalog._ids_table(catalog._RECIPES, catalog._RECIPE_ALIASES)
+    assert catalog._item_ids() == catalog._ids_table(catalog._ITEMS, catalog._ITEM_ALIASES)
