@@ -9,7 +9,7 @@ from dataclasses import dataclass, field, replace
 from functools import cache, partial
 from typing import Literal, cast
 
-from flab2bp.dsp import catalog, codec, colliders, planet, rules
+from flab2bp.dsp import catalog, codec, colliders, planet, quaternion, rules
 from flab2bp.layout import slots
 from flab2bp.layout.band_policy import BandPolicy
 from flab2bp.layout.base import AreaFrame, PlacedBuilding, Placement, PlacementCompletion
@@ -1619,7 +1619,7 @@ def _projected_addon_failure_from_context(
         # Projecting (addon.x + area.dx, addon.y + area.dy) made a transverse
         # supply miss the game's center by ~0.314 units even at the equator.
         position, rotation = projection.pose(addon.x, addon.y, float(addon.z), addon.yaw)
-        offset = colliders._qrot(
+        offset = quaternion.rotate(
             rotation, (float(area.dx), float(area.dz) * 4.0 / 3.0, float(area.dy))
         )
         target = (

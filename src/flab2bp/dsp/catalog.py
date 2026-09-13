@@ -56,6 +56,7 @@ from functools import cache, lru_cache
 from pathlib import Path
 from typing import Final, Protocol, TypedDict, TypeGuard
 
+from flab2bp.dsp import quaternion
 from flab2bp.dsp.rules import WORLD_UNITS_PER_LEVEL, PowerNode
 
 _DATA = Path(__file__).parent / "data" / "buildings.json"
@@ -1829,13 +1830,13 @@ def collider_span(item_id: int, yaw: float) -> tuple[float, float]:
     spin = (0.0, math.sin(half_turn), 0.0, math.cos(half_turn))
     ex = ez = 0.0
     for centre, half, rot in boxes:
-        turned = colliders._qmul(spin, rot)
-        rotated_centre = colliders._qrot(spin, centre)
+        turned = quaternion.multiply(spin, rot)
+        rotated_centre = quaternion.rotate(spin, centre)
         for sx in (-1.0, 1.0):
             for sy in (-1.0, 1.0):
                 for sz in (-1.0, 1.0):
                     local = (sx * half[0], sy * half[1], sz * half[2])
-                    spun = colliders._qrot(turned, local)
+                    spun = quaternion.rotate(turned, local)
                     ex = max(ex, abs(rotated_centre[0] + spun[0]))
                     ez = max(ez, abs(rotated_centre[2] + spun[2]))
     return (
