@@ -50,6 +50,7 @@ from flab2bp.dsp import (
 )
 from flab2bp.indexed import Nets, PortReservations, StakedPaths, UnionFind
 from flab2bp.indexed.staked_paths import StakedPathSnapshot
+from flab2bp.layout import budget as budget_module
 from flab2bp.layout import (
     finalize,
     geometric_router,
@@ -573,7 +574,7 @@ def _expired(deadline: float | None) -> bool:
     ``None`` means no deadline, which is what a caller reaching into these
     functions directly -- a test, a probe -- gets by default.
     """
-    return deadline is not None and time.monotonic() >= deadline
+    return budget_module.expired(deadline, time.monotonic)
 
 
 # --- adaptation ------------------------------------------------------------
