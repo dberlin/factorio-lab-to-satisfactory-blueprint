@@ -13,7 +13,9 @@ lookup re-reads them and compares before trusting it. Two version counters
 make the common case one integer comparison: the planned-tap version owned
 here, and the reservation mapping's own version. When a version moved the
 lookup falls back to comparing the recorded inputs and, if they still match,
-adopts the new version. Answers that depended on the whole staked selection
+adopts the new version; for taps that comparison is itself one dict read,
+because every tap change stamps the version onto the cells of its peer
+window. Answers that depended on the whole staked selection
 (a projected-frame proof or a junction frame ban) are also pinned to the
 staked-path version and are never kept across a tap change.
 
@@ -53,16 +55,18 @@ class JunctionAdmissionMemo:
     distance from it before the peer list is recomputed.
     """
 
-    __slots__ = ("_entries", "_tap_log", "hits", "invalidated", "misses", "taps_version")
+    __slots__ = ("_disturbed", "_entries", "hits", "invalidated", "misses", "taps_version")
 
-    #: Beyond this many tap changes since an entry was validated, compare the
-    #: recomputed peer list instead of scanning the log.
-    _LOG_SCAN_LIMIT = 64
+    #: The peer test's collision window: taps within this Chebyshev distance
+    #: of a cell, on every axis, are the peers `_can_junction` considers.
+    _PEER_WINDOW = 3
 
     def __init__(self) -> None:
         self._entries: dict[Any, _Entry] = {}
-        #: ``_tap_log[i]`` is the tap whose change moved the version to ``i + 1``.
-        self._tap_log: list[Cell] = []
+        #: The version at which a tap last changed inside each cell's peer
+        #: window.  Written once per tap change over the window's 343 cells,
+        #: so a lookup decides in one dict read whether its peers may differ.
+        self._disturbed: dict[Cell, int] = {}
         self.taps_version = 0
         self.hits = 0
         self.misses = 0
@@ -70,18 +74,19 @@ class JunctionAdmissionMemo:
 
     def taps_changed(self, tap: Cell) -> None:
         """A planned tap was added or withdrawn at ``tap``."""
-        self._tap_log.append(tap)
         self.taps_version += 1
+        version = self.taps_version
+        disturbed = self._disturbed
+        window = range(-self._PEER_WINDOW, self._PEER_WINDOW + 1)
+        tx, ty, tz = tap
+        for dx in window:
+            for dy in window:
+                for dz in window:
+                    disturbed[tx + dx, ty + dy, tz + dz] = version
 
     def _peers_may_differ(self, entry: _Entry, cell: Cell) -> bool:
         """Whether a tap within the collision window of ``cell`` changed since."""
-        changed = self._tap_log[entry.taps_version :]
-        if len(changed) > self._LOG_SCAN_LIMIT:
-            return True
-        x, y, level = cell
-        return any(
-            abs(tx - x) <= 3 and abs(ty - y) <= 3 and abs(tz - level) <= 3 for tx, ty, tz in changed
-        )
+        return self._disturbed.get(cell, 0) > entry.taps_version
 
     def forget_all(self) -> None:
         self.invalidated += len(self._entries)
