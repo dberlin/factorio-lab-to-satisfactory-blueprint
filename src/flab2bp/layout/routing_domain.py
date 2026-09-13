@@ -15678,9 +15678,14 @@ def plan_power_infill(
             raise _PreparationDeadline
         tile_free[x - min_x] = np.fromiter(
             (
-                canvas.free((x, y, 0))
-                and (x, y) not in canvas.solid
-                and (x, y) not in blocked_columns
+                # `fits` and not `free` + `solid`, which is the same pair
+                # spelled out, so that this mask and `free_site`'s ask ONE
+                # question.  They were the same until `free` learned to answer
+                # a narrower one for a caller that is not placing a belt: this
+                # is a tower site, `free_site` goes through `fits` and gets
+                # `belt=False`, and a wider mask here would hand the composed
+                # canvas a starvation the split exists to prevent.
+                canvas.fits(x, y, 1, 1) and (x, y) not in blocked_columns
                 for y in range(min_y, max_y + 1)
             ),
             dtype=bool,
