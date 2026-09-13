@@ -16,6 +16,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+from flab2bp.rates import CandidatePolicy
+
 _RANK = "arc-smelter~assembling-machine-2~chemical-plant~matrix-lab"
 _FAST_RANK = "plane-smelter~assembling-machine-3~quantum-chemical-plant~matrix-lab"
 
@@ -50,6 +52,22 @@ class CorpusEntry:
     #: Whether the tree touches an item with more than one producing recipe.
     multi_producer: bool = False
     note: str = ""
+    #: Seconds this entry needs for a given candidate policy, when a sweep's
+    #: shared budget is less than that.
+    #:
+    #: A CELL, not an entry, is what a budget belongs to: two proliferation
+    #: policies of one URL are two different routing problems, and on
+    #: `universe-matrix` they differ by more than the gate's whole budget.  A
+    #: floor is declared here, beside the measurement that justifies it, rather
+    #: than passed on a command line that no re-run remembers.
+    budget_floors: tuple[tuple[CandidatePolicy, float], ...] = ()
+
+    def budget_floor_s(self, policy: CandidatePolicy) -> float:
+        """Seconds this cell needs, or 0.0 when it takes the sweep's budget."""
+        for declared, floor in self.budget_floors:
+            if declared is policy:
+                return floor
+        return 0.0
 
 
 def _list_url(target: str, *, belt: str = "conveyor-belt-2", rank: str = _RANK) -> str:
@@ -149,6 +167,17 @@ URL_CORPUS: tuple[CorpusEntry, ...] = (
         955,
         multi_producer=True,
         note="deepest real chain (depth 9); where a strategy stops scaling",
+        # The two sprayed policies pack 53-54 strips and route 279-412 nets;
+        # neither finishes a pack inside the 15s the rest of the corpus uses.
+        # all-products is CLEAN in 16.7s at this floor.  output-products is not
+        # -- measured, it needs between 40s and 60s, because its first pack is
+        # unusable for a reason no budget changes (see the 2026-09-13 sprayed
+        # routing report) -- and 20s is what it is given anyway, so the gate
+        # measures the same cell the rest of the corpus is measured against.
+        budget_floors=(
+            (CandidatePolicy.ALL_PRODUCTS, 20.0),
+            (CandidatePolicy.OUTPUT_PRODUCTS, 20.0),
+        ),
     ),
 )
 

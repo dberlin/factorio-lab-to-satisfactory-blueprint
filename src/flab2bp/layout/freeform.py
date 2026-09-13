@@ -95,6 +95,7 @@ from flab2bp.layout.finalize import ProjectionNoGood
 from flab2bp.layout.observe import SearchEvent, SearchObserver, SearchPhase, stranded_endpoints
 from flab2bp.layout.piling import PilerPlan
 from flab2bp.layout.route_feedback import (
+    BudgetCause,
     Cell,
     ClusterRelationNoGood,
     DetailedRouteResult,
@@ -265,9 +266,23 @@ _PACK_SHARE = 0.35
 #: from more than a 15s ceiling could reach to less, the second candidate height
 #: exhausted it, and every height after that got nothing.  A budget that binds
 #: before the clock does not bound the runaway the clock already bounds; it just
-#: silently deletes the back half of the sweep.  Four hundred thousand a second
-#: is roughly two and a half times the measured 155k/sec.
-_ROUTING_EXPANSIONS_PER_SECOND = 400_000
+#: silently deletes the back half of the sweep.
+#:
+#: THE RATE IT IS 2.5x OF HAS TO BE THE RATE THE ROUTER ACTUALLY RUNS AT.  400k
+#: was 2.5x a measured 155k/sec; the sprayed `universe-matrix` cells spend
+#: 3.32M expansions in the 14.0s `_route_all` of their first pack, which is
+#: 237k/sec, so 400k was only 1.7x and the backstop had quietly become the
+#: binding constraint.  It binds through the coverage pass, which hands each net
+#: `budget["left"] // nets_remaining`: at a 20s ceiling that is 8.0M/279 = 28.7k
+#: for the first net on a canvas whose hard queries measure 90k-190k, so the
+#: first pass rations the very searches it exists to complete.
+#:
+#: Measured, `universe-matrix` all-products at a 20s ceiling: REFUSED at 400k
+#: (one net unrouted, the clock never reached), CLEAN in 17.4s at 600k -- the
+#: same area 28,800 the cell gives at a 30s ceiling, whose 12M ledger was never
+#: the bound.  Six hundred thousand restores the 2.5x margin against the rate
+#: measured today.
+_ROUTING_EXPANSIONS_PER_SECOND = 600_000
 
 
 def lanes_for(rate: Fraction, capacity: Fraction) -> int:
@@ -4293,6 +4308,14 @@ def _port_seating_refusal(attempts: Sequence[PackAttempt]) -> str | None:
     )
 
 
+def _budget_cause_summary(cause_counts: Mapping[BudgetCause, int]) -> str:
+    """Name the bounds behind the BUDGET failures, cheapest question first."""
+    return ", ".join(
+        f"{(cause.value or 'unattributed')}={count}"
+        for cause, count in sorted(cause_counts.items(), key=lambda pair: pair[0].value)
+    )
+
+
 def _routing_failure_bound(attempts: Sequence[PackAttempt]) -> str | None:
     """Name what the retained routing attempts prove, without blaming all packing.
 
@@ -4315,11 +4338,14 @@ def _routing_failure_bound(attempts: Sequence[PackAttempt]) -> str | None:
         return None
 
     kind_counts: dict[RouteFailureKind, int] = defaultdict(int)
+    cause_counts: dict[BudgetCause, int] = defaultdict(int)
     logical_by_attempt: list[set[LogicalNetId]] = []
     for attempt in routed:
         logical_by_attempt.append({failure.net_id.logical for failure in attempt.routing.failures})
         for failure in attempt.routing.failures:
             kind_counts[failure.kind] += 1
+            if failure.kind is RouteFailureKind.BUDGET:
+                cause_counts[failure.budget_cause] += 1
     kinds = ", ".join(
         f"{kind.value}={count}"
         for kind, count in sorted(kind_counts.items(), key=lambda pair: pair[0].value)
@@ -4329,10 +4355,32 @@ def _routing_failure_bound(attempts: Sequence[PackAttempt]) -> str | None:
         f"route evidence from {len(routed)} packs at candidate heights {heights}: "
         f"failure kinds {kinds}; "
     )
+    if RouteFailureKind.BUDGET in kind_counts:
+        evidence += f"budget causes {_budget_cause_summary(cause_counts)}; "
     if set(kind_counts) == {RouteFailureKind.BUDGET}:
+        # BUDGET means "no proof of impossibility", and the clock is only one of
+        # the three things that reach it. Saying ROUTING-CLOCK for all of them
+        # tells a reader to buy seconds that an expansion cap or a bounded
+        # search would spend to no effect.
+        if set(cause_counts) == {BudgetCause.DEADLINE}:
+            return (
+                evidence + "every failure is BUDGET on the routing clock, so this is a "
+                "ROUTING-CLOCK bound and not a verdict on the packing"
+            )
+        if BudgetCause.UNKNOWN in cause_counts:
+            return (
+                evidence + "every failure is BUDGET but not every one names its bound, so "
+                "the routing clock cannot be read into them"
+            )
+        if BudgetCause.DEADLINE not in cause_counts:
+            return (
+                evidence + "every failure is BUDGET and none of them is the clock, so more "
+                "seconds cannot change this; an expansion allowance or a bounded search "
+                "is what refused"
+            )
         return (
-            evidence + "every failure is BUDGET, so this is a ROUTING-CLOCK bound and not "
-            "a verdict on the packing"
+            evidence + "every failure is BUDGET but only some are the clock, so a "
+            "ROUTING-CLOCK bound covers part of this and not the rest"
         )
     if RouteFailureKind.BUDGET in kind_counts:
         return (

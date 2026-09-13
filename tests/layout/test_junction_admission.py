@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from flab2bp.layout.junction_admission import JunctionAdmissionMemo
 
 Cell = tuple[int, int, int]
@@ -104,15 +106,54 @@ def test_a_near_tap_change_keeps_the_answer_only_while_the_peers_agree() -> None
     assert _lookup(memo, peers=((6, 6, 0), (4, 4, 0))) is None, "a new peer may collide"
 
 
-def test_a_long_tap_history_falls_back_to_comparing_the_peers() -> None:
+def test_a_long_history_of_far_taps_keeps_the_answer_without_a_peer_scan() -> None:
     memo = JunctionAdmissionMemo()
     _store(memo)
-    for _ in range(JunctionAdmissionMemo._LOG_SCAN_LIMIT + 1):
+    for _ in range(200):
         memo.taps_changed((40, 40, 0))
-    assert _lookup(memo, peers=((6, 6, 0),)) is True
+
+    def not_asked() -> tuple[Cell, ...]:
+        raise AssertionError("no tap inside the window changed")
+
+    assert (
+        memo.lookup(
+            KEY,
+            planned_here=0,
+            in_guard=False,
+            reserved_version=5,
+            read_reserved={(3, 5, 0): (9, 9, 0)}.get,
+            routing_ports=OWN_PORTS,
+            paths_version=2,
+            peers=not_asked,
+        )
+        is True
+    )
+
+
+@pytest.mark.parametrize(
+    "tap, disturbed",
+    [
+        ((6, 7, 3), True),
+        ((0, 1, -3), True),
+        ((7, 4, 0), False),
+        ((3, 8, 0), False),
+        ((3, 4, 4), False),
+    ],
+)
+def test_the_window_edge_is_inclusive_on_every_axis(tap: Cell, disturbed: bool) -> None:
+    memo = JunctionAdmissionMemo()
     _store(memo)
-    for _ in range(JunctionAdmissionMemo._LOG_SCAN_LIMIT + 1):
-        memo.taps_changed((40, 40, 0))
+    memo.taps_changed(tap)
+    assert (_lookup(memo, peers=()) is None) is disturbed
+
+
+def test_a_disturbance_before_the_entry_was_validated_does_not_count() -> None:
+    memo = JunctionAdmissionMemo()
+    memo.taps_changed((4, 4, 0))
+    _store(memo)
+    memo.taps_changed((40, 40, 0))
+    assert _lookup(memo, peers=()) is True, "the entry was stored after the near change"
+    memo.taps_changed((4, 4, 0))
     assert _lookup(memo, peers=()) is None
 
 
