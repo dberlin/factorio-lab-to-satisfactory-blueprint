@@ -27,7 +27,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from flab2bp.sfy.archive import ArchiveError, ObjectRef, Reader, Writer
-from flab2bp.sfy.properties import PropertyList, read_property_list, write_property_list
+from flab2bp.sfy.properties import (
+    PropertyList,
+    check_tag_format,
+    read_property_list,
+    write_property_list,
+)
 from flab2bp.sfy.trailers import Trailer, read_trailer, write_trailer
 from flab2bp.sfy.versions import SaveCustomVersion
 
@@ -193,6 +198,7 @@ def write_object_data(d: ObjectData, header: ObjectHeader, fmt: TagFormat) -> by
         if d.control is None:
             raise ArchiveError(f"{header.path} has no control byte and the file format wants one")
         w.u8(d.control)
+    check_tag_format(d.properties, fmt.modern, f"{header.path}.")
     write_property_list(w, d.properties)
     write_trailer(w, d.trailer)
     return w.getvalue()

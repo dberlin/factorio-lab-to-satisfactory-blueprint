@@ -75,16 +75,20 @@ tag's ``size`` and remembered on the value (``wide``) so the write is identical.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from flab2bp.sfy.archive import ArchiveError, ObjectRef, Reader, Writer
 
 __all__ = [
     "BINARY_STRUCTS",
+    "DEFAULT_ENUM_STORAGE",
+    "DEFAULT_TYPE_PACKAGE",
+    "MAX_TYPE_NAME_DEPTH",
     "TAG_BOOL_TRUE",
     "TAG_HAS_ARRAY_INDEX",
     "TAG_HAS_PROPERTY_GUID",
     "TAG_NATIVE_SERIALIZE",
+    "TYPE_PACKAGES",
     "Array",
     "BinaryStruct",
     "Bool",
@@ -119,6 +123,8 @@ __all__ = [
     "Value",
     "Vector",
     "Vector2D",
+    "check_tag_format",
+    "modern_type_name",
     "read_property_list",
     "read_struct_value",
     "write_property_list",
@@ -164,6 +170,17 @@ class TypeName:
 
 @dataclass(frozen=True, slots=True)
 class Tag:
+    """One property's header, in whichever tag format its file uses.
+
+    The flat fields are the classic tag's, and a modern tag fills the same ones
+    from its type tree so callers need not care which format they hold.
+    ``type_package`` and ``enum_storage`` are the two things the tree says that
+    the classic tag never did -- the package a struct or enum name lives in, and
+    the integer type behind an enum -- and they exist so that
+    :func:`modern_type_name` can rebuild the tree from the flat fields alone.
+    ``type_name is None`` means a classic tag.
+    """
+
     name: str
     type: str
     index: int
@@ -176,6 +193,29 @@ class Tag:
     guid: bytes | None = None
     type_name: TypeName | None = None
     flags: int | None = None
+    type_package: str | None = None
+    enum_storage: str | None = None
+
+    def as_modern(self, flags: int = 0) -> Tag:
+        """This tag in the modern format: its type tree and the fields it implies.
+
+        Authoring for a save-version-58-or-later file is then
+        ``Tag("mCustomizationData", "StructProperty", 0,
+        struct_name="FactoryCustomizationData").as_modern()``. ``flags`` is the
+        caller's because :data:`TAG_NATIVE_SERIALIZE` depends on the value, not
+        on the tag; the index and guid bits are added by the writer. A struct
+        guid is dropped, because a modern tag has nowhere to keep one.
+        """
+        node = modern_type_name(self)
+        flat = _flatten(node)
+        return replace(
+            self,
+            struct_guid=None,
+            type_name=node,
+            flags=flags,
+            type_package=flat.type_package,
+            enum_storage=flat.enum_storage,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -495,12 +535,39 @@ class _TagRead:
     bool_value: int | None
 
 
-def _read_type_name(r: Reader) -> TypeName:
+MAX_TYPE_NAME_DEPTH = 32
+"""Nesting a type tree may reach. The deepest in the corpus is 4; a file that
+claims more is malformed, and the cap keeps a bad byte from recursing forever."""
+
+TYPE_PACKAGES: dict[str, str] = {
+    "Box": "/Script/CoreUObject",
+    "Color": "/Script/CoreUObject",
+    "Guid": "/Script/CoreUObject",
+    "IntVector": "/Script/CoreUObject",
+    "LinearColor": "/Script/CoreUObject",
+    "Quat": "/Script/CoreUObject",
+    "Rotator": "/Script/CoreUObject",
+    "Transform": "/Script/CoreUObject",
+    "Vector": "/Script/CoreUObject",
+    "Vector2D": "/Script/CoreUObject",
+    "SplinePointData": "/Script/Engine",
+}
+"""Packages for the engine type names the fixtures use. Everything else the game
+serialises comes from ``/Script/FactoryGame``, which :func:`modern_type_name`
+assumes when a tag carries no ``type_package`` of its own."""
+
+DEFAULT_TYPE_PACKAGE = "/Script/FactoryGame"
+DEFAULT_ENUM_STORAGE = "ByteProperty"
+
+
+def _read_type_name(r: Reader, depth: int = 0) -> TypeName:
+    if depth > MAX_TYPE_NAME_DEPTH:
+        raise ArchiveError(f"type name nested deeper than {MAX_TYPE_NAME_DEPTH} at {r.pos}")
     name = r.fstring()
     count = r.i32()
     if count < 0:
         raise ArchiveError(f"type name {name!r} declares {count} parameters")
-    return TypeName(name, tuple(_read_type_name(r) for _ in range(count)))
+    return TypeName(name, tuple(_read_type_name(r, depth + 1) for _ in range(count)))
 
 
 def _write_type_name(w: Writer, node: TypeName) -> None:
@@ -510,6 +577,77 @@ def _write_type_name(w: Writer, node: TypeName) -> None:
         _write_type_name(w, p)
 
 
+@dataclass(frozen=True, slots=True)
+class _Flat:
+    """A type tree spelled as the classic tag's named fields, and back again."""
+
+    struct_name: str | None = None
+    enum_name: str | None = None
+    inner_type: str | None = None
+    key_type: str | None = None
+    value_type: str | None = None
+    type_package: str | None = None
+    enum_storage: str | None = None
+
+
+def _package_of(node: TypeName) -> str | None:
+    """A struct or enum name node's one child is the package it lives in."""
+    return node.params[0].name if node.params else None
+
+
+def _flatten(node: TypeName) -> _Flat:
+    """Read a type tree into flat fields; :func:`modern_type_name` is the inverse."""
+    params = node.params
+    if node.name == "StructProperty" and params:
+        return _Flat(struct_name=params[0].name, type_package=_package_of(params[0]))
+    if node.name in ("ByteProperty", "EnumProperty") and params:
+        return _Flat(
+            enum_name=params[0].name,
+            type_package=_package_of(params[0]),
+            enum_storage=params[1].name if len(params) > 1 else None,
+        )
+    if node.name in ("ArrayProperty", "SetProperty") and params:
+        return replace(_flatten(params[0]), inner_type=params[0].name)
+    if node.name == "MapProperty" and len(params) >= 2:
+        return _Flat(key_type=params[0].name, value_type=params[1].name)
+    return _Flat()
+
+
+def _named_node(name: str, package: str | None) -> TypeName:
+    return TypeName(name, (TypeName(package or TYPE_PACKAGES.get(name, DEFAULT_TYPE_PACKAGE)),))
+
+
+def _type_node(typ: str, tag: Tag) -> TypeName:
+    if typ == "StructProperty" and tag.struct_name:
+        return TypeName(typ, (_named_node(tag.struct_name, tag.type_package),))
+    enum_name = tag.enum_name
+    if typ in ("ByteProperty", "EnumProperty") and enum_name is not None and enum_name != "None":
+        storage = TypeName(tag.enum_storage or DEFAULT_ENUM_STORAGE)
+        return TypeName(typ, (_named_node(enum_name, tag.type_package), storage))
+    if typ in ("ArrayProperty", "SetProperty") and tag.inner_type:
+        return TypeName(typ, (_type_node(tag.inner_type, tag),))
+    if typ == "MapProperty" and tag.key_type and tag.value_type:
+        return TypeName(typ, (TypeName(tag.key_type), TypeName(tag.value_type)))
+    return TypeName(typ)
+
+
+def modern_type_name(tag: Tag) -> TypeName:
+    """Build the modern tag's ``FPropertyTypeName`` tree from a tag's flat fields.
+
+    This is the inverse of the flattening a modern tag goes through when it is
+    read, so a tag authored from scratch -- ``Tag("mCustomizationData",
+    "StructProperty", 0, struct_name="FactoryCustomizationData")`` -- gets the
+    tree the game writes without anyone spelling one out. A struct or enum name
+    takes its package from the tag's ``type_package``, else from
+    :data:`TYPE_PACKAGES`, else :data:`DEFAULT_TYPE_PACKAGE`.
+
+    The ``flags`` byte is deliberately not derived here: ``TAG_NATIVE_SERIALIZE``
+    says how the game serialises a struct, which no flat field records, so an
+    author sets it alongside the value they chose.
+    """
+    return _type_node(tag.type, tag)
+
+
 def _read_modern_tag(r: Reader, name: str) -> _TagRead:
     node = _read_type_name(r)
     size = r.i32()
@@ -517,29 +655,21 @@ def _read_modern_tag(r: Reader, name: str) -> _TagRead:
     index = r.i32() if flags & TAG_HAS_ARRAY_INDEX else 0
     guid = r.guid() if flags & TAG_HAS_PROPERTY_GUID else None
     bool_value = (1 if flags & TAG_BOOL_TRUE else 0) if node.name == "BoolProperty" else None
-    # The tree's parameters are what the classic tag spelled out as named fields.
-    params = node.params
-    first = params[0].name if params else None
-    struct_name = first if node.name == "StructProperty" else None
-    enum_name = first if node.name in ("ByteProperty", "EnumProperty") else None
-    inner_type = first if node.name in ("ArrayProperty", "SetProperty") else None
-    if inner_type == "StructProperty" and params[0].params:
-        struct_name = params[0].params[0].name
-    key_type = value_type = None
-    if node.name == "MapProperty" and len(params) >= 2:
-        key_type, value_type = params[0].name, params[1].name
+    flat = _flatten(node)
     tag = Tag(
         name,
         node.name,
         index,
-        struct_name=struct_name,
-        enum_name=enum_name,
-        inner_type=inner_type,
-        key_type=key_type,
-        value_type=value_type,
+        struct_name=flat.struct_name,
+        enum_name=flat.enum_name,
+        inner_type=flat.inner_type,
+        key_type=flat.key_type,
+        value_type=flat.value_type,
         guid=guid,
         type_name=node,
         flags=flags,
+        type_package=flat.type_package,
+        enum_storage=flat.enum_storage,
     )
     return _TagRead(tag, size, bool_value)
 
@@ -617,7 +747,8 @@ def write_tag(w: Writer, tag: Tag, size: int, bool_value: int | None = None) -> 
 
 
 def _write_modern_tag(w: Writer, tag: Tag, size: int, bool_value: int | None) -> None:
-    assert tag.type_name is not None
+    if tag.type_name is None:
+        raise ArchiveError(f"{tag.name}: modern tag without a type name")
     _write_type_name(w, tag.type_name)
     w.i32(size)
     flags = tag.flags or 0
@@ -855,9 +986,41 @@ def write_property_list(w: Writer, props: PropertyList) -> None:
 
     The tag format is not a parameter here: each :class:`Tag` carries its own
     (``type_name is None`` means the classic one), so a list reads and writes
-    back in the format it arrived in.
+    back in the format it arrived in. Whether that is the format the *file*
+    wants is :func:`check_tag_format`'s question, which
+    :func:`flab2bp.sfy.objects.write_object_data` asks before it gets here.
     """
     _write_fields(w, props)
+
+
+def check_tag_format(props: PropertyList, modern: bool, prefix: str = "") -> None:
+    """Raise :class:`ArchiveError` if any tag is in the other file's tag format.
+
+    Each tag writes itself in the shape it carries, so a tag built by hand for
+    the wrong format would be emitted without complaint and quietly corrupt the
+    file. The caller knows which format the file uses; this walks the whole
+    tree -- nested structs, array elements, a classic array's inner tag -- and
+    names the first property that disagrees.
+    """
+    want = "modern" if modern else "classic"
+    for p in props:
+        where = f"{prefix}{p.tag.name}"
+        if (p.tag.type_name is not None) != modern:
+            got = "modern" if p.tag.type_name is not None else "classic"
+            raise ArchiveError(f"{where}: {got} tag in a {want} file")
+        _check_value_format(p.value, modern, where)
+
+
+def _check_value_format(value: Value, modern: bool, where: str) -> None:
+    if isinstance(value, Struct):
+        check_tag_format(value.fields, modern, f"{where}.")
+    elif isinstance(value, Array):
+        if value.inner_type == "StructProperty" and (value.inner_tag is not None) is modern:
+            had = "carries" if modern else "lacks"
+            want = "modern" if modern else "classic"
+            raise ArchiveError(f"{where}: struct array {had} an inner tag in a {want} file")
+        for item in value.items:
+            _check_value_format(item, modern, where)
 
 
 def _read_fields(r: Reader, modern: bool) -> PropertyList:
