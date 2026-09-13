@@ -794,6 +794,9 @@ def _run_started_cell(job_id: int, job: Job, belt_rules: catalog.BeltAltitudeRul
 #: and the RuntimeError below discarded the whole run's JSON. Reaping a killed
 #: process is not work the workers do, so a generous bound costs nothing.
 _TEARDOWN_JOIN_S = 15.0
+#: Set when the teardown above could not stop a worker; main prints it after
+#: the rows are written and exits non-zero.
+_TEARDOWN_FAILURE: str | None = None
 
 
 def _stop_audit_workers(
@@ -970,7 +973,14 @@ def _run_jobs(
                     except Exception as exc:
                         failed_url(url, exc)
         finally:
-            _stop_audit_workers(pool, groups, prior_children)
+            # Every settled result is already published; a worker that will not
+            # die is a cleanup fault, not a verdict on the cells. Keep the rows
+            # and let main report the fault after writing them.
+            try:
+                _stop_audit_workers(pool, groups, prior_children)
+            except RuntimeError as exc:
+                global _TEARDOWN_FAILURE
+                _TEARDOWN_FAILURE = str(exc)
 
     for job_id, job in enumerate(jobs):
         if job_id not in terminal:
@@ -1167,6 +1177,9 @@ def main() -> int:
             "emits nothing, while an invalid blueprint pastes and then does not "
             "run. Fix the invalid ones first."
         )
+    if _TEARDOWN_FAILURE is not None:
+        print(f"\n!! TEARDOWN FAULT: {_TEARDOWN_FAILURE}. Rows above are complete.")
+        return 1
     return 1 if failed else 0
 
 
