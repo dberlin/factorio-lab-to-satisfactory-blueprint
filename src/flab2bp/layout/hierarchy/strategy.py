@@ -129,6 +129,7 @@ from dataclasses import dataclass, field
 from typing import Literal, cast
 
 from flab2bp.dsp import catalog
+from flab2bp.layout import budget as budget_module
 from flab2bp.layout import process_resources
 from flab2bp.layout.band_policy import BandPolicy
 from flab2bp.layout.base import (
@@ -1095,7 +1096,11 @@ class HierarchicalLayout:
             )
 
         while ready or pending:
-            while ready and len(pending) < width and time.monotonic() < deadline:
+            while (
+                ready
+                and len(pending) < width
+                and not budget_module.expired(deadline, time.monotonic)
+            ):
                 shape = ready.popleft()
                 keys = keys_by_shape[shape]
                 while keys and all(slot in solved_slots for slot in slots_by_key[keys[0]]):
