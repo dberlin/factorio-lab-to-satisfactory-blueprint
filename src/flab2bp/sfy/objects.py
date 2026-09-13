@@ -7,8 +7,15 @@ FVector translation (3 f32), FVector scale (3 f32), int32 placedInLevel;
 components then FString parent actor path.
 
 Object data: int32 size, then for actors FObjectReferenceDisc parent,
-int32 component count, that many references; then the tagged property list
-and a class-specific trailer, kept here as an opaque ``body``.
+int32 component count, that many references; then the object body -- a
+``uint8 SerializationControl`` byte on the newer saves, the tagged property
+list, and a class-specific trailer.
+
+The control byte is ``UObject::Serialize``'s, written from FileVersionUE5 1011
+and always 0 in this corpus. It arrives with the UE 5.4 property tag, so its
+presence is what tells :mod:`flab2bp.sfy.properties` which tag format to read.
+A tag name is an FString of at least five bytes, so the low byte of a real
+first tag is never zero and the two cannot be confused.
 
 The object-flags field was probed on the fixture corpus: it is present at
 SaveVersion 52, 58 and 60 and absent at SaveVersion 46, so the boundary
@@ -20,6 +27,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from flab2bp.sfy.archive import ArchiveError, ObjectRef, Reader, Writer
+from flab2bp.sfy.properties import PropertyList, read_property_list, write_property_list
+from flab2bp.sfy.trailers import Trailer, read_trailer, write_trailer
 from flab2bp.sfy.versions import SaveCustomVersion
 
 __all__ = [
@@ -69,9 +78,18 @@ class ObjectHeader:
 
 @dataclass(frozen=True, slots=True)
 class ObjectData:
+    """One object's payload: the actor envelope, then the decoded body.
+
+    ``control`` is the leading ``uint8 SerializationControl`` byte on bodies
+    that carry one (save version 58 and up here) and ``None`` on the older
+    ones, where it is absent from the bytes rather than zero.
+    """
+
     parent: ObjectRef | None
     components: tuple[ObjectRef, ...] | None
-    body: bytes
+    control: int | None
+    properties: PropertyList
+    trailer: Trailer
 
 
 def _has_flags(save_version: int) -> bool:
@@ -137,11 +155,15 @@ def write_toc(w: Writer, headers: tuple[ObjectHeader, ...], save_version: int) -
 
 def read_object_data(raw: bytes, header: ObjectHeader) -> ObjectData:
     r = Reader(raw)
+    parent: ObjectRef | None = None
+    components: tuple[ObjectRef, ...] | None = None
     if header.kind == ACTOR:
         parent = r.object_ref()
         components = tuple(r.object_ref() for _ in range(r.i32()))
-        return ObjectData(parent, components, raw[r.pos :])
-    return ObjectData(None, None, raw)
+    control = r.u8() if r.remaining() and r.data[r.pos] == 0 else None
+    properties = read_property_list(r, control is not None)
+    trailer = read_trailer(r, header.class_name, header.kind)
+    return ObjectData(parent, components, control, properties, trailer)
 
 
 def write_object_data(d: ObjectData, header: ObjectHeader) -> bytes:
@@ -153,5 +175,8 @@ def write_object_data(d: ObjectData, header: ObjectHeader) -> bytes:
         w.i32(len(d.components))
         for c in d.components:
             w.object_ref(c)
-    w.raw(d.body)
+    if d.control is not None:
+        w.u8(d.control)
+    write_property_list(w, d.properties)
+    write_trailer(w, d.trailer)
     return w.getvalue()

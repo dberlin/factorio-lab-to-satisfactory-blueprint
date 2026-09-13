@@ -11,10 +11,12 @@ The corpus spans an engine change. ``UObject::Serialize`` writes a
 ``uint8 SerializationControl`` byte in front of the properties once
 ``FileVersionUE5`` reaches 1011, and at 1012 (UE 5.4) the property tag was
 replaced by one carrying a full ``FPropertyTypeName`` tree. Both arrive
-together here: every object at save version 58 and 60 has the control byte and
-a modern tag, every object at save version 46 and 52 has neither. The control
-byte is therefore what selects the tag format, and it is kept on
-:class:`ObjectProperties` so the body writes back identically.
+together: every object at save version 58 and 60 has the control byte and a
+modern tag, every object at save version 46 and 52 has neither. That byte
+belongs to the object envelope, so :mod:`flab2bp.sfy.objects` reads it and
+passes the format down as the ``modern`` argument of
+:func:`read_property_list`. Writing needs no such argument: each :class:`Tag`
+remembers its own format.
 
 Classic tag (save version 46, 52): ``FString name`` -- the FString ``"None"``
 ends the list; ``FString type``; ``int32 size``; ``int32 index``; then per type
@@ -99,7 +101,6 @@ __all__ = [
     "Map",
     "Name",
     "Object",
-    "ObjectProperties",
     "Opaque",
     "Property",
     "PropertyList",
@@ -182,30 +183,6 @@ class Property:
 
 
 PropertyList = tuple[Property, ...]
-
-
-class ObjectProperties(tuple[Property, ...]):
-    """An object body's property list plus the byte UE5 writes in front of it.
-
-    ``control`` is the ``uint8 SerializationControl`` of
-    ``UObject::Serialize``, present from ``FileVersionUE5`` 1011 and always 0
-    in this corpus, or ``None`` for the older bodies that have no such byte. It
-    also selects the tag format (see the module docstring).
-
-    The byte belongs to the object body, not to a property list, so nested
-    struct lists never have one. It rides on the tuple rather than in it, so
-    the list still compares equal to a plain tuple of properties and still
-    iterates as one.
-    """
-
-    control: int | None
-
-    def __new__(
-        cls, items: tuple[Property, ...] = (), control: int | None = None
-    ) -> ObjectProperties:
-        self = super().__new__(cls, items)
-        self.control = control
-        return self
 
 
 @dataclass(frozen=True, slots=True)
@@ -861,25 +838,23 @@ def _read_value(r: Reader, tag: Tag, size: int, bool_value: int | None, modern: 
     return Opaque(r.bytes(size))
 
 
-def read_property_list(r: Reader) -> PropertyList:
-    """Read one object body's properties, through the ``None`` terminator.
+def read_property_list(r: Reader, modern: bool) -> PropertyList:
+    """Read one property list, through the ``None`` terminator.
 
-    A leading zero byte is UE5's ``SerializationControl`` (see
-    :class:`ObjectProperties`) and selects the modern tag format. A tag name is
-    an FString of at least five bytes, so the low byte of a real first tag is
-    never zero and the two cannot be confused.
+    ``modern`` selects the tag format: the caller knows it, because the
+    ``SerializationControl`` byte that :mod:`flab2bp.sfy.objects` reads off the
+    front of an object body arrives with the same engine version.
     """
-    control: int | None = None
-    if r.remaining() and r.data[r.pos] == 0:
-        control = r.u8()
-    return ObjectProperties(_read_fields(r, control is not None), control)
+    return _read_fields(r, modern)
 
 
 def write_property_list(w: Writer, props: PropertyList) -> None:
-    """Write an object body's properties, followed by the ``None`` terminator."""
-    control = getattr(props, "control", None)
-    if control is not None:
-        w.u8(control)
+    """Write a property list, followed by the ``None`` terminator.
+
+    The tag format is not a parameter here: each :class:`Tag` carries its own
+    (``type_name is None`` means the classic one), so a list reads and writes
+    back in the format it arrived in.
+    """
     _write_fields(w, props)
 
 

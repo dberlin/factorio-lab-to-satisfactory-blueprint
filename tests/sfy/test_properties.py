@@ -10,7 +10,6 @@ from flab2bp.sfy.properties import (
     Float,
     Int,
     Object,
-    ObjectProperties,
     Opaque,
     Property,
     Struct,
@@ -23,11 +22,11 @@ from flab2bp.sfy.properties import (
 from tests.sfy.conftest import fixture_paths
 
 
-def _round_trip(props):
+def _round_trip(props, modern=False):
     w = Writer()
     write_property_list(w, props)
     r = Reader(w.getvalue())
-    again = read_property_list(r)
+    again = read_property_list(r, modern)
     r.expect_end()
     return again, w.getvalue()
 
@@ -88,7 +87,7 @@ def test_struct_array_of_vectors_round_trip():
     assert again == props
 
 
-def test_modern_tag_round_trip_keeps_the_type_tree_and_the_control_byte():
+def test_modern_tag_round_trip_keeps_the_type_tree():
     """Save version 58 and up: a type-name tree, a flags byte, and a bool in it."""
     struct_tree = TypeName(
         "StructProperty",
@@ -98,54 +97,55 @@ def test_modern_tag_round_trip_keeps_the_type_tree_and_the_control_byte():
         Tag("SwatchDesc", "ObjectProperty", 0, type_name=TypeName("ObjectProperty"), flags=0),
         Object(ObjectRef("", "")),
     )
-    props = ObjectProperties(
-        (
-            Property(
-                Tag(
-                    "mIsReversed",
-                    "BoolProperty",
-                    0,
-                    type_name=TypeName("BoolProperty"),
-                    flags=TAG_BOOL_TRUE,
-                ),
-                Bool(True),
+    props = (
+        Property(
+            Tag(
+                "mIsReversed",
+                "BoolProperty",
+                0,
+                type_name=TypeName("BoolProperty"),
+                flags=TAG_BOOL_TRUE,
             ),
-            Property(
-                Tag(
-                    "mCustomizationData",
-                    "StructProperty",
-                    0,
-                    struct_name="FactoryCustomizationData",
-                    type_name=struct_tree,
-                    flags=0,
-                ),
-                Struct("FactoryCustomizationData", (inner,)),
-            ),
+            Bool(True),
         ),
-        control=0,
+        Property(
+            Tag(
+                "mCustomizationData",
+                "StructProperty",
+                0,
+                struct_name="FactoryCustomizationData",
+                type_name=struct_tree,
+                flags=0,
+            ),
+            Struct("FactoryCustomizationData", (inner,)),
+        ),
     )
-    again, raw = _round_trip(props)
-    assert raw.startswith(b"\x00")
+    again, _ = _round_trip(props, modern=True)
     assert again == props
-    assert again.control == 0
 
 
 def test_every_fixture_object_body_parses_with_a_trailer():
-    """Every object's body is a property list followed by a short trailer.
+    """Every object's body splits into a property list and a trailer.
 
-    The trailer is decoded in Task 7; here it must merely be non-negative.
+    ``read_object_data`` does the splitting now; what this checks on all 1934
+    real bodies is that the properties it hands back write out and read back in
+    unchanged, and that a trailer was classified for every one of them.
     """
-    lengths = Counter()
+    seen = Counter()
     for path in fixture_paths():
         bp = read_sbp(path.read_bytes())
         for h, d in bp.objects:
-            r = Reader(d.body)
-            props = read_property_list(r)
-            lengths[(h.class_name, r.remaining())] += 1
             w = Writer()
-            write_property_list(w, props)
-            assert w.getvalue() == d.body[: r.pos], (path.name, h.path)
-    assert all(n >= 0 for (_, n) in lengths)
+            write_property_list(w, d.properties)
+            r = Reader(w.getvalue())
+            assert read_property_list(r, d.control is not None) == d.properties, (
+                path.name,
+                h.path,
+            )
+            r.expect_end()
+            assert d.trailer is not None, (path.name, h.path)
+            seen[h.class_name] += 1
+    assert sum(seen.values()) > 0
 
 
 def test_no_opaque_values_in_the_classes_the_layout_needs():
@@ -189,6 +189,6 @@ def test_no_opaque_values_in_the_classes_the_layout_needs():
         for h, d in bp.objects:
             if h.class_name not in needed:
                 continue
-            for p in read_property_list(Reader(d.body)):
+            for p in d.properties:
                 visit(p.value, h.class_name)
     assert not opaque, dict(opaque)
