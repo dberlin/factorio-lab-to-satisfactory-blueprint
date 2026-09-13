@@ -18,7 +18,7 @@ import flab2bp.layout.sequence_solver as sequence_solver_module
 import flab2bp.layout.strip_variants as strip_variants_module
 from flab2bp.dsp import catalog, rules
 from flab2bp.lab.techs import belt_rules_for_url
-from flab2bp.layout import finalize, route_kernel, routing_domain, slots, validate
+from flab2bp.layout import finalize, geometric_router, routing_domain, slots, validate
 from flab2bp.layout.band_policy import BandPolicy
 from flab2bp.layout.base import (
     AreaFrame,
@@ -7634,7 +7634,7 @@ def test_refusal_stats_publish_relation_no_good_observations() -> None:
         "best_stranded": -1.0,
         "best_overflow": 0.0,
         "backend": "sequence-pair",
-        "route_backend": route_kernel.selected_backend(),
+        "route_backend": geometric_router.BACKEND,
         "accelerator": "python",
     }
 

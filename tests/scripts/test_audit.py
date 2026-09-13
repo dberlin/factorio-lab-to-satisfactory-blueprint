@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from flab2bp.bench.corpus import URL_CORPUS, Tier
-from flab2bp.layout import finalize, route_kernel, validate
+from flab2bp.layout import finalize, geometric_router, validate
 from flab2bp.layout.base import (
     ATOMIC_COMPLETION_GRACE_S,
     AreaFrame,
@@ -187,11 +187,10 @@ def test_every_audit_row_carries_the_routing_backend_and_the_commit(
 
     assert tallies["freeform"].total == 2
     assert len(audit._JSONL) == 2
-    # Equality against the real selector, not membership in its two-value
-    # range: a `Result.route_backend` field hard-coded to a literal "cython"
-    # default would still pass a membership check but is not what shipped --
-    # it is not a live read of the process's actual routing kernel.
-    expected_backend = route_kernel.selected_backend()
+    # Equality against the router's own constant, not a literal repeated here:
+    # a `Result.route_backend` default that drifted from what the router
+    # reports would still pass a membership check but is not what shipped.
+    expected_backend = geometric_router.BACKEND
     for row in audit._JSONL:
         assert row["commit"] == "0123456789abcdef0123456789abcdef01234567"
         assert row["route_backend"] == expected_backend

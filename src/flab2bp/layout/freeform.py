@@ -4674,9 +4674,9 @@ class FreeformLayout:
                     budget_s=time_budget_s,
                 ) from exc
             if best is not None:
-                from flab2bp.layout import route_kernel
+                from flab2bp.layout import geometric_router
 
-                best.stats["route_backend"] = route_kernel.selected_backend()
+                best.stats["route_backend"] = geometric_router.BACKEND
                 best.stats["planning_time_s"] = planning_time_s
                 best.stats["total_time_s"] = time.monotonic() - started
                 return best

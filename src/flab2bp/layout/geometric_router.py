@@ -12,10 +12,13 @@ from __future__ import annotations
 from array import array
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from typing import Literal, TypedDict
+from typing import Final, Literal, TypedDict
 
 from ._geometric_kernel import search_intervals
 from .geometric_world import GeometricWorld
+
+#: The only routing backend; reported in placement stats as ``route_backend``.
+BACKEND: Final = "geometric"
 
 
 class GeometricMetrics(TypedDict):

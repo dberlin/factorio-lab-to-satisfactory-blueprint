@@ -47,9 +47,9 @@ from flab2bp.lab.url import parse_url  # noqa: E402
 from flab2bp.layout import (  # noqa: E402
     finalize,
     freeform,
+    geometric_router,
     global_router,
     last_mile,
-    route_kernel,
     routing_domain,
     sequence_solver,
     strip_variants,
@@ -685,7 +685,7 @@ def main() -> int:
                             if key in tally.t
                         },
                         "prepare_calls_s": list(tally.prepare_calls),
-                        "route_backend": route_kernel.selected_backend(),
+                        "route_backend": geometric_router.BACKEND,
                         "last_mile_stats": (
                             {} if placement is None else _last_mile_row(placement.stats)
                         ),

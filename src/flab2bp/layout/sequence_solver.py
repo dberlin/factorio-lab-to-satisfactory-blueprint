@@ -20,7 +20,7 @@ from typing import Protocol, TypedDict
 
 from flab2bp.dsp import catalog
 from flab2bp.indexed import Stages, StripPositions
-from flab2bp.layout import finalize, last_mile, route_kernel
+from flab2bp.layout import finalize, geometric_router, last_mile
 from flab2bp.layout.band_policy import BandPolicy
 from flab2bp.layout.base import (
     ATOMIC_COMPLETION_GRACE_S as ATOMIC_COMPLETION_GRACE_S,
@@ -6526,7 +6526,7 @@ def _refusal_stats(run: _ProductionRun) -> dict[str, float | str]:
     bound_stats = _prepared_lower_bound_stats(run.solver._stage_stats)
     return {
         "backend": "sequence-pair",
-        "route_backend": route_kernel.selected_backend(),
+        "route_backend": geometric_router.BACKEND,
         "accelerator": accelerator,
         "relation_no_goods_produced": float(telemetry.relation_no_goods_produced),
         "relation_no_goods_unique": float(telemetry.relation_no_goods_unique),
@@ -6641,7 +6641,7 @@ def _with_observational_stats(
     stats.update(
         {
             "backend": "sequence-pair",
-            "route_backend": route_kernel.selected_backend(),
+            "route_backend": geometric_router.BACKEND,
             "accelerator": accelerator,
             "seed": config.seed,
             "seeds": float(len(anneal_seeds)),

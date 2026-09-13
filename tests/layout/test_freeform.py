@@ -19376,12 +19376,12 @@ def test_post_feedback_replan_deadline_is_a_typed_preparation_refusal(
 
 
 def test_freeform_placement_records_route_backend() -> None:
-    from flab2bp.layout import route_kernel
+    from flab2bp.layout import geometric_router
 
     placement = FreeformLayout(
         belt_rules=_BELT_RULES, band_policy=BandPolicy("portable"), workers=1
     ).lay_out(two_stage_spec(), time_budget_s=4.0)
-    assert placement.stats["route_backend"] == route_kernel.selected_backend()
+    assert placement.stats["route_backend"] == geometric_router.BACKEND
     for key in (
         "planning_time_s",
         "pack_cp_wall_time_s",
