@@ -4897,9 +4897,10 @@ def _geometric_search(
     both the per-query cap and the shared ledger's ``WorkBudget.left``, which
     is read before the kernel and SET to that reading minus the charge after
     it, never decremented. A ``left`` of ``None`` -- like no budget at all --
-    is unbounded; the ledger is then only along for its deadline. Only complete
-    exhaustion supplies wall evidence. Budget or deadline termination never
-    proves infeasibility.
+    is unbounded, and the ledger is then inert: nothing here reads its
+    ``deadline`` field, because routing's clock is the explicit ``deadline``
+    parameter every caller already threads. Only complete exhaustion supplies
+    wall evidence. Budget or deadline termination never proves infeasibility.
     """
     forbidden_cells = frozenset(forbidden)
     goals = {goal for goal in goals if 0 <= goal[2] < canvas.levels}

@@ -2,8 +2,9 @@
 
 Before this module the concept had five named predicates, three closures,
 eight inline comparisons, three "clock ran out" exception types and an
-untyped ``budget["left"]`` dict at 42 sites (see
+untyped ledger dict at 42 sites, keyed ``"left"`` (see
 ``docs/superpowers/specs/2026-09-13-abstraction-review.md`` section 5, P1).
+That dict is now :class:`WorkBudget` and its ``left`` is a field.
 Two rules hold everything together:
 
 * a ``None`` deadline never expires, and the comparison is always ``>=``;

@@ -271,7 +271,7 @@ _PACK_SHARE = 0.35
 #: 3.32M work units in the 14.0s `_route_all` of their first pack, which is
 #: 237k/sec, so 400k was only 1.7x and the backstop had quietly become the
 #: binding constraint.  It binds through the coverage pass, which hands each net
-#: `budget["left"] // nets_remaining`: at a 20s ceiling that is 8.0M/279 = 28.7k
+#: `budget.left // nets_remaining`: at a 20s ceiling that is 8.0M/279 = 28.7k
 #: for the first net on a canvas whose hard queries measure 90k-190k, so the
 #: first pass rations the very searches it exists to complete.
 #:
