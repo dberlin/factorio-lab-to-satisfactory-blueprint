@@ -12,6 +12,7 @@ import ast
 from dataclasses import replace
 from fractions import Fraction
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -41,6 +42,14 @@ def _route_all_node() -> ast.FunctionDef:
         if isinstance(node, ast.FunctionDef) and node.name == "_route_all":
             return node
     raise AssertionError("_route_all is gone")
+
+
+def _run_class_node() -> ast.ClassDef:
+    tree = ast.parse(SRC.read_text(), filename=str(SRC))
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef) and node.name == "_RouteAllRun":
+            return node
+    raise AssertionError("_RouteAllRun is gone")
 
 
 def _corridor() -> tuple[domain._Canvas, list[domain._Net], tuple[int, int, int, int]]:
@@ -267,12 +276,12 @@ def test_the_per_call_resets_are_still_per_call() -> None:
     """
     source = SRC.read_text()
     for owner, reset in (
-        ("_search", "run.total_work = 0"),
-        ("_search", "run.capped_ordinary = None"),
-        ("_search", "run.ordinary_remaining = allowance"),
-        ("_ends", "run.neighborhood = None if replay is None else replay.neighborhood"),
-        ("_search_route", "run.admitted_path = None"),
-        ("_search_route", "run.admitted_future = None"),
+        ("_search", "self.total_work = 0"),
+        ("_search", "self.capped_ordinary = None"),
+        ("_search", "self.ordinary_remaining = allowance"),
+        ("_ends", "self.neighborhood = None if replay is None else replay.neighborhood"),
+        ("_search_route", "self.admitted_path = None"),
+        ("_search_route", "self.admitted_future = None"),
         ("_repair", "run.repair_guards = set(guard_claims)"),
         ("_repair", "run.policy_restricted = False"),
     ):
@@ -280,10 +289,17 @@ def test_the_per_call_resets_are_still_per_call() -> None:
 
 
 def test_the_two_deadline_restores_are_still_finally_clauses() -> None:
-    """`deadline` is rebound mid-run and restored; a lift must not drop that."""
+    """`deadline` is rebound mid-run and restored; a lift must not drop that.
+
+    One restore lives in `_RouteAllRun._search_route`'s nested
+    `admit_source_family` since Task 3 lifted the search cluster; the other is
+    still `_route_all._repair._grouped_overcap_alternative`'s.
+    """
+    scopes = (_route_all_node(), _run_class_node())
     restores = [
         node.lineno
-        for node in ast.walk(_route_all_node())
+        for scope in scopes
+        for node in ast.walk(scope)
         if isinstance(node, ast.Try)
         and node.finalbody
         and any(
@@ -372,6 +388,37 @@ def test_role_rows_is_still_a_generator_consumed_once() -> None:
     assert source.count("Nets.of(role_rows())") == 1
 
 
+SEARCH_METHODS = (
+    "_junction_stacks_collide_uncached",
+    "_peer_taps",
+    "_can_junction",
+    "_direct_tap_clear",
+    "_inside_grid",
+    "_claim_junction_guard",
+    "_selected_hints",
+    "_set_source_hint",
+    "_stake",
+    "_unstake",
+    "_prebuilt_branch_port_uncached",
+    "_prebuilt_source_starts",
+    "_ends",
+    "_future_source_offers",
+    "_analytic_ordinary",
+    "_ordinary_query_deadline",
+    "_search",
+    "_preserves_source_frontier",
+    "_search_route",
+    "_route_order",
+    "_endpoint_dependents",
+    "_dependency_closure",
+)
+
+
+def test_the_search_cluster_is_methods() -> None:
+    missing = [name for name in SEARCH_METHODS if name not in vars(domain._RouteAllRun)]
+    assert missing == [], missing
+
+
 def test_the_run_object_carries_the_search_cluster_fields() -> None:
     """The 42 names the lifted search methods used to capture."""
     from dataclasses import fields
@@ -389,8 +436,9 @@ def test_the_late_search_fields_are_unset_until_the_loop_binds_them() -> None:
 def test_the_three_per_run_caches_do_not_outlive_the_run() -> None:
     """Two `_route_all` calls must not share a shape cache.
 
-    `_junction_stacks_collide` reaches `_building_collider_hits`, which three
-    tests monkeypatch; a process-lifetime cache would serve pre-patch verdicts.
+    `_junction_stacks_collide` reaches `_building_collider_hits`, which
+    `test_prepared_junction_ban_cancels_inside_cell_level_scan` monkeypatches;
+    a process-lifetime cache would serve verdicts computed before the patch.
     """
     canvas, nets, bounds = _corridor()
     domain._route_all(canvas, nets, 2003, 37, bounds, budget=WorkBudget(left=100_000))
@@ -399,6 +447,37 @@ def test_the_three_per_run_caches_do_not_outlive_the_run() -> None:
         assert attribute is None or not hasattr(attribute, "cache_info"), (
             f"{name} must be built per run in the prologue, not cached on the class"
         )
+
+
+def test_the_per_run_caches_are_fresh_on_every_pass() -> None:
+    """The stronger witness: two passes must not share one cache object."""
+    seen: list[tuple[object, object, object]] = []
+    original = domain._RouteAllRun._ends
+
+    def spy(self: domain._RouteAllRun, *args: Any, **kwargs: Any) -> Any:
+        seen.append(
+            (
+                self._junction_stacks_collide,
+                self._prebuilt_branch_port,
+                self._prebuilt_path_port,
+            )
+        )
+        return original(self, *args, **kwargs)
+
+    domain._RouteAllRun._ends = spy  # type: ignore[method-assign]
+    try:
+        for _ in range(2):
+            canvas, nets, bounds = _corridor()
+            domain._route_all(canvas, nets, 2003, 37, bounds, budget=WorkBudget(left=100_000))
+    finally:
+        domain._RouteAllRun._ends = original  # type: ignore[method-assign]
+
+    assert seen, "the corridor pass never derived a net's ends"
+    first, last = seen[0], seen[-1]
+    assert all(a is not b for a, b in zip(first, last, strict=True)), (
+        "a cache survived from one `_route_all` call into the next"
+    )
+    assert all(hasattr(entry, "cache_clear") for entry in first), first
 
 
 def test_the_proposal_deadline_narrowing_is_still_conditional_and_nested() -> None:

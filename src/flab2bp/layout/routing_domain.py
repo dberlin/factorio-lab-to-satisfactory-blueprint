@@ -6497,6 +6497,1468 @@ class _RouteAllRun:
             relation_evidence=self.relation_evidence,
         )
 
+    # -- The search cluster --------------------------------------------------
+    #
+    # The twenty-two depth-1 closures that stake and unstake a path, ask the
+    # junction question, derive a net's ends and run the path search. Each is
+    # the closure's body with the names it captured read through `self` at call
+    # time, which is what a free-variable read did. Module globals -- `_expired`,
+    # `_geometric_search`, `_merge_frontier`, `_MAX_SEARCH_WORK` -- stay bare so
+    # `monkeypatch.setattr(routing_domain, ...)` still reaches them.
+    #
+    # `_junction_stacks_collide_uncached` and `_prebuilt_branch_port_uncached`
+    # carry no decorator: `_route_all`'s prologue wraps each in a `cache` per
+    # run. See the two fields above for why a class-level cache is wrong.
+
+    def _junction_stacks_collide_uncached(self, existing: Cell, candidate: Cell) -> bool:
+        """Cache a shape pair, independent of whether either tap is selected."""
+        nearby = _splitter_stack_geometry(*existing)
+        return any(
+            _building_collider_hits(nearby, member)
+            for member in _splitter_stack_geometry(*candidate)
+        )
+
+    def _peer_taps(self, cell: Cell, neighborhood: JunctionNeighborhood | None) -> tuple[Cell, ...]:
+        """Planned taps the collision test considers for ``cell``, in a fixed order."""
+        if neighborhood is not None:
+            try:
+                return neighborhood.nearby(cell)
+            except TimeoutError as error:
+                # Interrupted filtering is not evidence of impossibility.
+                raise _PreparationDeadline from error
+        x, y, level = cell
+        return tuple(
+            tap
+            for tap in self.planned_taps
+            if tap != cell
+            and abs(tap[0] - x) <= 3
+            and abs(tap[1] - y) <= 3
+            and abs(tap[2] - level) <= 3
+        )
+
+    def _can_junction(
+        self,
+        x: int,
+        y: int,
+        level: int,
+        *,
+        project: bool = True,
+        neighborhood: JunctionNeighborhood | None = None,
+    ) -> bool:
+        self.last_junction_blame = ()
+        cell = (x, y, level)
+        planned_here = self.planned_taps.get(cell, ())
+        if len(planned_here) >= 2:
+            return False
+        # A conditional guard is the exact geometry a previously selected tap
+        # needs against later paths and later Splitters. Reusing the same tap is
+        # allowed up to the Splitter's remaining two branch ports.
+        #
+        # The relaxed cluster run is exempt, and only here.  Unstaking the pack
+        # leaves `canvas.guard == permanent_guard` and `planned_taps` empty, so
+        # this refusal would turn away every permanent-guard cell -- including
+        # ones a realizable world DOES tap -- making run 2 tighter than a world
+        # it is supposed to bound.  Run 2 treats every cell as already tapped
+        # for this one check; the two checks that read `planned_taps` around it
+        # stay as they are, now over the cluster's own taps alone.
+        in_guard = cell in self.canvas.guard
+        if in_guard and not planned_here and not self.relaxed_junctions:
+            return False
+        # Everything below is a function of this cell, the policy flags, the
+        # net's own ports, and live inputs the memo pins each answer to.
+        memo_key = (cell, project, self.relaxed_junctions, neighborhood is None)
+        remembered = self.admission_memo.lookup(
+            memo_key,
+            planned_here=len(planned_here),
+            in_guard=in_guard,
+            reserved_version=self.canvas.reserved.version,
+            read_reserved=self.canvas.reserved.get,
+            routing_ports=self.canvas.routing_ports,
+            paths_version=self.paths.version,
+            peers=lambda: self._peer_taps(cell, neighborhood),
+        )
+        if remembered is not None:
+            return remembered
+        peers = self._peer_taps(cell, neighborhood)
+        selection_dependent = False
+
+        def remember(
+            admitted: bool,
+            keepout: tuple[Cell, ...] = (),
+            reserved_values: tuple[Cell | None, ...] = (),
+        ) -> bool:
+            self.admission_memo.store(
+                memo_key,
+                admitted,
+                planned_here=len(planned_here),
+                in_guard=in_guard,
+                peers=peers,
+                keepout=keepout,
+                reserved_values=reserved_values,
+                reserved_version=self.canvas.reserved.version,
+                paths_version=self.paths.version,
+                selection_dependent=selection_dependent,
+            )
+            return admitted
+
+        if any(
+            (tx, ty, tz) != cell
+            and abs(tx - x) <= 3
+            and abs(ty - y) <= 3
+            and abs(tz - level) <= 3
+            and self._junction_stacks_collide((tx, ty, tz), cell)
+            for tx, ty, tz in peers
+        ):
+            return remember(False)
+        got = self.junction_ok.get(cell)
+        if got is None:
+            stack = _splitter_stack_geometry(x, y, level)
+            got = self.canvas._junction_geometry_is_clear(
+                x, y, level, obstacle_span=self.junction_obstacle_span
+            ) and (self.power_discs is None or _buildings_are_powered(stack, self.power_discs))
+            self.junction_ok[cell] = got
+        if not got:
+            return remember(False)
+        # Endpoint offers defer the whole-selection proof until _search knows
+        # the chosen path and tap. Future-tap and cluster promises still ask it
+        # here; speculative offers are not construction certificates.
+        if project and self.canvas.junction_projection is not None:
+            selection_dependent = True
+            selected = self.primitives.selection(self.paths, (*self.planned_taps, cell))
+            if not self.canvas.projected_buildings_are_clear(selected, deadline=self.deadline):
+                return remember(False)
+        elif self.canvas.junction_projection is None and self.junction_frame_bans:
+            selection_dependent = True
+            if not any(
+                cell not in frame_ban and all(tap not in frame_ban for tap in self.planned_taps)
+                for frame_ban in self.junction_frame_bans
+            ):
+                return remember(False)
+        # Reservations change with the active endpoints and rip-up; unlike
+        # physical clearance, ownership cannot be cached in junction_ok. The
+        # memo instead records which cells were read and what they held.
+        keepout: list[Cell] = []
+        reserved_values: list[Cell | None] = []
+        denied = False
+        blamed: set[int] = set()
+        for member in _splitter_stack_geometry(x, y, level):
+            for guard_cell in junction.keepout_cells(
+                x, y, int(member.z), model_index=member.model_index, yaw=member.yaw
+            ):
+                key = self.canvas.reserved.get(guard_cell)
+                keepout.append(guard_cell)
+                reserved_values.append(key)
+                if key is None or key in self.canvas.routing_ports:
+                    continue
+                denied = True
+                for corridor in self.canvas.port_corridors.get(key, ()):
+                    if guard_cell not in (corridor.access, corridor.exit):
+                        continue
+                    for role, kind in (
+                        ("src", PortAccessKind.INTERNAL_DEPARTURE),
+                        ("dst", PortAccessKind.INTERNAL_ARRIVAL),
+                    ):
+                        if corridor.kind in (None, kind):
+                            blamed.update(
+                                member
+                                for member, _net in self.net_index.payloads_in_role(key, role)
+                            )
+        if denied:
+            # Carries blame that depends on corridor state the memo does not
+            # follow; recomputed on every ask.
+            self.junction_reservation_blockers.update(blamed)
+            self.last_junction_blame = tuple(sorted(blamed))
+            return False
+        return remember(True, tuple(keepout), tuple(reserved_values))
+
+    def _direct_tap_clear(
+        self, source: _Port, siblings: tuple[int, ...], *, tentative_ok: bool = False
+    ) -> bool:
+        tap = (source.x, source.y, source.z)
+        # Splitter legality excuses the actual connected run around the tap,
+        # not only the source port's declared horizontal lane. A prebuilt
+        # proliferator trunk is vertical, and treating its predecessor and
+        # successor as foreign belts makes every root falsely unavailable.
+        excused = _run_cells(self.canvas, self.canvas.buildings.belts_into, source.belt)
+        # Connected branches share this source's keep-out even before it is
+        # upgraded to a Splitter. Same-family paths passing nearby remain foreign.
+        for sibling in siblings:
+            sibling_source = self.nets[sibling].source
+            if (
+                self.source_hint.get(
+                    sibling, (sibling_source.x, sibling_source.y, sibling_source.z)
+                )
+                == tap
+            ):
+                excused.update(self.paths.get(sibling, ())[:2])
+        try:
+            stack = _splitter_stack_geometry(tap[0], tap[1], tap[2])
+        except ValueError:
+            return False
+        for offset, stack_member in enumerate(stack):
+            top = offset == len(stack) - 1
+            for cell in junction.keepout_cells(
+                tap[0],
+                tap[1],
+                int(stack_member.z),
+                model_index=stack_member.model_index,
+                yaw=stack_member.yaw,
+            ):
+                if top and cell in excused:
+                    continue
+                who = self.canvas.blocked.get(cell)
+                if who == _TENTATIVE:
+                    if tentative_ok:
+                        continue
+                    return False
+                building = self.canvas.buildings.by_index(who)
+                if building is not None and catalog.is_belt(building.item_id):
+                    return False
+        return True
+
+    def _inside_grid(self, cell: Cell) -> bool:
+        x, y, level = cell
+        x0, y0, x1, y1 = self.grid.span
+        return x0 <= x <= x1 and y0 <= y <= y1 and 0 <= level < self.grid.levels
+
+    def _claim_junction_guard(self, index: int, tap: Cell | None) -> None:
+        if tap is None:
+            return
+        self.planned_taps[tap].add(index)
+        self.admission_memo.taps_changed(tap)
+        self.path_tap[index] = tap
+        excused = set(self.paths[index])
+        for sibling in self.src_group.get(index, ()):
+            sibling_path = self.paths.get(sibling, ())
+            if tap in sibling_path:
+                excused.update(sibling_path)
+        claimed: set[Cell] = set()
+        stack = _splitter_stack_geometry(tap[0], tap[1], tap[2])
+        for offset, stack_member in enumerate(stack):
+            top = offset == len(stack) - 1
+            for cell in junction.keepout_cells(
+                tap[0],
+                tap[1],
+                int(stack_member.z),
+                model_index=stack_member.model_index,
+                yaw=stack_member.yaw,
+            ):
+                if (top and cell in excused) or not self._inside_grid(cell):
+                    continue
+                self.guard_claims[cell].add(index)
+                self.canvas.guard.add(cell)
+                if cell not in self.owner:
+                    self.grid.block(cell)
+                claimed.add(cell)
+        if claimed:
+            self.path_guards[index] = claimed
+
+    def _selected_hints(
+        self,
+        path: Sequence[Cell],
+        offers: tuple[Mapping[Cell, Cell], Mapping[Cell, Cell], Mapping[Cell, Cell]],
+    ) -> tuple[Cell | None, Cell | None, Cell | None]:
+        """Freeze the endpoint promises from the search that selected ``path``."""
+        source_offers, sink_offers, guard_offers = offers
+        return (
+            source_offers.get(path[0]),
+            sink_offers.get(path[-1]),
+            guard_offers.get(path[0]),
+        )
+
+    def _set_source_hint(self, index: int, tap: Cell | None) -> None:
+        """Record or withdraw ``index``'s selected source tap and its reverse index."""
+        previous = self.source_hint.pop(index, None)
+        if previous is not None:
+            holders = self.hinted_to[previous]
+            holders.discard(index)
+            if not holders:
+                del self.hinted_to[previous]
+        if tap is not None:
+            self.source_hint[index] = tap
+            self.hinted_to[tap].add(index)
+
+    def _stake(
+        self,
+        index: int,
+        path: tuple[Cell, ...],
+        *,
+        hints: tuple[Cell | None, Cell | None, Cell | None],
+    ) -> None:
+        """Put a path down with the exact sibling endpoints it selected."""
+        selected = hints
+        self.paths.stake(index, path, linked_head=selected[2] is not None or index in self.path_tap)
+        self._set_source_hint(index, selected[0])
+        if selected[1] is not None:
+            self.sink_hint[index] = selected[1]
+        else:
+            self.sink_hint.pop(index, None)
+        for cell in path:
+            self.canvas.blocked[cell] = _TENTATIVE
+            self.grid.block(cell)
+            self.owner[cell] = index
+        self._claim_junction_guard(index, selected[2])
+        primitive_guard = self.primitives.guards(path).difference(path)
+        for cell in primitive_guard:
+            self.guard_claims[cell].add(index)
+            self.canvas.guard.add(cell)
+            if self._inside_grid(cell) and cell not in self.owner:
+                self.grid.block(cell)
+        if primitive_guard:
+            self.path_guards.setdefault(index, set()).update(primitive_guard)
+        self.corridor_reservations.retire_served_roles(
+            self.net_index.roles_of(self._net_id(index)), path
+        )
+
+    def _unstake(self, index: int) -> None:
+        """Take a path, its exact endpoint, and its conditional guard up."""
+        self.corridor_reservations.restore_unserved_roles(
+            (key, role)
+            for key, role in self.net_index.roles_of(self._net_id(index))
+            if not any(
+                member != index and member in self.paths
+                for member, _net in self.net_index.payloads_in_role(key, role)
+            )
+        )
+        tap = self.path_tap.pop(index, None)
+        if tap is not None:
+            planned = self.planned_taps[tap]
+            planned.discard(index)
+            if not planned:
+                del self.planned_taps[tap]
+            self.admission_memo.taps_changed(tap)
+        for cell in self.path_guards.pop(index, ()):
+            claims = self.guard_claims[cell]
+            claims.discard(index)
+            if claims:
+                continue
+            del self.guard_claims[cell]
+            if cell not in self.permanent_guard:
+                self.canvas.guard.discard(cell)
+            # Reservations belong to per-query flags, not hard occupancy.
+            # A foreign reservation must not keep a withdrawn guard blocked.
+            if (
+                cell not in self.owner
+                and cell not in self.canvas.guard
+                and cell not in self.canvas.blocked
+                and self._inside_grid(cell)
+            ):
+                self.grid.restore(cell)
+        self._set_source_hint(index, None)
+        self.sink_hint.pop(index, None)
+        path = self.paths[index]
+        self.paths.unstake(index)
+        for cell in path:
+            if self.canvas.blocked.get(cell, -1) == _TENTATIVE:
+                del self.canvas.blocked[cell]
+                # An owned branch dock can still be guarded by its provider
+                # after this path's own claims have been withdrawn.
+                if cell in self.canvas.guard:
+                    self.grid.block(cell)
+                else:
+                    self.grid.restore(cell)
+            if self.owner.get(cell) == index:
+                del self.owner[cell]
+
+    def _prebuilt_branch_port_uncached(
+        self, splitter: PlacedBuilding, source_belt: PlacedBuilding, outward: Cell
+    ) -> int | None:
+        """Reuse only immutable physical shape, never a live admission verdict."""
+        attachment = replace(source_belt, z=Fraction(outward[2]))
+        return self._prebuilt_path_port(
+            splitter, attachment, replace(attachment, x=outward[0], y=outward[1])
+        )
+
+    def _prebuilt_source_starts(
+        self,
+        index: int,
+        source: _Port,
+        siblings: tuple[int, ...],
+        owned_guard: Mapping[Cell, Cell],
+        *,
+        needs_junction: bool,
+        project: bool = False,
+        tentative_ok: bool = False,
+    ) -> tuple[list[Cell], list[Cell]]:
+        """Admit docks on a declared source with the exact live tap gates."""
+        starts: list[Cell] = []
+        tap = (source.x, source.y, source.z)
+        direct_ports: set[int] = set()
+        direct_ports_valid = True
+        source_belt = self.canvas.buildings[source.belt]
+        incoming = self.canvas.buildings.belts_into(source.belt)
+        mixed_height = needs_junction and bool(source.z % 2)
+        carry_direction: tuple[int, int] | None = None
+        if mixed_height:
+            if len(incoming) != 1 or source_belt.output_obj is None:
+                direct_ports_valid = False
+            else:
+                feed_direction = _cardinal_direction(
+                    source_belt,
+                    self.canvas.buildings[incoming[0]],
+                )
+                carry_direction = _cardinal_direction(
+                    source_belt,
+                    self.canvas.buildings[source_belt.output_obj],
+                )
+                if (
+                    feed_direction is None
+                    or carry_direction is None
+                    or feed_direction != (-carry_direction[0], -carry_direction[1])
+                ):
+                    direct_ports_valid = False
+                    carry_direction = None
+        prospective_splitter = _splitter_stack_geometry(
+            source_belt.x,
+            source_belt.y,
+            source.z,
+            carry_direction=carry_direction,
+        )[-1]
+        if needs_junction:
+            if len(incoming) != 1:
+                direct_ports_valid = False
+            else:
+                feed_port = self._prebuilt_path_port(
+                    prospective_splitter,
+                    source_belt,
+                    self.canvas.buildings[incoming[0]],
+                )
+                if feed_port is None:
+                    direct_ports_valid = False
+                else:
+                    direct_ports.add(feed_port)
+            if source_belt.output_obj is not None:
+                carry_port = self._prebuilt_path_port(
+                    prospective_splitter,
+                    source_belt,
+                    self.canvas.buildings[source_belt.output_obj],
+                )
+                if carry_port is None or carry_port in direct_ports:
+                    direct_ports_valid = False
+                else:
+                    direct_ports.add(carry_port)
+            # Only a net that hints at this tap, or declares it and hints at
+            # nothing, can have selected it; the indexes name those directly
+            # and the exact test below still decides.
+            tapped = self.planned_taps.get(tap, ())
+            group = self.src_group_set[index]
+            for sibling in sorted(
+                candidate
+                for candidate in self.hinted_to.get(tap, set())
+                | self.own_source_nets.get(tap, frozenset())
+                if candidate in group or candidate in tapped
+            ):
+                sibling_path = self.paths.path(sibling)
+                if not sibling_path:
+                    continue
+                sibling_source = self.nets[sibling].source
+                selected_tap = self.source_hint.get(
+                    sibling, (sibling_source.x, sibling_source.y, sibling_source.z)
+                )
+                if selected_tap != tap:
+                    continue
+                first = sibling_path[0]
+                port = self._prebuilt_branch_port(prospective_splitter, source_belt, first)
+                if port is None or port in direct_ports:
+                    direct_ports_valid = False
+                    break
+                direct_ports.add(port)
+        occupied_source_access: list[Cell] = []
+        # A source Splitter adds its own stub as the branch head's sole reverse
+        # predecessor.  Reusing a cell that an already-selected destination
+        # merge targets would make that reverse link last-writer dependent.
+        existing_sink_targets = frozenset(self.sink_hint.values())
+        if not (
+            needs_junction
+            and (
+                not direct_ports_valid
+                or not (
+                    self._can_junction(source.x, source.y, source.z, project=project)
+                    and self._direct_tap_clear(source, siblings, tentative_ok=tentative_ok)
+                )
+            )
+        ):
+            branch_level = source.z - 1 if mixed_height else source.z
+            for dx, dy in _STEPS:
+                if (
+                    mixed_height
+                    and carry_direction is not None
+                    and dx * carry_direction[0] + dy * carry_direction[1] != 0
+                ):
+                    continue
+                cell = (source.x + dx, source.y + dy, branch_level)
+                if cell in self.rejected_starts[index] or (
+                    needs_junction and cell in existing_sink_targets
+                ):
+                    continue
+                if needs_junction:
+                    port = self._prebuilt_branch_port(prospective_splitter, source_belt, cell)
+                    if port is None or port in direct_ports:
+                        continue
+                if (
+                    self.canvas.free(cell)
+                    or (owned_guard.get(cell) == tap and self.canvas.free_owned_guard(cell))
+                    or (tentative_ok and self.canvas.blocked.get(cell) == _TENTATIVE)
+                ):
+                    starts.append(cell)
+                elif cell in self.owner:
+                    occupied_source_access.append(cell)
+        return starts, occupied_source_access
+
+    def _ends(
+        self,
+        index: int,
+        *,
+        tentative_ok: bool = False,
+        project_taps: frozenset[Cell] = frozenset(),
+        witnessed_taps: dict[Cell, bool] | None = None,
+        witness_ports: frozenset[Cell] | None = None,
+        admit_source_tap: Callable[[Cell], bool] | None = None,
+        replay: _SourceWalk | None = None,
+    ) -> tuple[
+        list[Cell],
+        set[Cell],
+        tuple[dict[Cell, Cell], dict[Cell, Cell], dict[Cell, Cell]],
+    ]:
+        """This net's start and goal cells, and its port claim as a side effect.
+
+        Factored out because the repair pass has to ask the SAME question the
+        round asks.  A repair that built its ends differently would find a path
+        the committer cannot attach at either end -- which is precisely the class
+        of bug `3f04239` and `00d1f78` were.  The caller clears
+        ``canvas.routing_ports`` once its search returns.
+
+        ``replay`` is the source walk of the ask this one widens
+        ``project_taps`` from; only the widened cells are asked again.
+        """
+        self.junction_reservation_blockers.clear()
+        net = self.nets[index]
+        source_ranges = sink_ranges = None
+        if self.flow_limits is not None:
+            if self.flow_limits.rates[index] > self.flow_limits.capacity:
+                return [], set(), ({}, {}, {})
+            source_ranges, sink_ranges = _flow_frontier_ranges(
+                index, self.paths, self.owner, self.source_hint, self.sink_hint, self.flow_limits
+            )
+        source = net.source
+        # Claim this net's port reservations for the duration of its search,
+        # so its own way in and out reads as free while every other port's
+        # stays held.
+        self.canvas.routing_ports = frozenset(
+            {
+                (net.source.x, net.source.y, net.source.z),
+                (net.dst.x, net.dst.y, net.dst.z),
+            }
+        )
+        if witness_ports is not None:
+            assert witnessed_taps is not None
+            self.canvas.routing_ports &= witness_ports
+        # THE LANE TILE IS ONLY FREE FOR THE FIRST NET TO LEAVE IT.  Its port is
+        # the lane's END, which has no onward link, so the first tap merely
+        # points it at the branch. Every later one finds that link in place and
+        # needs a SPLITTER on the lane tile -- and a lane runs directly beside
+        # its machine band, where a splitter's cross collider never fits. Those
+        # starts are withdrawn rather than offered and then refused at commit
+        # time, which is the difference between the router picking its second
+        # choice and the whole pack being discarded.
+        siblings = self.src_group.get(index, ())
+        sibling_set = set(siblings)
+        owned_guard: dict[Cell, Cell] = {}
+        ambiguous_guard: set[Cell] = set()
+        for sibling in siblings:
+            tap = self.path_tap.get(sibling)
+            if tap is None:
+                continue
+            for cell in self.path_guards.get(sibling, ()):
+                claims = self.guard_claims.get(cell, set())
+                if not claims or not claims <= sibling_set or cell in self.permanent_guard:
+                    continue
+                previous = owned_guard.get(cell)
+                if previous is None or previous == tap:
+                    owned_guard[cell] = tap
+                else:
+                    ambiguous_guard.add(cell)
+        for cell in ambiguous_guard:
+            owned_guard.pop(cell, None)
+        needs_junction = any(s in self.paths for s in siblings) or (
+            self.canvas.buildings[source.belt].output_obj is not None
+        )
+        source_provenance: dict[Cell, Cell] = {}
+        # The cells whose `project` flag this ask widened; every other answer
+        # of the walk it replays still holds.
+        added = frozenset() if replay is None else project_taps - replay.project_taps
+        walk_docks: dict[Cell, tuple[tuple[Cell, ...], tuple[Cell, ...], tuple[int, ...]]] = {}
+
+        def prebuilt_starts(
+            tap: Cell, port: _Port, *, needs_junction: bool
+        ) -> tuple[list[Cell], list[Cell]]:
+            """`_prebuilt_source_starts` for ``tap``, replayed when its flag did not widen."""
+            if replay is not None and tap not in added:
+                docks, occupied, blame = replay.docks[tap]
+                self.junction_reservation_blockers.update(blame)
+            else:
+                self.last_junction_blame = ()
+                found, taken = self._prebuilt_source_starts(
+                    index,
+                    port,
+                    siblings,
+                    owned_guard,
+                    needs_junction=needs_junction,
+                    project=tap in project_taps,
+                    tentative_ok=tentative_ok,
+                )
+                docks, occupied, blame = tuple(found), tuple(taken), self.last_junction_blame
+            walk_docks[tap] = (docks, occupied, blame)
+            return list(docks), list(occupied)
+
+        starts, occupied_source_access = prebuilt_starts(
+            (source.x, source.y, source.z), source, needs_junction=needs_junction
+        )
+        if (
+            starts
+            and needs_junction
+            and admit_source_tap is not None
+            and not admit_source_tap((source.x, source.y, source.z))
+        ):
+            starts.clear()
+        source_choices = {cell: {(source.x, source.y, source.z)} for cell in starts}
+        existing_sink_targets = frozenset(self.sink_hint.values())
+        guard_provenance = dict(source_provenance)
+        if needs_junction:
+            direct_tap = (source.x, source.y, source.z)
+            for cell in starts:
+                guard_provenance.setdefault(cell, direct_tap)
+        witness: Callable[[Cell, Cell], bool] | None = None
+        if witnessed_taps is not None:
+            checked_taps = witnessed_taps
+            selected_primitives = self.primitives.selection(self.paths, self.planned_taps)
+
+            def admit_witness(cell: Cell, tap: Cell) -> bool:
+                if (
+                    cell in self.rejected_starts[index]
+                    or cell in existing_sink_targets
+                    or tap in self.rejected_source_hints[index]
+                    or _expired(self.deadline)
+                ):
+                    return False
+                admitted = checked_taps.get(tap)
+                if admitted is None:
+                    admitted = self.canvas.projected_buildings_are_clear(
+                        () if tap in self.planned_taps else _splitter_stack_geometry(*tap),
+                        selected=selected_primitives,
+                        deadline=self.deadline,
+                    )
+                    checked_taps[tap] = admitted
+                return admitted
+
+            witness = admit_witness
+            direct_tap = (source.x, source.y, source.z)
+            for cell in starts:
+                if witness(cell, direct_tap):
+                    return [cell], set(), ({}, {}, {cell: direct_tap})
+        source_feeds: dict[int, int] = {}
+        for sibling in siblings:
+            if sibling not in self.paths:
+                continue
+            sibling_source = self.nets[sibling].source
+            tap = self.source_hint.get(
+                sibling, (sibling_source.x, sibling_source.y, sibling_source.z)
+            )
+            feeder = self.canvas.blocked.get(tap)
+            if (
+                feeder is not None
+                and feeder >= 0
+                and catalog.is_belt(self.canvas.buildings[feeder].item_id)
+            ):
+                source_feeds[sibling] = feeder
+        # This owner lives for exactly one frontier. No tap is staked or
+        # unstaked while _merge_frontier calls its admission predicate.
+        # Construct lazily so an empty/ranged/witness-expired frontier does
+        # not prepare geometry that it will never query.  A replayed walk
+        # shares the owner of the walk it replays: no tap moved in between.
+        self.neighborhood = None if replay is None else replay.neighborhood
+        asks: list[tuple[Cell, bool, tuple[int, ...]]] = []
+
+        def frontier_junctionable(x: int, y: int, level: int) -> bool:
+            if self.neighborhood is None:
+                try:
+                    self.neighborhood = JunctionNeighborhood(
+                        self.planned_taps, deadline=self.deadline
+                    )
+                except TimeoutError as error:
+                    # Incomplete preparation publishes no admission answer.
+                    raise _PreparationDeadline from error
+            admitted = self._can_junction(
+                x,
+                y,
+                level,
+                project=(x, y, level) in project_taps,
+                neighborhood=self.neighborhood,
+            )
+            asks.append(((x, y, level), admitted, self.last_junction_blame))
+            return admitted
+
+        walk_offers: list[tuple[Cell, Cell, tuple[Cell, ...]]] = []
+        if replay is None:
+            frontier = _merge_frontier(
+                self.canvas,
+                self.paths,
+                siblings,
+                frontier_junctionable,
+                provenance=source_provenance,
+                belt_prefab=(self.belt_id, self.belt_model),
+                tentative_ok=tentative_ok,
+                owned_guard=owned_guard,
+                primitives=self.primitives,
+                source_choices=source_choices,
+                witness=witness,
+                admit_tap=admit_source_tap,
+                deadline=self.deadline,
+                path_ranges=source_ranges,
+                merged_cells=existing_sink_targets,
+                source_feeds=source_feeds,
+                trace=walk_offers,
+            )
+        else:
+            walk_offers = replay.offers
+            frontier = replay.replay(
+                project_taps,
+                frontier_junctionable,
+                asks=asks,
+                blame=self.junction_reservation_blockers,
+                provenance=source_provenance,
+                source_choices=source_choices,
+            )
+        if witness is not None and frontier:
+            cell = min(frontier)
+            return [cell], set(), ({}, {}, {cell: source_provenance[cell]})
+        guard_provenance.update(source_provenance)
+        if existing_sink_targets:
+            frontier.difference_update(existing_sink_targets)
+            for cell in existing_sink_targets:
+                source_provenance.pop(cell, None)
+                guard_provenance.pop(cell, None)
+        starts.extend(
+            sorted(
+                cell
+                for cell in frontier - set(starts)
+                if cell not in self.rejected_starts[index]
+                and source_provenance.get(cell) not in self.rejected_source_hints[index]
+            )
+        )
+        # A sibling may leave a prebuilt source absent from every routed path.
+        # Offer its spare docks whether already split or still an ordinary
+        # branch, using the same direct-source and physical-port proof.
+        selected_sources: set[Cell] = set()
+        for sibling in siblings:
+            sibling_source = self.nets[sibling].source
+            tap = (sibling_source.x, sibling_source.y, sibling_source.z)
+            if (
+                tap in selected_sources
+                or tap == (source.x, source.y, source.z)
+                or tap in self.rejected_source_hints[index]
+                or (tap in self.planned_taps and not self.planned_taps[tap] <= sibling_set)
+            ):
+                continue
+            selected_sources.add(tap)
+            docks, occupied = prebuilt_starts(tap, sibling_source, needs_junction=True)
+            occupied_source_access.extend(occupied)
+            if docks and admit_source_tap is not None and not admit_source_tap(tap):
+                continue
+            for cell in docks:
+                if witness is not None and witness(cell, tap):
+                    return [cell], set(), ({}, {}, {cell: tap})
+                source_choices.setdefault(cell, set()).add(tap)
+                if cell in starts:
+                    continue
+                starts.append(cell)
+                source_provenance[cell] = tap
+                guard_provenance[cell] = tap
+        # First-wins provenance is safe only after competing source taps have
+        # been certified. Include direct/frontier and prebuilt/frontier clashes,
+        # not just alternatives found along one sibling path.
+        if witnessed_taps is not None:
+            # Every admissible source candidate was checked during generation.
+            return [], set(), ({}, {}, {})
+        competing = frozenset(
+            tap for cell in starts if len(source_choices[cell]) > 1 for tap in source_choices[cell]
+        )
+        if not competing <= project_taps:
+            return self._ends(
+                index,
+                tentative_ok=tentative_ok,
+                project_taps=project_taps | competing,
+                admit_source_tap=admit_source_tap,
+                replay=_SourceWalk(project_taps, asks, walk_offers, self.neighborhood, walk_docks),
+            )
+        self.source_access_walls[index] = tuple(occupied_source_access) if not starts else ()
+        # A shared source can become unusable without an occupied access cell:
+        # an earlier sibling may consume the only legal branch topology. That
+        # sibling is concrete blocking ownership even though the failed geometric search
+        # search has an empty wall.
+        self.source_access_blockers[index] = (
+            tuple(
+                self._net_id(blocker)
+                for blocker in sorted(
+                    {sibling for sibling in siblings if sibling in self.paths}
+                    | (self.junction_reservation_blockers - {index})
+                )
+            )
+            if not starts
+            else ()
+        )
+        self.owned_source_starts[index] = frozenset(set(starts) & owned_guard.keys())
+        reverse_link_guard = self.paths.linked_heads() | _selected_source_heads(
+            self.nets, self.paths, self.source_hint, self.planned_taps
+        )
+
+        destination_access = tuple((net.dst.x + dx, net.dst.y + dy, net.dst.z) for dx, dy in _STEPS)
+        sink_provenance: dict[Cell, Cell] = {}
+        goals = {
+            cell
+            for cell in destination_access
+            if self.canvas.free(cell) and cell not in self.rejected_goals[index]
+        }
+        # Filter tap identities before first-wins provenance: rejecting one
+        # target must not discard a dock that can reach another legal target.
+        frontier = _merge_frontier(
+            self.canvas,
+            self.paths,
+            self.dst_group.get(index, ()),
+            provenance=sink_provenance,
+            primitives=self.primitives,
+            path_ranges=sink_ranges,
+            protected_sinks=_protected_merge_cells(
+                self.paths, self.dst_group.get(index, ()), self.path_tap
+            )
+            | reverse_link_guard
+            | self.rejected_sink_hints[index],
+        )
+        # The committer prefers a direct destination link over a sibling hint.
+        # Freeze the same choice so transit reservations do not charge a
+        # sibling suffix the emitted flow never traverses.
+        for cell in goals:
+            sink_provenance.pop(cell, None)
+        goals.update(cell for cell in frontier if cell not in self.rejected_goals[index])
+        # A zero-work access miss can still be congestion: earlier paths
+        # may occupy every direct dock, leaving the geometric search no start or goal and therefore
+        # no explored wall to attribute. Retain those exact owners so repair can
+        # rip up the paths that closed either endpoint instead of repeating the
+        # same order with an anonymous dynamic-access failure.
+        self.destination_access_walls[index] = (
+            tuple(cell for cell in destination_access if cell in self.owner) if not goals else ()
+        )
+        # These maps belong to THIS endpoint query.  A path may be staked only
+        # with the exact promises the geometric search selected from, even if a later repair asks
+        # `_ends` another question for the same net.
+        offers = (
+            dict(source_provenance),
+            dict(sink_provenance),
+            dict(guard_provenance),
+        )
+        return starts, goals, offers
+
+    def _future_source_offers(
+        self,
+        index: int,
+        path: tuple[Cell, ...],
+        offers: tuple[Mapping[Cell, Cell], Mapping[Cell, Cell], Mapping[Cell, Cell]],
+        *,
+        tentative_ok: bool = False,
+    ) -> dict[Cell, Cell]:
+        """Find future taps; tentative mode only discovers repair blockers."""
+        routing_ports = self.canvas.routing_ports
+        reservations = self.corridor_reservations.snapshot()
+        self._stake(index, path, hints=self._selected_hints(path, offers))
+        try:
+            future: dict[Cell, Cell] = {}
+            checked: dict[Cell, bool] = {}
+            path_cells = frozenset(path)
+            remaining = tuple(
+                sibling for sibling in self.src_group.get(index, ()) if sibling not in self.paths
+            )
+            shared: tuple[Cell, Cell] | None = None
+            if len(remaining) > 1 and (
+                self.flow_limits is None
+                or all(
+                    self.flow_limits.rates[sibling] == self.flow_limits.rates[remaining[0]]
+                    for sibling in remaining[1:]
+                )
+            ):
+                # Prove one offer with only the reservation exemptions common
+                # to every remaining sibling. Each actual query is less
+                # restrictive. The staked topology and source family stay
+                # fixed until this transaction's finally block; an unrouted
+                # sibling owns no path or conditional guard to distinguish it.
+                common_ports: set[Cell] | None = None
+                for sibling in remaining:
+                    net = self.nets[sibling]
+                    ports = {
+                        (net.source.x, net.source.y, net.source.z),
+                        (net.dst.x, net.dst.y, net.dst.z),
+                    }
+                    common_ports = ports if common_ports is None else common_ports & ports
+                assert common_ports is not None
+                starts, _goals, shared_offers = self._ends(
+                    remaining[0],
+                    witnessed_taps=checked,
+                    tentative_ok=tentative_ok,
+                    witness_ports=frozenset(common_ports),
+                )
+                if starts:
+                    shared = starts[0], shared_offers[2][starts[0]]
+            for sibling in remaining:
+                if _expired(self.deadline):
+                    return {}
+                if (
+                    shared is not None
+                    and shared[0] not in self.rejected_starts[sibling]
+                    and shared[1] not in self.rejected_source_hints[sibling]
+                ):
+                    start, tap = shared
+                else:
+                    starts, _goals, sibling_offers = self._ends(
+                        sibling, witnessed_taps=checked, tentative_ok=tentative_ok
+                    )
+                    if not starts:
+                        return {}
+                    start = starts[0]
+                    source = self.nets[sibling].source
+                    tap = sibling_offers[2].get(start, (source.x, source.y, source.z))
+                assert checked[tap]
+                if tap in path_cells or not future:
+                    future = {start: tap}
+            return future
+        finally:
+            self._unstake(index)
+            self.corridor_reservations.restore(reservations)
+            self.canvas.routing_ports = routing_ports
+
+    def _analytic_ordinary(
+        self,
+        starts: list[Cell],
+        goals: set[Cell],
+        search_history: dict[Cell, float],
+        pressure: float,
+        query_deadline: float | None,
+        *,
+        forbidden: Collection[Cell],
+        owned_starts: Collection[Cell],
+        released_starts: Collection[Cell],
+        admit_proposal: Callable[[tuple[Cell, ...], float | None], bool] | None,
+    ) -> tuple[Cell, ...] | None:
+        """Try complete overhead constructions inside the ordinary query's clock."""
+        try:
+            if self.geometry_world is None:
+                self.geometry_world = projection_world.ClearanceOracle(
+                    self.canvas, deadline=query_deadline
+                )
+            world = self.geometry_world
+            world.history = search_history
+            world.pressure = pressure
+            world.forbidden = frozenset(forbidden)
+            world.owned_starts = frozenset(owned_starts)
+            world.released_starts = frozenset(released_starts)
+            if self.geometry_screen is None:
+                self.geometry_screen = FlatScreen((), query_deadline, world)
+            prepared = time.monotonic()
+            # The staged proposal slice is part of, never additional to, the
+            # existing ordinary allowance. A miss still takes the original geometric search.
+            proposal_deadline = prepared + 0.05
+            if query_deadline is not None:
+                proposal_deadline = min(proposal_deadline, query_deadline)
+            return overhead_path(
+                world,
+                [cell for cell in starts if _inside_route_box(cell, self.bounds)],
+                {cell for cell in goals if _inside_route_box(cell, self.bounds)},
+                self.bounds,
+                proposal_deadline,
+                blocked=tuple(cell for cell in self.owner if cell in self.canvas.blocked),
+                screen=self.geometry_screen,
+                admit_proposal=admit_proposal,
+            )
+        except _GeometricDeadline:
+            # This proposal family is not an exhaustive geometric search.
+            return None
+
+    def _ordinary_query_deadline(self) -> float | None:
+        if self.deadline is None:
+            return None
+        now = time.monotonic()
+        return now + (self.deadline - now) / 8
+
+    def _search(
+        self,
+        starts: list[Cell],
+        goals: set[Cell],
+        junction_offers: Mapping[Cell, Cell],
+        search_history: dict[Cell, float],
+        pressure: float,
+        search_budget: budget_module.WorkBudget,
+        blame: dict[Cell, float] | None,
+        search_grid: _Grid,
+        *,
+        owned_starts: Collection[Cell] = (),
+        released_starts: Collection[Cell] = (),
+        forbidden: Collection[Cell] = (),
+        ordinary_only: bool = False,
+        admit_proposal: Callable[[tuple[Cell, ...], float | None], bool] | None = None,
+        ordinary_deadline: float | None = None,
+    ) -> _PathSearchResult:
+        """Admit source geometry for every normal, repair and cluster search.
+
+        A path may leave a prospective Splitter legally and later return through
+        its keepout. Retry that source locally; its geometry must never poison
+        another source's cells or a later endpoint query.
+        """
+        search_starts = starts
+        source_choices = {junction_offers.get(cell) for cell in starts}
+        search_tap = next(iter(source_choices)) if len(source_choices) == 1 else None
+        rejected: set[Cell] | None = None
+        rejected_edges: set[tuple[Cell, Cell]] = set()
+        self.total_work = 0
+        # Every caller hands this closure the pass ledger or a carved child of
+        # it, and both are built with an int allowance; `None` -- "unbounded" --
+        # never reaches a routing search.
+        assert search_budget.left is not None, "a routing search needs a ledger"
+        connector_reserve = (
+            0 if ordinary_only else min(_MAX_SEARCH_WORK + 1, max(0, search_budget.left) // 2)
+        )
+        allowance = min(_MAX_SEARCH_WORK + 1, max(0, search_budget.left - connector_reserve))
+        if _expired(self.deadline):
+            return _PathSearchResult(None, RouteFailureKind.BUDGET, (), 0, BudgetCause.DEADLINE)
+        if ordinary_deadline is None:
+            ordinary_deadline = self._ordinary_query_deadline()
+        ordinary = None
+        self.capped_ordinary = None
+        self.ordinary_remaining = allowance
+        ordinary_starts = starts
+        ordinary_rejected: dict[Cell, set[Cell]] = {}
+
+        def probe_ordinary(
+            candidates: list[Cell], blocked: Collection[Cell]
+        ) -> _PathSearchResult | None:
+            if (
+                self.ordinary_remaining < 2
+                or _expired(ordinary_deadline)
+                or not candidates
+                or all(goal in blocked for goal in goals)
+            ):
+                return None
+            if self.flow_limits is not None:
+                proposed = self._analytic_ordinary(
+                    candidates,
+                    goals,
+                    search_history,
+                    pressure,
+                    ordinary_deadline,
+                    forbidden=blocked,
+                    owned_starts=owned_starts,
+                    released_starts=released_starts,
+                    admit_proposal=admit_proposal,
+                )
+                if proposed is not None:
+                    return _PathSearchResult(proposed, None, (), 0)
+            private = budget_module.WorkBudget(left=self.ordinary_remaining)
+            result = _geometric_search(
+                self.canvas,
+                candidates,
+                goals,
+                search_history,
+                pressure,
+                self.bounds,
+                budget=private,
+                deadline=ordinary_deadline,
+                blame=None,
+                grid=search_grid,
+                owned_starts=owned_starts,
+                released_starts=released_starts,
+                forbidden=blocked,
+                blocking_owners=self.owner,
+                extra_edges=None,
+            )
+            private_left = private.left
+            assert private_left is not None
+            assert search_budget.left is not None
+            search_budget.left -= self.ordinary_remaining - private_left
+            self.ordinary_remaining = private_left
+            self.total_work += result.work
+            if result.path is not None:
+                return result
+            if result.kind is RouteFailureKind.BUDGET and (
+                result.work >= _MAX_SEARCH_WORK or self.ordinary_remaining <= 0
+            ):
+                self.capped_ordinary = result
+            return None
+
+        try:
+            ordinary = probe_ordinary(starts, forbidden)
+            # Large first passes spend only their ordinary share. Optional physical
+            # enrichment belongs to repair, after every net has had an opportunity.
+            for retry in range(5):
+                if ordinary_only and ordinary is None:
+                    return _PathSearchResult(
+                        None,
+                        RouteFailureKind.BUDGET,
+                        (),
+                        self.total_work,
+                        self.capped_ordinary.cause
+                        if self.capped_ordinary is not None
+                        else BudgetCause.BOUNDED,
+                    )
+                ordinary_attempt = ordinary is not None
+                if ordinary_attempt:
+                    assert ordinary is not None
+                    found = ordinary
+                    ordinary = None
+                else:
+                    if _expired(self.deadline) or search_budget.left <= 0:
+                        return _PathSearchResult(
+                            None,
+                            RouteFailureKind.BUDGET,
+                            (),
+                            self.total_work,
+                            BudgetCause.DEADLINE
+                            if _expired(self.deadline)
+                            else BudgetCause.ALLOWANCE,
+                        )
+                    connector_edges = self.primitives.edges(
+                        self.canvas,
+                        search_grid,
+                        search_starts,
+                        goals,
+                        forbidden=forbidden if rejected is None else rejected,
+                        excluded_edges=rejected_edges,
+                        active_paths=self.paths,
+                        active_taps=(
+                            self.planned_taps
+                            if search_tap is None
+                            else (*self.planned_taps, search_tap)
+                        ),
+                        deadline=self.deadline,
+                        power_allows=self._connector_is_powered
+                        if self.power_discs is not None
+                        else None,
+                    )
+                    if retry == 0 and not connector_edges and self.capped_ordinary is not None:
+                        # No graph inputs changed. The fallback has no larger
+                        # work allowance than the exhausted ordinary search.
+                        # Repeating its bounded prefix cannot find a new path;
+                        # retain the shared quota for other nets, still refusing.
+                        return replace(self.capped_ordinary, work=self.total_work)
+                    # The leaf SETS `left` on the ledger it is handed, never
+                    # decrements it, so handing it this pass's own ledger
+                    # charges exactly what the query spent.
+                    found = _geometric_search(
+                        self.canvas,
+                        search_starts,
+                        goals,
+                        search_history,
+                        pressure,
+                        self.bounds,
+                        search_budget,
+                        self.deadline,
+                        blame,
+                        search_grid,
+                        owned_starts=owned_starts,
+                        released_starts=released_starts,
+                        forbidden=forbidden if rejected is None else rejected,
+                        blocking_owners=self.owner,
+                        extra_edges=connector_edges,
+                    )
+                    self.total_work += found.work
+                if found.path is None:
+                    # Connector siting is bounded and keeps one physical witness
+                    # per directed edge. Exhausting this subset cannot prove the
+                    # complete physical routing problem impossible -- but say so
+                    # as BOUNDED rather than borrowing the clock's name, unless
+                    # the inner search really did hit a limit and named one.
+                    return replace(
+                        found,
+                        kind=RouteFailureKind.BUDGET,
+                        work=self.total_work,
+                        cause=(
+                            found.cause
+                            if found.kind is RouteFailureKind.BUDGET
+                            and found.cause is not BudgetCause.UNKNOWN
+                            else BudgetCause.BOUNDED
+                        ),
+                    )
+                if not self.primitives.path_is_clear(found.path):
+                    if retry == 4:
+                        return _PathSearchResult(
+                            None,
+                            RouteFailureKind.BUDGET,
+                            (),
+                            self.total_work,
+                            BudgetCause.BOUNDED,
+                        )
+                    if ordinary_attempt:
+                        continue
+                    rejected_edges.update(
+                        edge
+                        for edge in zip(found.path, found.path[1:], strict=False)
+                        if edge in self.primitives.witnesses
+                    )
+                    continue
+                tap = junction_offers.get(found.path[0])
+                proposed_taps = () if tap is None or tap in self.planned_taps else (tap,)
+                if not self.canvas.projected_buildings_are_clear(
+                    self.primitives.selection({0: found.path}, proposed_taps),
+                    selected=self.primitives.selection(self.paths, self.planned_taps),
+                    deadline=self.deadline,
+                ):
+                    if retry == 4 or _expired(self.deadline):
+                        return _PathSearchResult(
+                            None,
+                            RouteFailureKind.BUDGET,
+                            (),
+                            self.total_work,
+                            BudgetCause.BOUNDED,
+                        )
+                    if ordinary_attempt:
+                        # Try another ordinary source inside the same allocation.
+                        # Keep original offers untouched for enriched fallback:
+                        # connector members may admit a different final frame.
+                        ordinary_starts = [
+                            cell for cell in ordinary_starts if junction_offers.get(cell) != tap
+                        ]
+                        ordinary = probe_ordinary(ordinary_starts, forbidden)
+                        continue
+                    macro_edges = {
+                        edge
+                        for edge in zip(found.path, found.path[1:], strict=False)
+                        if edge in self.primitives.witnesses
+                    }
+                    if macro_edges:
+                        # The rejection belongs to this source selection, not to
+                        # another source that might use the same connector legally.
+                        search_tap = tap
+                        search_starts = [
+                            cell for cell in search_starts if junction_offers.get(cell) == tap
+                        ]
+                        rejected_edges.update(macro_edges)
+                    else:
+                        search_starts = [
+                            cell for cell in search_starts if junction_offers.get(cell) != tap
+                        ]
+                    continue
+                if tap is None:
+                    return replace(found, work=self.total_work)
+                stack = _splitter_stack_geometry(*tap)
+                illegal: set[Cell] = set()
+                path_cells = set(found.path)
+                attached_cells = found.path[:2]
+                for offset, member in enumerate(stack):
+                    for cell in junction.keepout_cells(
+                        tap[0],
+                        tap[1],
+                        int(member.z),
+                        model_index=member.model_index,
+                        yaw=member.yaw,
+                    ):
+                        if cell in path_cells and (
+                            offset != len(stack) - 1 or cell not in attached_cells
+                        ):
+                            illegal.add(cell)
+                attachment = (tap[0], tap[1], tap[2] - 1 if tap[2] % 2 else tap[2])
+                if attachment in path_cells:
+                    illegal.add(attachment)
+                if not illegal:
+                    return replace(found, work=self.total_work)
+                if retry == 4:
+                    return _PathSearchResult(
+                        None, RouteFailureKind.BUDGET, (), self.total_work, BudgetCause.BOUNDED
+                    )
+                if ordinary_attempt:
+                    # Only this source owns these body constraints. Retrying it
+                    # must not ban the same cells for another source or enrichment.
+                    source_blocked = ordinary_rejected.setdefault(tap, set(forbidden))
+                    source_blocked.update(illegal)
+                    ordinary = probe_ordinary(
+                        [cell for cell in starts if junction_offers.get(cell) == tap],
+                        source_blocked,
+                    )
+                    if ordinary is None:
+                        # A failed detour around this tap's body says nothing
+                        # about the other source taps. Keep their original
+                        # geometry and spend the remaining ordinary allowance
+                        # there, rather than discarding all ordinary sources.
+                        ordinary_starts = [
+                            cell for cell in ordinary_starts if junction_offers.get(cell) != tap
+                        ]
+                        ordinary = probe_ordinary(ordinary_starts, forbidden)
+                    continue
+                if rejected is None:
+                    rejected = set(forbidden)
+                    search_starts = [cell for cell in starts if junction_offers.get(cell) == tap]
+                    search_tap = tap
+                rejected.update(illegal)
+            raise AssertionError("source admission retry must return")
+        except _PreparationDeadline as error:
+            error.work += self.total_work
+            raise
+
+    def _preserves_source_frontier(
+        self,
+        index: int,
+        path: tuple[Cell, ...],
+        offers: tuple[dict[Cell, Cell], dict[Cell, Cell], dict[Cell, Cell]],
+        *,
+        proved_future: Mapping[Cell, Cell] | None = None,
+    ) -> bool:
+        if not any(sibling not in self.paths for sibling in self.src_group.get(index, ())):
+            return True
+        if _expired(self.deadline):
+            raise _PreparationDeadline
+        future = (
+            self._future_source_offers(index, path, offers)
+            if proved_future is None
+            else proved_future
+        )
+        if not future:
+            return False
+        for tap in future.values():
+            if tap in path:
+                offers[2].setdefault(path[0], tap)
+                break
+        return True
+
+    def _search_route(
+        self,
+        index: int,
+        starts: list[Cell],
+        goals: set[Cell],
+        offers: tuple[dict[Cell, Cell], dict[Cell, Cell], dict[Cell, Cell]],
+        pressure: float,
+        search_budget: budget_module.WorkBudget,
+        blame: dict[Cell, float],
+        *,
+        ordinary_only: bool = False,
+        constraints: Collection[Cell] = (),
+    ) -> _PathSearchResult:
+        """Search and admit the same source obligations in every reconstruction."""
+        assert search_budget.left is not None, "a routing search needs a ledger"
+        total = 0
+        admit_proposal: Callable[[tuple[Cell, ...], float | None], bool] | None = None
+        self.admitted_path = None
+        self.admitted_future = None
+        if any(sibling not in self.paths for sibling in self.src_group.get(index, ())):
+
+            def admit_source_family(
+                path: tuple[Cell, ...], proposal_deadline: float | None
+            ) -> bool:
+                # All synchronous witness helpers share this route-local clock.
+                # Narrow it only for the proposal; outer admission keeps its clock.
+                route_deadline = self.deadline
+                if proposal_deadline is not None:
+                    self.deadline = (
+                        proposal_deadline
+                        if self.deadline is None
+                        else min(self.deadline, proposal_deadline)
+                    )
+                try:
+                    future = self._future_source_offers(index, path, offers)
+                    if future:
+                        self.admitted_path, self.admitted_future = path, future
+                    return bool(future)
+                except _PreparationDeadline as error:
+                    raise _GeometricDeadline from error
+                finally:
+                    self.deadline = route_deadline
+
+            admit_proposal = admit_source_family
+
+        try:
+            for retry in range(5):
+                found = self._search(
+                    starts,
+                    goals,
+                    offers[2],
+                    self.history,
+                    pressure,
+                    search_budget,
+                    blame,
+                    self.grid,
+                    owned_starts=self.owned_source_starts.get(index, ()),
+                    forbidden=frozenset(self.rejected_path_cells.get(index, ()))
+                    | frozenset(constraints),
+                    ordinary_only=ordinary_only,
+                    admit_proposal=admit_proposal,
+                )
+                total += found.work
+                # No routing state changes between proposal admission and this
+                # return. Reuse only the exact immutable path's witness; the geometric search and
+                # other proposals still receive their own family proof.
+                if found.path is None or self._preserves_source_frontier(
+                    index,
+                    found.path,
+                    offers,
+                    proved_future=self.admitted_future
+                    if found.path is self.admitted_path
+                    else None,
+                ):
+                    return replace(found, work=total)
+                if retry == 4 or _expired(self.deadline) or search_budget.left <= 0:
+                    break
+                for cell in found.path:
+                    self.history[cell] += _BLAME_WEIGHT
+                self.grid.refresh_history(self.history)
+            # Bounded alternatives did not preserve the family. This is not an
+            # exhausted geometric search and cannot establish an impossibility.
+            return _PathSearchResult(None, RouteFailureKind.BUDGET, (), total, BudgetCause.BOUNDED)
+        except _PreparationDeadline as error:
+            error.work += total
+            error.net_index = index
+            raise
+
+    def _route_order(
+        self, indices: Collection[int], dependents: Mapping[int, Collection[int]]
+    ) -> tuple[int, ...] | None:
+        preferred = sorted(
+            indices,
+            key=lambda i: (
+                not any(member in self.priority for member in self.source_family[i]),
+                self._net_id(i).role is not NetRole.PROLIFERATOR,
+                -len(self.source_family[i]) if self.prioritize_source_families else 0,
+                -self.source_family_distance[i],
+                self.source_family[i][0],
+                -self.route_distance[i],
+                i,
+            ),
+        )
+        return _dependency_order(preferred, dependents)
+
+    def _endpoint_dependents(self) -> dict[int, set[int]]:
+        """Resolve frozen endpoint promises before any provider is withdrawn."""
+        dependents: dict[int, set[int]] = defaultdict(set)
+        for index in self.paths:
+            for hint in (
+                self.source_hint.get(index),
+                self.sink_hint.get(index),
+                self.path_tap.get(index),
+            ):
+                provider = self.owner.get(hint) if hint is not None else None
+                if provider is not None and provider != index:
+                    dependents[provider].add(index)
+        return dependents
+
+    def _dependency_closure(
+        self,
+        indices: Collection[int],
+        dependents: Mapping[int, Collection[int]] | None = None,
+    ) -> set[int]:
+        if dependents is None:
+            dependents = self._endpoint_dependents()
+        closure = set(indices)
+        pending = list(indices)
+        while pending:
+            for index in dependents.get(pending.pop(), ()):
+                if index not in closure:
+                    closure.add(index)
+                    pending.append(index)
+        return closure
+
 
 def _route_all(
     canvas: _Canvas,
@@ -6610,11 +8072,6 @@ def _route_all(
     run.junction_obstacle_span = junction_obstacle_span
     run.history = history
     run.paths = paths
-    #: The vocabulary, now bound methods. Each alias keeps its call sites
-    #: byte-identical -- and `connector_is_powered` is passed as a VALUE, not
-    #: called, so the bound method has to reach that argument the same way.
-    #: Task 7 deletes the aliases.
-    connector_is_powered = run._connector_is_powered
     fewest_failed = len(nets) + 1
     stale = 0
     #: The round `best_paths` was captured from, or ``-1`` before any round
@@ -6644,12 +8101,16 @@ def _route_all(
     proposals: dict[int, _RouteProposal] = {}
     best_attempt: _CommittedAttempt | None = None
 
+    #: The vocabulary and the search cluster, now bound methods. Each alias
+    #: keeps its call sites byte-identical; Task 7 deletes the aliases.
+    #: `connector_is_powered` needed none: its one use was a VALUE passed into
+    #: `RoutePrimitives.edges`, which only calls it, and that use is inside
+    #: `_search`, a method now, so it reaches `self._connector_is_powered`.
     _net_id = run._net_id
     _pass_budget_cause = run._pass_budget_cause
     _endpoint_cells = run._endpoint_cells
     role_rows = run._role_rows
-    net_index = Nets.of(role_rows())
-    run.net_index = net_index
+    run.net_index = Nets.of(role_rows())
     _blocking_endpoint_cells = run._blocking_endpoint_cells
     _blocking_nets = run._blocking_nets
     _failure = run._failure
@@ -7086,208 +8547,9 @@ def _route_all(
     run.admission_memo = admission_memo
     run.junction_reservation_blockers = junction_reservation_blockers
 
-    @cache
-    def _junction_stacks_collide(existing: Cell, candidate: Cell) -> bool:
-        """Cache a shape pair, independent of whether either tap is selected."""
-        nearby = _splitter_stack_geometry(*existing)
-        return any(
-            _building_collider_hits(nearby, member)
-            for member in _splitter_stack_geometry(*candidate)
-        )
-
-    def _peer_taps(cell: Cell, neighborhood: JunctionNeighborhood | None) -> tuple[Cell, ...]:
-        """Planned taps the collision test considers for ``cell``, in a fixed order."""
-        if neighborhood is not None:
-            try:
-                return neighborhood.nearby(cell)
-            except TimeoutError as error:
-                # Interrupted filtering is not evidence of impossibility.
-                raise _PreparationDeadline from error
-        x, y, level = cell
-        return tuple(
-            tap
-            for tap in planned_taps
-            if tap != cell
-            and abs(tap[0] - x) <= 3
-            and abs(tap[1] - y) <= 3
-            and abs(tap[2] - level) <= 3
-        )
-
-    def _can_junction(
-        x: int,
-        y: int,
-        level: int,
-        *,
-        project: bool = True,
-        neighborhood: JunctionNeighborhood | None = None,
-    ) -> bool:
-        run.last_junction_blame = ()
-        cell = (x, y, level)
-        planned_here = planned_taps.get(cell, ())
-        if len(planned_here) >= 2:
-            return False
-        # A conditional guard is the exact geometry a previously selected tap
-        # needs against later paths and later Splitters. Reusing the same tap is
-        # allowed up to the Splitter's remaining two branch ports.
-        #
-        # The relaxed cluster run is exempt, and only here.  Unstaking the pack
-        # leaves `canvas.guard == permanent_guard` and `planned_taps` empty, so
-        # this refusal would turn away every permanent-guard cell -- including
-        # ones a realizable world DOES tap -- making run 2 tighter than a world
-        # it is supposed to bound.  Run 2 treats every cell as already tapped
-        # for this one check; the two checks that read `planned_taps` around it
-        # stay as they are, now over the cluster's own taps alone.
-        in_guard = cell in canvas.guard
-        if in_guard and not planned_here and not run.relaxed_junctions:
-            return False
-        # Everything below is a function of this cell, the policy flags, the
-        # net's own ports, and live inputs the memo pins each answer to.
-        memo_key = (cell, project, run.relaxed_junctions, neighborhood is None)
-        remembered = admission_memo.lookup(
-            memo_key,
-            planned_here=len(planned_here),
-            in_guard=in_guard,
-            reserved_version=canvas.reserved.version,
-            read_reserved=canvas.reserved.get,
-            routing_ports=canvas.routing_ports,
-            paths_version=paths.version,
-            peers=lambda: _peer_taps(cell, neighborhood),
-        )
-        if remembered is not None:
-            return remembered
-        peers = _peer_taps(cell, neighborhood)
-        selection_dependent = False
-
-        def remember(
-            admitted: bool,
-            keepout: tuple[Cell, ...] = (),
-            reserved_values: tuple[Cell | None, ...] = (),
-        ) -> bool:
-            admission_memo.store(
-                memo_key,
-                admitted,
-                planned_here=len(planned_here),
-                in_guard=in_guard,
-                peers=peers,
-                keepout=keepout,
-                reserved_values=reserved_values,
-                reserved_version=canvas.reserved.version,
-                paths_version=paths.version,
-                selection_dependent=selection_dependent,
-            )
-            return admitted
-
-        if any(
-            (tx, ty, tz) != cell
-            and abs(tx - x) <= 3
-            and abs(ty - y) <= 3
-            and abs(tz - level) <= 3
-            and _junction_stacks_collide((tx, ty, tz), cell)
-            for tx, ty, tz in peers
-        ):
-            return remember(False)
-        got = junction_ok.get(cell)
-        if got is None:
-            stack = _splitter_stack_geometry(x, y, level)
-            got = canvas._junction_geometry_is_clear(
-                x, y, level, obstacle_span=junction_obstacle_span
-            ) and (power_discs is None or _buildings_are_powered(stack, power_discs))
-            junction_ok[cell] = got
-        if not got:
-            return remember(False)
-        # Endpoint offers defer the whole-selection proof until _search knows
-        # the chosen path and tap. Future-tap and cluster promises still ask it
-        # here; speculative offers are not construction certificates.
-        if project and canvas.junction_projection is not None:
-            selection_dependent = True
-            selected = primitives.selection(paths, (*planned_taps, cell))
-            if not canvas.projected_buildings_are_clear(selected, deadline=run.deadline):
-                return remember(False)
-        elif canvas.junction_projection is None and junction_frame_bans:
-            selection_dependent = True
-            if not any(
-                cell not in frame_ban and all(tap not in frame_ban for tap in planned_taps)
-                for frame_ban in junction_frame_bans
-            ):
-                return remember(False)
-        # Reservations change with the active endpoints and rip-up; unlike
-        # physical clearance, ownership cannot be cached in junction_ok. The
-        # memo instead records which cells were read and what they held.
-        keepout: list[Cell] = []
-        reserved_values: list[Cell | None] = []
-        denied = False
-        blamed: set[int] = set()
-        for member in _splitter_stack_geometry(x, y, level):
-            for guard_cell in junction.keepout_cells(
-                x, y, int(member.z), model_index=member.model_index, yaw=member.yaw
-            ):
-                key = canvas.reserved.get(guard_cell)
-                keepout.append(guard_cell)
-                reserved_values.append(key)
-                if key is None or key in canvas.routing_ports:
-                    continue
-                denied = True
-                for corridor in canvas.port_corridors.get(key, ()):
-                    if guard_cell not in (corridor.access, corridor.exit):
-                        continue
-                    for role, kind in (
-                        ("src", PortAccessKind.INTERNAL_DEPARTURE),
-                        ("dst", PortAccessKind.INTERNAL_ARRIVAL),
-                    ):
-                        if corridor.kind in (None, kind):
-                            blamed.update(
-                                member for member, _net in net_index.payloads_in_role(key, role)
-                            )
-        if denied:
-            # Carries blame that depends on corridor state the memo does not
-            # follow; recomputed on every ask.
-            junction_reservation_blockers.update(blamed)
-            run.last_junction_blame = tuple(sorted(blamed))
-            return False
-        return remember(True, tuple(keepout), tuple(reserved_values))
-
-    def _direct_tap_clear(
-        source: _Port, siblings: tuple[int, ...], *, tentative_ok: bool = False
-    ) -> bool:
-        tap = (source.x, source.y, source.z)
-        # Splitter legality excuses the actual connected run around the tap,
-        # not only the source port's declared horizontal lane. A prebuilt
-        # proliferator trunk is vertical, and treating its predecessor and
-        # successor as foreign belts makes every root falsely unavailable.
-        excused = _run_cells(canvas, canvas.buildings.belts_into, source.belt)
-        # Connected branches share this source's keep-out even before it is
-        # upgraded to a Splitter. Same-family paths passing nearby remain foreign.
-        for sibling in siblings:
-            sibling_source = nets[sibling].source
-            if (
-                source_hint.get(sibling, (sibling_source.x, sibling_source.y, sibling_source.z))
-                == tap
-            ):
-                excused.update(paths.get(sibling, ())[:2])
-        try:
-            stack = _splitter_stack_geometry(tap[0], tap[1], tap[2])
-        except ValueError:
-            return False
-        for offset, stack_member in enumerate(stack):
-            top = offset == len(stack) - 1
-            for cell in junction.keepout_cells(
-                tap[0],
-                tap[1],
-                int(stack_member.z),
-                model_index=stack_member.model_index,
-                yaw=stack_member.yaw,
-            ):
-                if top and cell in excused:
-                    continue
-                who = canvas.blocked.get(cell)
-                if who == _TENTATIVE:
-                    if tentative_ok:
-                        continue
-                    return False
-                building = canvas.buildings.by_index(who)
-                if building is not None and catalog.is_belt(building.item_id):
-                    return False
-        return True
+    #: Per RUN, never `@cache` on the class -- see `_RouteAllRun`.
+    run._junction_stacks_collide = cache(run._junction_stacks_collide_uncached)
+    _can_junction = run._can_junction
 
     owned_source_starts: dict[int, frozenset[Cell]] = {}
     source_hint: dict[int, Cell] = {}
@@ -7327,1220 +8589,23 @@ def _route_all(
     run.permanent_guard = permanent_guard
     run.path_tap = path_tap
 
-    def _inside_grid(cell: Cell) -> bool:
-        x, y, level = cell
-        x0, y0, x1, y1 = grid.span
-        return x0 <= x <= x1 and y0 <= y <= y1 and 0 <= level < grid.levels
-
-    def _claim_junction_guard(index: int, tap: Cell | None) -> None:
-        if tap is None:
-            return
-        planned_taps[tap].add(index)
-        admission_memo.taps_changed(tap)
-        path_tap[index] = tap
-        excused = set(paths[index])
-        for sibling in src_group.get(index, ()):
-            sibling_path = paths.get(sibling, ())
-            if tap in sibling_path:
-                excused.update(sibling_path)
-        claimed: set[Cell] = set()
-        stack = _splitter_stack_geometry(tap[0], tap[1], tap[2])
-        for offset, stack_member in enumerate(stack):
-            top = offset == len(stack) - 1
-            for cell in junction.keepout_cells(
-                tap[0],
-                tap[1],
-                int(stack_member.z),
-                model_index=stack_member.model_index,
-                yaw=stack_member.yaw,
-            ):
-                if (top and cell in excused) or not _inside_grid(cell):
-                    continue
-                guard_claims[cell].add(index)
-                canvas.guard.add(cell)
-                if cell not in owner:
-                    grid.block(cell)
-                claimed.add(cell)
-        if claimed:
-            path_guards[index] = claimed
-
-    def _selected_hints(
-        path: Sequence[Cell],
-        offers: tuple[Mapping[Cell, Cell], Mapping[Cell, Cell], Mapping[Cell, Cell]],
-    ) -> tuple[Cell | None, Cell | None, Cell | None]:
-        """Freeze the endpoint promises from the search that selected ``path``."""
-        source_offers, sink_offers, guard_offers = offers
-        return (
-            source_offers.get(path[0]),
-            sink_offers.get(path[-1]),
-            guard_offers.get(path[0]),
-        )
-
-    def _set_source_hint(index: int, tap: Cell | None) -> None:
-        """Record or withdraw ``index``'s selected source tap and its reverse index."""
-        previous = source_hint.pop(index, None)
-        if previous is not None:
-            holders = hinted_to[previous]
-            holders.discard(index)
-            if not holders:
-                del hinted_to[previous]
-        if tap is not None:
-            source_hint[index] = tap
-            hinted_to[tap].add(index)
-
-    def _stake(
-        index: int,
-        path: tuple[Cell, ...],
-        *,
-        hints: tuple[Cell | None, Cell | None, Cell | None],
-    ) -> None:
-        """Put a path down with the exact sibling endpoints it selected."""
-        selected = hints
-        paths.stake(index, path, linked_head=selected[2] is not None or index in path_tap)
-        _set_source_hint(index, selected[0])
-        if selected[1] is not None:
-            sink_hint[index] = selected[1]
-        else:
-            sink_hint.pop(index, None)
-        for cell in path:
-            canvas.blocked[cell] = _TENTATIVE
-            grid.block(cell)
-            owner[cell] = index
-        _claim_junction_guard(index, selected[2])
-        primitive_guard = primitives.guards(path).difference(path)
-        for cell in primitive_guard:
-            guard_claims[cell].add(index)
-            canvas.guard.add(cell)
-            if _inside_grid(cell) and cell not in owner:
-                grid.block(cell)
-        if primitive_guard:
-            path_guards.setdefault(index, set()).update(primitive_guard)
-        corridor_reservations.retire_served_roles(net_index.roles_of(_net_id(index)), path)
-
-    def _unstake(index: int) -> None:
-        """Take a path, its exact endpoint, and its conditional guard up."""
-        corridor_reservations.restore_unserved_roles(
-            (key, role)
-            for key, role in net_index.roles_of(_net_id(index))
-            if not any(
-                member != index and member in paths
-                for member, _net in net_index.payloads_in_role(key, role)
-            )
-        )
-        tap = path_tap.pop(index, None)
-        if tap is not None:
-            planned = planned_taps[tap]
-            planned.discard(index)
-            if not planned:
-                del planned_taps[tap]
-            admission_memo.taps_changed(tap)
-        for cell in path_guards.pop(index, ()):
-            claims = guard_claims[cell]
-            claims.discard(index)
-            if claims:
-                continue
-            del guard_claims[cell]
-            if cell not in permanent_guard:
-                canvas.guard.discard(cell)
-            # Reservations belong to per-query flags, not hard occupancy.
-            # A foreign reservation must not keep a withdrawn guard blocked.
-            if (
-                cell not in owner
-                and cell not in canvas.guard
-                and cell not in canvas.blocked
-                and _inside_grid(cell)
-            ):
-                grid.restore(cell)
-        _set_source_hint(index, None)
-        sink_hint.pop(index, None)
-        path = paths[index]
-        paths.unstake(index)
-        for cell in path:
-            if canvas.blocked.get(cell, -1) == _TENTATIVE:
-                del canvas.blocked[cell]
-                # An owned branch dock can still be guarded by its provider
-                # after this path's own claims have been withdrawn.
-                if cell in canvas.guard:
-                    grid.block(cell)
-                else:
-                    grid.restore(cell)
-            if owner.get(cell) == index:
-                del owner[cell]
-
-    _prebuilt_path_port = lru_cache(maxsize=None)(splitter_ports.expected_path_port)
-
-    @cache
-    def _prebuilt_branch_port(
-        splitter: PlacedBuilding, source_belt: PlacedBuilding, outward: Cell
-    ) -> int | None:
-        """Reuse only immutable physical shape, never a live admission verdict."""
-        attachment = replace(source_belt, z=Fraction(outward[2]))
-        return _prebuilt_path_port(
-            splitter, attachment, replace(attachment, x=outward[0], y=outward[1])
-        )
-
-    def _prebuilt_source_starts(
-        index: int,
-        source: _Port,
-        siblings: tuple[int, ...],
-        owned_guard: Mapping[Cell, Cell],
-        *,
-        needs_junction: bool,
-        project: bool = False,
-        tentative_ok: bool = False,
-    ) -> tuple[list[Cell], list[Cell]]:
-        """Admit docks on a declared source with the exact live tap gates."""
-        starts: list[Cell] = []
-        tap = (source.x, source.y, source.z)
-        direct_ports: set[int] = set()
-        direct_ports_valid = True
-        source_belt = canvas.buildings[source.belt]
-        incoming = canvas.buildings.belts_into(source.belt)
-        mixed_height = needs_junction and bool(source.z % 2)
-        carry_direction: tuple[int, int] | None = None
-        if mixed_height:
-            if len(incoming) != 1 or source_belt.output_obj is None:
-                direct_ports_valid = False
-            else:
-                feed_direction = _cardinal_direction(
-                    source_belt,
-                    canvas.buildings[incoming[0]],
-                )
-                carry_direction = _cardinal_direction(
-                    source_belt,
-                    canvas.buildings[source_belt.output_obj],
-                )
-                if (
-                    feed_direction is None
-                    or carry_direction is None
-                    or feed_direction != (-carry_direction[0], -carry_direction[1])
-                ):
-                    direct_ports_valid = False
-                    carry_direction = None
-        prospective_splitter = _splitter_stack_geometry(
-            source_belt.x,
-            source_belt.y,
-            source.z,
-            carry_direction=carry_direction,
-        )[-1]
-        if needs_junction:
-            if len(incoming) != 1:
-                direct_ports_valid = False
-            else:
-                feed_port = _prebuilt_path_port(
-                    prospective_splitter,
-                    source_belt,
-                    canvas.buildings[incoming[0]],
-                )
-                if feed_port is None:
-                    direct_ports_valid = False
-                else:
-                    direct_ports.add(feed_port)
-            if source_belt.output_obj is not None:
-                carry_port = _prebuilt_path_port(
-                    prospective_splitter,
-                    source_belt,
-                    canvas.buildings[source_belt.output_obj],
-                )
-                if carry_port is None or carry_port in direct_ports:
-                    direct_ports_valid = False
-                else:
-                    direct_ports.add(carry_port)
-            # Only a net that hints at this tap, or declares it and hints at
-            # nothing, can have selected it; the indexes name those directly
-            # and the exact test below still decides.
-            tapped = planned_taps.get(tap, ())
-            group = src_group_set[index]
-            for sibling in sorted(
-                candidate
-                for candidate in hinted_to.get(tap, set()) | own_source_nets.get(tap, frozenset())
-                if candidate in group or candidate in tapped
-            ):
-                sibling_path = paths.path(sibling)
-                if not sibling_path:
-                    continue
-                sibling_source = nets[sibling].source
-                selected_tap = source_hint.get(
-                    sibling, (sibling_source.x, sibling_source.y, sibling_source.z)
-                )
-                if selected_tap != tap:
-                    continue
-                first = sibling_path[0]
-                port = _prebuilt_branch_port(prospective_splitter, source_belt, first)
-                if port is None or port in direct_ports:
-                    direct_ports_valid = False
-                    break
-                direct_ports.add(port)
-        occupied_source_access: list[Cell] = []
-        # A source Splitter adds its own stub as the branch head's sole reverse
-        # predecessor.  Reusing a cell that an already-selected destination
-        # merge targets would make that reverse link last-writer dependent.
-        existing_sink_targets = frozenset(sink_hint.values())
-        if not (
-            needs_junction
-            and (
-                not direct_ports_valid
-                or not (
-                    _can_junction(source.x, source.y, source.z, project=project)
-                    and _direct_tap_clear(source, siblings, tentative_ok=tentative_ok)
-                )
-            )
-        ):
-            branch_level = source.z - 1 if mixed_height else source.z
-            for dx, dy in _STEPS:
-                if (
-                    mixed_height
-                    and carry_direction is not None
-                    and dx * carry_direction[0] + dy * carry_direction[1] != 0
-                ):
-                    continue
-                cell = (source.x + dx, source.y + dy, branch_level)
-                if cell in rejected_starts[index] or (
-                    needs_junction and cell in existing_sink_targets
-                ):
-                    continue
-                if needs_junction:
-                    port = _prebuilt_branch_port(prospective_splitter, source_belt, cell)
-                    if port is None or port in direct_ports:
-                        continue
-                if (
-                    canvas.free(cell)
-                    or (owned_guard.get(cell) == tap and canvas.free_owned_guard(cell))
-                    or (tentative_ok and canvas.blocked.get(cell) == _TENTATIVE)
-                ):
-                    starts.append(cell)
-                elif cell in owner:
-                    occupied_source_access.append(cell)
-        return starts, occupied_source_access
-
-    def _ends(
-        index: int,
-        *,
-        tentative_ok: bool = False,
-        project_taps: frozenset[Cell] = frozenset(),
-        witnessed_taps: dict[Cell, bool] | None = None,
-        witness_ports: frozenset[Cell] | None = None,
-        admit_source_tap: Callable[[Cell], bool] | None = None,
-        replay: _SourceWalk | None = None,
-    ) -> tuple[
-        list[Cell],
-        set[Cell],
-        tuple[dict[Cell, Cell], dict[Cell, Cell], dict[Cell, Cell]],
-    ]:
-        """This net's start and goal cells, and its port claim as a side effect.
-
-        Factored out because the repair pass has to ask the SAME question the
-        round asks.  A repair that built its ends differently would find a path
-        the committer cannot attach at either end -- which is precisely the class
-        of bug `3f04239` and `00d1f78` were.  The caller clears
-        ``canvas.routing_ports`` once its search returns.
-
-        ``replay`` is the source walk of the ask this one widens
-        ``project_taps`` from; only the widened cells are asked again.
-        """
-        junction_reservation_blockers.clear()
-        net = nets[index]
-        source_ranges = sink_ranges = None
-        if flow_limits is not None:
-            if flow_limits.rates[index] > flow_limits.capacity:
-                return [], set(), ({}, {}, {})
-            source_ranges, sink_ranges = _flow_frontier_ranges(
-                index, paths, owner, source_hint, sink_hint, flow_limits
-            )
-        source = net.source
-        # Claim this net's port reservations for the duration of its search,
-        # so its own way in and out reads as free while every other port's
-        # stays held.
-        canvas.routing_ports = frozenset(
-            {
-                (net.source.x, net.source.y, net.source.z),
-                (net.dst.x, net.dst.y, net.dst.z),
-            }
-        )
-        if witness_ports is not None:
-            assert witnessed_taps is not None
-            canvas.routing_ports &= witness_ports
-        # THE LANE TILE IS ONLY FREE FOR THE FIRST NET TO LEAVE IT.  Its port is
-        # the lane's END, which has no onward link, so the first tap merely
-        # points it at the branch. Every later one finds that link in place and
-        # needs a SPLITTER on the lane tile -- and a lane runs directly beside
-        # its machine band, where a splitter's cross collider never fits. Those
-        # starts are withdrawn rather than offered and then refused at commit
-        # time, which is the difference between the router picking its second
-        # choice and the whole pack being discarded.
-        siblings = src_group.get(index, ())
-        sibling_set = set(siblings)
-        owned_guard: dict[Cell, Cell] = {}
-        ambiguous_guard: set[Cell] = set()
-        for sibling in siblings:
-            tap = path_tap.get(sibling)
-            if tap is None:
-                continue
-            for cell in path_guards.get(sibling, ()):
-                claims = guard_claims.get(cell, set())
-                if not claims or not claims <= sibling_set or cell in permanent_guard:
-                    continue
-                previous = owned_guard.get(cell)
-                if previous is None or previous == tap:
-                    owned_guard[cell] = tap
-                else:
-                    ambiguous_guard.add(cell)
-        for cell in ambiguous_guard:
-            owned_guard.pop(cell, None)
-        needs_junction = any(s in paths for s in siblings) or (
-            canvas.buildings[source.belt].output_obj is not None
-        )
-        source_provenance: dict[Cell, Cell] = {}
-        # The cells whose `project` flag this ask widened; every other answer
-        # of the walk it replays still holds.
-        added = frozenset() if replay is None else project_taps - replay.project_taps
-        walk_docks: dict[Cell, tuple[tuple[Cell, ...], tuple[Cell, ...], tuple[int, ...]]] = {}
-
-        def prebuilt_starts(
-            tap: Cell, port: _Port, *, needs_junction: bool
-        ) -> tuple[list[Cell], list[Cell]]:
-            """`_prebuilt_source_starts` for ``tap``, replayed when its flag did not widen."""
-            if replay is not None and tap not in added:
-                docks, occupied, blame = replay.docks[tap]
-                junction_reservation_blockers.update(blame)
-            else:
-                run.last_junction_blame = ()
-                found, taken = _prebuilt_source_starts(
-                    index,
-                    port,
-                    siblings,
-                    owned_guard,
-                    needs_junction=needs_junction,
-                    project=tap in project_taps,
-                    tentative_ok=tentative_ok,
-                )
-                docks, occupied, blame = tuple(found), tuple(taken), run.last_junction_blame
-            walk_docks[tap] = (docks, occupied, blame)
-            return list(docks), list(occupied)
-
-        starts, occupied_source_access = prebuilt_starts(
-            (source.x, source.y, source.z), source, needs_junction=needs_junction
-        )
-        if (
-            starts
-            and needs_junction
-            and admit_source_tap is not None
-            and not admit_source_tap((source.x, source.y, source.z))
-        ):
-            starts.clear()
-        source_choices = {cell: {(source.x, source.y, source.z)} for cell in starts}
-        existing_sink_targets = frozenset(sink_hint.values())
-        guard_provenance = dict(source_provenance)
-        if needs_junction:
-            direct_tap = (source.x, source.y, source.z)
-            for cell in starts:
-                guard_provenance.setdefault(cell, direct_tap)
-        witness: Callable[[Cell, Cell], bool] | None = None
-        if witnessed_taps is not None:
-            checked_taps = witnessed_taps
-            selected_primitives = primitives.selection(paths, planned_taps)
-
-            def admit_witness(cell: Cell, tap: Cell) -> bool:
-                if (
-                    cell in rejected_starts[index]
-                    or cell in existing_sink_targets
-                    or tap in rejected_source_hints[index]
-                    or _expired(run.deadline)
-                ):
-                    return False
-                admitted = checked_taps.get(tap)
-                if admitted is None:
-                    admitted = canvas.projected_buildings_are_clear(
-                        () if tap in planned_taps else _splitter_stack_geometry(*tap),
-                        selected=selected_primitives,
-                        deadline=run.deadline,
-                    )
-                    checked_taps[tap] = admitted
-                return admitted
-
-            witness = admit_witness
-            direct_tap = (source.x, source.y, source.z)
-            for cell in starts:
-                if witness(cell, direct_tap):
-                    return [cell], set(), ({}, {}, {cell: direct_tap})
-        source_feeds: dict[int, int] = {}
-        for sibling in siblings:
-            if sibling not in paths:
-                continue
-            sibling_source = nets[sibling].source
-            tap = source_hint.get(sibling, (sibling_source.x, sibling_source.y, sibling_source.z))
-            feeder = canvas.blocked.get(tap)
-            if (
-                feeder is not None
-                and feeder >= 0
-                and catalog.is_belt(canvas.buildings[feeder].item_id)
-            ):
-                source_feeds[sibling] = feeder
-        # This owner lives for exactly one frontier. No tap is staked or
-        # unstaked while _merge_frontier calls its admission predicate.
-        # Construct lazily so an empty/ranged/witness-expired frontier does
-        # not prepare geometry that it will never query.  A replayed walk
-        # shares the owner of the walk it replays: no tap moved in between.
-        run.neighborhood = None if replay is None else replay.neighborhood
-        asks: list[tuple[Cell, bool, tuple[int, ...]]] = []
-
-        def frontier_junctionable(x: int, y: int, level: int) -> bool:
-            if run.neighborhood is None:
-                try:
-                    run.neighborhood = JunctionNeighborhood(planned_taps, deadline=run.deadline)
-                except TimeoutError as error:
-                    # Incomplete preparation publishes no admission answer.
-                    raise _PreparationDeadline from error
-            admitted = _can_junction(
-                x,
-                y,
-                level,
-                project=(x, y, level) in project_taps,
-                neighborhood=run.neighborhood,
-            )
-            asks.append(((x, y, level), admitted, run.last_junction_blame))
-            return admitted
-
-        walk_offers: list[tuple[Cell, Cell, tuple[Cell, ...]]] = []
-        if replay is None:
-            frontier = _merge_frontier(
-                canvas,
-                paths,
-                siblings,
-                frontier_junctionable,
-                provenance=source_provenance,
-                belt_prefab=(belt_id, belt_model),
-                tentative_ok=tentative_ok,
-                owned_guard=owned_guard,
-                primitives=primitives,
-                source_choices=source_choices,
-                witness=witness,
-                admit_tap=admit_source_tap,
-                deadline=run.deadline,
-                path_ranges=source_ranges,
-                merged_cells=existing_sink_targets,
-                source_feeds=source_feeds,
-                trace=walk_offers,
-            )
-        else:
-            walk_offers = replay.offers
-            frontier = replay.replay(
-                project_taps,
-                frontier_junctionable,
-                asks=asks,
-                blame=junction_reservation_blockers,
-                provenance=source_provenance,
-                source_choices=source_choices,
-            )
-        if witness is not None and frontier:
-            cell = min(frontier)
-            return [cell], set(), ({}, {}, {cell: source_provenance[cell]})
-        guard_provenance.update(source_provenance)
-        if existing_sink_targets:
-            frontier.difference_update(existing_sink_targets)
-            for cell in existing_sink_targets:
-                source_provenance.pop(cell, None)
-                guard_provenance.pop(cell, None)
-        starts.extend(
-            sorted(
-                cell
-                for cell in frontier - set(starts)
-                if cell not in rejected_starts[index]
-                and source_provenance.get(cell) not in rejected_source_hints[index]
-            )
-        )
-        # A sibling may leave a prebuilt source absent from every routed path.
-        # Offer its spare docks whether already split or still an ordinary
-        # branch, using the same direct-source and physical-port proof.
-        selected_sources: set[Cell] = set()
-        for sibling in siblings:
-            sibling_source = nets[sibling].source
-            tap = (sibling_source.x, sibling_source.y, sibling_source.z)
-            if (
-                tap in selected_sources
-                or tap == (source.x, source.y, source.z)
-                or tap in rejected_source_hints[index]
-                or (tap in planned_taps and not planned_taps[tap] <= sibling_set)
-            ):
-                continue
-            selected_sources.add(tap)
-            docks, occupied = prebuilt_starts(tap, sibling_source, needs_junction=True)
-            occupied_source_access.extend(occupied)
-            if docks and admit_source_tap is not None and not admit_source_tap(tap):
-                continue
-            for cell in docks:
-                if witness is not None and witness(cell, tap):
-                    return [cell], set(), ({}, {}, {cell: tap})
-                source_choices.setdefault(cell, set()).add(tap)
-                if cell in starts:
-                    continue
-                starts.append(cell)
-                source_provenance[cell] = tap
-                guard_provenance[cell] = tap
-        # First-wins provenance is safe only after competing source taps have
-        # been certified. Include direct/frontier and prebuilt/frontier clashes,
-        # not just alternatives found along one sibling path.
-        if witnessed_taps is not None:
-            # Every admissible source candidate was checked during generation.
-            return [], set(), ({}, {}, {})
-        competing = frozenset(
-            tap for cell in starts if len(source_choices[cell]) > 1 for tap in source_choices[cell]
-        )
-        if not competing <= project_taps:
-            return _ends(
-                index,
-                tentative_ok=tentative_ok,
-                project_taps=project_taps | competing,
-                admit_source_tap=admit_source_tap,
-                replay=_SourceWalk(project_taps, asks, walk_offers, run.neighborhood, walk_docks),
-            )
-        source_access_walls[index] = tuple(occupied_source_access) if not starts else ()
-        # A shared source can become unusable without an occupied access cell:
-        # an earlier sibling may consume the only legal branch topology. That
-        # sibling is concrete blocking ownership even though the failed geometric search
-        # search has an empty wall.
-        source_access_blockers[index] = (
-            tuple(
-                _net_id(blocker)
-                for blocker in sorted(
-                    {sibling for sibling in siblings if sibling in paths}
-                    | (junction_reservation_blockers - {index})
-                )
-            )
-            if not starts
-            else ()
-        )
-        owned_source_starts[index] = frozenset(set(starts) & owned_guard.keys())
-        reverse_link_guard = paths.linked_heads() | _selected_source_heads(
-            nets, paths, source_hint, planned_taps
-        )
-
-        destination_access = tuple((net.dst.x + dx, net.dst.y + dy, net.dst.z) for dx, dy in _STEPS)
-        sink_provenance: dict[Cell, Cell] = {}
-        goals = {
-            cell
-            for cell in destination_access
-            if canvas.free(cell) and cell not in rejected_goals[index]
-        }
-        # Filter tap identities before first-wins provenance: rejecting one
-        # target must not discard a dock that can reach another legal target.
-        frontier = _merge_frontier(
-            canvas,
-            paths,
-            dst_group.get(index, ()),
-            provenance=sink_provenance,
-            primitives=primitives,
-            path_ranges=sink_ranges,
-            protected_sinks=_protected_merge_cells(paths, dst_group.get(index, ()), path_tap)
-            | reverse_link_guard
-            | rejected_sink_hints[index],
-        )
-        # The committer prefers a direct destination link over a sibling hint.
-        # Freeze the same choice so transit reservations do not charge a
-        # sibling suffix the emitted flow never traverses.
-        for cell in goals:
-            sink_provenance.pop(cell, None)
-        goals.update(cell for cell in frontier if cell not in rejected_goals[index])
-        # A zero-work access miss can still be congestion: earlier paths
-        # may occupy every direct dock, leaving the geometric search no start or goal and therefore
-        # no explored wall to attribute. Retain those exact owners so repair can
-        # rip up the paths that closed either endpoint instead of repeating the
-        # same order with an anonymous dynamic-access failure.
-        destination_access_walls[index] = (
-            tuple(cell for cell in destination_access if cell in owner) if not goals else ()
-        )
-        # These maps belong to THIS endpoint query.  A path may be staked only
-        # with the exact promises the geometric search selected from, even if a later repair asks
-        # `_ends` another question for the same net.
-        offers = (
-            dict(source_provenance),
-            dict(sink_provenance),
-            dict(guard_provenance),
-        )
-        return starts, goals, offers
-
-    def _future_source_offers(
-        index: int,
-        path: tuple[Cell, ...],
-        offers: tuple[Mapping[Cell, Cell], Mapping[Cell, Cell], Mapping[Cell, Cell]],
-        *,
-        tentative_ok: bool = False,
-    ) -> dict[Cell, Cell]:
-        """Find future taps; tentative mode only discovers repair blockers."""
-        routing_ports = canvas.routing_ports
-        reservations = corridor_reservations.snapshot()
-        _stake(index, path, hints=_selected_hints(path, offers))
-        try:
-            future: dict[Cell, Cell] = {}
-            checked: dict[Cell, bool] = {}
-            path_cells = frozenset(path)
-            remaining = tuple(
-                sibling for sibling in src_group.get(index, ()) if sibling not in paths
-            )
-            shared: tuple[Cell, Cell] | None = None
-            if len(remaining) > 1 and (
-                flow_limits is None
-                or all(
-                    flow_limits.rates[sibling] == flow_limits.rates[remaining[0]]
-                    for sibling in remaining[1:]
-                )
-            ):
-                # Prove one offer with only the reservation exemptions common
-                # to every remaining sibling. Each actual query is less
-                # restrictive. The staked topology and source family stay
-                # fixed until this transaction's finally block; an unrouted
-                # sibling owns no path or conditional guard to distinguish it.
-                common_ports: set[Cell] | None = None
-                for sibling in remaining:
-                    net = nets[sibling]
-                    ports = {
-                        (net.source.x, net.source.y, net.source.z),
-                        (net.dst.x, net.dst.y, net.dst.z),
-                    }
-                    common_ports = ports if common_ports is None else common_ports & ports
-                assert common_ports is not None
-                starts, _goals, shared_offers = _ends(
-                    remaining[0],
-                    witnessed_taps=checked,
-                    tentative_ok=tentative_ok,
-                    witness_ports=frozenset(common_ports),
-                )
-                if starts:
-                    shared = starts[0], shared_offers[2][starts[0]]
-            for sibling in remaining:
-                if _expired(run.deadline):
-                    return {}
-                if (
-                    shared is not None
-                    and shared[0] not in rejected_starts[sibling]
-                    and shared[1] not in rejected_source_hints[sibling]
-                ):
-                    start, tap = shared
-                else:
-                    starts, _goals, sibling_offers = _ends(
-                        sibling, witnessed_taps=checked, tentative_ok=tentative_ok
-                    )
-                    if not starts:
-                        return {}
-                    start = starts[0]
-                    source = nets[sibling].source
-                    tap = sibling_offers[2].get(start, (source.x, source.y, source.z))
-                assert checked[tap]
-                if tap in path_cells or not future:
-                    future = {start: tap}
-            return future
-        finally:
-            _unstake(index)
-            corridor_reservations.restore(reservations)
-            canvas.routing_ports = routing_ports
-
-    def _analytic_ordinary(
-        starts: list[Cell],
-        goals: set[Cell],
-        search_history: dict[Cell, float],
-        pressure: float,
-        query_deadline: float | None,
-        *,
-        forbidden: Collection[Cell],
-        owned_starts: Collection[Cell],
-        released_starts: Collection[Cell],
-        admit_proposal: Callable[[tuple[Cell, ...], float | None], bool] | None,
-    ) -> tuple[Cell, ...] | None:
-        """Try complete overhead constructions inside the ordinary query's clock."""
-        try:
-            if run.geometry_world is None:
-                run.geometry_world = projection_world.ClearanceOracle(
-                    canvas, deadline=query_deadline
-                )
-            world = run.geometry_world
-            world.history = search_history
-            world.pressure = pressure
-            world.forbidden = frozenset(forbidden)
-            world.owned_starts = frozenset(owned_starts)
-            world.released_starts = frozenset(released_starts)
-            if run.geometry_screen is None:
-                run.geometry_screen = FlatScreen((), query_deadline, world)
-            prepared = time.monotonic()
-            # The staged proposal slice is part of, never additional to, the
-            # existing ordinary allowance. A miss still takes the original geometric search.
-            proposal_deadline = prepared + 0.05
-            if query_deadline is not None:
-                proposal_deadline = min(proposal_deadline, query_deadline)
-            return overhead_path(
-                world,
-                [cell for cell in starts if _inside_route_box(cell, bounds)],
-                {cell for cell in goals if _inside_route_box(cell, bounds)},
-                bounds,
-                proposal_deadline,
-                blocked=tuple(cell for cell in owner if cell in canvas.blocked),
-                screen=run.geometry_screen,
-                admit_proposal=admit_proposal,
-            )
-        except _GeometricDeadline:
-            # This proposal family is not an exhaustive geometric search.
-            return None
-
-    def _ordinary_query_deadline() -> float | None:
-        if run.deadline is None:
-            return None
-        now = time.monotonic()
-        return now + (run.deadline - now) / 8
-
-    def _search(
-        starts: list[Cell],
-        goals: set[Cell],
-        junction_offers: Mapping[Cell, Cell],
-        search_history: dict[Cell, float],
-        pressure: float,
-        search_budget: budget_module.WorkBudget,
-        blame: dict[Cell, float] | None,
-        search_grid: _Grid,
-        *,
-        owned_starts: Collection[Cell] = (),
-        released_starts: Collection[Cell] = (),
-        forbidden: Collection[Cell] = (),
-        ordinary_only: bool = False,
-        admit_proposal: Callable[[tuple[Cell, ...], float | None], bool] | None = None,
-        ordinary_deadline: float | None = None,
-    ) -> _PathSearchResult:
-        """Admit source geometry for every normal, repair and cluster search.
-
-        A path may leave a prospective Splitter legally and later return through
-        its keepout. Retry that source locally; its geometry must never poison
-        another source's cells or a later endpoint query.
-        """
-        search_starts = starts
-        source_choices = {junction_offers.get(cell) for cell in starts}
-        search_tap = next(iter(source_choices)) if len(source_choices) == 1 else None
-        rejected: set[Cell] | None = None
-        rejected_edges: set[tuple[Cell, Cell]] = set()
-        run.total_work = 0
-        # Every caller hands this closure the pass ledger or a carved child of
-        # it, and both are built with an int allowance; `None` -- "unbounded" --
-        # never reaches a routing search.
-        assert search_budget.left is not None, "a routing search needs a ledger"
-        connector_reserve = (
-            0 if ordinary_only else min(_MAX_SEARCH_WORK + 1, max(0, search_budget.left) // 2)
-        )
-        allowance = min(_MAX_SEARCH_WORK + 1, max(0, search_budget.left - connector_reserve))
-        if _expired(run.deadline):
-            return _PathSearchResult(None, RouteFailureKind.BUDGET, (), 0, BudgetCause.DEADLINE)
-        if ordinary_deadline is None:
-            ordinary_deadline = _ordinary_query_deadline()
-        ordinary = None
-        run.capped_ordinary = None
-        run.ordinary_remaining = allowance
-        ordinary_starts = starts
-        ordinary_rejected: dict[Cell, set[Cell]] = {}
-
-        def probe_ordinary(
-            candidates: list[Cell], blocked: Collection[Cell]
-        ) -> _PathSearchResult | None:
-            if (
-                run.ordinary_remaining < 2
-                or _expired(ordinary_deadline)
-                or not candidates
-                or all(goal in blocked for goal in goals)
-            ):
-                return None
-            if flow_limits is not None:
-                proposed = _analytic_ordinary(
-                    candidates,
-                    goals,
-                    search_history,
-                    pressure,
-                    ordinary_deadline,
-                    forbidden=blocked,
-                    owned_starts=owned_starts,
-                    released_starts=released_starts,
-                    admit_proposal=admit_proposal,
-                )
-                if proposed is not None:
-                    return _PathSearchResult(proposed, None, (), 0)
-            private = budget_module.WorkBudget(left=run.ordinary_remaining)
-            result = _geometric_search(
-                canvas,
-                candidates,
-                goals,
-                search_history,
-                pressure,
-                bounds,
-                budget=private,
-                deadline=ordinary_deadline,
-                blame=None,
-                grid=search_grid,
-                owned_starts=owned_starts,
-                released_starts=released_starts,
-                forbidden=blocked,
-                blocking_owners=owner,
-                extra_edges=None,
-            )
-            private_left = private.left
-            assert private_left is not None
-            assert search_budget.left is not None
-            search_budget.left -= run.ordinary_remaining - private_left
-            run.ordinary_remaining = private_left
-            run.total_work += result.work
-            if result.path is not None:
-                return result
-            if result.kind is RouteFailureKind.BUDGET and (
-                result.work >= _MAX_SEARCH_WORK or run.ordinary_remaining <= 0
-            ):
-                run.capped_ordinary = result
-            return None
-
-        try:
-            ordinary = probe_ordinary(starts, forbidden)
-            # Large first passes spend only their ordinary share. Optional physical
-            # enrichment belongs to repair, after every net has had an opportunity.
-            for retry in range(5):
-                if ordinary_only and ordinary is None:
-                    return _PathSearchResult(
-                        None,
-                        RouteFailureKind.BUDGET,
-                        (),
-                        run.total_work,
-                        run.capped_ordinary.cause
-                        if run.capped_ordinary is not None
-                        else BudgetCause.BOUNDED,
-                    )
-                ordinary_attempt = ordinary is not None
-                if ordinary_attempt:
-                    assert ordinary is not None
-                    found = ordinary
-                    ordinary = None
-                else:
-                    if _expired(run.deadline) or search_budget.left <= 0:
-                        return _PathSearchResult(
-                            None,
-                            RouteFailureKind.BUDGET,
-                            (),
-                            run.total_work,
-                            BudgetCause.DEADLINE
-                            if _expired(run.deadline)
-                            else BudgetCause.ALLOWANCE,
-                        )
-                    connector_edges = primitives.edges(
-                        canvas,
-                        search_grid,
-                        search_starts,
-                        goals,
-                        forbidden=forbidden if rejected is None else rejected,
-                        excluded_edges=rejected_edges,
-                        active_paths=paths,
-                        active_taps=(
-                            planned_taps if search_tap is None else (*planned_taps, search_tap)
-                        ),
-                        deadline=run.deadline,
-                        power_allows=connector_is_powered if power_discs is not None else None,
-                    )
-                    if retry == 0 and not connector_edges and run.capped_ordinary is not None:
-                        # No graph inputs changed. The fallback has no larger
-                        # work allowance than the exhausted ordinary search.
-                        # Repeating its bounded prefix cannot find a new path;
-                        # retain the shared quota for other nets, still refusing.
-                        return replace(run.capped_ordinary, work=run.total_work)
-                    # The leaf SETS `left` on the ledger it is handed, never
-                    # decrements it, so handing it this pass's own ledger
-                    # charges exactly what the query spent.
-                    found = _geometric_search(
-                        canvas,
-                        search_starts,
-                        goals,
-                        search_history,
-                        pressure,
-                        bounds,
-                        search_budget,
-                        run.deadline,
-                        blame,
-                        search_grid,
-                        owned_starts=owned_starts,
-                        released_starts=released_starts,
-                        forbidden=forbidden if rejected is None else rejected,
-                        blocking_owners=owner,
-                        extra_edges=connector_edges,
-                    )
-                    run.total_work += found.work
-                if found.path is None:
-                    # Connector siting is bounded and keeps one physical witness
-                    # per directed edge. Exhausting this subset cannot prove the
-                    # complete physical routing problem impossible -- but say so
-                    # as BOUNDED rather than borrowing the clock's name, unless
-                    # the inner search really did hit a limit and named one.
-                    return replace(
-                        found,
-                        kind=RouteFailureKind.BUDGET,
-                        work=run.total_work,
-                        cause=(
-                            found.cause
-                            if found.kind is RouteFailureKind.BUDGET
-                            and found.cause is not BudgetCause.UNKNOWN
-                            else BudgetCause.BOUNDED
-                        ),
-                    )
-                if not primitives.path_is_clear(found.path):
-                    if retry == 4:
-                        return _PathSearchResult(
-                            None,
-                            RouteFailureKind.BUDGET,
-                            (),
-                            run.total_work,
-                            BudgetCause.BOUNDED,
-                        )
-                    if ordinary_attempt:
-                        continue
-                    rejected_edges.update(
-                        edge
-                        for edge in zip(found.path, found.path[1:], strict=False)
-                        if edge in primitives.witnesses
-                    )
-                    continue
-                tap = junction_offers.get(found.path[0])
-                proposed_taps = () if tap is None or tap in planned_taps else (tap,)
-                if not canvas.projected_buildings_are_clear(
-                    primitives.selection({0: found.path}, proposed_taps),
-                    selected=primitives.selection(paths, planned_taps),
-                    deadline=run.deadline,
-                ):
-                    if retry == 4 or _expired(run.deadline):
-                        return _PathSearchResult(
-                            None,
-                            RouteFailureKind.BUDGET,
-                            (),
-                            run.total_work,
-                            BudgetCause.BOUNDED,
-                        )
-                    if ordinary_attempt:
-                        # Try another ordinary source inside the same allocation.
-                        # Keep original offers untouched for enriched fallback:
-                        # connector members may admit a different final frame.
-                        ordinary_starts = [
-                            cell for cell in ordinary_starts if junction_offers.get(cell) != tap
-                        ]
-                        ordinary = probe_ordinary(ordinary_starts, forbidden)
-                        continue
-                    macro_edges = {
-                        edge
-                        for edge in zip(found.path, found.path[1:], strict=False)
-                        if edge in primitives.witnesses
-                    }
-                    if macro_edges:
-                        # The rejection belongs to this source selection, not to
-                        # another source that might use the same connector legally.
-                        search_tap = tap
-                        search_starts = [
-                            cell for cell in search_starts if junction_offers.get(cell) == tap
-                        ]
-                        rejected_edges.update(macro_edges)
-                    else:
-                        search_starts = [
-                            cell for cell in search_starts if junction_offers.get(cell) != tap
-                        ]
-                    continue
-                if tap is None:
-                    return replace(found, work=run.total_work)
-                stack = _splitter_stack_geometry(*tap)
-                illegal: set[Cell] = set()
-                path_cells = set(found.path)
-                attached_cells = found.path[:2]
-                for offset, member in enumerate(stack):
-                    for cell in junction.keepout_cells(
-                        tap[0],
-                        tap[1],
-                        int(member.z),
-                        model_index=member.model_index,
-                        yaw=member.yaw,
-                    ):
-                        if cell in path_cells and (
-                            offset != len(stack) - 1 or cell not in attached_cells
-                        ):
-                            illegal.add(cell)
-                attachment = (tap[0], tap[1], tap[2] - 1 if tap[2] % 2 else tap[2])
-                if attachment in path_cells:
-                    illegal.add(attachment)
-                if not illegal:
-                    return replace(found, work=run.total_work)
-                if retry == 4:
-                    return _PathSearchResult(
-                        None, RouteFailureKind.BUDGET, (), run.total_work, BudgetCause.BOUNDED
-                    )
-                if ordinary_attempt:
-                    # Only this source owns these body constraints. Retrying it
-                    # must not ban the same cells for another source or enrichment.
-                    source_blocked = ordinary_rejected.setdefault(tap, set(forbidden))
-                    source_blocked.update(illegal)
-                    ordinary = probe_ordinary(
-                        [cell for cell in starts if junction_offers.get(cell) == tap],
-                        source_blocked,
-                    )
-                    if ordinary is None:
-                        # A failed detour around this tap's body says nothing
-                        # about the other source taps. Keep their original
-                        # geometry and spend the remaining ordinary allowance
-                        # there, rather than discarding all ordinary sources.
-                        ordinary_starts = [
-                            cell for cell in ordinary_starts if junction_offers.get(cell) != tap
-                        ]
-                        ordinary = probe_ordinary(ordinary_starts, forbidden)
-                    continue
-                if rejected is None:
-                    rejected = set(forbidden)
-                    search_starts = [cell for cell in starts if junction_offers.get(cell) == tap]
-                    search_tap = tap
-                rejected.update(illegal)
-            raise AssertionError("source admission retry must return")
-        except _PreparationDeadline as error:
-            error.work += run.total_work
-            raise
-
-    def _preserves_source_frontier(
-        index: int,
-        path: tuple[Cell, ...],
-        offers: tuple[dict[Cell, Cell], dict[Cell, Cell], dict[Cell, Cell]],
-        *,
-        proved_future: Mapping[Cell, Cell] | None = None,
-    ) -> bool:
-        if not any(sibling not in paths for sibling in src_group.get(index, ())):
-            return True
-        if _expired(run.deadline):
-            raise _PreparationDeadline
-        future = (
-            _future_source_offers(index, path, offers) if proved_future is None else proved_future
-        )
-        if not future:
-            return False
-        for tap in future.values():
-            if tap in path:
-                offers[2].setdefault(path[0], tap)
-                break
-        return True
-
-    def _search_route(
-        index: int,
-        starts: list[Cell],
-        goals: set[Cell],
-        offers: tuple[dict[Cell, Cell], dict[Cell, Cell], dict[Cell, Cell]],
-        pressure: float,
-        search_budget: budget_module.WorkBudget,
-        blame: dict[Cell, float],
-        *,
-        ordinary_only: bool = False,
-        constraints: Collection[Cell] = (),
-    ) -> _PathSearchResult:
-        """Search and admit the same source obligations in every reconstruction."""
-        assert search_budget.left is not None, "a routing search needs a ledger"
-        total = 0
-        admit_proposal: Callable[[tuple[Cell, ...], float | None], bool] | None = None
-        run.admitted_path = None
-        run.admitted_future = None
-        if any(sibling not in paths for sibling in src_group.get(index, ())):
-
-            def admit_source_family(
-                path: tuple[Cell, ...], proposal_deadline: float | None
-            ) -> bool:
-                # All synchronous witness helpers share this route-local clock.
-                # Narrow it only for the proposal; outer admission keeps its clock.
-                route_deadline = run.deadline
-                if proposal_deadline is not None:
-                    run.deadline = (
-                        proposal_deadline
-                        if run.deadline is None
-                        else min(run.deadline, proposal_deadline)
-                    )
-                try:
-                    future = _future_source_offers(index, path, offers)
-                    if future:
-                        run.admitted_path, run.admitted_future = path, future
-                    return bool(future)
-                except _PreparationDeadline as error:
-                    raise _GeometricDeadline from error
-                finally:
-                    run.deadline = route_deadline
-
-            admit_proposal = admit_source_family
-
-        try:
-            for retry in range(5):
-                found = _search(
-                    starts,
-                    goals,
-                    offers[2],
-                    history,
-                    pressure,
-                    search_budget,
-                    blame,
-                    grid,
-                    owned_starts=owned_source_starts.get(index, ()),
-                    forbidden=frozenset(rejected_path_cells.get(index, ()))
-                    | frozenset(constraints),
-                    ordinary_only=ordinary_only,
-                    admit_proposal=admit_proposal,
-                )
-                total += found.work
-                # No routing state changes between proposal admission and this
-                # return. Reuse only the exact immutable path's witness; the geometric search and
-                # other proposals still receive their own family proof.
-                if found.path is None or _preserves_source_frontier(
-                    index,
-                    found.path,
-                    offers,
-                    proved_future=run.admitted_future if found.path is run.admitted_path else None,
-                ):
-                    return replace(found, work=total)
-                if retry == 4 or _expired(run.deadline) or search_budget.left <= 0:
-                    break
-                for cell in found.path:
-                    history[cell] += _BLAME_WEIGHT
-                grid.refresh_history(history)
-            # Bounded alternatives did not preserve the family. This is not an
-            # exhausted geometric search and cannot establish an impossibility.
-            return _PathSearchResult(None, RouteFailureKind.BUDGET, (), total, BudgetCause.BOUNDED)
-        except _PreparationDeadline as error:
-            error.work += total
-            error.net_index = index
-            raise
-
-    def _route_order(
-        indices: Collection[int], dependents: Mapping[int, Collection[int]]
-    ) -> tuple[int, ...] | None:
-        preferred = sorted(
-            indices,
-            key=lambda i: (
-                not any(member in priority for member in source_family[i]),
-                _net_id(i).role is not NetRole.PROLIFERATOR,
-                -len(source_family[i]) if prioritize_source_families else 0,
-                -source_family_distance[i],
-                source_family[i][0],
-                -route_distance[i],
-                i,
-            ),
-        )
-        return _dependency_order(preferred, dependents)
-
-    def _endpoint_dependents() -> dict[int, set[int]]:
-        """Resolve frozen endpoint promises before any provider is withdrawn."""
-        dependents: dict[int, set[int]] = defaultdict(set)
-        for index in paths:
-            for hint in (source_hint.get(index), sink_hint.get(index), path_tap.get(index)):
-                provider = owner.get(hint) if hint is not None else None
-                if provider is not None and provider != index:
-                    dependents[provider].add(index)
-        return dependents
-
-    def _dependency_closure(
-        indices: Collection[int],
-        dependents: Mapping[int, Collection[int]] | None = None,
-    ) -> set[int]:
-        if dependents is None:
-            dependents = _endpoint_dependents()
-        closure = set(indices)
-        pending = list(indices)
-        while pending:
-            for index in dependents.get(pending.pop(), ()):
-                if index not in closure:
-                    closure.add(index)
-                    pending.append(index)
-        return closure
+    #: The rest of the search cluster, each alias standing where its `def` did.
+    #: The eight the cluster alone calls need none; Task 7 deletes these.
+    _inside_grid = run._inside_grid
+    _selected_hints = run._selected_hints
+    _stake = run._stake
+    _unstake = run._unstake
+    run._prebuilt_path_port = lru_cache(maxsize=None)(splitter_ports.expected_path_port)
+    run._prebuilt_branch_port = cache(run._prebuilt_branch_port_uncached)
+    _ends = run._ends
+    _future_source_offers = run._future_source_offers
+    _ordinary_query_deadline = run._ordinary_query_deadline
+    _search = run._search
+    _preserves_source_frontier = run._preserves_source_frontier
+    _search_route = run._search_route
+    _route_order = run._route_order
+    _endpoint_dependents = run._endpoint_dependents
+    _dependency_closure = run._dependency_closure
 
     def _repair(
         stranded: list[int],

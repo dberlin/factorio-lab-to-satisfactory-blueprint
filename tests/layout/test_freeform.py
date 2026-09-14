@@ -21287,7 +21287,10 @@ def _capture_can_junction(
     ) -> set[Cell]:
         if junctionable is not None:
             context = inspect.getclosurevars(junctionable).nonlocals
-            can_junction = cast(Callable[..., bool], context["_can_junction"])
+            # `_can_junction` is a `_RouteAllRun` method since the Plan C
+            # search-cluster lift, so the gate now reaches it through the run
+            # object `frontier_junctionable` closes over instead of directly.
+            can_junction = cast(Callable[..., bool], context["self"]._can_junction)
             project_taps = cast(frozenset[Cell], context["project_taps"])
 
             def live_gate(x: int, y: int, level: int) -> bool:
