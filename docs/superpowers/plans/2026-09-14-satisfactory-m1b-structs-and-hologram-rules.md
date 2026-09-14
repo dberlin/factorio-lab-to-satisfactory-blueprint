@@ -319,6 +319,35 @@ git commit -m "Take legality from the hologram rules and demote the corpus to st
 
 ---
 
+### Task 4: Port directions from the game, not from the corpus or the port name
+
+Added 2026-09-14 after the user pointed out that Milestone 1's registry took 24
+port directions from the blueprint corpus and 31 from the port's name, against
+the ruling that game data is never inferred from blueprints. This task removes
+both sources.
+
+**Files:**
+- Modify: `tools/sfy-extract/Program.cs`, `tools/sfy-extract/README.md`, `scripts/sfy_registry.py`, `src/flab2bp/sfy/registry.py`, `src/flab2bp/sfy/data/assets.json`, `src/flab2bp/sfy/data/native.json` (if the native default is read), `src/flab2bp/sfy/data/registry.json`
+- Test: `tests/sfy/test_registry.py`
+
+**Facts:** the extractor emits `direction: "unknown"` when a connection component template omits `mDirection`; Unreal delta-serializes a template property when it equals its archetype's value, so an omitted `mDirection` means "same as the archetype", where the archetype is the parent Blueprint's template for the same component, or, at the root, the native class default object of `UFGFactoryConnectionComponent` (set in its C++ constructor, readable with `sfy-native extract`/`disasm`). Belt and lift ends are additionally set in `AFGBuildableConveyorBase`'s constructor (`mConnection0`/`mConnection1` `SetDirection` calls, readable with `disasm`; `FGBuildableConveyorBase.h:380` documents them).
+
+**Interfaces:**
+- `Port.direction_source` values become exactly `"asset"`, `"asset-inherited"` (found on a parent Blueprint template), `"native"` (the C++ constructor of the buildable or the component class, with the function and RVA in provenance) or `"unknown"`; `"corpus"` and `"name"` are removed from the loader's vocabulary and the merge refuses them.
+- A port whose direction is `"unknown"` after all three game sources is shipped as `"unknown"`; the registry test asserts the count and lists them, and `docs/sfy-regenerating-game-data.md` says what an `unknown` port means for the validator (refuse to route to it).
+
+- [ ] **Step 1: Failing tests** — replace `test_every_port_says_how_its_direction_was_established` with one asserting the new vocabulary and that no port carries `corpus` or `name`; keep the belt/lift end test but require `direction_source == "native"` for `ConveyorAny0/1`.
+- [ ] **Step 2: Extractor** — walk the parent Blueprint chain for the same-named component template until a `mDirection` is found (`asset-inherited`); when none is found, look up the native default: `sfy-native extract --class UFGFactoryConnectionComponent` member `mDirection` (constructor immediate) and, for belts and lifts, `disasm AFGBuildableConveyorBase::AFGBuildableConveyorBase` for the two `SetDirection` immediates; emit `direction_source` per port from the extractor itself.
+- [ ] **Step 3: Merge and loader** — drop `CONVEYOR_ENDS`, the name heuristic and the corpus lookup from `scripts/sfy_registry.py`; the provenance block records the native evidence; regenerate; `load_registry` rejects the removed vocabulary.
+- [ ] **Step 4: Suite, docs, commit** — `uv run pytest tests/sfy -q` exit 0; README and runbook updated.
+```bash
+git commit -m "Take every port direction from the game and ship unknown where the game does not say"
+```
+
+**Review batch C: Task 4.**
+
+---
+
 ## Self-review
 
 **Spec coverage.** Fix 2 (structs from game data): Task 2 covers both survivors and adds the usmap schema check. Fix 4 (hologram legality): Task 3 covers extraction, registry semantics, statistics demotion, runbook and spec amendment; Task 1 is the tool both depend on.
