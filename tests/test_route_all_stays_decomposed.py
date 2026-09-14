@@ -32,8 +32,10 @@ directories must not collide on one allowlist key. ``<enclosing function>``
 is the dotted chain of function and class names around the site.
 
 Plan C's other two abstraction pins, the request objects that replaced
-`_merge_frontier`'s 18 keyword parameters and `_pack_window`'s 14, are
-already enforced next to the code they describe and are deliberately not
+`_merge_frontier`'s 18 parameters (14 keyword-only, now the 14 fields of
+`_MergeFrontierRequest`) and `_pack_window`'s 17 parameters (16
+keyword-only, now the 16 fields of `_PackWindowRequest`), are already
+enforced next to the code they describe and are deliberately not
 duplicated here: `tests/layout/test_route_witnesses.py`'s
 `test_merge_frontier_takes_five_parameters` and
 `tests/layout/test_freeform.py`'s

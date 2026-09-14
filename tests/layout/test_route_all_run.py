@@ -386,7 +386,9 @@ def test_role_rows_is_still_a_generator_consumed_once() -> None:
 
     assert inspect.isgeneratorfunction(domain._RouteAllRun._role_rows)
     source = SRC.read_text()
-    assert source.count("Nets.of(run._role_rows())") == 1
+    driver = ast.get_source_segment(source, _route_all_node())
+    assert driver is not None
+    assert driver.count("Nets.of(run._role_rows())") == 1
 
 
 SEARCH_METHODS = (
