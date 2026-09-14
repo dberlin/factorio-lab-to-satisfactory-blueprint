@@ -31,9 +31,10 @@ export FLAB2BP_SATISFACTORY_DIR="$HOME/Satisfactory"   # the default, if unset
 | 5 | `tools/sfy-extract extract` | .NET 10, the paks, the usmap, step 4 | `data/assets.json` |
 | 6 | `tools/sfy-extract structs` | .NET 10 and the usmap | `data/struct_schemas.json` |
 | 7 | `uv run python scripts/sfy_registry.py` | steps 1–5 | `data/registry.json` |
+| 8 | `uv run python scripts/sfy_lab_map.py` (after `--refresh-names`) | steps 1 and 7, the install's Docs dump | `data/lab_item_names.json`, `data/lab_map.json` |
 
 Then re-run the tests, which read the committed files and are the acceptance for
-all seven steps:
+all eight steps:
 
 ```bash
 uv run pytest tests/sfy
@@ -323,11 +324,61 @@ need, `mPowerConsumptionExponent` and `mProductionShardBoostMultiplier`, are
 extractors (1.321929) than for everything else (1.6), so a single global would be
 a number nobody stated, and both ride on the buildable that states them.
 
+## 8. The lab map → `lab_item_names.json` and `lab_map.json`
+
+```bash
+uv run python scripts/sfy_lab_map.py --refresh-names
+uv run python scripts/sfy_lab_map.py
+```
+
+What a FactorioLab id means in the game: lab item id → `Desc_*_C`, lab recipe id
+→ `Recipe_*_C`, lab machine, belt and pipe id → `Build_*_C`, plus the lab recipes
+the game has no `Recipe_*_C` for and the reason for each.
+`flab2bp.sfy.labmap.load_lab_map` reads the result.
+
+**Order matters: step 1, then `--refresh-names`, then the derive.** The first
+command is the only one here that reads the install. It collects
+`mDisplayName` for every class in `registry.item_paths` that states one, out of
+the same `CommunityResources/Docs/en-US.json` step 1 reads, and writes
+`data/lab_item_names.json`. It is a separate file because `data/docs.json` keeps
+buildables, recipes and the `Desc_X_C → Build_X_C` descriptor map but no item
+display name, and because a *building* descriptor leaves `mDisplayName` empty —
+its buildable carries the name, which is where the machine, belt and pipe rows
+are matched from instead.
+
+Both halves refuse rather than let the two drift apart: `--refresh-names` stops
+if the install's dump is not the one `data/docs.json` was built from, and the
+derive stops if `lab_item_names.json`'s `docs_sha256` is not `docs.json`'s. So
+after a game update, re-run step 1 **before** `--refresh-names`, and step 7
+before the derive.
+
+The derive itself reads only committed files — the registry, the names file and
+FactorioLab's vendored `data.json` — and **guesses nothing**. Items match on
+display name, exactly or tolerating one side's trailing `s` after the exact name
+finds nothing; the run prints how many rows needed that licence (it is 0 today).
+Recipes match on an exact signature over the *mapped* item classes: producer
+`Build_*_C`, duration as a `Fraction`, and the sorted `(Desc_*_C, amount)` pairs
+on both sides, with fluid amounts multiplied by 1000 because the lab states m3
+and the game centilitres. A lab id with no candidate, or with more than one,
+fails the run with the candidates listed; the two item overrides, the one recipe
+override and the twenty unmapped recipes are each spelled out in the script with
+the reason, and each is itself re-checked against game data. The machine table is
+written out by hand — no convention produces `refinery → Build_OilRefinery_C` —
+and then derived a second way, through the item table and
+`registry.descriptors`, with a refusal if the two disagree.
+
+`tests/sfy/test_labmap.py` is the acceptance: it re-runs this step into a
+temporary file and diffs it against what is committed (ignoring `provenance`),
+holds every mapped class to `registry.recipes` / `item_paths` / `buildables`,
+checks that every lab recipe either maps or says why not and that every item a
+mapped recipe names has a class, and doctors the script's own tables in process
+to prove each refusal path still refuses.
+
 ## After a game update
 
-1. Run all seven steps. Step 3 is the one most likely to fail: a validator that
+1. Run all eight steps. Step 3 is the one most likely to fail: a validator that
    moved stops it by name and address, which is the point.
-2. `uv run pytest tests/sfy` — three things in it are the gate:
+2. `uv run pytest tests/sfy` — four things in it are the gate:
    - the **drift test**,
      `test_registry.py::test_the_committed_registry_is_what_the_merge_produces`,
      which re-runs step 7 into a temporary file and diffs it against what is
@@ -340,6 +391,10 @@ a number nobody stated, and both ride on the buildable that states them.
      direction traced to the game link that answered, every conveyor's flow and
      cost segment naming its source, and nothing anywhere coming from the
      blueprint corpus.
+   - the **lab map's drift test**,
+     `test_labmap.py::test_the_committed_map_is_what_the_script_derives`, which
+     does the same for step 8 — and will refuse outright if `--refresh-names`
+     was not re-run against the dump step 1 read.
 3. `git diff --stat src/flab2bp/sfy/data/` — a game update should move the build
    version and whatever the patch notes say it moved, and nothing else.
 4. Rebuild the checkpoint blueprint and load it in the game:

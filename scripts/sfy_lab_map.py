@@ -38,10 +38,13 @@ The three tables:
      ``registry.buildables[registry.descriptors[desc]].display_name``.
 
    Matching is case-insensitive and tolerates one side's trailing ``s`` when the
-   other side has none (``screw`` -> ``Screws``). Two lab names still miss, and
-   both are in :data:`ITEM_OVERRIDES` with the two names on the line. Eight lab
-   ids have no game class at all and are in :data:`ITEMS_NOT_IN_GAME` with the
-   reason; every other lab item must land in exactly one class or the run fails.
+   other side has none, only after the exact name has found nothing. **No row
+   needs that licence today** -- the run prints the count, so a version of the
+   game or the lab that starts leaning on it says so -- and the two lab names
+   that still miss are in :data:`ITEM_OVERRIDES` with both names on the line.
+   Eight lab ids have no game class at all and are in :data:`ITEMS_NOT_IN_GAME`
+   with the reason; every other lab item must land in exactly one class or the
+   run fails.
 
 3. **Recipes.** By exact signature over *mapped* classes:
    ``(producer Build_*_C, duration, sorted (Desc_*_C, amount) ingredients,
@@ -71,6 +74,7 @@ import hashlib
 import json
 from collections import defaultdict
 from collections.abc import Mapping
+from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
 from typing import Any
@@ -123,8 +127,11 @@ MACHINES = {
     "conveyor-belt-mk4": "Build_ConveyorBeltMk4_C",
     "conveyor-belt-mk5": "Build_ConveyorBeltMk5_C",
     "conveyor-belt-mk6": "Build_ConveyorBeltMk6_C",
-    # The fixture corpus carries the ``_NoIndicator_C`` variants, which are
-    # distinct classes ("Clean Pipeline Mk.1"); these two are the plain marks.
+    # Docs.json names ``Build_Pipeline_C`` "Pipeline Mk.1" and
+    # ``Build_PipelineMK2_C`` "Pipeline Mk.2", which is what the lab calls
+    # ``pipeline-mk1`` and ``pipeline-mk2``. The ``_NoIndicator_C`` classes are
+    # separate buildables the game names "Clean Pipeline Mk.1" and "Clean
+    # Pipeline Mk.2", and the lab has no id for either.
     "pipeline-mk1": "Build_Pipeline_C",
     "pipeline-mk2": "Build_PipelineMK2_C",
 }
@@ -200,13 +207,14 @@ def _normalise(name: str) -> str:
     return " ".join(name.split()).casefold()
 
 
-def _name_keys(name: str) -> tuple[str, ...]:
-    """The normalised name, and its one-``s`` plural or singular counterpart.
+def _name_keys(name: str) -> tuple[str, str]:
+    """The normalised name, then its one-``s`` plural or singular counterpart.
 
-    The lab writes ``Screw`` where the game writes ``Screws`` and ``Blade
-    Runners`` where the game writes ``Blade Runners``; tolerating a trailing
-    ``s`` on one side only -- never adding or removing one on both -- is the
-    whole of the licence taken here.
+    The lab writes ``Screw`` where the game writes ``Screws``, and ``Alien
+    Protein`` where the game writes ``Alien Protein``: tolerating a trailing
+    ``s`` on one side when the other has none -- never stripping or adding one
+    on both, and only after the exact name has found nothing -- is the whole of
+    the licence taken here. The run reports how many rows needed it.
     """
     key = _normalise(name)
     other = key[:-1] if key.endswith("s") else key + "s"
@@ -260,13 +268,52 @@ def _machines(registry: Registry) -> dict[str, str]:
     return dict(MACHINES)
 
 
-def _items(dataset: Dataset, registry: Registry) -> dict[str, str]:
+def _check_machines(
+    machines: Mapping[str, str],
+    items: Mapping[str, str],
+    dataset: Dataset,
+    registry: Registry,
+) -> None:
+    """Derive each machine row a second way, and require the two to agree.
+
+    The table is written out by hand because no convention produces
+    ``refinery -> Build_OilRefinery_C``. It is still derivable, though, once the
+    item table exists: a lab machine id is also a lab *item*, so it has a
+    ``Desc_*_C``, and ``registry.descriptors`` says which ``Build_*_C`` that
+    descriptor builds. Every row must come out the same both ways, and a row
+    naming a lab id the dataset no longer carries is stale.
+    """
+    known = {item.id for item in dataset.items}
+    stale = sorted(lab_id for lab_id in machines if lab_id not in known)
+    if stale:
+        raise DerivationError(f"the machine table names lab ids the dataset no longer has: {stale}")
+    disagree: list[str] = []
+    for lab_id, build_class in sorted(machines.items()):
+        descriptor = items.get(lab_id)
+        if descriptor is None:
+            disagree.append(f"{lab_id!r} has no item class, so nothing corroborates {build_class}")
+            continue
+        built = registry.descriptors.get(descriptor)
+        if built != build_class:
+            disagree.append(
+                f"{lab_id!r} -> {descriptor} -> {built}, but the table says {build_class}"
+            )
+    if disagree:
+        raise DerivationError(
+            f"{len(disagree)} machine rows do not survive being derived from the item table "
+            "and registry.descriptors:\n  " + "\n  ".join(disagree)
+        )
+
+
+def _items(dataset: Dataset, registry: Registry) -> tuple[dict[str, str], tuple[str, ...]]:
+    """The item table, and the lab ids that needed the trailing-``s`` licence."""
     pool = _display_names(registry)
     by_name: dict[str, set[str]] = defaultdict(set)
     for class_name, name in pool.items():
         by_name[_normalise(name)].add(class_name)
 
     items: dict[str, str] = {}
+    plural_matched: list[str] = []
     unresolved: list[str] = []
     for item in dataset.items:
         if item.id in ITEM_OVERRIDES:
@@ -286,13 +333,15 @@ def _items(dataset: Dataset, registry: Registry) -> dict[str, str]:
             continue
         if item.id in ITEMS_NOT_IN_GAME:
             continue
-        candidates: set[str] = set()
-        for key in _name_keys(item.name):
-            candidates = by_name.get(key, set())
-            if candidates:
-                break
+        exact, plural = _name_keys(item.name)
+        candidates = by_name.get(exact, set())
+        by_licence = not candidates
+        if by_licence:
+            candidates = by_name.get(plural, set())
         if len(candidates) == 1:
             items[item.id] = next(iter(candidates))
+            if by_licence:
+                plural_matched.append(item.id)
         else:
             unresolved.append(f"{item.id!r} ({item.name!r}) -> {sorted(candidates)}")
     if unresolved:
@@ -305,7 +354,7 @@ def _items(dataset: Dataset, registry: Registry) -> dict[str, str]:
     stale += sorted(k for k in ITEMS_NOT_IN_GAME if k not in {i.id for i in dataset.items})
     if stale:
         raise DerivationError(f"these item entries name lab ids the dataset no longer has: {stale}")
-    return items
+    return items, tuple(plural_matched)
 
 
 def _fluids(dataset: Dataset) -> frozenset[str]:
@@ -323,68 +372,97 @@ def _amount(lab_item_id: str, quantity: Fraction, fluids: frozenset[str]) -> int
     return int(scaled)
 
 
+Signature = tuple[str, Fraction, tuple[tuple[str, int], ...], tuple[tuple[str, int], ...]]
+#: A signature with the amounts dropped: what an override is checked against.
+RelaxedSignature = tuple[str, Fraction, frozenset[str], frozenset[str]]
+
+
+def _duration(seconds: float) -> Fraction:
+    """A game duration as the exact decimal the game data states.
+
+    Both sides are compared as :class:`~fractions.Fraction`, never as floats.
+    ``Fraction(seconds)`` would be wrong: the game states 2.4 s for four
+    recipes, whose ``float`` is 2.399999999999999911182…, while the lab states
+    ``Fraction(12, 5)``. ``repr`` of a float is the shortest decimal that reads
+    back as that float, so ``Fraction(str(...))`` recovers the literal the JSON
+    carried, which is the number both files are quoting.
+    """
+    return Fraction(str(seconds))
+
+
 def _signature(
     producer: str,
-    duration: float,
+    duration: Fraction,
     ingredients: tuple[tuple[str, int], ...],
     products: tuple[tuple[str, int], ...],
-) -> tuple[str, float, tuple[tuple[str, int], ...], tuple[tuple[str, int], ...]]:
+) -> Signature:
     return (producer, duration, tuple(sorted(ingredients)), tuple(sorted(products)))
 
 
-def _game_signatures(registry: Registry) -> dict[Any, list[str]]:
-    """Every game recipe that names a producer, keyed by its signature.
+def _relax(signature: Signature) -> RelaxedSignature:
+    producer, duration, ingredients, products = signature
+    return (
+        producer,
+        duration,
+        frozenset(class_name for class_name, _ in ingredients),
+        frozenset(class_name for class_name, _ in products),
+    )
+
+
+def _game_signatures(registry: Registry) -> tuple[dict[Signature, list[str]], dict[Any, list[str]]]:
+    """Every game recipe that names a producer, keyed by signature and relaxed one.
 
     A recipe with no producer is a manual or workshop craft: nothing places a
     building for it, so it cannot be what a lab producer recipe means.
     """
-    index: dict[Any, list[str]] = defaultdict(list)
+    exact: dict[Signature, list[str]] = defaultdict(list)
+    relaxed: dict[Any, list[str]] = defaultdict(list)
     for class_name, recipe in registry.recipes.items():
         if not recipe.producers:
             continue
         key = _signature(
-            recipe.producers[0], recipe.duration_s, recipe.ingredients, recipe.products
+            recipe.producers[0],
+            _duration(recipe.duration_s),
+            recipe.ingredients,
+            recipe.products,
         )
-        index[key].append(class_name)
-    return index
+        exact[key].append(class_name)
+        relaxed[_relax(key)].append(class_name)
+    return exact, relaxed
 
 
-def _override_recipe(lab_id: str, class_name: str, registry: Registry, signature: Any) -> None:
-    """Check an override names a recipe the lab row can only be.
+def _override_recipe(
+    lab_id: str, class_name: str, signature: Signature, relaxed: Mapping[Any, list[str]]
+) -> None:
+    """Check an override names the *only* recipe the lab row can be.
 
-    Producer, duration and the item classes on both sides must agree; only the
-    amounts are allowed to differ, which is the drift the override exists for.
+    An override exists because the two sides state the same recipe at different
+    multiples, so the amounts are dropped and producer, duration and the item
+    classes on both sides must still pick out exactly one game recipe. Checking
+    only that the *named* class fits would let an override point at the wrong
+    sibling of a shared relaxed signature and pass, so the rule is uniqueness
+    first and the name second: if more than one recipe fits, the override is not
+    evidence of anything and the run fails.
     """
-    recipe = registry.recipes.get(class_name)
-    if recipe is None:
-        raise DerivationError(f"the {lab_id!r} override names {class_name}, which is not a recipe")
-    producer, duration, ingredients, products = signature
-    if not recipe.producers or recipe.producers[0] != producer:
+    candidates = relaxed.get(_relax(signature), [])
+    if len(candidates) != 1:
         raise DerivationError(
-            f"the {lab_id!r} override names {class_name}, whose producers are "
-            f"{recipe.producers} rather than {producer}"
+            f"the {lab_id!r} override cannot be checked: dropping the amounts leaves "
+            f"{len(candidates)} game recipes with this producer, duration and item classes "
+            f"({sorted(candidates)}), so nothing says which one the lab row is"
         )
-    if recipe.duration_s != duration:
+    if candidates[0] != class_name:
         raise DerivationError(
-            f"the {lab_id!r} override names {class_name}, which takes {recipe.duration_s}s "
-            f"rather than {duration}s"
+            f"the {lab_id!r} override names {class_name}, but the only recipe with this "
+            f"producer, duration and item classes is {candidates[0]}"
         )
-    for side, lab_side, game_side in (
-        ("ingredients", ingredients, recipe.ingredients),
-        ("products", products, recipe.products),
-    ):
-        if {c for c, _ in lab_side} != {c for c, _ in game_side}:
-            raise DerivationError(
-                f"the {lab_id!r} override names {class_name}, whose {side} are {game_side} "
-                f"rather than the lab's {lab_side}"
-            )
 
 
 def _recipes(
     dataset: Dataset, registry: Registry, items: Mapping[str, str], machines: Mapping[str, str]
 ) -> tuple[dict[str, str], dict[str, str]]:
     fluids = _fluids(dataset)
-    index = _game_signatures(registry)
+    index, relaxed = _game_signatures(registry)
     ambiguous_game = {k: v for k, v in index.items() if len(v) > 1}
     if ambiguous_game:
         raise DerivationError(
@@ -420,13 +498,13 @@ def _recipes(
             )
         signature = _signature(
             producer,
-            float(recipe.time),
+            recipe.time,
             tuple((items[i], _amount(i, q, fluids)) for i, q in recipe.inputs.items()),
             tuple((items[i], _amount(i, q, fluids)) for i, q in recipe.outputs.items()),
         )
         if recipe.id in RECIPE_OVERRIDES:
             class_name = RECIPE_OVERRIDES[recipe.id]
-            _override_recipe(recipe.id, class_name, registry, signature)
+            _override_recipe(recipe.id, class_name, signature, relaxed)
             mapped[recipe.id] = class_name
             continue
         candidates = index.get(signature, [])
@@ -499,12 +577,40 @@ def _refresh_names() -> int:
     return 0
 
 
-def derive() -> dict[str, Any]:
+@dataclass(frozen=True, slots=True)
+class Derived:
+    """The map, and what the run wants to say about how it got there."""
+
+    payload: dict[str, Any]
+    plural_matched: tuple[str, ...]
+
+
+def _check_item_names_are_current() -> str:
+    """Refuse a names file taken from a different Docs.json than ``docs.json``.
+
+    The two are extracts of the same dump and the map joins them, so a stale
+    names file would name items from one build of the game against a registry
+    from another. Returns the digest both agree on.
+    """
+    names = json.loads(ITEM_NAMES_PATH.read_text(encoding="utf-8"))["provenance"]["docs_sha256"]
+    docs = json.loads(DOCS_PATH.read_text(encoding="utf-8"))["provenance"]["docs_sha256"]
+    if names != docs:
+        raise DerivationError(
+            f"{ITEM_NAMES_PATH.name} was taken from Docs.json {names[:12]} but data/docs.json "
+            f"was built from {docs[:12]}; re-run `--refresh-names` against the install "
+            "data/docs.json now describes"
+        )
+    return str(names)
+
+
+def derive() -> Derived:
     """The whole map, ready to write."""
+    docs_sha256 = _check_item_names_are_current()
     registry = load_registry()
     dataset = load_vendored(Game.SFY)
     machines = _machines(registry)
-    items = _items(dataset, registry)
+    items, plural_matched = _items(dataset, registry)
+    _check_machines(machines, items, dataset, registry)
     recipes, unmapped = _recipes(dataset, registry, items, machines)
 
     covered = set(items) | set(ITEMS_NOT_IN_GAME)
@@ -518,19 +624,21 @@ def derive() -> dict[str, Any]:
     if stray:
         raise DerivationError(f"these recipe classes are not in registry.recipes: {stray}")
 
-    names = json.loads(ITEM_NAMES_PATH.read_text(encoding="utf-8"))["provenance"]
-    return {
-        "items": dict(sorted(items.items())),
-        "machines": dict(sorted(machines.items())),
-        "provenance": {
-            "derived": dt.date.today().isoformat(),
-            "item_names_docs_sha256": names["docs_sha256"],
-            "lab_dataset_sha256": _sha256(LAB_DATASET_PATH),
-            "registry_inputs_sha256": registry.provenance["inputs_sha256"],
+    return Derived(
+        payload={
+            "items": dict(sorted(items.items())),
+            "machines": dict(sorted(machines.items())),
+            "provenance": {
+                "derived": dt.date.today().isoformat(),
+                "item_names_docs_sha256": docs_sha256,
+                "lab_dataset_sha256": _sha256(LAB_DATASET_PATH),
+                "registry_inputs_sha256": registry.provenance["inputs_sha256"],
+            },
+            "recipes": dict(sorted(recipes.items())),
+            "unmapped_recipes": dict(sorted(unmapped.items())),
         },
-        "recipes": dict(sorted(recipes.items())),
-        "unmapped_recipes": dict(sorted(unmapped.items())),
-    }
+        plural_matched=plural_matched,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -545,12 +653,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.refresh_names:
         return _refresh_names()
 
-    payload = derive()
+    derived = derive()
+    payload = derived.payload
     target = LAB_MAP_PATH if args.out is None else Path(args.out)
     target.write_text(json.dumps(payload, indent=1, sort_keys=True) + "\n", encoding="utf-8")
     print(
         f"items: {len(payload['items'])} mapped, {len(ITEMS_NOT_IN_GAME)} with no game class "
-        f"({len(ITEM_OVERRIDES)} overrides)"
+        f"({len(ITEM_OVERRIDES)} overrides, "
+        f"{len(derived.plural_matched)} through the trailing-'s' licence)"
     )
     print(
         f"recipes: {len(payload['recipes'])} mapped "

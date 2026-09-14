@@ -21,8 +21,8 @@ from typing import Final
 
 from pydantic import BaseModel, ConfigDict, TypeAdapter
 
+from flab2bp.lab.games import Game
 from flab2bp.lab.schema import Dataset, HashIndex
-from flab2bp.lab.url import Game
 
 
 def data_url(game: Game) -> str:
@@ -267,7 +267,7 @@ def _vendored_dataset(game: Game) -> Dataset:
 
 
 @cache
-def load_vendored(game: Game = Game.DSP) -> Dataset:
+def load_vendored(game: Game | str = Game.DSP) -> Dataset:
     """Load the in-repo copy directly, bypassing cache and network.
 
     `@cache`d because `bench/runner.py` calls it TWICE per corpus URL --
@@ -275,12 +275,21 @@ def load_vendored(game: Game = Game.DSP) -> Dataset:
     re-parsed an unchanged `data.json` 24 times and rebuilt
     `Dataset.__post_init__`'s indexes 24 times. `Dataset` is
     `@dataclass(frozen=True, slots=True)`, so sharing one instance is safe.
+
+    ``game`` is coerced here rather than trusted: a caller that passes the bare
+    string `"sfy"` gets the right dataset, and one that passes a typo gets
+    `ValueError: 'sdy' is not a valid Game` instead of a silent miss. Without
+    the coercion :func:`_vendored_name`'s ``game is Game.DSP`` is False for the
+    *string* `"dsp"`, so `load_vendored("dsp")` would look under `dsp/` --
+    where DSP's flat layout keeps nothing -- and raise an unrelated `OSError`.
+    `Game` is a `StrEnum`, so the two spellings hash and compare equal and
+    share one cache entry.
     """
-    return _vendored_dataset(game)
+    return _vendored_dataset(Game(game))
 
 
-def load_vendored_hash_index(game: Game = Game.DSP) -> HashIndex:
-    source = VENDORED_DIR / _vendored_name(game, "hash.json")
+def load_vendored_hash_index(game: Game | str = Game.DSP) -> HashIndex:
+    source = VENDORED_DIR / _vendored_name(Game(game), "hash.json")
     return HashIndex.parse(_parse_json(source.read_text(encoding="utf-8")))
 
 

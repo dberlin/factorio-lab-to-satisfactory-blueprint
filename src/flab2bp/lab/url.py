@@ -25,11 +25,12 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from enum import IntEnum, StrEnum
+from enum import IntEnum
 from fractions import Fraction
 from urllib.parse import unquote, urlparse
 
 from flab2bp.lab import params as P
+from flab2bp.lab.games import Game
 from flab2bp.lab.params import LabUrlError, ModHash
 
 __all__ = [
@@ -50,17 +51,6 @@ __all__ = [
     "UnsupportedZipVersionError",
     "parse_url",
 ]
-
-
-class Game(StrEnum):
-    """A FactorioLab dataset this tool builds blueprints for.
-
-    The value is the first path segment of a FactorioLab URL and the directory
-    name under ``data/`` that serves that dataset's ``data.json``/``hash.json``.
-    """
-
-    DSP = "dsp"
-    SFY = "sfy"
 
 
 #: The Dyson Sphere Program dataset.  Kept as a name of its own because it is
