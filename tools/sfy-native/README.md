@@ -63,7 +63,7 @@ out about each instruction:
 ```json
 [{"symbol": "AFGConveyorBeltHologram::ValidateCurvature",
   "mangled": "?ValidateCurvature@AFGConveyorBeltHologram@@AEAA_NXZ",
-  "rva": "0xaa5280", "size": 722, "size_source": "pdata",
+  "rva": "0xaa5280", "size": 722, "size_source": "pdata", "this": "rcx",
   "instructions": [
     {"rva": "0xaa52dd", "bytes": "f30f5915873b8100",
      "text": "mulss xmm2,dword ptr [12B8E6Ch]",
@@ -86,19 +86,49 @@ consequence is that a symbol whose mangling has no plain `Class::Method` form �
 a free function, an operator, a destructor, a templated or nested scope — has
 no name to match against and can never be selected. Public symbols and, where
 a PDB carries them in the global stream, procedure symbols both count; one
-address is reported once, however many symbols the linker folded onto it.
+address is reported once, however many symbols the linker folded onto it —
+identical-COMDAT folding gives several functions one body, and the surviving
+name is the one reported, so the members are annotated against *that* class.
 
 **Where a function ends.** `.pdata` is authoritative: the `RUNTIME_FUNCTION`
 entry covering the RVA gives `[begin, end)` and `size_source` is `pdata`. MSVC
 emits no entry for many leaf functions, and those fall back to the first `ret`
-(`size_source: "ret"`). A function that reaches neither within 64 KiB says
-`truncated` rather than cutting off silently.
+(`size_source: "ret"`) — `FInventoryItem::SetItemState` is 191 bytes of leaf
+with no entry, so its `ret` bound really is the first of possibly several
+exits. A function that reaches neither within 64 KiB, or whose `.pdata` range
+runs past its section, says `truncated` rather than cutting off silently; for
+those `size` is the byte range asked for and can exceed what actually decoded.
+Chained entries (`UNWIND_INFO` with a chained parent) are not followed, so a
+function MSVC split into chunks reports only the chunk the symbol is in.
+
+**Where `this` is.** The `this` field says which register the annotator seeded,
+and it comes from the mangling's access code:
+
+- A **static** member function (access `C`, `D`, `K`, `L`, `S`, `T`) has no
+  `this` at all: `"this": null`, and **no** `member` annotation is emitted.
+  `rcx` there is an ordinary argument — in a UE `exec` thunk it is a `UObject*`
+  of a different class entirely, and annotating it would be fiction. Seven of
+  `AFGConveyorBeltHologram`'s 54 published functions are static.
+- Everything else has `"this": "rcx"`, **including** a function that returns an
+  object by value. MSVC's x64 convention passes `this` first and the caller's
+  hidden return slot *second*, so an sret function has `this` in `rcx` and the
+  slot in `rdx`: `AFGConveyorBeltHologram::GetAnyConnectedBuildables` reads
+  `[rcx+800h]` (`mSnappedConnectionComponents`) while building the returned
+  `TArray` through `[rdx]`, and `FInventoryItem::GetItemClass` reads `[rcx+8]`
+  and stores it to `[rdx]`. `rdx` is never seeded, so those return-slot writes
+  are left unannotated instead of being labelled with the wrong object's
+  members.
 
 **The three annotations.** Each is present only when the tool is sure of it:
 
 - `member` — the instruction's operand is `[reg+disp]`, `reg` is an alias of
   `this`, and `disp` falls on a member of the function's class or one of its
-  bases, per the PDB type stream. The `this` tracking is the constructor
+  bases, per the PDB type stream. *Every* base is walked, not just the primary
+  one, and an inherited member's offset is its base's offset plus its own: a UE
+  actor multiply-inherits its interfaces, and a secondary base sits at a
+  non-zero offset in the derived object, so taking its members at face value
+  would read them as members of whatever the primary chain has there. The
+  `this` tracking is the constructor
   tracer's: `this` arrives in `rcx`, `mov reg, alias` carries it on, and an
   alias dies the moment its register is written otherwise or a call clobbers
   it — so a `[rcx+X]` *after* a call is left unannotated rather than guessed
@@ -261,8 +291,10 @@ one the reported value came from.
 sequences (each test asserts the disassembly text too, so a wrong encoding fails
 loudly rather than passing vacuously), the constructor manglings, the CodeView
 GUID formatting and the float decoding. The `disasm` mode's annotations are
-tested the same way — a read through `this` against a hand-built two-class
-layout, a dead alias after a call, a `call rel32` against a fake symbol map, a
+tested the same way — a read through `this` against a hand-built layout with a
+primary base at 0 and a secondary base at 2300, a dead alias after a call, a
+static function annotating nothing against `rcx`, an sret function's return
+slot in `rdx` staying unannotated, a `call rel32` against a fake symbol map, a
 `.rdata` constant and the `.data` global it refuses, and the `.pdata`/`ret`/
 `truncated` bounds. `tests/sfy/test_native.py` holds the committed
 `native.json` to the oracle and to the evidence each value carries, and runs

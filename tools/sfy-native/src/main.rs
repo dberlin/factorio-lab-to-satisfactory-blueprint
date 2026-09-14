@@ -237,11 +237,26 @@ struct Member {
     size: usize,
 }
 
-/// One class: its size, its first base class, and its data members by name.
+/// One base class of another, at its offset within the derived object.
+///
+/// A UE actor multiply-inherits its interfaces, so a class has more than one
+/// base and every base after the first sits at a non-zero offset. A member of
+/// such a base is at `base.offset + member.offset` in the derived object.
+#[derive(Clone, Debug)]
+struct Base {
+    name: String,
+    offset: u32,
+}
+
+/// One class: its size, its base classes and its data members by name.
 #[derive(Clone, Debug, Default)]
 struct Layout {
     size: u64,
+    /// The primary base -- the first the field list names, at offset 0. It is
+    /// what `chain` walks and what `native.json` reports.
     base: Option<String>,
+    /// Every base, primary first, each with its offset in this class.
+    bases: Vec<Base>,
     members: BTreeMap<String, Member>,
 }
 
@@ -338,6 +353,7 @@ fn read_layouts<S: pdb::Source<'static> + 'static>(
         let mut layout = Layout {
             size: class.size,
             base: None,
+            bases: Vec::new(),
             members: BTreeMap::new(),
         };
         let mut next = Some(fields);
@@ -363,9 +379,17 @@ fn read_layouts<S: pdb::Source<'static> + 'static>(
                             },
                         );
                     }
-                    pdb::TypeData::BaseClass(base) if layout.base.is_none() => {
+                    pdb::TypeData::BaseClass(base) => {
                         if let Some(base_name) = type_name_of(&finder, base.base_class) {
-                            layout.base = Some(base_name);
+                            // The first base is the primary one, at offset 0;
+                            // `base` (and so `native.json`) names only that.
+                            if layout.base.is_none() {
+                                layout.base = Some(base_name.clone());
+                            }
+                            layout.bases.push(Base {
+                                name: base_name,
+                                offset: base.offset,
+                            });
                         }
                     }
                     _ => {}
@@ -572,6 +596,64 @@ fn member_function(mangled: &str) -> Option<(String, String, bool)> {
     Some((class.to_string(), function.to_string(), false))
 }
 
+/// Where `this` is when a function is entered.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ThisIn {
+    /// A member function: `this` is the first argument.
+    Rcx,
+    /// A static member function: there is no `this` at all.
+    None,
+}
+
+impl ThisIn {
+    /// The register name for the JSON, and the register to seed the tracker.
+    fn register(self) -> Option<(&'static str, Register)> {
+        match self {
+            ThisIn::Rcx => Some(("rcx", Register::RCX)),
+            ThisIn::None => None,
+        }
+    }
+}
+
+/// Read off the mangling whether `this` arrives at all, and where.
+///
+/// MSVC encodes a member function as
+/// `?Method@Class@@<access><this-quals><cc><return><args>`. The access code
+/// says whether it is **static**: `C`, `D`, `K`, `L`, `S` and `T` are the
+/// private, protected and public static codes. A static member function has no
+/// `this` at all -- `rcx` is its first ordinary argument, which for a UE
+/// `exec` thunk is a `UObject*` of an entirely different class -- so nothing
+/// may be annotated against it.
+///
+/// Every other member function has `this` in `rcx`, **including** one that
+/// returns an object by value. It is worth saying why, because the opposite is
+/// easy to assume: MSVC's x64 convention passes the `this` pointer first and
+/// the caller's hidden return slot *second*, so an sret member function has
+/// `this` in `rcx` and the slot in `rdx`. Both of this module's sret functions
+/// say so plainly --
+/// `AFGConveyorBeltHologram::GetAnyConnectedBuildables @0xa7a170` reads its
+/// members at `[rcx+800h]` and `[rcx+810h]` while building the returned
+/// `TArray` through `[rdx]`, and `FInventoryItem::GetItemClass @0x1674b0`
+/// reads `[rcx+8]` and stores it to `[rdx]` before returning `rdx` in `rax`.
+/// `rdx` is therefore never seeded, and a write through the return slot is
+/// left unannotated rather than labelled with a member of the wrong object.
+fn this_register(mangled: &str) -> ThisIn {
+    // A constructor is never static.
+    if mangled.starts_with("??0") {
+        return ThisIn::Rcx;
+    }
+    let Some((_, tail)) = mangled
+        .strip_prefix('?')
+        .and_then(|rest| rest.split_once("@@"))
+    else {
+        return ThisIn::Rcx;
+    };
+    match tail.chars().next() {
+        Some('C' | 'D' | 'K' | 'L' | 'S' | 'T') => ThisIn::None,
+        _ => ThisIn::Rcx,
+    }
+}
+
 /// A bare identifier: no further scope, no template argument, no operator.
 fn plain_name(name: &str) -> bool {
     !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
@@ -727,8 +809,14 @@ impl Regs {
     /// At the entry of a member function `this` is in `rcx` and nothing else
     /// is known.
     fn new() -> Regs {
+        Regs::with_this(Some(Register::RCX))
+    }
+
+    /// The same, for a function whose `this` is elsewhere -- or nowhere, in
+    /// which case nothing is ever an alias and nothing is annotated.
+    fn with_this(this: Option<Register>) -> Regs {
         Regs {
-            aliases: HashSet::from([Register::RCX]),
+            aliases: this.into_iter().collect(),
             loaded: HashMap::new(),
             reloaded: HashMap::new(),
             info_factory: InstructionInfoFactory::new(),
@@ -1312,6 +1400,10 @@ struct DisasmOut {
     /// `pdata` when `.pdata` gave the bounds, `ret` when the first `ret` did,
     /// `truncated` when neither did -- never a silent cut.
     size_source: &'static str,
+    /// The register `this` arrives in, or `null` for a static member function
+    /// -- which gets no `member` annotation at all.
+    #[serde(rename = "this")]
+    this_in: Option<&'static str>,
     instructions: Vec<InstrOut>,
 }
 
@@ -1364,20 +1456,42 @@ struct MemberSpan {
 /// Every member of `class` and its bases, most-derived class first.
 fn member_spans(index: &PdbIndex, class: &str) -> Vec<MemberSpan> {
     let mut spans = Vec::new();
-    for owner in index.chain(class) {
-        let Some(layout) = index.layouts.get(&owner) else {
-            continue;
-        };
-        for (name, member) in &layout.members {
-            spans.push(MemberSpan {
-                class: owner.clone(),
-                name: name.clone(),
-                offset: member.offset,
-                size: member.size,
-            });
-        }
-    }
+    let mut seen = HashSet::new();
+    collect_spans(index, class, 0, &mut seen, &mut spans);
     spans
+}
+
+/// `class`'s own members at `at`, then each base's at `at + base.offset`.
+///
+/// Every base is walked, not just the primary one: a UE actor inherits its
+/// interfaces as secondary bases, whose members live at a non-zero offset in
+/// the derived object and would otherwise be read as the wrong member (or
+/// missed). The offset a span carries is the displacement off `this` of the
+/// most-derived object, which is what an instruction's operand holds.
+fn collect_spans(
+    index: &PdbIndex,
+    class: &str,
+    at: u32,
+    seen: &mut HashSet<String>,
+    spans: &mut Vec<MemberSpan>,
+) {
+    if !seen.insert(class.to_string()) {
+        return;
+    }
+    let Some(layout) = index.layouts.get(class) else {
+        return;
+    };
+    for (name, member) in &layout.members {
+        spans.push(MemberSpan {
+            class: class.to_string(),
+            name: name.clone(),
+            offset: at + member.offset,
+            size: member.size,
+        });
+    }
+    for base in &layout.bases {
+        collect_spans(index, &base.name, at + base.offset, seen, spans);
+    }
 }
 
 /// The member at `displacement`: one starting exactly there, else one whose
@@ -1534,8 +1648,9 @@ fn annotate(
     instrs: &[Instr],
     spans: &[MemberSpan],
     symbols: &BTreeMap<u32, String>,
+    this: Option<Register>,
 ) -> Vec<InstrOut> {
-    let mut regs = Regs::new();
+    let mut regs = Regs::with_this(this);
     let mut out = Vec::with_capacity(instrs.len());
     for instr in instrs {
         let i = &instr.instruction;
@@ -1592,13 +1707,23 @@ fn disasm_one(
         .class()
         .map(|class| member_spans(index, class))
         .unwrap_or_default();
+    let this = this_register(&symbol.mangled).register();
     DisasmOut {
         symbol: symbol.display().to_string(),
         mangled: symbol.mangled.clone(),
         rva: format!("{:#x}", symbol.rva),
         size: buffer.len() as u32,
         size_source,
-        instructions: annotate(pe, &buffer, symbol.rva, &instrs, &spans, symbols),
+        this_in: this.map(|(name, _)| name),
+        instructions: annotate(
+            pe,
+            &buffer,
+            symbol.rva,
+            &instrs,
+            &spans,
+            symbols,
+            this.map(|(_, register)| register),
+        ),
     }
 }
 
@@ -2220,8 +2345,10 @@ mod tests {
         pe
     }
 
-    /// `AFGConveyorBeltHologram : AFGBuildableHologram`, the two members the
-    /// annotation is checked against at the offsets the real PDB gives them.
+    /// `AFGConveyorBeltHologram : AFGBuildableHologram, IFGSaveInterface`:
+    /// the members the annotation is checked against at the offsets the real
+    /// PDB gives them, plus a secondary base the way a UE actor inherits its
+    /// interfaces -- at a non-zero offset in the derived object.
     fn fake_index() -> PdbIndex {
         let float = |offset| Member {
             offset,
@@ -2231,6 +2358,16 @@ mod tests {
         let belt = Layout {
             size: 2400,
             base: Some("AFGBuildableHologram".to_string()),
+            bases: vec![
+                Base {
+                    name: "AFGBuildableHologram".to_string(),
+                    offset: 0,
+                },
+                Base {
+                    name: "IFGSaveInterface".to_string(),
+                    offset: 2300,
+                },
+            ],
             members: BTreeMap::from([
                 ("mBendRadius".to_string(), float(2120)),
                 ("mMaxSplineLength".to_string(), float(2124)),
@@ -2239,7 +2376,14 @@ mod tests {
         let base = Layout {
             size: 1300,
             base: None,
+            bases: Vec::new(),
             members: BTreeMap::from([("mGridSnapSize".to_string(), float(1260))]),
+        };
+        let interface = Layout {
+            size: 16,
+            base: None,
+            bases: Vec::new(),
+            members: BTreeMap::from([("mSaveVersion".to_string(), float(8))]),
         };
         PdbIndex {
             guid: String::new(),
@@ -2247,6 +2391,7 @@ mod tests {
             layouts: HashMap::from([
                 ("AFGConveyorBeltHologram".to_string(), belt),
                 ("AFGBuildableHologram".to_string(), base),
+                ("IFGSaveInterface".to_string(), interface),
             ]),
             functions: HashMap::new(),
             symbols: Vec::new(),
@@ -2279,7 +2424,15 @@ mod tests {
         );
         let pe = fake_module(&code, &[]);
         let spans = member_spans(&fake_index(), "AFGConveyorBeltHologram");
-        let out = annotate(&pe, &code, 0x1000, &decode(&code), &spans, &BTreeMap::new());
+        let out = annotate(
+            &pe,
+            &code,
+            0x1000,
+            &decode(&code),
+            &spans,
+            &BTreeMap::new(),
+            Some(Register::RCX),
+        );
         assert!(out[0].member.is_none(), "{:?}", out[0].member);
         let bend = out[1].member.as_ref().expect("[rbx+848h] was not a member");
         assert_eq!(bend.name, "mBendRadius");
@@ -2303,7 +2456,15 @@ mod tests {
         ];
         let pe = fake_module(&code, &[]);
         let spans = member_spans(&fake_index(), "AFGConveyorBeltHologram");
-        let out = annotate(&pe, &code, 0x1000, &decode(&code), &spans, &BTreeMap::new());
+        let out = annotate(
+            &pe,
+            &code,
+            0x1000,
+            &decode(&code),
+            &spans,
+            &BTreeMap::new(),
+            Some(Register::RCX),
+        );
         assert_eq!(
             out[0].member.as_ref().map(|m| m.name.as_str()),
             Some("mBendRadius")
@@ -2318,6 +2479,111 @@ mod tests {
     }
 
     #[test]
+    fn a_secondary_base_contributes_its_members_at_its_own_offset() {
+        let spans = member_spans(&fake_index(), "AFGConveyorBeltHologram");
+        let at = |displacement| {
+            member_at(&spans, displacement).map(|s| (s.class.as_str(), s.name.as_str(), s.offset))
+        };
+        // The class's own members and the primary base's are where they were.
+        assert_eq!(
+            at(2120),
+            Some(("AFGConveyorBeltHologram", "mBendRadius", 2120))
+        );
+        assert_eq!(
+            at(1260),
+            Some(("AFGBuildableHologram", "mGridSnapSize", 1260))
+        );
+        // The interface sits at 2300, so its member at 8 is at 2308 -- not at
+        // 8, where the primary base's object header is.
+        assert_eq!(at(2308), Some(("IFGSaveInterface", "mSaveVersion", 2308)));
+        assert!(at(8).is_none());
+    }
+
+    #[test]
+    fn the_mangling_says_whether_this_arrives_at_all() {
+        // Plain instance members, virtual ones, and a constructor.
+        for mangled in [
+            "?ValidateCurvature@AFGConveyorBeltHologram@@AEAA_NXZ",
+            "?BeginPlay@AFGConveyorLiftHologram@@MEAAXXZ",
+            "??0AFGConveyorBeltHologram@@QEAA@AEBVFObjectInitializer@@@Z",
+            "?GetWorld@AActor@@UEBAPEAVUWorld@@XZ",
+            // Returning an object by value moves the caller's *return slot*
+            // into `rdx`; `this` stays in `rcx`. Both of these are real
+            // manglings from the module whose code says so.
+            "?GetAnyConnectedBuildables@AFGConveyorBeltHologram@@QEAA?AV?$TArray@PEAVAFGBuildable@@V?$TSizedDefaultAllocator@$0CA@@@@@XZ",
+            "?GetItemClass@FInventoryItem@@QEBA?AV?$TSubclassOf@VUFGItemDescriptor@@@@XZ",
+        ] {
+            assert_eq!(this_register(mangled), ThisIn::Rcx, "{mangled}");
+        }
+        // Static member functions -- public, protected and private -- have no
+        // `this`, and a UE `exec` thunk's `rcx` is another class's `UObject*`.
+        for mangled in [
+            "?StaticClass@AFGConveyorBeltHologram@@SAPEAVUClass@@XZ",
+            "?GetPrivateStaticClass@AFGConveyorBeltHologram@@CAPEAVUClass@@XZ",
+            "?Helper@AFGHologram@@KAXXZ",
+            "?execOnRep_ConnectionArrowComponentDirection@AFGConveyorBeltHologram@@SAXPEAVUObject@@AEAUFFrame@@QEAX@Z",
+        ] {
+            assert_eq!(this_register(mangled), ThisIn::None, "{mangled}");
+        }
+    }
+
+    #[test]
+    fn a_static_member_function_annotates_nothing_against_rcx() {
+        // movss xmm0,[rcx+0x848] -- `rcx` is an argument here, not `this`.
+        let code = [0xf3, 0x0f, 0x10, 0x81, 0x48, 0x08, 0x00, 0x00];
+        let pe = fake_module(&code, &[]);
+        let spans = member_spans(&fake_index(), "AFGConveyorBeltHologram");
+        let out = annotate(
+            &pe,
+            &code,
+            0x1000,
+            &decode(&code),
+            &spans,
+            &BTreeMap::new(),
+            None,
+        );
+        assert!(out[0].member.is_none(), "{:?}", out[0].member);
+    }
+
+    #[test]
+    fn an_sret_functions_return_slot_is_not_mistaken_for_this() {
+        // movss xmm0,[rdx+0x848] ; movss xmm1,[rcx+0x848]
+        let code = [
+            0xf3, 0x0f, 0x10, 0x82, 0x48, 0x08, 0x00, 0x00, 0xf3, 0x0f, 0x10, 0x89, 0x48, 0x08,
+            0x00, 0x00,
+        ];
+        assert_eq!(
+            text_of(&code),
+            [
+                "movss xmm0,dword ptr [rdx+848h]",
+                "movss xmm1,dword ptr [rcx+848h]",
+            ]
+        );
+        let pe = fake_module(&code, &[]);
+        let spans = member_spans(&fake_index(), "AFGConveyorBeltHologram");
+        let out = annotate(
+            &pe,
+            &code,
+            0x1000,
+            &decode(&code),
+            &spans,
+            &BTreeMap::new(),
+            this_register("?GetAnyConnectedBuildables@AFGConveyorBeltHologram@@QEAA?AV?$TArray@PEAVAFGBuildable@@V?$TSizedDefaultAllocator@$0CA@@@@@XZ")
+                .register()
+                .map(|(_, register)| register),
+        );
+        assert!(
+            out[0].member.is_none(),
+            "the return slot was read as `this`: {:?}",
+            out[0].member
+        );
+        assert_eq!(
+            out[1].member.as_ref().map(|m| m.name.as_str()),
+            Some("mBendRadius")
+        );
+    }
+
+    #[test]
     fn a_call_rel32_is_resolved_against_the_symbol_map() {
         // call $+5 ; ret
         let code = [0xe8, 0x00, 0x00, 0x00, 0x00, 0xc3];
@@ -2327,7 +2593,15 @@ mod tests {
             symbol("?GetSplineLength@USplineComponent@@QEBAMXZ", 0x1005),
             symbol("?Unnamed@?$TArray@M@@QEBAMXZ", 0x1005),
         ]);
-        let out = annotate(&pe, &code, 0x1000, &decode(&code), &[], &symbols);
+        let out = annotate(
+            &pe,
+            &code,
+            0x1000,
+            &decode(&code),
+            &[],
+            &symbols,
+            Some(Register::RCX),
+        );
         assert_eq!(
             out[0].call.as_deref(),
             Some("USplineComponent::GetSplineLength")
@@ -2343,7 +2617,15 @@ mod tests {
         let mut constants = 199.0f32.to_le_bytes().to_vec();
         constants.resize(16, 0);
         let pe = fake_module(&code, &constants);
-        let out = annotate(&pe, &code, 0x1000, &decode(&code), &[], &BTreeMap::new());
+        let out = annotate(
+            &pe,
+            &code,
+            0x1000,
+            &decode(&code),
+            &[],
+            &BTreeMap::new(),
+            Some(Register::RCX),
+        );
         let constant = out[0]
             .constant
             .as_ref()
@@ -2359,7 +2641,15 @@ mod tests {
         let code = [0xf3, 0x0f, 0x10, 0x05, 0xf8, 0x0f, 0x00, 0x00];
         let mut pe = fake_module(&code, &199.0f32.to_le_bytes());
         pe.sections[1].name = ".data".to_string();
-        let out = annotate(&pe, &code, 0x1000, &decode(&code), &[], &BTreeMap::new());
+        let out = annotate(
+            &pe,
+            &code,
+            0x1000,
+            &decode(&code),
+            &[],
+            &BTreeMap::new(),
+            Some(Register::RCX),
+        );
         assert!(out[0].constant.is_none(), "a `.data` global was reported");
     }
 
