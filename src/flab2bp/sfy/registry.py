@@ -71,15 +71,25 @@ LIMIT_SOURCES = (
 )
 
 # Where a port's direction came from. A cooked asset omits ``mDirection``
-# whenever it equals the component archetype's value, and the archetype is a
-# native constructor the pak does not carry, so ``tools/sfy-extract`` reports
-# those as ``"unknown"`` and ``scripts/sfy_registry.py`` resolves them:
+# whenever it equals the component **archetype**'s value, so an absent property
+# means "whatever my archetype has" rather than the enum's zero, and the chain of
+# archetypes runs from the buildable's own Blueprint up to a native constructor
+# the pak does not carry. ``tools/sfy-extract`` walks all of it:
 #
-# ``asset``   the asset spells the direction out
-# ``header``  a conveyor end, from ``Buildables/FGBuildableConveyorBase.h:380``
-# ``name``    the component's own name, a convention that agrees with every port
-#             in the content that does spell its direction
-PORT_DIRECTION_SOURCES = ("asset", "header", "name")
+# ``asset``            the buildable's own Blueprint states the direction
+# ``asset-inherited``  a parent Blueprint's template of the same name states it
+# ``native``           the archetype's C++ constructor does, read out of the
+#                      shipped DLL; ``provenance["assets"]
+#                      ["native_direction_defaults"]`` carries the class, the
+#                      member, the value and the instructions it was read at
+# ``unknown``          none of the three answered, and the port ships saying so
+#
+# There is deliberately no source for "what a blueprint corpus wires this port
+# to" and none for "what the component is called". A corpus says what somebody
+# once built, which is not a fact about the game, and a naming convention is not
+# something the game reads. A port whose direction is ``"unknown"`` is one no
+# caller may route to.
+PORT_DIRECTION_SOURCES = ("asset", "asset-inherited", "native", "unknown")
 
 _HEADER_DEFAULTED = (
     "belt_max_spline_cm",
@@ -134,10 +144,11 @@ class ClearanceBox:
 class Port:
     """A belt, pipe or power connection on a buildable, in its local frame.
 
-    ``direction_source`` says how ``direction`` was established, because the
-    cooked asset only answers for the ports that spell ``mDirection`` out; see
-    :data:`PORT_DIRECTION_SOURCES`. ``direction`` is ``"unknown"`` only if
-    nothing resolved it, which no port in the shipped registry is.
+    ``direction_source`` says where in the game ``direction`` was read, because
+    the cooked asset only answers for the ports that spell the property out; see
+    :data:`PORT_DIRECTION_SOURCES`. ``direction`` is ``"unknown"`` exactly when
+    the source is, which means no part of the game gave this port a direction:
+    a caller must refuse to route to it rather than assume one.
 
     ``max_connections`` is how many wires may end on a power connection, from
     ``FGCircuitConnectionComponent::mMaxNumConnectionLinks``. It is ``None`` on
@@ -309,7 +320,14 @@ def _clearance(raw: Iterable[Mapping[str, Any]]) -> tuple[ClearanceBox, ...]:
 
 
 def _ports(raw: Iterable[Mapping[str, Any]]) -> tuple[Port, ...]:
-    return tuple(
+    """Read a buildable's ports, refusing a direction no game source backs.
+
+    ``direction_source`` is a claim about where in the game a direction was
+    read, so a value outside :data:`PORT_DIRECTION_SOURCES` -- the ``"corpus"``
+    and ``"name"`` a Milestone 1 registry carried, say -- is refused rather than
+    loaded. So is a direction and a source that disagree about being unknown.
+    """
+    ports = tuple(
         Port(
             name=str(port["name"]),
             kind=str(port["kind"]),
@@ -322,6 +340,15 @@ def _ports(raw: Iterable[Mapping[str, Any]]) -> tuple[Port, ...]:
         )
         for port in raw
     )
+    wrong = [
+        f"{p.name}: direction {p.direction!r} from {p.direction_source!r}"
+        for p in ports
+        if p.direction_source not in PORT_DIRECTION_SOURCES
+        or (p.direction == "unknown") != (p.direction_source == "unknown")
+    ]
+    if wrong:
+        raise RegistryError(f"port directions come from no game source: {wrong}")
+    return ports
 
 
 def _buildables(raw: Mapping[str, Mapping[str, Any]]) -> dict[str, Buildable]:

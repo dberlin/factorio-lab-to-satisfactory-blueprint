@@ -4,15 +4,16 @@ Everything `flab2bp.sfy` knows about the game — what can be built, out of what
 with which connection ports, under which placement limits, and what the build
 gun's hologram refuses — is extracted from an installed copy of Satisfactory
 into committed JSON files under `src/flab2bp/sfy/data/`. Nothing there is typed
-in by hand, and **nothing there comes from a blueprint corpus**: a community
-blueprint can carry clipped geometry, a hacked save or an older game version, so
-what one contains is not a source, not a cross-check and not evidence, for
-legality or for anything else.
+in by hand, and **nothing there comes from a blueprint corpus, and nothing from
+the name of anything**: a community blueprint can carry clipped geometry, a
+hacked save or an older game version, so what one contains is not a source, not
+a cross-check and not evidence, for legality or for anything else; and what a
+component happens to be called is a convention, not something the game reads.
 
 The files are committed so that the tests, and anyone building the project, need
 no game install. **Re-run this whole sequence after a game update**, in the order
-below: each step's output is the next one's input, and the merge at the end is
-what the package actually reads.
+below: step 4 needs step 2's output and step 5 needs step 4's, and the merge at
+the end is what the package actually reads.
 
 ```bash
 export FLAB2BP_SATISFACTORY_DIR="$HOME/Satisfactory"   # the default, if unset
@@ -21,23 +22,25 @@ export FLAB2BP_SATISFACTORY_DIR="$HOME/Satisfactory"   # the default, if unset
 | # | Step | Needs | Writes |
 | --- | --- | --- | --- |
 | 1 | `uv run python -m flab2bp.sfy.docs` | the install's Docs dump | `data/docs.json` |
-| 2 | `tools/sfy-extract` | .NET 10, the paks and the usmap | `data/assets.json` |
-| 3 | `tools/sfy-native` | cargo, the shipped DLL **and its PDB** | `data/native.json` |
-| 4 | `uv run python scripts/sfy_native_rules.py` | cargo, the same DLL and PDB, `Headers.zip` | `data/hologram_rules.json` |
-| 5 | `uv run python scripts/sfy_registry.py` | steps 1–4 | `data/registry.json` |
+| 2 | `tools/sfy-native` | cargo, the shipped DLL **and its PDB** | `data/native.json` |
+| 3 | `uv run python scripts/sfy_native_rules.py` | cargo, the same DLL and PDB, `Headers.zip` | `data/hologram_rules.json` |
+| 4 | `uv run python scripts/sfy_native_directions.py` | cargo, the same DLL and PDB | `data/native_directions.json` |
+| 5 | `tools/sfy-extract extract` | .NET 10, the paks, the usmap, step 4 | `data/assets.json` |
+| 6 | `tools/sfy-extract structs` | .NET 10 and the usmap | `data/struct_schemas.json` |
+| 7 | `uv run python scripts/sfy_registry.py` | steps 1–5 | `data/registry.json` |
 
 `scripts/sfy_measure_limits.py` is *not* in this sequence. It describes the
-fixture corpus and writes `data/measured.json`, which nothing reads; step 4 says
-why.
+fixture corpus and writes `data/measured.json`, which nothing reads; the note
+below step 7 says why.
 
 Then re-run the tests, which read the committed files and are the acceptance for
-all five steps:
+all seven steps:
 
 ```bash
 uv run pytest tests/sfy
 ```
 
-`tests/sfy/test_registry.py` re-runs step 5 into a temporary file and diffs it
+`tests/sfy/test_registry.py` re-runs step 7 into a temporary file and diffs it
 against what is committed, so a registry that was edited by hand, or one whose
 sources have moved on, fails there.
 
@@ -54,29 +57,7 @@ clearance boxes, power draw, manufacturing speed, belt speed, mesh and designer
 dimensions, the recipe graph and the build recipes. It records the dump's
 sha256 in the file's provenance.
 
-## 2. Cooked assets → `assets.json`
-
-```bash
-cd tools/sfy-extract
-dotnet run -- "$FLAB2BP_SATISFACTORY_DIR" extract ../../src/flab2bp/sfy/data/assets.json
-cd ../..
-```
-
-Needs the .NET 10 SDK and an install carrying
-`CommunityResources/FactoryGame.usmap`. Reads the paks and IoStore containers
-through CUE4Parse and writes: every buildable's connection ports (position,
-rotation, kind, direction, clearance, and a power connection's
-`mMaxNumConnectionLinks`), each buildable's hologram class and any placement
-limit that hologram's Blueprint overrides, the wire lengths, and the full asset
-path of every class Docs.json states one for — which is how a blueprint names an
-item descriptor or a recipe.
-
-The run is deterministic: re-running it produces a byte-identical file apart
-from `provenance.extracted`. `tools/sfy-extract/README.md` has the discovery
-modes (`list`, `props`) for when a game update moves something, and a table of
-where each value lives.
-
-## 3. The shipped binary → `native.json`
+## 2. The shipped binary → `native.json`
 
 ```bash
 cd tools/sfy-native
@@ -104,13 +85,13 @@ anything is written, so a broken extraction cannot replace the committed file.
 Keep them on every run. `tools/sfy-native/README.md` explains each limit and
 what to do when one comes back `null`.
 
-## 4. The hologram rules → `hologram_rules.json`
+## 3. The hologram rules → `hologram_rules.json`
 
 ```bash
 uv run python scripts/sfy_native_rules.py
 ```
 
-Needs cargo and the same game install as step 3 — the shipped DLL, its PDB and
+Needs cargo and the same game install as step 2 — the shipped DLL, its PDB and
 `CommunityResources/Headers.zip` — and refuses if the DLL has moved since
 `native.json` was written, because the rules quote the member offsets that file
 resolved.
@@ -128,6 +109,96 @@ The script fails rather than quoting stale instructions: if a function moved, th
 addresses in its `EVIDENCE` table no longer decode and the run stops, which is
 the signal to re-read that validator and rewrite its interpretation.
 
+## 4. The connection directions → `native_directions.json`
+
+```bash
+uv run python scripts/sfy_native_directions.py
+```
+
+Needs cargo and the same DLL and PDB as step 2, and refuses if the DLL has moved
+since `native.json` was written.
+
+A cooked asset leaves a component template's property out whenever it equals the
+**archetype**'s value, and for a connection component the archetype is a native
+constructor the pak does not carry. 177 of the 288 connection templates in the
+content say nothing about their direction for that reason. This disassembles the
+constructors that do say — each connection component class's own, and the four
+buildables whose constructors create their connections and set them — and writes
+what each stores, with the instruction it was read at.
+
+`tools/sfy-extract` reads the result and resolves every port with it;
+`tools/sfy-extract/README.md` has the table of what was found and why both ends
+of a conveyor are `FCD_ANY` rather than the input and output a header comment
+suggests.
+
+## 5. Cooked assets → `assets.json`
+
+```bash
+cd tools/sfy-extract
+dotnet run -- "$FLAB2BP_SATISFACTORY_DIR" extract \
+    ../../src/flab2bp/sfy/data/assets.json \
+    ../../src/flab2bp/sfy/data/native_directions.json
+cd ../..
+```
+
+Needs the .NET 10 SDK and an install carrying
+`CommunityResources/FactoryGame.usmap`. Reads the paks and IoStore containers
+through CUE4Parse and writes: every buildable's connection ports (position,
+rotation, kind, direction, clearance, and a power connection's
+`mMaxNumConnectionLinks`), each buildable's hologram class and any placement
+limit that hologram's Blueprint overrides, the wire lengths, and the full asset
+path of every class Docs.json states one for — which is how a blueprint names an
+item descriptor or a recipe.
+
+Step 4's file is the second argument and is required: it is what resolves the
+177 ports whose own asset says nothing about their direction. Each port carries
+a `direction_source` saying which link of the archetype chain answered —
+`asset`, `asset-inherited`, `native`, or `unknown` when none did.
+
+The run is deterministic: re-running it produces a byte-identical file apart
+from `provenance.extracted`. `tools/sfy-extract/README.md` has the discovery
+modes (`list`, `props`) for when a game update moves something, and a table of
+where each value lives.
+
+## 6. The usmap's struct schemas → `struct_schemas.json`
+
+```bash
+uv run python scripts/sfy_struct_names.py > /tmp/struct-names.txt
+cd tools/sfy-extract
+dotnet run -- "$FLAB2BP_SATISFACTORY_DIR" structs /tmp/struct-names.txt \
+    ../../src/flab2bp/sfy/data/struct_schemas.json
+cd ../..
+```
+
+The game's own field list for every struct name a blueprint's property tags
+carry, straight out of `FactoryGame.usmap` — this mode mounts no paks and loads
+no package. `tests/sfy/test_struct_schemas.py` checks the codec's decoded
+structs against it, so a game update that adds or reorders a struct's fields
+shows up there. A name with no usmap struct is listed in `provenance.missing`
+and makes the exit code 1.
+
+## 7. The merge → `registry.json`
+
+```bash
+uv run python scripts/sfy_registry.py
+```
+
+Joins steps 1–5 into the file `flab2bp.sfy.registry.load_registry` reads. It
+prints where every limit came from, any it could not fill, how each port
+direction was resolved, and how many asset paths it kept. Every limit also gets
+`provenance.limits[key].enforced_by` — the hologram rule that turns it into a
+refusal, or `null` with the reason nothing does.
+
+It refuses to write when the sources contradict each other: a header against the
+binary, a port whose `direction_source` is not one of the four game sources, an
+item or recipe with no asset path, or a limit naming a hologram rule that does
+not exist. A port whose direction is `unknown` is *not* a refusal — it is the
+honest answer when no part of the game gives that port a direction, and it is
+shipped as `unknown` so that **the validator refuses to route to it** rather
+than inventing one from the port's name. A refusal means the extraction is
+wrong, not that the registry needs an edit — `registry.json` is generated, never
+hand-edited.
+
 ### Not a step: `measured.json`
 
 `uv run python scripts/sfy_measure_limits.py` measures the fixture corpus and
@@ -136,28 +207,9 @@ writes `data/measured.json`. **Nothing reads it.** It is not in the merge, not i
 not a fact about the game. Re-run it when fixtures are added if you want the
 corpus described; skip it otherwise.
 
-## 5. The merge → `registry.json`
-
-```bash
-uv run python scripts/sfy_registry.py
-```
-
-Joins steps 1–4 into the file `flab2bp.sfy.registry.load_registry` reads. It
-prints where every limit came from, any it could not fill, how each port
-direction was resolved, and how many asset paths it kept. Every limit also gets
-`provenance.limits[key].enforced_by` — the hologram rule that turns it into a
-refusal, or `null` with the reason nothing does.
-
-It refuses to write when the sources contradict each other: a header against the
-binary, an asset's stated port direction against the naming convention, a port no
-source gives a direction to, an item or recipe with no asset path, or a limit
-naming a hologram rule that does not exist. A refusal means the extraction is
-wrong, not that the registry needs an edit — `registry.json` is generated, never
-hand-edited.
-
 ## After a game update
 
-1. Run all five steps. Step 4 is the one most likely to fail: a validator that
+1. Run all seven steps. Step 3 is the one most likely to fail: a validator that
    moved stops it by name and address, which is the point.
 2. `uv run pytest tests/sfy` — the drift test and the port cross-checks are the
    gate.

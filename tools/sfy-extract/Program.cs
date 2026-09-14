@@ -11,17 +11,18 @@ using Newtonsoft.Json;
 using SfyExtract;
 
 // Usage: dotnet run -- <SatisfactoryDir> <mode> [filter|out.json]
-//   list    [filter]          : every Build_* package and its export names/classes (discovery)
-//   props   [filter]          : the same, plus every property of every export (discovery)
-//   extract [out]             : write assets.json
-//   structs <names> <out>     : write struct_schemas.json for the names in <names>
+//   list    [filter]              : every Build_* package and its export names/classes (discovery)
+//   props   [filter]              : the same, plus every property of every export (discovery)
+//   extract <out> <directions>    : write assets.json, resolving directions with
+//                                   data/native_directions.json
+//   structs <names> <out>         : write struct_schemas.json for the names in <names>
 //
 // `filter` is a case-insensitive substring of the package path. With a filter,
 // packages that are not named Build_* are searched too, which is how you look at
 // a Holo_* hologram class.
 if (args.Length < 2)
 {
-    Console.Error.WriteLine("usage: dotnet run -- <SatisfactoryDir> <list|props|extract|structs> [filter|out.json|<names> <out>]");
+    Console.Error.WriteLine("usage: dotnet run -- <SatisfactoryDir> <list|props|extract|structs> [filter|<out> <directions>|<names> <out>]");
     return 2;
 }
 
@@ -85,6 +86,27 @@ if (mode is "list" or "props")
 
 // ---- extract ----------------------------------------------------------------
 
+// What a connection component carries when no asset in its chain says. Written
+// by `scripts/sfy_native_directions.py` out of the shipped DLL's constructors;
+// see `DirectionOf` for why an omitted property is not the enum's zero.
+if (arg3.Length == 0)
+{
+    Console.Error.WriteLine(
+        "usage: dotnet run -- <SatisfactoryDir> extract <out.json> <native_directions.json>\n" +
+        "  the second file is written by scripts/sfy_native_directions.py: without it no\n" +
+        "  port whose asset omits its direction could be resolved from the game at all.");
+    return 2;
+}
+var nativeDirectionsText = File.ReadAllText(arg3);
+var nativeDirections = JsonConvert.DeserializeObject<NativeDirections>(nativeDirectionsText)
+    ?? throw new InvalidOperationException($"{arg3} is not a native-directions file");
+var componentDefaults = nativeDirections.ComponentDefaults.ToDictionary(d => d.ComponentClass, StringComparer.Ordinal);
+Console.Error.WriteLine(
+    $"native direction defaults from {Path.GetFileName(arg3)}: " +
+    string.Join(", ", componentDefaults.Select(d => $"{d.Key}={d.Value.Direction}")) + "; " +
+    string.Join(", ", nativeDirections.OwnerDefaults.Select(
+        o => $"{string.Join('/', o.OwnerClasses)}={o.Direction}")));
+
 var ports = new SortedDictionary<string, List<object>>(StringComparer.Ordinal);
 var holograms = new SortedDictionary<string, Dictionary<string, object?>>(StringComparer.Ordinal);
 var unmodelled = new SortedSet<string>(StringComparer.Ordinal);
@@ -126,6 +148,10 @@ var output = new
         archives,
         usmap = Path.GetFileName(usmap),
         usmap_sha256 = Sha256(usmap),
+        // The machine code behind every port whose `direction_source` is
+        // "native", carried here so the registry's claim can be read without
+        // the game install. `scripts/sfy_native_directions.py` wrote it.
+        native_direction_defaults = JsonConvert.DeserializeObject(nativeDirectionsText),
     },
     ports,
     holograms,
@@ -174,24 +200,39 @@ IEnumerable<UObject> Exports(string pkg)
 /// the class default object. Both are read the same way. A Blueprint that
 /// derives from another Blueprint inherits the parent's templates, so the super
 /// chain is walked until it leaves the cooked content.
+///
+/// The *whole* chain is kept per port, not just the most derived template.
+/// Unreal leaves a template property out whenever it equals the archetype's
+/// value, and a Blueprint's archetype for an inherited component is the parent
+/// Blueprint's template of the same name -- so a port that says nothing here may
+/// still have its direction stated one class up. `DirectionOf` walks that.
 List<object> CollectPorts(UObject generatedClass, List<UObject> exports)
 {
-    var seen = new HashSet<string>(StringComparer.Ordinal);
-    var collected = new List<object>();
+    var chains = new Dictionary<string, List<UObject>>(StringComparer.Ordinal);
+    var order = new List<string>();
     var current = generatedClass;
     var currentExports = exports;
+    string? nativeSuper = null;
     for (var depth = 0; depth < 16 && current is not null; depth++)
     {
+        // The last class in the chain that names a super is the deepest cooked
+        // one, and what it names is the native class the chain rests on. The
+        // stub CUE4Parse loads for that native class names no super of its own.
+        if (NativeSuperName(current) is { } named) nativeSuper = named;
         foreach (var template in currentExports.Where(IsConnectionTemplate).OrderBy(e => e.Name, StringComparer.Ordinal))
         {
             var name = template.Name.Replace("_GEN_VARIABLE", "");
-            if (!seen.Add(name)) continue;
-            collected.Add(Port(name, template));
+            if (!chains.TryGetValue(name, out var chain))
+            {
+                chains[name] = chain = [];
+                order.Add(name);
+            }
+            chain.Add(template);
         }
         current = SuperClass(current);
         currentExports = current?.Owner?.GetExports().ToList() ?? [];
     }
-    return collected;
+    return order.Select(name => Port(name, chains[name], nativeSuper)).ToList();
 }
 
 static bool IsConnectionTemplate(UObject export) => KindOf(export) is not null;
@@ -203,6 +244,22 @@ static UObject? SuperClass(UObject generatedClass)
     catch (Exception) { return null; }
 }
 
+/// The name of the class this one derives from, as the asset spells it.
+///
+/// The last cooked class in a chain names a native C++ one -- every belt mark
+/// ends at `FGBuildableConveyorBelt` -- and that is what
+/// `native_directions.json`'s `owner_defaults` are matched against, which is how
+/// a conveyor end gets the direction its own constructor sets rather than the
+/// component class's. Unreal Header Tool drops the `A`/`U` prefix when it makes
+/// the FName, so the asset says `FGBuildableConveyorBelt` where the PDB says
+/// `AFGBuildableConveyorBelt`; `DirectionOf` puts it back rather than storing
+/// two spellings of the same class.
+static string? NativeSuperName(UObject generatedClass)
+{
+    try { return (generatedClass as UStruct)?.SuperStruct?.Name; }
+    catch (Exception) { return null; }
+}
+
 /// One connection component, as the registry's `Port` wants it.
 ///
 /// `max_connections` is `FGCircuitConnectionComponent::mMaxNumConnectionLinks`,
@@ -211,16 +268,19 @@ static UObject? SuperClass(UObject generatedClass)
 /// where the Blueprint overrides the native default: the three power poles say
 /// 4, 7 and 10, and a machine's power input says nothing, which is emitted as
 /// null rather than as a number this tool made up.
-object Port(string name, UObject template)
+object Port(string name, List<UObject> chain, string? nativeSuper)
 {
+    var template = chain[0];
     var location = template.GetOrDefault("RelativeLocation", FVector.ZeroVector);
     var rotation = template.GetOrDefault("RelativeRotation", FRotator.ZeroRotator);
     var kind = KindOf(template)!;
+    var (direction, source) = DirectionOf(chain, kind, nativeSuper);
     return new
     {
         name,
         kind,
-        direction = DirectionOf(template, kind),
+        direction,
+        direction_source = source,
         translation = new[] { location.X, location.Y, location.Z },
         rotation = new[] { rotation.Pitch, rotation.Yaw, rotation.Roll },
         clearance = Number(template, "mConnectorClearance"),
@@ -244,45 +304,89 @@ static string? KindOf(UObject template) => template.Class?.Name.Text switch
     _ => null,
 };
 
-/// A connection's direction.
+/// A connection's direction, and where in the game it was established.
 ///
 /// Belts and pipes each have their own enum and neither is serialised when it
-/// equals the value the component's archetype carries. Every output spells
-/// `FCD_OUTPUT` out, and the ten connections that really are bidirectional
-/// spell `FCD_ANY` out; an *absent* `mDirection` is the one case the cooked
-/// asset does not answer.
+/// equals the value the component's **archetype** carries. That is the whole
+/// difficulty: an absent `mDirection` does not mean the enum's zero, it means
+/// "whatever my archetype has", and the chain of archetypes is
 ///
-/// It is tempting to read an absent `mDirection` as the enum's zero, `FCD_INPUT`
-/// -- and for a machine port it does come out that way -- but the default is the
-/// archetype's value, not the enum's, and the archetype is a native constructor
-/// the pak does not carry. `AFGBuildableConveyorBase`'s constructor sets its two
-/// ends apart (`mConnection0` input, `mConnection1` output), so reading the zero
-/// there labels every belt and lift end an input, which is what the registry
-/// said before this. So an absent `mDirection` is reported as `"unknown"` and
-/// `scripts/sfy_registry.py` resolves it, recording a `direction_source` per
-/// port for how.
+///   this Blueprint's template
+///     -> the parent Blueprint's template of the same name  ("asset-inherited")
+///        -> ... up the Blueprint chain ...
+///           -> the subobject the native constructor made    ("native")
 ///
-/// Pipes are not affected: `mPipeConnectionType`'s default really is the class
-/// default `PCT_ANY` on every pipe archetype in the content. Power connections
-/// are circuit connections and have no direction at all.
-static string DirectionOf(UObject template, string kind)
+/// so this walks the chain the same way. Reading an absent value as `FCD_INPUT`
+/// is what made every belt and lift end an input in the first registry: their
+/// archetype is the connection `AFGBuildableConveyorBase`'s constructor creates,
+/// and it sets both ends to `FCD_ANY`.
+///
+/// `native_directions.json` holds the last step -- every value in it is a store
+/// `tools/sfy-native` read out of the shipped DLL's constructors. A port that
+/// falls off the end of all of it is `"unknown"`, which is shipped as `unknown`
+/// rather than guessed at from the component's name.
+///
+/// Power connections are circuit connections with no direction property at all;
+/// `native_directions.json` says so, and they come back `("any", "native")`.
+(string, string) DirectionOf(List<UObject> chain, string kind, string? nativeSuper)
 {
-    if (kind == "power") return "any";
-    if (kind == "pipe")
+    var componentClass = chain[0].Class?.Name.Text ?? "";
+    if (kind != "power")
     {
-        var pipe = Text(template, "mPipeConnectionType") ?? "EPipeConnectionType::PCT_ANY";
-        if (pipe.EndsWith("PCT_CONSUMER", StringComparison.Ordinal)) return "input";
-        if (pipe.EndsWith("PCT_PRODUCER", StringComparison.Ordinal)) return "output";
-        if (pipe.EndsWith("PCT_SNAP_ONLY", StringComparison.Ordinal)) return "snap_only";
-        return "any";
+        var member = kind == "pipe" ? "mPipeConnectionType" : "mDirection";
+        for (var depth = 0; depth < chain.Count; depth++)
+        {
+            if (Text(chain[depth], member) is not { } stated) continue;
+            var named = kind == "pipe" ? PipeDirection(stated) : BeltDirection(stated);
+            return (named, depth == 0 ? "asset" : "asset-inherited");
+        }
     }
-    var direction = Text(template, "mDirection");
-    if (direction is null) return "unknown";
-    if (direction.EndsWith("FCD_OUTPUT", StringComparison.Ordinal)) return "output";
-    if (direction.EndsWith("FCD_ANY", StringComparison.Ordinal)) return "any";
-    if (direction.EndsWith("FCD_SNAP_ONLY", StringComparison.Ordinal)) return "snap_only";
-    return "input";
+    // Nothing in the asset chain says, so the value is the archetype's, which
+    // is native code. A buildable whose own constructor creates and sets its
+    // connections wins over the component class's default.
+    // `owner_classes` are the PDB's C++ names; the asset's super is the same
+    // name without UHT's `A`/`U` prefix.
+    var superNames = nativeSuper is null ? [] : new[] { "A" + nativeSuper, "U" + nativeSuper };
+    foreach (var owner in nativeDirections.OwnerDefaults)
+    {
+        if (owner.ComponentClass == componentClass
+            && owner.OwnerClasses.Intersect(superNames, StringComparer.Ordinal).Any())
+            return (owner.Direction, "native");
+    }
+    if (!componentDefaults.TryGetValue(componentClass, out var fallback)) return ("unknown", "unknown");
+    // A class with no direction property at all -- a power connection -- has
+    // nothing for an archetype to carry, so that answer holds however the
+    // component was made.
+    if (fallback.Member is null) return (fallback.Direction, "native");
+    // Otherwise the component class default only answers for a Blueprint's own
+    // component, whose archetype really is the component class default object. A
+    // subobject a native constructor made takes that constructor's value, which
+    // is the `owner_defaults` above; falling back here would have called a
+    // conveyor pole's snap-only connection an input, so it is `unknown` instead.
+    if (!IsNativeSubobject(chain[^1])) return (fallback.Direction, "native");
+    return ("unknown", "unknown");
 }
+
+/// Whether a template is a subobject a native constructor made.
+///
+/// The cooked package outers those to the class default object, and a
+/// Blueprint's own components -- the construction script's `_GEN_VARIABLE`
+/// ones -- to the generated class. The two have different archetypes, so they
+/// take their default from different places.
+static bool IsNativeSubobject(UObject template) =>
+    template.Outer?.Name.Text.StartsWith("Default__", StringComparison.Ordinal) == true;
+
+static string BeltDirection(string stated) =>
+    stated.EndsWith("FCD_OUTPUT", StringComparison.Ordinal) ? "output"
+    : stated.EndsWith("FCD_ANY", StringComparison.Ordinal) ? "any"
+    : stated.EndsWith("FCD_SNAP_ONLY", StringComparison.Ordinal) ? "snap_only"
+    : "input";
+
+static string PipeDirection(string stated) =>
+    stated.EndsWith("PCT_CONSUMER", StringComparison.Ordinal) ? "input"
+    : stated.EndsWith("PCT_PRODUCER", StringComparison.Ordinal) ? "output"
+    : stated.EndsWith("PCT_SNAP_ONLY", StringComparison.Ordinal) ? "snap_only"
+    : "any";
 
 /// The buildable's hologram class and whatever limits its class default object sets.
 ///
@@ -401,4 +505,60 @@ static string Sha256(string path)
 {
     using var stream = File.OpenRead(path);
     return Convert.ToHexStringLower(SHA256.HashData(stream));
+}
+
+/// `src/flab2bp/sfy/data/native_directions.json`, as far as this tool reads it.
+///
+/// Everything else in the file -- the member, the offset, the enum, the value
+/// and the instructions each direction was read at -- is carried through into
+/// `assets.json`'s provenance untouched, so the evidence travels with the claim.
+/// `JsonExtensionData` is what keeps it: the fields named here are the ones the
+/// resolution uses, and the rest round-trips.
+sealed class NativeDirections
+{
+    [JsonProperty("component_defaults")]
+    public List<ComponentDefault> ComponentDefaults { get; set; } = [];
+
+    [JsonProperty("owner_defaults")]
+    public List<OwnerDefault> OwnerDefaults { get; set; } = [];
+
+    [JsonExtensionData]
+    public IDictionary<string, Newtonsoft.Json.Linq.JToken> Rest { get; set; }
+        = new Dictionary<string, Newtonsoft.Json.Linq.JToken>();
+}
+
+/// What a connection component carries when no asset in its chain states one.
+sealed class ComponentDefault
+{
+    [JsonProperty("component_class")]
+    public string ComponentClass { get; set; } = "";
+
+    [JsonProperty("direction")]
+    public string Direction { get; set; } = "unknown";
+
+    /// The property the direction lives in, or null when the class has none --
+    /// a power connection is a circuit connection and has no direction at all.
+    [JsonProperty("member")]
+    public string? Member { get; set; }
+
+    [JsonExtensionData]
+    public IDictionary<string, Newtonsoft.Json.Linq.JToken> Rest { get; set; }
+        = new Dictionary<string, Newtonsoft.Json.Linq.JToken>();
+}
+
+/// A native buildable that makes its own connections and sets their direction.
+sealed class OwnerDefault
+{
+    [JsonProperty("owner_classes")]
+    public List<string> OwnerClasses { get; set; } = [];
+
+    [JsonProperty("component_class")]
+    public string ComponentClass { get; set; } = "";
+
+    [JsonProperty("direction")]
+    public string Direction { get; set; } = "unknown";
+
+    [JsonExtensionData]
+    public IDictionary<string, Newtonsoft.Json.Linq.JToken> Rest { get; set; }
+        = new Dictionary<string, Newtonsoft.Json.Linq.JToken>();
 }

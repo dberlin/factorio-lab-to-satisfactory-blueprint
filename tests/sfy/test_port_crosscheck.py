@@ -187,28 +187,6 @@ def test_no_registry_port_is_wrong_everywhere_it_is_wired() -> None:
     assert {k: round(v, 2) for k, v in best.items() if v > TOLERANCE_CM} == {}
 
 
-def test_the_corpus_wires_every_port_the_way_the_registry_calls_it() -> None:
-    """A machine port's direction, checked against what the fixtures do with it.
-
-    ``Buildables/FGBuildableConveyorBase.h:380`` says a conveyor's
-    ``ConveyorAny0`` is its input and ``ConveyorAny1`` its output. So whatever
-    feeds ``ConveyorAny0`` is an output and whatever ``ConveyorAny1`` feeds is
-    an input -- which makes every link in the corpus a check on the direction
-    the registry gives that port. 84 of the registry's belt ports have no
-    direction in the cooked asset at all, so this is not a tautology: it is the
-    evidence ``scripts/sfy_registry.py`` resolves them from.
-    """
-    reg = load_registry()
-    wrong = []
-    for link in _links():
-        port = next(p for p in reg.buildables[link.machine].ports if p.name == link.port)
-        expected = "output" if link.component.endswith("0") else "input"
-        # "any" really does take either, so it is never contradicted.
-        if port.direction not in (expected, "any"):
-            wrong.append((link.fixture, link.machine, link.port, port.direction, expected))
-    assert not wrong, wrong[:10]
-
-
 def test_conveyor_any_index_names_the_spline_end() -> None:
     """``ConveyorAny0`` is the belt's first spline point and ``ConveyorAny1`` its last."""
     disagree = [

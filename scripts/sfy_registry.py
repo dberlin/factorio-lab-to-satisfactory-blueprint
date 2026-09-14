@@ -6,7 +6,10 @@ add: the connection ports of every buildable, whatever limits the hologram
 Blueprints override, and the full asset path of every class the game's Docs.json
 states one for -- which is how a blueprint names an item descriptor or a recipe.
 ``native.json`` (``tools/sfy-native``) is what the shipped
-DLL's machine code states for the hologram limits no asset carries.
+DLL's machine code states for the hologram limits no asset carries, and
+``native_directions.json`` (``scripts/sfy_native_directions.py``) the same for
+the connection directions no asset carries -- which the extractor, not this
+script, resolves the ports with.
 ``hologram_rules.json`` (``scripts/sfy_native_rules.py``) is what the build
 gun's hologram does with those numbers. This script joins the four and writes
 the registry that :func:`flab2bp.sfy.registry.load_registry` reads.
@@ -15,12 +18,12 @@ the registry that :func:`flab2bp.sfy.registry.load_registry` reads.
 a refusal.** ``provenance.limits[key].enforced_by`` names the hologram rule that
 enforces it, or is ``null`` with the reason none does.
 
-**Nothing here comes from a blueprint corpus.** A community blueprint can carry
-clipped geometry, a hacked save or an older game version, so what one contains
-is not a fact about the game: it is not a source, not a cross-check and not
-evidence, for a limit or for anything else in the registry.
-``scripts/sfy_measure_limits.py`` still measures the fixtures, and this script
-does not read what it writes.
+**Nothing here comes from a blueprint corpus, and nothing from a port's name.**
+A community blueprint can carry clipped geometry, a hacked save or an older game
+version, so what one contains is not a fact about the game: it is not a source,
+not a cross-check and not evidence, for a limit, for a port direction or for
+anything else in the registry. What a component happens to be called is not one
+either.
 
 Run it after re-running the extractors for a new game build::
 
@@ -28,8 +31,8 @@ Run it after re-running the extractors for a new game build::
 
 It prints where each limit came from, and any it could not fill at all. It
 refuses to write a registry when the sources contradict each other: a header
-against the binary, an asset's stated port direction against the naming
-convention, or a limit naming a hologram rule that does not exist.
+against the binary, a port whose ``direction_source`` is not one of the four
+game sources, or a limit naming a hologram rule that does not exist.
 """
 
 from __future__ import annotations
@@ -181,31 +184,20 @@ PROJECT_CONSTANTS: dict[str, tuple[float, str]] = {
     ),
 }
 
-# ``AFGBuildableConveyorBase``'s two connections, which the cooked asset leaves
-# to the component archetype and ``tools/sfy-extract`` therefore reports as
-# ``"unknown"``. The header states the order outright:
+# The four direction sources ``tools/sfy-extract`` may report, and the only
+# ones this merge will write. There is deliberately no source for "what a
+# blueprint corpus wires a port to" and none for "what the component is called":
+# a corpus says what somebody once built and a name is a convention, and neither
+# is a fact about the game. ``flab2bp.sfy.registry.PORT_DIRECTION_SOURCES`` is
+# the same list, re-checked on load.
 #
-#   Source/FactoryGame/Public/Buildables/FGBuildableConveyorBase.h:380
-#       /** First connection on conveyor belt, Connections are always in the
-#           same order, mConnection0 is the input, mConnection1 is the output. */
-#
-# Both belts and lifts derive from that class and name the components in that
-# order, and the corpus agrees on every wired conveyor end in the fixtures.
-CONVEYOR_ENDS: dict[str, str] = {"ConveyorAny0": "input", "ConveyorAny1": "output"}
-CONVEYOR_END_HEADER = "Buildables/FGBuildableConveyorBase.h:380"
-
-# The last resort for a port the asset, the header and the corpus all leave
-# open: the component's own name. Every one of the 63 belt ports in the content
-# that *does* spell its direction agrees with this, so it is a convention the
-# game's own data corroborates rather than a guess -- and ``_check_directions``
-# refuses the merge if a future build breaks it.
-NAME_DIRECTIONS: tuple[tuple[tuple[str, ...], str], ...] = (
-    (("Output",), "output"),
-    (("SnapOnly",), "snap_only"),
-    # "InPut" is the Space Elevator's own typo; "FuelInput" is the truck and
-    # fluid stations' fuel belt; "ConveyorInput" is the Portal's.
-    (("Input", "InPut", "ConveyorInput", "FuelInput"), "input"),
-)
+# ``asset``            the buildable's own Blueprint states the direction
+# ``asset-inherited``  a parent Blueprint's template of the same name states it
+# ``native``           nothing in the asset chain does, so it is the archetype's:
+#                      a store ``tools/sfy-native`` read out of the shipped DLL,
+#                      quoted in ``data/native_directions.json``
+# ``unknown``          none of the three answered. The port ships as ``unknown``
+#                      and the validator refuses to route to it.
 
 
 def _first(holograms: dict[str, dict[str, Any]], prefix: str, key: str) -> Any:
@@ -410,69 +402,36 @@ def _item_classes(docs: dict[str, Any]) -> set[str]:
     return items
 
 
-def _by_name(port_name: str) -> str | None:
-    """The direction the component's own name implies, or ``None``."""
-    for prefixes, direction in NAME_DIRECTIONS:
-        if port_name.startswith(prefixes):
-            return direction
-    return None
+def _check_directions(ports: dict[str, list[dict[str, Any]]]) -> dict[str, int]:
+    """Hold every port's ``direction_source`` to the vocabulary, and count them.
 
-
-def _check_directions(ports: dict[str, list[dict[str, Any]]]) -> None:
-    """Refuse the merge if the naming convention contradicts the game's own data.
-
-    The convention is only usable because every port that *does* state its
-    direction agrees with it. If a game update breaks that, it has to stop the
-    merge, not quietly reshape the registry.
+    ``tools/sfy-extract`` resolves directions now -- it is the only thing that
+    can, because resolving one means walking the Blueprint archetype chain and
+    then the native constructor at the end of it. This merge no longer has a
+    rule of its own to apply: it checks that what the extractor wrote is one of
+    the four sources, that an ``unknown`` source and an ``unknown`` direction go
+    together, and refuses anything else. A registry that had taken a direction
+    from a blueprint corpus or from a port's name would fail here.
     """
+    counts = {source: 0 for source in PORT_DIRECTION_SOURCES}
     wrong = []
     for class_name, entries in sorted(ports.items()):
         for port in entries:
-            if port["kind"] != "belt" or port["direction"] == "unknown":
+            where = f"{class_name}.{port['name']}"
+            source = port.get("direction_source")
+            if source not in counts:
+                wrong.append(f"{where}: direction_source {source!r} is not a game source")
                 continue
-            stated = port["direction"]
-            guess = _by_name(port["name"])
-            if guess is not None and guess != stated:
-                wrong.append(f"{class_name}.{port['name']}: asset says {stated}, name says {guess}")
-    if wrong:
-        raise SystemExit("port directions contradict each other:\n  " + "\n  ".join(wrong))
-
-
-def _resolve_directions(ports: dict[str, list[dict[str, Any]]]) -> dict[str, int]:
-    """Give every port a direction and a ``direction_source``, in place.
-
-    ``tools/sfy-extract`` reports ``"unknown"`` for a belt connection whose
-    ``mDirection`` the cooked asset omits, because the value then comes from the
-    component's archetype -- a native constructor the pak does not carry. Two
-    things resolve those, strongest first: the conveyor header and the naming
-    convention. A port that neither resolves stops the merge.
-
-    What a blueprint corpus wires a port to used to be the middle of those
-    three. It is gone: a corpus says what somebody once built, which is not a
-    fact about the game, and it is not a source for any registry datum. It
-    resolved 24 ports, every one of which the naming convention resolves to the
-    same direction.
-    """
-    counts = {source: 0 for source in PORT_DIRECTION_SOURCES}
-    unresolved = []
-    for class_name, entries in sorted(ports.items()):
-        conveyor = class_name.startswith(("Build_ConveyorBelt", LIFT_CLASS_PREFIX))
-        for port in entries:
-            if port["direction"] != "unknown":
-                source = "asset"
-            elif conveyor and port["name"] in CONVEYOR_ENDS:
-                port["direction"], source = CONVEYOR_ENDS[port["name"]], "header"
-            elif (guess := _by_name(port["name"])) is not None:
-                port["direction"], source = guess, "name"
-            else:
-                unresolved.append(f"{class_name}.{port['name']}")
+            if (port["direction"] == "unknown") != (source == "unknown"):
+                wrong.append(
+                    f"{where}: direction {port['direction']!r} with source {source!r}"
+                )
                 continue
-            port["direction_source"] = source
             counts[source] += 1
-    if unresolved:
+    if wrong:
         raise SystemExit(
-            "no source gives these ports a direction; add a rule rather than "
-            f"shipping a port nobody can route:\n  {unresolved}"
+            "tools/sfy-extract wrote port directions this merge will not ship:\n  "
+            + "\n  ".join(wrong)
         )
     return counts
 
@@ -480,7 +439,7 @@ def _resolve_directions(ports: dict[str, list[dict[str, Any]]]) -> dict[str, int
 def _shipped_direction_counts(buildables: dict[str, Any]) -> dict[str, int]:
     """How the directions of the ports the registry actually ships were resolved.
 
-    ``_resolve_directions`` walks every class ``tools/sfy-extract`` read, and it
+    ``_check_directions`` counts every class ``tools/sfy-extract`` read, and it
     reads every cooked ``Build_*`` class -- including the ones Docs.json does not
     list, which never become a buildable here. Counting those would describe a
     registry nobody loads, so the provenance counts these, over the ports that
@@ -506,8 +465,7 @@ def main(out: Path | None = None) -> int:
         (DATA / "hologram_rules.json").read_text(encoding="utf-8")
     )["provenance"]
 
-    _check_directions(assets["ports"])
-    extracted_counts = _resolve_directions(assets["ports"])
+    extracted_counts = _check_directions(assets["ports"])
 
     for class_name, buildable in docs["buildables"].items():
         buildable["ports"] = assets["ports"].get(class_name, [])
@@ -533,7 +491,7 @@ def main(out: Path | None = None) -> int:
             "hologram_rules": rules_provenance,
             "limits": limit_provenance,
             "port_directions": {
-                "header": CONVEYOR_END_HEADER,
+                "sources": list(PORT_DIRECTION_SOURCES),
                 # Over the ports this registry ships. The extractor reads ports
                 # off every cooked Build_* class, Docs.json lists fewer of them
                 # than that, and the wider count is kept beside this one rather

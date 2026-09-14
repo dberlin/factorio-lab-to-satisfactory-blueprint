@@ -586,7 +586,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input0",
@@ -604,7 +604,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "PowerConnection",
@@ -729,7 +729,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input0",
@@ -747,7 +747,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input1",
@@ -783,7 +783,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "PowerInput",
@@ -1782,7 +1782,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input0",
@@ -1800,7 +1800,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input1",
@@ -1890,7 +1890,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "PowerConnection",
@@ -2359,7 +2359,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": 2,
      "name": "PowerConnection",
@@ -2580,7 +2580,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input0",
@@ -2616,7 +2616,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "PowerInput",
@@ -2730,7 +2730,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input0",
@@ -2748,7 +2748,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input1",
@@ -2784,7 +2784,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "PowerInput",
@@ -2851,7 +2851,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input1",
@@ -2869,7 +2869,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input2",
@@ -2887,7 +2887,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input3",
@@ -2972,7 +2972,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input1",
@@ -2990,7 +2990,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input2",
@@ -3008,7 +3008,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input3",
@@ -3093,7 +3093,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input1",
@@ -3214,7 +3214,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input1",
@@ -3335,7 +3335,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input1",
@@ -3425,8 +3425,8 @@
    "ports": [
     {
      "clearance": null,
-     "direction": "input",
-     "direction_source": "header",
+     "direction": "any",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "ConveyorAny0",
@@ -3443,8 +3443,8 @@
     },
     {
      "clearance": null,
-     "direction": "output",
-     "direction_source": "header",
+     "direction": "any",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "ConveyorAny1",
@@ -3480,8 +3480,8 @@
    "ports": [
     {
      "clearance": null,
-     "direction": "input",
-     "direction_source": "header",
+     "direction": "any",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "ConveyorAny0",
@@ -3498,8 +3498,8 @@
     },
     {
      "clearance": null,
-     "direction": "output",
-     "direction_source": "header",
+     "direction": "any",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "ConveyorAny1",
@@ -3535,8 +3535,8 @@
    "ports": [
     {
      "clearance": null,
-     "direction": "input",
-     "direction_source": "header",
+     "direction": "any",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "ConveyorAny0",
@@ -3553,8 +3553,8 @@
     },
     {
      "clearance": null,
-     "direction": "output",
-     "direction_source": "header",
+     "direction": "any",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "ConveyorAny1",
@@ -3590,8 +3590,8 @@
    "ports": [
     {
      "clearance": null,
-     "direction": "input",
-     "direction_source": "header",
+     "direction": "any",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "ConveyorAny0",
@@ -3608,8 +3608,8 @@
     },
     {
      "clearance": null,
-     "direction": "output",
-     "direction_source": "header",
+     "direction": "any",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "ConveyorAny1",
@@ -3645,8 +3645,8 @@
    "ports": [
     {
      "clearance": null,
-     "direction": "input",
-     "direction_source": "header",
+     "direction": "any",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "ConveyorAny0",
@@ -3663,8 +3663,8 @@
     },
     {
      "clearance": null,
-     "direction": "output",
-     "direction_source": "header",
+     "direction": "any",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "ConveyorAny1",
@@ -3700,8 +3700,8 @@
    "ports": [
     {
      "clearance": null,
-     "direction": "input",
-     "direction_source": "header",
+     "direction": "any",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "ConveyorAny0",
@@ -3718,8 +3718,8 @@
     },
     {
      "clearance": null,
-     "direction": "output",
-     "direction_source": "header",
+     "direction": "any",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "ConveyorAny1",
@@ -3822,8 +3822,8 @@
    "ports": [
     {
      "clearance": 200.0,
-     "direction": "input",
-     "direction_source": "header",
+     "direction": "any",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "ConveyorAny0",
@@ -3840,8 +3840,8 @@
     },
     {
      "clearance": 200.0,
-     "direction": "output",
-     "direction_source": "header",
+     "direction": "any",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "ConveyorAny1",
@@ -3877,8 +3877,8 @@
    "ports": [
     {
      "clearance": null,
-     "direction": "input",
-     "direction_source": "header",
+     "direction": "any",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "ConveyorAny0",
@@ -3895,8 +3895,8 @@
     },
     {
      "clearance": null,
-     "direction": "output",
-     "direction_source": "header",
+     "direction": "any",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "ConveyorAny1",
@@ -3932,8 +3932,8 @@
    "ports": [
     {
      "clearance": null,
-     "direction": "input",
-     "direction_source": "header",
+     "direction": "any",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "ConveyorAny0",
@@ -3950,8 +3950,8 @@
     },
     {
      "clearance": null,
-     "direction": "output",
-     "direction_source": "header",
+     "direction": "any",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "ConveyorAny1",
@@ -3987,8 +3987,8 @@
    "ports": [
     {
      "clearance": null,
-     "direction": "input",
-     "direction_source": "header",
+     "direction": "any",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "ConveyorAny0",
@@ -4005,8 +4005,8 @@
     },
     {
      "clearance": null,
-     "direction": "output",
-     "direction_source": "header",
+     "direction": "any",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "ConveyorAny1",
@@ -4042,8 +4042,8 @@
    "ports": [
     {
      "clearance": null,
-     "direction": "input",
-     "direction_source": "header",
+     "direction": "any",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "ConveyorAny0",
@@ -4060,8 +4060,8 @@
     },
     {
      "clearance": null,
-     "direction": "output",
-     "direction_source": "header",
+     "direction": "any",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "ConveyorAny1",
@@ -4097,8 +4097,8 @@
    "ports": [
     {
      "clearance": null,
-     "direction": "input",
-     "direction_source": "header",
+     "direction": "any",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "ConveyorAny0",
@@ -4115,8 +4115,8 @@
     },
     {
      "clearance": null,
-     "direction": "output",
-     "direction_source": "header",
+     "direction": "any",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "ConveyorAny1",
@@ -4305,7 +4305,7 @@
     {
      "clearance": null,
      "direction": "snap_only",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "SnapOnly0",
@@ -5131,7 +5131,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input0",
@@ -5149,7 +5149,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input1",
@@ -5185,7 +5185,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "PowerConnection",
@@ -5222,7 +5222,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "PowerInput",
@@ -5259,7 +5259,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "PowerConnection ",
@@ -5451,7 +5451,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": 2,
      "name": "PowerConnection",
@@ -5488,7 +5488,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": 2,
      "name": "PowerConnection",
@@ -5671,7 +5671,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "FuelInput0",
@@ -5761,7 +5761,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "PowerInput",
@@ -6756,7 +6756,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input0",
@@ -6774,7 +6774,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input1",
@@ -6810,7 +6810,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "PowerConnection",
@@ -6944,7 +6944,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "FGPowerConnection1",
@@ -7059,7 +7059,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input0",
@@ -7077,7 +7077,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "PowerConnection",
@@ -7249,7 +7249,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input0",
@@ -7267,7 +7267,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "PowerConnection",
@@ -7555,7 +7555,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "PowerConnection",
@@ -7622,7 +7622,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "PowerConnection",
@@ -7910,7 +7910,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input0",
@@ -7946,7 +7946,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "PowerConnection",
@@ -8698,7 +8698,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input0",
@@ -8716,7 +8716,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input1",
@@ -8752,7 +8752,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "PowerInput",
@@ -9086,7 +9086,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "pipe",
      "max_connections": null,
      "name": "ConnectionAny0",
@@ -9104,7 +9104,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "pipe",
      "max_connections": null,
      "name": "ConnectionAny1",
@@ -10899,7 +10899,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "FGPowerConnection",
@@ -10966,7 +10966,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "FGPowerConnection",
@@ -11033,7 +11033,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "FGPowerConnection",
@@ -11118,7 +11118,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "FGPowerConnection",
@@ -11281,7 +11281,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "DownstreamConnection",
@@ -11299,7 +11299,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "UpstreamConnection",
@@ -11607,7 +11607,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input0",
@@ -11625,7 +11625,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input1",
@@ -11643,7 +11643,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input2",
@@ -11661,7 +11661,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input3",
@@ -11697,7 +11697,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "PowerConnection",
@@ -11840,7 +11840,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "PowerInput",
@@ -11983,7 +11983,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "PowerInput",
@@ -12108,7 +12108,7 @@
     {
      "clearance": null,
      "direction": "output",
-     "direction_source": "name",
+     "direction_source": "asset-inherited",
      "kind": "belt",
      "max_connections": null,
      "name": "Output0",
@@ -12126,7 +12126,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "PowerInput",
@@ -12211,7 +12211,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "PowerInput",
@@ -12394,7 +12394,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input0",
@@ -12466,7 +12466,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "PowerConnection",
@@ -12533,7 +12533,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input0",
@@ -12605,7 +12605,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "PowerConnection",
@@ -13140,7 +13140,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "pipe",
      "max_connections": null,
      "name": "ConnectionAny0",
@@ -13158,7 +13158,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "pipe",
      "max_connections": null,
      "name": "ConnectionAny1",
@@ -13292,7 +13292,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "pipe",
      "max_connections": null,
      "name": "Connection0",
@@ -13310,7 +13310,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "pipe",
      "max_connections": null,
      "name": "Connection1",
@@ -13328,7 +13328,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "pipe",
      "max_connections": null,
      "name": "Connection2",
@@ -13346,7 +13346,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "pipe",
      "max_connections": null,
      "name": "Connection3",
@@ -13413,7 +13413,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "pipe",
      "max_connections": null,
      "name": "Connection0",
@@ -13431,7 +13431,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "pipe",
      "max_connections": null,
      "name": "Connection1",
@@ -13449,7 +13449,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "pipe",
      "max_connections": null,
      "name": "Connection2",
@@ -13486,7 +13486,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "pipe",
      "max_connections": null,
      "name": "PipelineConnection0",
@@ -13504,7 +13504,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "pipe",
      "max_connections": null,
      "name": "PipelineConnection1",
@@ -13541,7 +13541,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "pipe",
      "max_connections": null,
      "name": "PipelineConnection0",
@@ -13559,7 +13559,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "pipe",
      "max_connections": null,
      "name": "PipelineConnection1",
@@ -13662,7 +13662,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "PowerInput",
@@ -13765,7 +13765,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "PowerInput",
@@ -13943,7 +13943,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "pipe",
      "max_connections": null,
      "name": "PipelineConnection0",
@@ -13961,7 +13961,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "pipe",
      "max_connections": null,
      "name": "PipelineConnection1",
@@ -13998,7 +13998,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "pipe",
      "max_connections": null,
      "name": "PipelineConnection0",
@@ -14016,7 +14016,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "pipe",
      "max_connections": null,
      "name": "PipelineConnection1",
@@ -14131,7 +14131,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "PowerInput",
@@ -14198,7 +14198,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "ConveyorInput0_0",
@@ -14216,7 +14216,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "PowerInput",
@@ -14301,7 +14301,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": 4,
      "name": "PowerConnection",
@@ -14368,7 +14368,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": 7,
      "name": "PowerConnection",
@@ -14435,7 +14435,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": 10,
      "name": "PowerConnection",
@@ -14502,7 +14502,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": 4,
      "name": "PowerConnection1",
@@ -14520,7 +14520,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": 4,
      "name": "PowerConnection2",
@@ -14616,7 +14616,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": 7,
      "name": "PowerConnection1",
@@ -14634,7 +14634,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": 7,
      "name": "PowerConnection2",
@@ -14759,7 +14759,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": 10,
      "name": "PowerConnection1",
@@ -14777,7 +14777,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": 10,
      "name": "PowerConnection2",
@@ -14844,7 +14844,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": 4,
      "name": "PowerConnection",
@@ -14940,7 +14940,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": 7,
      "name": "PowerConnection",
@@ -15036,7 +15036,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": 10,
      "name": "PowerConnection",
@@ -15103,7 +15103,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": 2,
      "name": "PowerConnection",
@@ -15170,7 +15170,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "PowerConnection1",
@@ -15188,7 +15188,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "PowerConnection2",
@@ -15342,7 +15342,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": 4,
      "name": "PowerConnection",
@@ -15360,7 +15360,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": 3,
      "name": "PowerTowerConnection",
@@ -15485,7 +15485,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": 4,
      "name": "PowerConnection",
@@ -15503,7 +15503,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": 3,
      "name": "PowerTowerConnection",
@@ -15570,7 +15570,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "PowerConnection1",
@@ -15588,7 +15588,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "PowerConnection2",
@@ -15800,7 +15800,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input1",
@@ -15818,7 +15818,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input2",
@@ -15836,7 +15836,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input3",
@@ -15908,7 +15908,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "PowerInput",
@@ -18999,7 +18999,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "FGPowerConnection",
@@ -22701,7 +22701,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "FGPowerConnection",
@@ -22719,7 +22719,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input0",
@@ -24793,7 +24793,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input0",
@@ -24829,7 +24829,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "PowerConnection",
@@ -25185,7 +25185,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "InPut3",
@@ -25203,7 +25203,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input1",
@@ -25221,7 +25221,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input2",
@@ -25239,7 +25239,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input4",
@@ -25257,7 +25257,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input5",
@@ -25275,7 +25275,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input6",
@@ -27406,7 +27406,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input0",
@@ -27491,7 +27491,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input0",
@@ -27509,7 +27509,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input1",
@@ -27756,7 +27756,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": 2,
      "name": "FGPowerConnection",
@@ -27948,7 +27948,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "FGPowerConnection",
@@ -28087,7 +28087,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "FGPowerConnection",
@@ -28105,7 +28105,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input0",
@@ -28123,7 +28123,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input1",
@@ -28322,7 +28322,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "PowerConnection",
@@ -28572,7 +28572,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input0",
@@ -28590,7 +28590,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input1",
@@ -28608,7 +28608,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "name",
+     "direction_source": "native",
      "kind": "belt",
      "max_connections": null,
      "name": "Input2",
@@ -28662,7 +28662,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "PowerInput",
@@ -32928,7 +32928,7 @@
     {
      "clearance": null,
      "direction": "any",
-     "direction_source": "asset",
+     "direction_source": "native",
      "kind": "power",
      "max_connections": null,
      "name": "PowerConnection",
@@ -34468,6 +34468,198 @@
    "cue4parse": "1.2.2.0",
    "extracted": "2026-09-14",
    "game_enum": "GAME_UE5_6",
+   "native_direction_defaults": {
+    "component_defaults": [
+     {
+      "class": "UFGFactoryConnectionComponent",
+      "component_class": "FGFactoryConnectionComponent",
+      "direction": "input",
+      "enum": "EFactoryConnectionDirection",
+      "enum_name": "FCD_INPUT",
+      "function": "UFGFactoryConnectionComponent::UFGFactoryConnectionComponent",
+      "instructions": [
+       "0x7b5ff1: mov byte ptr [rbx+258h],0  ; UFGFactoryConnectionComponent::mDirection @600"
+      ],
+      "member": "mDirection",
+      "note": "UFGFactoryConnectionComponent's constructor stores FCD_INPUT. A machine's belt port that says nothing is an input because this is what its archetype carries, not because of what the component is called.",
+      "offset": 600,
+      "rva": "0x7b5fd0",
+      "value": 0
+     },
+     {
+      "class": "UFGPipeConnectionComponent",
+      "component_class": "FGPipeConnectionComponent",
+      "direction": "any",
+      "enum": "EPipeConnectionType",
+      "enum_name": "PCT_ANY",
+      "function": "UFGPipeConnectionComponent::UFGPipeConnectionComponent",
+      "instructions": [
+       "0x355439: call 000000000024C350h  ; -> UFGConnectionComponent::UFGConnectionComponent",
+       "0x8b3915: call 000000000024C3A0h  ; -> UFGConnectionComponent::UFGConnectionComponent",
+       "0x3553d9: call 000000000024C350h  ; -> UFGConnectionComponent::UFGConnectionComponent",
+       "0x8b3899: call 00000000008B3900h  ; -> UFGPipeConnectionComponentBase::UFGPipeConnectionComponentBase"
+      ],
+      "member": "mPipeConnectionType",
+      "note": "Neither UFGPipeConnectionComponentBase's constructor nor UFGPipeConnectionComponent's writes mPipeConnectionType, so it keeps the zero UObject construction leaves, which is PCT_ANY.",
+      "offset": 600,
+      "rva": "0x8b3890",
+      "value": 0
+     },
+     {
+      "class": "UFGPipeConnectionFactory",
+      "component_class": "FGPipeConnectionFactory",
+      "direction": "any",
+      "enum": "EPipeConnectionType",
+      "enum_name": "PCT_ANY",
+      "function": "UFGPipeConnectionFactory::UFGPipeConnectionFactory",
+      "instructions": [
+       "0x355439: call 000000000024C350h  ; -> UFGConnectionComponent::UFGConnectionComponent",
+       "0x8b3915: call 000000000024C3A0h  ; -> UFGConnectionComponent::UFGConnectionComponent",
+       "0x3553d9: call 000000000024C350h  ; -> UFGConnectionComponent::UFGConnectionComponent",
+       "0x8b3899: call 00000000008B3900h  ; -> UFGPipeConnectionComponentBase::UFGPipeConnectionComponentBase",
+       "0x3554d9: call 000000000024C350h  ; -> UFGConnectionComponent::UFGConnectionComponent",
+       "0x8b39c9: call 00000000008B3890h  ; -> UFGPipeConnectionComponent::UFGPipeConnectionComponent"
+      ],
+      "member": "mPipeConnectionType",
+      "note": "UFGPipeConnectionFactory derives from UFGPipeConnectionComponent (its constructor calls it) and no constructor in the chain writes mPipeConnectionType, so it too is PCT_ANY.",
+      "offset": 600,
+      "rva": "0x8b39c0",
+      "value": 0
+     },
+     {
+      "class": "UFGPowerConnectionComponent",
+      "component_class": "FGPowerConnectionComponent",
+      "direction": "any",
+      "enum": null,
+      "enum_name": null,
+      "function": "UFGPowerConnectionComponent::UFGPowerConnectionComponent",
+      "instructions": [
+       "0x36e819: call 000000000023FBD0h  ; -> UFGCircuitConnectionComponent::UFGCircuitConnectionComponent",
+       "0x8f116d: call 00000000006F41A0h  ; -> UFGCircuitConnectionComponent::UFGCircuitConnectionComponent"
+      ],
+      "member": null,
+      "note": "A power connection is a circuit connection: its constructor chains to UFGCircuitConnectionComponent, not to UFGFactoryConnectionComponent, and the class carries no direction property. 'any' here says there is no direction to take, not that one was read.",
+      "offset": null,
+      "rva": "0x8f1160",
+      "value": null
+     }
+    ],
+    "enums": {
+     "EFactoryConnectionDirection": [
+      "input",
+      "output",
+      "any",
+      "snap_only"
+     ],
+     "EPipeConnectionType": [
+      "any",
+      "input",
+      "output",
+      "snap_only"
+     ]
+    },
+    "owner_defaults": [
+     {
+      "component_class": "FGFactoryConnectionComponent",
+      "direction": "any",
+      "enum": "EFactoryConnectionDirection",
+      "enum_name": "FCD_ANY",
+      "inheritance": [
+       "AFGBuildableConveyorBelt: 0x1b9cb9: call 00000000001B9AF0h  ; -> AFGBuildableConveyorBase::AFGBuildableConveyorBase",
+       "AFGBuildableConveyorLift: 0x1b9e09: call 00000000001B9AF0h  ; -> AFGBuildableConveyorBase::AFGBuildableConveyorBase"
+      ],
+      "instructions": [
+       "0x4c98ec: mov qword ptr [rdi+6A0h],rbx  ; AFGBuildableConveyorBase::mConnection0 @1696",
+       "0x4c9902: mov rax,qword ptr [rdi+6A0h]  ; AFGBuildableConveyorBase::mConnection0 @1696",
+       "0x4c9914: mov byte ptr [rax+258h],2",
+       "0x4c999d: mov qword ptr [rdi+6A8h],rbx  ; AFGBuildableConveyorBase::mConnection1 @1704",
+       "0x4c9b47: mov rax,qword ptr [rdi+6A8h]  ; AFGBuildableConveyorBase::mConnection1 @1704",
+       "0x4c9b59: mov byte ptr [rax+258h],2"
+      ],
+      "note": "AFGBuildableConveyorBase's constructor creates both ends and sets both to FCD_ANY, which is what ConveyorAny0 and ConveyorAny1 are named after. FGBuildableConveyorBase.h:380 -- 'mConnection0 is the input, mConnection1 is the output' -- is about which end items enter and leave by; it is not mDirection. A placed belt takes its two directions from whatever it snapped to, under the belt.snap_directions rule.",
+      "owner_classes": [
+       "AFGBuildableConveyorBelt",
+       "AFGBuildableConveyorLift"
+      ],
+      "rva": "0x4c96b0",
+      "set_in": "AFGBuildableConveyorBase::AFGBuildableConveyorBase",
+      "value": 2
+     },
+     {
+      "component_class": "FGFactoryConnectionComponent",
+      "direction": "snap_only",
+      "enum": "EFactoryConnectionDirection",
+      "enum_name": "FCD_SNAP_ONLY",
+      "inheritance": [
+       "AFGBuildablePoleConveyor: AFGBuildablePoleConveyor::AFGBuildablePoleConveyor is its own constructor"
+      ],
+      "instructions": [
+       "0x51b567: call 00000000002BA120h  ; -> ?Z_Construct_UClass_UFGFactoryConnectionComponent_NoRegister@@YAPEAVUClass@@XZ",
+       "0x51b5bf: mov byte ptr [rbx+258h],3"
+      ],
+      "note": "A conveyor pole's one connection is FCD_SNAP_ONLY: it is something to snap a belt to, not something that takes or gives items. Build_ConveyorPole_C inherits it; the stackable and wall poles are Blueprint components and spell the same value out themselves.",
+      "owner_classes": [
+       "AFGBuildablePoleConveyor"
+      ],
+      "rva": "0x51b4c0",
+      "set_in": "AFGBuildablePoleConveyor::AFGBuildablePoleConveyor",
+      "value": 3
+     },
+     {
+      "component_class": "FGPipeConnectionComponent",
+      "direction": "any",
+      "enum": "EPipeConnectionType",
+      "enum_name": "PCT_ANY",
+      "inheritance": [
+       "AFGBuildablePipeline: AFGBuildablePipeline::AFGBuildablePipeline is its own constructor"
+      ],
+      "instructions": [
+       "0x51ac2c: xor ebp,ebp",
+       "0x51ae87: mov qword ptr [rdi+648h],rbx  ; AFGBuildablePipeBase::mConnection0 @1608",
+       "0x51ae9c: mov rax,qword ptr [rdi+648h]  ; AFGBuildablePipeBase::mConnection0 @1608",
+       "0x51aeab: mov byte ptr [rax+258h],bpl",
+       "0x51af26: mov qword ptr [rdi+650h],rbx  ; AFGBuildablePipeBase::mConnection1 @1616",
+       "0x51af3b: mov rax,qword ptr [rdi+650h]  ; AFGBuildablePipeBase::mConnection1 @1616",
+       "0x51af4a: mov byte ptr [rax+258h],bpl"
+      ],
+      "note": "Both ends of a pipeline are PCT_ANY: fluid runs either way along one. The value is stored from bpl, which xor ebp,ebp cleared at the top of the constructor and nothing writes again before either store.",
+      "owner_classes": [
+       "AFGBuildablePipeline"
+      ],
+      "rva": "0x51ac10",
+      "set_in": "AFGBuildablePipeline::AFGBuildablePipeline",
+      "value": 0
+     },
+     {
+      "component_class": "FGPipeConnectionComponent",
+      "direction": "snap_only",
+      "enum": "EPipeConnectionType",
+      "enum_name": "PCT_SNAP_ONLY",
+      "inheritance": [
+       "AFGBuildablePolePipe: AFGBuildablePolePipe::AFGBuildablePolePipe is its own constructor"
+      ],
+      "instructions": [
+       "0x666d23: call 0000000000354780h  ; -> ?Z_Construct_UClass_UFGPipeConnectionComponentBase_NoRegister@@YAPEAVUClass@@XZ",
+       "0x666d75: mov byte ptr [rbx+258h],3"
+      ],
+      "note": "A pipeline support's connection is PCT_SNAP_ONLY, the pipe's counterpart to the conveyor pole's FCD_SNAP_ONLY.",
+      "owner_classes": [
+       "AFGBuildablePolePipe"
+      ],
+      "rva": "0x666c10",
+      "set_in": "AFGBuildablePolePipe::AFGBuildablePolePipe",
+      "value": 3
+     }
+    ],
+    "provenance": {
+     "dll": "FactoryGameEGS-FactoryGame-Win64-Shipping.dll",
+     "dll_sha256": "65fc5a6bde6d44782da387976b144a41a6b94e4fa78ec6e1bc49c3dad2d47513",
+     "extracted": "2026-09-14",
+     "method": "sfy-native disasm, one run per constructor. Every direction is a store the tool decoded, or a proven absence of one, quoted by address. The blueprint corpus and the component's name are not inputs and are never evidence for a direction.",
+     "pdb_guid": "A2691F7C-B45E-7947-65C6-535DE373BA04",
+     "tool": "sfy-native 0.1.0"
+    }
+   },
    "usmap": "FactoryGame.usmap",
    "usmap_sha256": "b0e9179d1af4663cc06e54d6cbfe2ce834f3960d50891ef28a90e936978e4b35"
   },
@@ -34547,7 +34739,7 @@
     "reason": "no rule was extracted for it. AFGBuildableWire::mMaxLength is a buildable's property rather than a hologram member, and AFGWireHologram was not disassembled; what refuses an over-long wire is still unread."
    }
   },
-  "merged_at_commit": "5803eac3681d27fbaa7fef3bddc2771e7cf96c42",
+  "merged_at_commit": "ac9ebe75913cca5b28c55a5ec439a2f8cc919139",
   "native": {
    "dll": "FactoryGameEGS-FactoryGame-Win64-Shipping.dll",
    "dll_sha256": "65fc5a6bde6d44782da387976b144a41a6b94e4fa78ec6e1bc49c3dad2d47513",
@@ -34557,17 +34749,24 @@
    "tool": "sfy-native 0.1.0"
   },
   "port_directions": {
-   "header": "Buildables/FGBuildableConveyorBase.h:380",
    "resolved_from": {
-    "asset": 180,
-    "header": 24,
-    "name": 55
+    "asset": 93,
+    "asset-inherited": 1,
+    "native": 165,
+    "unknown": 0
    },
    "resolved_from_all_extracted": {
-    "asset": 204,
-    "header": 24,
-    "name": 60
-   }
+    "asset": 111,
+    "asset-inherited": 1,
+    "native": 176,
+    "unknown": 0
+   },
+   "sources": [
+    "asset",
+    "asset-inherited",
+    "native",
+    "unknown"
+   ]
   }
  },
  "recipe_paths": {

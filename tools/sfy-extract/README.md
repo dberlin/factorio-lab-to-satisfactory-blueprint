@@ -26,11 +26,19 @@ the tool.
 ## Running it
 
 ```bash
+uv run python scripts/sfy_native_directions.py   # -> data/native_directions.json
 cd tools/sfy-extract
-dotnet run -- "$HOME/Satisfactory" extract ../../src/flab2bp/sfy/data/assets.json
+dotnet run -- "$HOME/Satisfactory" extract \
+    ../../src/flab2bp/sfy/data/assets.json \
+    ../../src/flab2bp/sfy/data/native_directions.json
 cd ../..
 uv run python scripts/sfy_registry.py       # merges docs.json + assets.json -> registry.json
 ```
+
+The second argument is required. It is what the game's own C++ constructors set
+a connection's direction to, and without it no port whose asset omits its
+direction could be resolved from the game at all — see
+[port directions](#port-directions-and-the-archetype-chain).
 
 `assets.json` and `registry.json` are committed. Regenerate both after a game
 update and re-run `uv run pytest tests/sfy`. The extractor is deterministic:
@@ -91,6 +99,77 @@ struct types in the 1.2.0 mappings are searched for them.
   one — the blueprint fixtures' engine block says `5.6.1` and the usmap's own
   package file version is `(522, 1017)`, UE 5.6's.
 
+## Port directions and the archetype chain
+
+Unreal leaves a template property out of a cooked asset whenever it equals the
+**archetype**'s value. So an absent `mDirection` does not mean the enum's zero,
+`FCD_INPUT`: it means "whatever my archetype has", and the chain of archetypes is
+
+```
+this Blueprint's template                                  -> "asset"
+  the parent Blueprint's template of the same name         -> "asset-inherited"
+    ...
+      the subobject the native constructor made            -> "native"
+        nothing answered                                   -> "unknown"
+```
+
+The extractor walks all of it and emits `direction` and `direction_source` per
+port. `scripts/sfy_registry.py` only checks the vocabulary; nothing downstream
+re-derives a direction, and **neither a blueprint corpus nor the component's own
+name is a source** — a corpus says what somebody once built and a name is a
+convention, and neither is a fact about the game. A port nothing answers for is
+shipped `unknown`, and the validator refuses to route to it. (In 1.2.0 there are
+none: 111 `asset`, 1 `asset-inherited`, 176 `native`.)
+
+The last step is machine code, so it comes out of the shipped DLL.
+`scripts/sfy_native_directions.py` drives `tools/sfy-native disasm` over the
+constructors below and writes `src/flab2bp/sfy/data/native_directions.json`; the
+extractor copies the whole file into `assets.json`'s
+`provenance.native_direction_defaults`, so the evidence travels with the claim
+and the registry can be read without a game install.
+
+**What a component class defaults to**, which is the archetype of a Blueprint's
+own component:
+
+| Component | Class | Member | Value | Read at |
+| --- | --- | --- | --- | --- |
+| `FGFactoryConnectionComponent` | `UFGFactoryConnectionComponent` | `mDirection` | 0, `FCD_INPUT` → `input` | `mov byte ptr [rbx+258h],0` @ `0x7b5ff1`, in its constructor at `0x7b5fd0` |
+| `FGPipeConnectionComponent`, `FGPipeConnectionFactory` | `UFGPipeConnectionComponentBase` and down | `mPipeConnectionType` | 0, `PCT_ANY` → `any` | **no store**: neither constructor in the chain writes offset 600, so the member keeps `UObject`'s zero |
+| `FGPowerConnectionComponent` | `UFGPowerConnectionComponent` | — | `any` | a circuit connection: its constructor chains to `UFGCircuitConnectionComponent` (`0x8f116d`) and the class has no direction property at all |
+
+**What a buildable that makes its own connections sets them to**, which is the
+archetype of every template deriving from it. Four do, and they are exactly the
+classes whose connection templates are outered to the class default object
+rather than being construction-script components:
+
+| Constructor | Applies to | Value |
+| --- | --- | --- |
+| `AFGBuildableConveyorBase::AFGBuildableConveyorBase` @ `0x4c96b0` | `AFGBuildableConveyorBelt`, `AFGBuildableConveyorLift` | 2, `FCD_ANY` → `any` (`mov byte ptr [rax+258h],2` @ `0x4c9914` for `mConnection0` and @ `0x4c9b59` for `mConnection1`) |
+| `AFGBuildablePoleConveyor::AFGBuildablePoleConveyor` @ `0x51b4c0` | itself | 3, `FCD_SNAP_ONLY` → `snap_only` (`mov byte ptr [rbx+258h],3` @ `0x51b5bf`) |
+| `AFGBuildablePipeline::AFGBuildablePipeline` @ `0x51ac10` | itself | 0, `PCT_ANY` → `any` (`mov byte ptr [rax+258h],bpl` @ `0x51aeab` and `0x51af4a`, with `xor ebp,ebp` @ `0x51ac2c`) |
+| `AFGBuildablePolePipe::AFGBuildablePolePipe` @ `0x666c10` | itself | 3, `PCT_SNAP_ONLY` → `snap_only` (`mov byte ptr [rbx+258h],3` @ `0x666d75`) |
+
+Three things are worth stating plainly.
+
+1. **Both conveyor ends are `FCD_ANY`, not input and output.** That is what
+   `ConveyorAny0` and `ConveyorAny1` are named after.
+   `Buildables/FGBuildableConveyorBase.h:380` — "mConnection0 is the input,
+   mConnection1 is the output" — is about which end items enter and leave the
+   belt by; it is not `mDirection`, and the registry took it for `mDirection`
+   until this. A placed belt gets its two directions from whatever it snapped
+   to, under the `belt.snap_directions` rule in `data/hologram_rules.json`.
+2. **The component class default only applies to a Blueprint's own component.**
+   A subobject a native constructor made takes that constructor's value, so a
+   native subobject with no matching entry above is `unknown` rather than
+   `FCD_INPUT` — which is what kept `Build_ConveyorPole_C.SnapOnly0` from being
+   called an input.
+3. **`mConnection1`'s store is in a second `.pdata` chunk.** MSVC split
+   `AFGBuildableConveyorBase`'s constructor, and the store that sets the second
+   connection is 600 bytes past the chunk the symbol is in. `sfy-native disasm`
+   follows the chain (`size_source: pdata-chained`), so both stores are quoted
+   from its output; a game update that stops the chain from resolving fails the
+   script by address rather than shipping half the answer.
+
 ## The usmap compatibility patch
 
 `UsmapCompat.cs` rewrites the mappings in memory before handing them to
@@ -117,7 +196,7 @@ Discovery findings, so nobody has to repeat the search:
 | --- | --- |
 | Connection ports (`RelativeLocation`, `RelativeRotation`, `mConnectorClearance`) | Package exports of the buildable, as either `<Name>_GEN_VARIABLE` construction-script templates outered to the generated class, or natively-constructed components outered to the class default object. Both shapes occur and both are read. A Blueprint deriving from another Blueprint inherits its templates, so the `SuperStruct` chain is walked too — in 1.2.0 the 38 buildables that do this are all doors and walls, none with a connection. |
 | Which components are ports | Seven connection component classes exist in the content. `FGFactoryConnectionComponent` is a belt port, `FGPipeConnectionComponent` and `FGPipeConnectionFactory` are pipe ports, `FGPowerConnectionComponent` is a power port. `FGPipeConnectionComponentHyper`, `FGTrainPlatformConnection` and `FGRailroadTrackConnectionComponent` are left out on purpose — nothing routes hypertubes or railways yet, and the mapping is by exact class name so a new one is dropped loudly (the extractor prints the classes it left out) rather than silently mislabelled. |
-| Belt/pipe port direction | `mDirection` (`EFactoryConnectionDirection`) and `mPipeConnectionType` (`EPipeConnectionType`) on the template — but only when it differs from the component **archetype**'s value, which is not the enum zero and is not in the pak. Every output carries `FCD_OUTPUT` and the ten genuinely bidirectional connections spell `FCD_ANY` out; an absent `mDirection` is emitted as `"unknown"` and `scripts/sfy_registry.py` resolves it (84 ports, from the conveyor header, the fixture corpus or the naming convention, recorded per port as `direction_source`). Reading the absence as `FCD_INPUT` is what made every belt and lift end an input in the first registry. Pipes are not affected — `PCT_ANY` is the archetype value on every pipe in the content. Power connections are circuit connections and have no direction. |
+| Belt/pipe port direction | `mDirection` (`EFactoryConnectionDirection`) and `mPipeConnectionType` (`EPipeConnectionType`) on the template — but only when it differs from the component **archetype**'s value, which is not the enum zero and is not in the pak. 111 of the 288 ports spell theirs out; the other 177 are resolved up the archetype chain. See [port directions](#port-directions-and-the-archetype-chain). |
 | Power connection counts | `mMaxNumConnectionLinks` on the power connection template, the `FGCircuitConnectionComponent` UPROPERTY for how many wires may end there. Serialised only where the Blueprint overrides the native default, which every pole does: the three marks say **4, 7 and 10** and their wall variants repeat those, the power tower and its platform say 3, and the four lights and the battery say 2. The other 53 power ports in the content — machine power inputs, all of them — say nothing, and are emitted as `null` rather than as a number this tool made up. No pole carries a wire length of its own; `mMaxLength` is on the wire (`wire_max_cm`, one number for all of them). |
 | Item and recipe asset paths | Docs.json, in the references one entry makes to another (`mIngredients`, `mProduct`, `mProducedIn`, a schematic's unlocked recipes). A blueprint names an item descriptor and a recipe by whole asset path — `/Game/FactoryGame/Resource/Parts/IronPlate/Desc_IronPlate.Desc_IronPlate_C` — and the folder is not derivable from the class name, which is all `docs.json` keeps. Every `/Game/….<Name>_C` the dump mentions is collected into `class_paths` (2581 of them in 1.2.0); a name found under two packages cannot be resolved by name and is listed in `class_paths_ambiguous` instead (none in 1.2.0). `scripts/sfy_registry.py` keeps the ones the registry needs — 750 item descriptors and 872 recipes — and refuses if one is missing. |
 | `mHologramClass` | The buildable's class default object. 454 of 595 buildables name one. |

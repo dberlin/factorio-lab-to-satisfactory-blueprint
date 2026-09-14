@@ -206,13 +206,14 @@ def test_nothing_in_the_registry_comes_from_the_blueprint_corpus():
     """A corpus says what somebody once built, which is not a fact about the game.
 
     It carries clipped geometry, hacked saves and older game versions, so it is
-    not a source, not a cross-check and not evidence -- for a limit or for
-    anything else here. ``scripts/sfy_measure_limits.py`` still measures the
-    fixtures; the merge does not read what it writes.
+    not a source, not a cross-check and not evidence -- for a limit, for a port
+    direction, or for anything else here. Neither is a port's name: what a
+    component is called is a convention, not something the game reads.
     """
     reg = load_registry()
     assert "measured" not in LIMIT_SOURCES
     assert "corpus" not in PORT_DIRECTION_SOURCES
+    assert "name" not in PORT_DIRECTION_SOURCES
     assert set(reg.limits_sources.values()) <= set(LIMIT_SOURCES)
     ports = [p for b in reg.buildables.values() for p in b.ports]
     assert {p.direction_source for p in ports} <= set(PORT_DIRECTION_SOURCES)
@@ -235,13 +236,17 @@ def test_pipe_ports_carry_their_own_direction_enum():
     assert pipes == {"PipeInputFactory": "input", "PipeOutputFactory": "output"}
 
 
-def test_a_conveyor_takes_in_at_end_0_and_puts_out_at_end_1():
-    """Both ends of every belt and lift mark, pinned.
+def test_both_ends_of_a_conveyor_are_the_direction_the_constructor_sets():
+    """Both ends of every belt and lift mark, from the game rather than a comment.
 
-    The cooked asset omits ``mDirection`` on these, so the registry used to call
-    both ends inputs. ``FGBuildableConveyorBase.h:380`` states the order --
-    ``mConnection0`` is the input, ``mConnection1`` the output -- and the
-    corpus wires all 1119 belt-to-machine links that way.
+    The cooked asset omits ``mDirection`` on these, because it equals the
+    archetype's -- and the archetype is the component
+    ``AFGBuildableConveyorBase``'s constructor creates. That constructor sets
+    **both** of them to ``FCD_ANY`` (2), which is also what the components are
+    named after. ``FGBuildableConveyorBase.h:380``'s "mConnection0 is the input,
+    mConnection1 is the output" is about which end items enter and leave by, not
+    about ``mDirection``: a placed belt gets its two directions from whatever it
+    snaps to, under the ``belt.snap_directions`` rule.
     """
     reg = load_registry()
     marks = [
@@ -251,10 +256,9 @@ def test_a_conveyor_takes_in_at_end_0_and_puts_out_at_end_1():
     for class_name in marks:
         ends = {p.name: p for p in reg.buildables[class_name].ports if p.kind == "belt"}
         assert sorted(ends) == ["ConveyorAny0", "ConveyorAny1"], class_name
-        assert ends["ConveyorAny0"].direction == "input", class_name
-        assert ends["ConveyorAny1"].direction == "output", class_name
         for port in ends.values():
-            assert port.direction_source == "header", class_name
+            assert port.direction == "any", class_name
+            assert port.direction_source == "native", class_name
 
 
 def test_the_power_poles_carry_the_connection_counts_the_assets_state():
@@ -335,13 +339,98 @@ def test_every_item_a_recipe_names_has_an_asset_path():
 
 
 def test_every_port_says_how_its_direction_was_established():
+    """Four sources, all of them game data, and nothing else.
+
+    ``corpus`` and ``name`` were both removed: what a blueprint contains is not
+    a fact about the game, and neither is what a component happens to be called.
+    A port the three game sources leave open is shipped ``unknown`` rather than
+    guessed at, and :func:`test_the_ports_the_game_does_not_give_a_direction`
+    lists those.
+    """
     reg = load_registry()
     ports = [(c, p) for c, b in reg.buildables.items() for p in b.ports]
+    assert set(PORT_DIRECTION_SOURCES) == {"asset", "asset-inherited", "native", "unknown"}
     assert {p.direction_source for _, p in ports} <= set(PORT_DIRECTION_SOURCES)
-    assert [f"{c}.{p.name}" for c, p in ports if p.direction == "unknown"] == []
-    # Pipes and power connections are never in doubt: a pipe spells its own
-    # enum out and a power connection has no direction to begin with.
-    assert {p.direction_source for _, p in ports if p.kind != "belt"} == {"asset"}
+    assert [f"{c}.{p.name}" for c, p in ports if p.direction_source in ("corpus", "name")] == []
+    # "unknown" is the source exactly when the direction is unknown.
+    assert all((p.direction == "unknown") == (p.direction_source == "unknown") for _, p in ports)
+
+
+def test_the_ports_the_game_does_not_give_a_direction():
+    """The ``unknown`` ports, listed rather than counted.
+
+    A port lands here when neither the buildable's own Blueprint, nor a parent
+    Blueprint's template of the same name, nor the archetype's native
+    constructor states a direction. The validator refuses to route to one, and
+    the way to shrink this list is to read more of the game -- never to infer a
+    direction from the port's name or from a blueprint corpus.
+    """
+    reg = load_registry()
+    unknown = sorted(
+        f"{c}.{p.name}"
+        for c, b in reg.buildables.items()
+        for p in b.ports
+        if p.direction_source == "unknown"
+    )
+    assert unknown == []
+
+
+def test_a_port_that_inherits_its_direction_says_so():
+    """Unreal omits a template property that equals its archetype's value.
+
+    So a Blueprint that derives from another Blueprint carries no ``mDirection``
+    of its own for a port the parent already set, and reading the absence as the
+    enum's zero would call that port an input. The extractor walks the parent
+    chain, and the ports it resolves there are tagged ``asset-inherited``.
+    """
+    reg = load_registry()
+    inherited = {
+        f"{c}.{p.name}": p.direction
+        for c, b in reg.buildables.items()
+        for p in b.ports
+        if p.direction_source == "asset-inherited"
+    }
+    assert inherited
+    assert "Build_MinerMk3_C.Output0" in inherited
+    assert inherited["Build_MinerMk3_C.Output0"] == "output"
+
+
+def test_the_native_direction_defaults_carry_their_evidence():
+    """A ``native`` direction is a claim about machine code, so it names it."""
+    reg = load_registry()
+    defaults = reg.provenance["assets"]["native_direction_defaults"]
+    by_class = {entry["component_class"]: entry for entry in defaults["component_defaults"]}
+    factory = by_class["FGFactoryConnectionComponent"]
+    assert factory["direction"] == "input"
+    assert factory["class"] == "UFGFactoryConnectionComponent"
+    assert factory["member"] == "mDirection"
+    assert factory["value"] == 0
+    assert factory["function"] == "UFGFactoryConnectionComponent::UFGFactoryConnectionComponent"
+    assert any("mDirection" in line for line in factory["instructions"])
+    # Four buildables build their own connections and set them, so their
+    # subobject -- not the component class default -- is the archetype.
+    owners = {entry["set_in"]: entry for entry in defaults["owner_defaults"]}
+    assert {name.split("::")[0] for name in owners} == {
+        "AFGBuildableConveyorBase",
+        "AFGBuildablePoleConveyor",
+        "AFGBuildablePipeline",
+        "AFGBuildablePolePipe",
+    }
+    conveyor = owners["AFGBuildableConveyorBase::AFGBuildableConveyorBase"]
+    assert conveyor["direction"] == "any"
+    assert conveyor["value"] == 2
+    assert conveyor["enum_name"] == "FCD_ANY"
+    assert set(conveyor["owner_classes"]) == {
+        "AFGBuildableConveyorBelt",
+        "AFGBuildableConveyorLift",
+    }
+    # Both stores are quoted: the second is 600 bytes past the chunk the symbol
+    # is in, which sfy-native reaches by following the chained .pdata.
+    assert sum("[rax+258h],2" in line for line in conveyor["instructions"]) == 2
+    assert owners["AFGBuildablePoleConveyor::AFGBuildablePoleConveyor"]["direction"] == "snap_only"
+    for entry in defaults["owner_defaults"]:
+        assert entry["instructions"], entry["set_in"]
+        assert len(entry["inheritance"]) == len(entry["owner_classes"]), entry["set_in"]
 
 
 def test_a_rotated_clearance_box_keeps_its_rotation():
@@ -369,9 +458,9 @@ def test_the_committed_registry_is_what_the_merge_produces(tmp_path, capsys):
     """Re-run the merge and diff it, so registry.json can never drift from its inputs.
 
     Everything but ``merged_at_commit`` has to come out identical: if
-    ``docs.json``, ``assets.json``, ``native.json`` or ``measured.json`` has
-    moved since the registry was written, or the merge itself has, this is where
-    it shows up rather than in whatever consumes the registry next.
+    ``docs.json``, ``assets.json``, ``native.json`` or ``hologram_rules.json``
+    has moved since the registry was written, or the merge itself has, this is
+    where it shows up rather than in whatever consumes the registry next.
     """
     sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
     import sfy_registry
