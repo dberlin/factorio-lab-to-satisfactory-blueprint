@@ -404,6 +404,18 @@ def test_the_geometric_search_spells_the_index_once() -> None:
     body = ast.unparse(search)
     assert "divmod(source // levels, gh)" not in body
     assert "divmod(target // levels, gh)" not in body
+    # The two per-cell sites: the start encoder and the path-cell decoder.
+    # Conditional on the measurement -- see the task report's timing table --
+    # so if a future change puts the inline arithmetic back to buy speed, the
+    # number that bought it belongs in the commit that deletes these two.
+    assert "(s[0] - gx0) * xstep + (s[1] - gy0) * ystep + s[2]" not in body
+    assert "divmod(q, gh)" not in body
+    assert body.count("flat.codec.decode") == 3
+    assert body.count("flat.codec.encode") == 1
+    # `_Grid.index` bounds-checks and raises; `GridIndex.encode` does not. The
+    # seven raising call sites -- the owned-start and forbidden-cell flag
+    # writes, the goal encoder, and the four boundary probes -- stay raising.
+    assert body.count("flat.index(") == 7
 
 
 def test_the_history_flattener_spells_the_index_once() -> None:

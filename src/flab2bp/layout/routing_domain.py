@@ -4970,9 +4970,8 @@ def _geometric_search(
             raise ValueError("extra edges require the caller's matching routing grid")
         flat = _make_grid(canvas, box, _span_for(box, starts, goal_list), history)
 
-    gx0, gy0, gh, xstep, size = flat.gx0, flat.gy0, flat.gh, flat.xstep, flat.size
+    xstep, size = flat.xstep, flat.size
     levels = flat.levels
-    ystep = levels
     transitions = _routing_transitions(xstep, levels, flat.vertical_construction)
     admitted_edges = {} if extra_edges is None else extra_edges
     for source, edges in admitted_edges.items():
@@ -5003,7 +5002,7 @@ def _geometric_search(
 
     # Admit starts once using the same source exceptions as the physical caller.
     start_indices = [
-        (s[0] - gx0) * xstep + (s[1] - gy0) * ystep + s[2]
+        flat.codec.encode(s)
         for s in starts
         if not (
             s in forbidden_cells or (not canvas.free(s) and s not in owned and s not in released)
@@ -5044,11 +5043,7 @@ def _geometric_search(
     path_indices = outcome.path
     if not outcome.exhausted:
         assert path_indices is not None
-        cells = []
-        for index in path_indices:
-            q, lvl = divmod(index, levels)
-            px, py = divmod(q, gh)
-            cells.append((px + gx0, py + gy0, lvl))
+        cells = [flat.codec.decode(index) for index in path_indices]
         return _PathSearchResult(tuple(_cut_loops(cells, ramped=canvas.ramped)), None, (), work)
 
     # Forward exhaustion keeps its existing cardinal ownership frontier.
