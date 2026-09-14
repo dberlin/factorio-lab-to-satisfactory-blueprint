@@ -327,44 +327,88 @@ def test_no_satisfactory_module_loads_the_dsp_catalog() -> None:
     submodule that pulled them in; the fix is to sever that import, never to
     allowlist it here.
     """
-    loaded, failed = _dsp_modules_after_importing_all_of_sfy()
+    loaded, failed, walked = _dsp_modules_after_importing_all_of_sfy()
     assert failed == {}, f"these sfy modules would not import at all: {failed}"
+    # The pipeline is the one that reaches `flab2bp.lab.flow` and
+    # `flab2bp.lab.capture`, so a walk that somehow missed it would clear this
+    # test without ever opening the door it is about.
+    assert "flab2bp.sfy.pipeline" in walked, (
+        "the walk did not import flab2bp.sfy.pipeline, so this test says nothing "
+        f"about the module most likely to pull DSP in: {walked}"
+    )
     assert loaded == [], (
         "importing flab2bp.sfy loaded DSP modules; find the sfy module that "
         f"imports flab2bp.dsp (or flab2bp.lab.flow, or flab2bp.rates) and sever it: {loaded}"
     )
 
 
-def _dsp_modules_after_importing_all_of_sfy() -> tuple[list[str], dict[str, str]]:
+def test_the_satisfactory_pipeline_alone_loads_no_dsp_module() -> None:
+    """`flab2bp.sfy.pipeline` on its own, which is what the CLI imports.
+
+    The whole-package walk above would still pass if `pipeline` were clean only
+    because some OTHER sfy module happened to be imported first and pre-empted
+    it. This is the module the `sfy` CLI arm actually loads, and it is the one
+    that reaches `flab2bp.lab.flow`'s CSV parser and `flab2bp.lab.capture`, so
+    it gets its own fresh interpreter.
+    """
+    loaded, failed, _ = _dsp_modules_after_importing("flab2bp.sfy.pipeline")
+    assert failed == {}, f"flab2bp.sfy.pipeline would not import at all: {failed}"
+    assert loaded == [], (
+        "importing flab2bp.sfy.pipeline loaded DSP modules; the door is most "
+        "likely flab2bp.lab.flow's catalog import, which belongs inside its "
+        f"`df-` branch rather than at module scope: {loaded}"
+    )
+
+
+def _dsp_modules_after_importing_all_of_sfy() -> tuple[list[str], dict[str, str], list[str]]:
     """Import every `flab2bp.sfy` submodule in a fresh interpreter.
 
-    Returns the DSP modules that ended up in `sys.modules` and, separately, any
-    submodule that raised on import -- an sfy module that cannot be imported
-    would otherwise make this test pass by never running.
+    Returns the DSP modules that ended up in `sys.modules`, any submodule that
+    raised on import -- an sfy module that cannot be imported would otherwise
+    make this test pass by never running -- and the submodules actually walked.
+    """
+    return _dsp_modules_after_importing(None)
+
+
+def _dsp_modules_after_importing(module: str | None) -> tuple[list[str], dict[str, str], list[str]]:
+    """The DSP fallout of importing one sfy module, or every one of them.
+
+    `module` `None` walks the whole package; a name imports just that module.
+    A fresh interpreter is the only honest check: inside this one the DSP
+    modules are long since imported by other tests.
     """
     probe = """
 import importlib, json, pkgutil, sys
 import flab2bp.sfy
+wanted = json.loads(sys.argv[1])
+if wanted is None:
+    names = [info.name for info in pkgutil.walk_packages(flab2bp.sfy.__path__, "flab2bp.sfy.")]
+else:
+    names = [wanted]
 failed = {}
-for info in pkgutil.walk_packages(flab2bp.sfy.__path__, "flab2bp.sfy."):
+walked = []
+for name in names:
     try:
-        importlib.import_module(info.name)
+        importlib.import_module(name)
     except Exception as exc:
-        failed[info.name] = f"{type(exc).__name__}: {exc}"
+        failed[name] = f"{type(exc).__name__}: {exc}"
+    else:
+        walked.append(name)
 print(json.dumps({
     "dsp": sorted(m for m in sys.modules if m.startswith("flab2bp.dsp")),
     "failed": failed,
+    "walked": walked,
 }))
 """
     result = subprocess.run(
-        [sys.executable, "-c", probe],
+        [sys.executable, "-c", probe, json.dumps(module)],
         capture_output=True,
         text=True,
         check=True,
         cwd=REPO_ROOT,
     )
     parsed = json.loads(result.stdout.strip().splitlines()[-1])
-    return parsed["dsp"], parsed["failed"]
+    return parsed["dsp"], parsed["failed"], parsed["walked"]
 
 
 def test_every_fixture_flow_is_the_file_its_manifest_describes() -> None:
