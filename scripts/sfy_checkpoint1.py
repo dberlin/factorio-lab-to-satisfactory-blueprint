@@ -129,6 +129,29 @@ def _port(registry: Registry, class_name: str, port_name: str) -> Port:
     return next(p for p in ports if p.name == port_name)
 
 
+def _belt_entry(registry: Registry) -> str:
+    """The end of the belt items enter by, out of the game rather than typed here.
+
+    ``registry.json`` carries each conveyor mark's ``flow``: which of its two
+    connection components items enter and leave through, read out of
+    ``AFGBuildableConveyorBase::Factory_Tick``'s grab and named from the cooked
+    class default object's ``mConnection0``/``mConnection1``. The Constructor's
+    ``Output0`` feeds this belt, so the end wired to it is ``flow.entry``.
+
+    The other half of the arrangement -- that the entry sits at spline point 0,
+    where :func:`straight_spline` puts the belt's start -- is **this project's
+    assumption and not something read out of the game**, exactly as
+    ``geometry.port_forward``'s facing rule is. ``flab2bp.sfy.query`` says so at
+    ``query.py:47-54``: which connection sits at which end of ``mSplineData`` is
+    a separate reading of the game that nobody has done, and no caller may take
+    it from what a blueprint happens to contain.
+    """
+    flow = registry.buildables[BELT].flow
+    if flow is None:
+        raise SystemExit(f"the registry gives {BELT} no conveyor flow to wire by")
+    return flow.entry
+
+
 def build() -> Blueprint:
     """Assemble the checkpoint blueprint from fixture templates."""
     library = TemplateLibrary.from_fixtures(sorted(FIXTURES.glob("*.sbp")))
@@ -156,8 +179,9 @@ def build() -> Blueprint:
         (belt[0][0], set_spline(belt[0][1], straight_spline(facing, BELT_LENGTH_CM))),
     ) + tuple(belt[1:])
 
+    entry = _belt_entry(registry)
     port_header, port_data = next((h, d) for h, d in constructor[1:] if h.name == "Output0")
-    belt_header, belt_data = next((h, d) for h, d in belt[1:] if h.name == "ConveyorAny0")
+    belt_header, belt_data = next((h, d) for h, d in belt[1:] if h.name == entry)
     port_data, belt_data = connect(port_data, port_header.path, belt_data, belt_header.path)
     constructor = tuple((h, port_data if h.path == port_header.path else d) for h, d in constructor)
     belt = tuple((h, belt_data if h.path == belt_header.path else d) for h, d in belt)
@@ -197,10 +221,11 @@ def check(built: Blueprint, path: Path, config: Path) -> None:
     if residual > PORT_TOLERANCE_CM:
         raise SystemExit(f"belt starts {residual:.3f} cm from the Constructor's output port")
 
-    wired = index[f"{belt_header.path}.ConveyorAny0"][1]
+    entry = _belt_entry(registry)
+    wired = index[f"{belt_header.path}.{entry}"][1]
     peer = next((p.value for p in wired.properties if p.tag.name == "mConnectedComponent"), None)
     if peer is None:
-        raise SystemExit("the belt's ConveyorAny0 is not wired to anything")
+        raise SystemExit(f"the belt's {entry} is not wired to anything")
 
     _check_filters(again, registry)
     for point in _occupied_points(again):

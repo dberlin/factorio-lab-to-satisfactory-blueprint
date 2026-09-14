@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import sys
 from functools import cache
+from pathlib import Path
 
 import pytest
 
@@ -228,6 +230,25 @@ def test_item_paths_are_the_paths_the_cooked_descriptor_assets_carry() -> None:
     assert {item: cooked.get(item) for item in reg.item_paths} == reg.item_paths
     # The other direction: every item descriptor Docs.json lists is authorable.
     assert set(reg.descriptors) <= set(reg.item_paths)
+
+
+def test_the_checkpoint_takes_the_belt_end_it_wires_from_the_registry() -> None:
+    """``scripts/sfy_checkpoint1.py`` names no port; the game's flow order does.
+
+    Which of a conveyor's two connections items enter by is
+    ``registry.json``'s ``flow``, read out of ``Factory_Tick`` and named from
+    the cooked class default object. The script used to spell ``ConveyorAny0``
+    out twice, which is a port name taken on trust.
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+    import sfy_checkpoint1
+
+    reg = load_registry()
+    flow = reg.buildables[sfy_checkpoint1.BELT].flow
+    assert flow is not None and flow.name_source == "asset"
+    assert sfy_checkpoint1._belt_entry(reg) == flow.entry
+    source = Path(sfy_checkpoint1.__file__).read_text(encoding="utf-8")
+    assert flow.entry not in source and flow.exit not in source
 
 
 def test_authoring_reaches_every_item_a_recipe_names() -> None:
