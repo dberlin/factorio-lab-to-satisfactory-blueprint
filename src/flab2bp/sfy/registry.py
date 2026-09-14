@@ -42,12 +42,14 @@ PIPE_MAX_SPLINE_CM = 5600.1
 PIPE_BEND_RADIUS_2D_CM = 199.0
 PIPE_MIN_BEND_RADIUS_CM = 75.0
 
-# Where a limit's value came from. ``assets`` is the cooked game data (a
-# hologram Blueprint's own override, or Docs.json for the wire lengths),
-# ``header`` one of the four constants above, and ``measured`` the envelope
-# ``scripts/sfy_measure_limits.py`` takes from the blueprint corpus for the
-# values the install ships in neither place.
-LIMIT_SOURCES = ("assets", "header", "measured")
+# Where a limit's value came from, in order of authority. ``assets`` is the
+# cooked game data (a hologram Blueprint's own override, or Docs.json for the
+# wire lengths); ``binary`` is a constructor immediate ``tools/sfy-native``
+# read out of the shipped DLL through its PDB; ``header`` is one of the four
+# constants above; and ``measured`` is the envelope
+# ``scripts/sfy_measure_limits.py`` takes from the blueprint corpus, which is
+# only ever reached by a limit the game works out at run time.
+LIMIT_SOURCES = ("assets", "binary", "header", "measured")
 
 _HEADER_DEFAULTED = (
     "belt_max_spline_cm",

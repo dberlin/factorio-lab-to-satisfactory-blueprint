@@ -25916,15 +25916,15 @@
   "Desc_WreathDecor_C": "Build_WreathDecor_C"
  },
  "limits": {
-  "belt_bend_radius_cm": 111.0758,
-  "belt_max_incline_deg": 39.8167,
+  "belt_bend_radius_cm": 199.0,
+  "belt_max_incline_deg": 35.0,
   "belt_max_spline_cm": 5600.1,
-  "hologram_grid_cm": 50.0,
+  "hologram_grid_cm": 100.0,
   "hologram_rotation_step_deg": 90.0,
   "lift_max_cm": 2400.0,
   "lift_min_cm": 150.0,
   "lift_min_vertical_cm": 150.0,
-  "lift_step_cm": 50.0,
+  "lift_step_cm": 100.0,
   "pipe_bend_radius_2d_cm": 199.0,
   "pipe_bend_radius_cm": 100.0,
   "pipe_max_spline_cm": 5600.1,
@@ -25935,19 +25935,19 @@
   }
  },
  "limits_sources": {
-  "belt_bend_radius_cm": "measured",
-  "belt_max_incline_deg": "measured",
-  "belt_max_spline_cm": "header",
-  "hologram_grid_cm": "measured",
+  "belt_bend_radius_cm": "binary",
+  "belt_max_incline_deg": "binary",
+  "belt_max_spline_cm": "binary",
+  "hologram_grid_cm": "binary",
   "hologram_rotation_step_deg": "assets",
   "lift_max_cm": "measured",
   "lift_min_cm": "measured",
   "lift_min_vertical_cm": "measured",
-  "lift_step_cm": "measured",
-  "pipe_bend_radius_2d_cm": "header",
+  "lift_step_cm": "binary",
+  "pipe_bend_radius_2d_cm": "binary",
   "pipe_bend_radius_cm": "assets",
-  "pipe_max_spline_cm": "header",
-  "pipe_min_bend_radius_cm": "header",
+  "pipe_max_spline_cm": "binary",
+  "pipe_min_bend_radius_cm": "binary",
   "wire_max_cm": "assets"
  },
  "provenance": {
@@ -25980,7 +25980,15 @@
    "method": "envelope over the committed blueprint corpus; see the module docstring",
    "samples_per_segment": 64
   },
-  "merged_at_commit": "c959957c182c86b1fc2755d2ebba5e1b73edf636"
+  "merged_at_commit": "2d89e5e37f442ddd60425f7b14e1e13655766f0c",
+  "native": {
+   "dll": "FactoryGameEGS-FactoryGame-Win64-Shipping.dll",
+   "dll_sha256": "65fc5a6bde6d44782da387976b144a41a6b94e4fa78ec6e1bc49c3dad2d47513",
+   "pdb": "FactoryGameEGS-FactoryGame-Win64-Shipping.pdb",
+   "pdb_age": 1,
+   "pdb_guid": "A2691F7C-B45E-7947-65C6-535DE373BA04",
+   "tool": "sfy-native 0.1.0"
+  }
  },
  "recipes": {
   "Recipe_AILimiter_C": {
