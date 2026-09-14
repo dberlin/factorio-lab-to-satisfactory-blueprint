@@ -77,6 +77,21 @@ struct Section {
     raw_size: u32,
 }
 
+/// `UNWIND_INFO`'s flag for "this chunk belongs to another function", whose
+/// entry is the `RUNTIME_FUNCTION` stored after the unwind codes.
+const UNW_FLAG_CHAININFO: u8 = 0x4;
+
+/// A chain longer than this is a malformed or hostile `.pdata`, not a function.
+const MAX_CHAIN_DEPTH: usize = 16;
+
+/// One 12-byte `.pdata` `RUNTIME_FUNCTION`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RuntimeFunction {
+    begin: u32,
+    end: u32,
+    unwind: u32,
+}
+
 /// The shipped DLL: its sections, its CodeView debug record and its `.pdata`.
 struct Pe {
     bytes: Vec<u8>,
@@ -86,6 +101,14 @@ struct Pe {
     pdb_name: String,
     /// `.pdata` RUNTIME_FUNCTION entries as (begin rva, end rva).
     functions: BTreeMap<u32, u32>,
+    /// Every chunk of a split function, keyed by the RVA of the primary entry
+    /// its unwind chain resolves to and sorted by RVA. A function MSVC did not
+    /// split has one entry here, itself.
+    chunks: BTreeMap<u32, Vec<(u32, u32)>>,
+    /// Import address table slot RVA -> the imported symbol, as the other
+    /// module mangles it. `call qword ptr [rip+K]` through one of these is a
+    /// call to another DLL, and this is the only way to name it.
+    imports: BTreeMap<u32, String>,
     sha256: String,
 }
 
@@ -127,6 +150,22 @@ impl Pe {
             .copied()
             .ok_or_else(|| anyhow!("{} has no exception directory", path.display()))?;
 
+        // `Import::offset` is the import address table slot's RVA (goblin's
+        // `rva` is the hint/name table entry instead, which is not what a
+        // `call qword ptr [rip+K]` operand points at).
+        let imports = pe
+            .imports
+            .iter()
+            .map(|import| {
+                let name = if import.name.is_empty() {
+                    format!("{}!{}", import.dll, import.ordinal)
+                } else {
+                    import.name.to_string()
+                };
+                (import.offset as u32, name)
+            })
+            .collect();
+
         let mut pe = Pe {
             bytes,
             sections,
@@ -134,10 +173,13 @@ impl Pe {
             pdb_age,
             pdb_name,
             functions: BTreeMap::new(),
+            chunks: BTreeMap::new(),
+            imports,
             sha256: String::new(),
         };
         pe.sha256 = hex(&Sha256::digest(&pe.bytes));
-        pe.functions = pe.parse_pdata(exception_dir.virtual_address, exception_dir.size)?;
+        let entries = pe.parse_pdata(exception_dir.virtual_address, exception_dir.size)?;
+        pe.index_pdata(&entries);
         Ok(pe)
     }
 
@@ -164,19 +206,100 @@ impl Pe {
     }
 
     /// `.pdata` gives every x64 function's exact `[begin, end)` RVA range.
-    fn parse_pdata(&self, rva: u32, size: u32) -> Result<BTreeMap<u32, u32>> {
+    fn parse_pdata(&self, rva: u32, size: u32) -> Result<Vec<RuntimeFunction>> {
         let table = self
             .rva_to_bytes(rva, size as usize)
             .ok_or_else(|| anyhow!("exception directory at {rva:#x} is outside every section"))?;
-        let mut functions = BTreeMap::new();
-        for entry in table.as_chunks::<12>().0 {
-            let begin = u32::from_le_bytes(entry[0..4].try_into().unwrap());
-            let end = u32::from_le_bytes(entry[4..8].try_into().unwrap());
-            if end > begin {
-                functions.insert(begin, end);
+        Ok(table
+            .as_chunks::<12>()
+            .0
+            .iter()
+            .map(|entry| RuntimeFunction {
+                begin: u32::from_le_bytes(entry[0..4].try_into().unwrap()),
+                end: u32::from_le_bytes(entry[4..8].try_into().unwrap()),
+                unwind: u32::from_le_bytes(entry[8..12].try_into().unwrap()),
+            })
+            .collect())
+    }
+
+    /// Turn the `.pdata` array into the two lookups the rest of the tool uses:
+    /// `functions` (begin -> end) and `chunks` (primary -> every chunk).
+    ///
+    /// MSVC splits a function into chunks and gives each its own entry; only
+    /// the first is the function, and the others say so by chaining their
+    /// `UNWIND_INFO` back to it. Grouping by the primary each chain resolves
+    /// to puts the pieces back together whatever order `.pdata` lists them in
+    /// -- a chunk can and does sort before the entry it belongs to.
+    fn index_pdata(&mut self, entries: &[RuntimeFunction]) {
+        self.functions = entries
+            .iter()
+            .filter(|entry| entry.end > entry.begin)
+            .map(|entry| (entry.begin, entry.end))
+            .collect();
+        let mut chunks: BTreeMap<u32, Vec<(u32, u32)>> = BTreeMap::new();
+        for entry in entries.iter().filter(|entry| entry.end > entry.begin) {
+            chunks
+                .entry(self.primary_of(*entry))
+                .or_default()
+                .push((entry.begin, entry.end));
+        }
+        for list in chunks.values_mut() {
+            list.sort_unstable();
+            list.dedup();
+        }
+        self.chunks = chunks;
+    }
+
+    /// The RVA of the entry `entry`'s unwind chain resolves to, transitively.
+    ///
+    /// An unchained entry is its own primary, which is why every function has
+    /// a `chunks` list even when nothing was split.
+    fn primary_of(&self, entry: RuntimeFunction) -> u32 {
+        let mut current = entry;
+        let mut seen = Vec::new();
+        for _ in 0..MAX_CHAIN_DEPTH {
+            if seen.contains(&current.unwind) {
+                break; // a cycle: stop where we are rather than loop
+            }
+            seen.push(current.unwind);
+            match self.chained_parent(current.unwind) {
+                Some(parent) => current = parent,
+                None => break,
             }
         }
-        Ok(functions)
+        current.begin
+    }
+
+    /// The `RUNTIME_FUNCTION` a chained `UNWIND_INFO` names as its parent.
+    ///
+    /// `UNWIND_INFO` is `version | flags << 3`, the prolog size, the count of
+    /// unwind codes and the frame register, then `count` 2-byte codes padded
+    /// to an even count -- and, with `UNW_FLAG_CHAININFO` set, the parent's
+    /// 12-byte entry right after them.
+    fn chained_parent(&self, unwind_rva: u32) -> Option<RuntimeFunction> {
+        let head = self.rva_to_bytes(unwind_rva, 4)?;
+        if head.len() < 4 {
+            return None;
+        }
+        let version = head[0] & 0x7;
+        if version != 1 && version != 2 {
+            return None; // not an unwind info this tool understands
+        }
+        if (head[0] >> 3) & UNW_FLAG_CHAININFO == 0 {
+            return None; // a primary entry: the chain ends here
+        }
+        let count = head[2] as u32;
+        let at = unwind_rva.checked_add(4 + 2 * (count + count % 2))?;
+        let entry = self.rva_to_bytes(at, 12)?;
+        if entry.len() < 12 {
+            return None;
+        }
+        let parent = RuntimeFunction {
+            begin: u32::from_le_bytes(entry[0..4].try_into().unwrap()),
+            end: u32::from_le_bytes(entry[4..8].try_into().unwrap()),
+            unwind: u32::from_le_bytes(entry[8..12].try_into().unwrap()),
+        };
+        (parent.end > parent.begin).then_some(parent)
     }
 
     /// The `[begin, end)` of the function starting at `rva`, `.pdata` first.
@@ -1397,14 +1520,26 @@ struct DisasmOut {
     mangled: String,
     rva: String,
     size: u32,
-    /// `pdata` when `.pdata` gave the bounds, `ret` when the first `ret` did,
-    /// `truncated` when neither did -- never a silent cut.
+    /// `pdata` when one `.pdata` entry gave the bounds, `pdata-chained` when
+    /// the function is split and its chained chunks were stitched back on,
+    /// `ret` when the first `ret` gave them, `truncated` when none did --
+    /// never a silent cut.
     size_source: &'static str,
+    /// Every chunk `instructions` covers, in RVA order. One entry unless the
+    /// function was split; `size` is the sum.
+    chunks: Vec<ChunkOut>,
     /// The register `this` arrives in, or `null` for a static member function
     /// -- which gets no `member` annotation at all.
     #[serde(rename = "this")]
     this_in: Option<&'static str>,
     instructions: Vec<InstrOut>,
+}
+
+/// One `.pdata` chunk of a function, as it is reported.
+#[derive(Serialize)]
+struct ChunkOut {
+    rva: String,
+    size: u32,
 }
 
 /// One instruction, with whatever the annotator could say about it.
@@ -1419,6 +1554,11 @@ struct InstrOut {
     constant: Option<ConstantOut>,
     #[serde(skip_serializing_if = "Option::is_none")]
     call: Option<String>,
+    /// The imported symbol a `call`/`jmp qword ptr [rip+K]` goes to, when `K`
+    /// is an import address table slot. The name is the exporting module's
+    /// mangling, verbatim.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    import: Option<String>,
 }
 
 /// The member an instruction's `[this + disp]` operand lands on.
@@ -1545,27 +1685,56 @@ fn symbol_map(symbols: &[Symbol]) -> BTreeMap<u32, String> {
         .collect()
 }
 
-/// The `[begin, end)` to decode and where those bounds came from.
+/// One contiguous run of a function's code, with the bytes to decode.
+struct CodeChunk {
+    rva: u32,
+    bytes: Vec<u8>,
+}
+
+/// The chunks to decode and where those bounds came from.
 ///
-/// `.pdata` is authoritative. A function with no entry falls back to the
-/// first `ret`, and one that runs past the cap without a `ret` says so.
-fn disasm_bounds(pe: &Pe, rva: u32) -> (Vec<u8>, &'static str) {
+/// `.pdata` is authoritative, and a function MSVC split is every chunk whose
+/// unwind chain resolves to its entry, in RVA order -- not just the one the
+/// symbol is in. A function with no entry falls back to the first `ret`, and
+/// one that runs past the cap without a `ret` says so.
+fn disasm_chunks(pe: &Pe, rva: u32) -> (Vec<CodeChunk>, &'static str) {
     const CAP: usize = 0x1_0000;
-    if let Some((_, end)) = pe.pdata_bounds(rva) {
-        let wanted = end.saturating_sub(rva) as usize;
-        if let Some(bytes) = pe.rva_to_bytes(rva, wanted.min(CAP)) {
-            // A range the section or the cap cuts short is not the function
-            // `.pdata` promised, and says so rather than passing for one.
-            let source = if bytes.len() == wanted {
-                "pdata"
-            } else {
-                "truncated"
-            };
-            return (bytes.to_vec(), source);
+    if let Some((begin, end)) = pe.pdata_bounds(rva) {
+        // A symbol *on* an entry gets that entry's whole function. A symbol
+        // inside one gets the rest of that entry only: the bytes before it
+        // belong to whatever the entry started as, not to this name.
+        let ranges = match pe.chunks.get(&rva) {
+            Some(chunks) if begin == rva => chunks.clone(),
+            _ => vec![(rva, end)],
+        };
+        let mut out = Vec::with_capacity(ranges.len());
+        let mut whole = true;
+        for (begin, end) in ranges {
+            let wanted = end.saturating_sub(begin) as usize;
+            let bytes = pe
+                .rva_to_bytes(begin, wanted.min(CAP))
+                .unwrap_or_default()
+                .to_vec();
+            whole &= bytes.len() == wanted;
+            out.push(CodeChunk { rva: begin, bytes });
         }
+        // A range the section or the cap cuts short is not the function
+        // `.pdata` promised, and says so rather than passing for one.
+        let source = match (whole, out.len() > 1) {
+            (false, _) => "truncated",
+            (true, true) => "pdata-chained",
+            (true, false) => "pdata",
+        };
+        return (out, source);
     }
     let Some(bytes) = pe.rva_to_bytes(rva, CAP) else {
-        return (Vec::new(), "truncated");
+        return (
+            vec![CodeChunk {
+                rva,
+                bytes: Vec::new(),
+            }],
+            "truncated",
+        );
     };
     // No `.pdata` entry: decode to the first `ret` and keep it.
     let mut decoder = Decoder::with_ip(64, bytes, rva as u64, DecoderOptions::NONE);
@@ -1577,10 +1746,12 @@ fn disasm_bounds(pe: &Pe, rva: u32) -> (Vec<u8>, &'static str) {
         }
         if instruction.mnemonic() == Mnemonic::Ret {
             let end = (instruction.ip() as u32 - rva) as usize + instruction.len();
-            return (bytes[..end.min(bytes.len())].to_vec(), "ret");
+            let bytes = bytes[..end.min(bytes.len())].to_vec();
+            return (vec![CodeChunk { rva, bytes }], "ret");
         }
     }
-    (bytes.to_vec(), "truncated")
+    let bytes = bytes.to_vec();
+    (vec![CodeChunk { rva, bytes }], "truncated")
 }
 
 /// Decode `buffer`, which starts at `begin`, keeping the printed form.
@@ -1640,7 +1811,10 @@ fn f32_as_written_f64(value: f64) -> Option<f64> {
 ///
 /// The `this` tracking is [`Regs`], the same one the constructor store tracer
 /// uses: `this` arrives in `rcx` and an alias survives only until the
-/// register is written to otherwise or a call clobbers it.
+/// register is written to otherwise or a call clobbers it. `regs` is the
+/// caller's so a split function's chunks step one tracker in RVA order:
+/// MSVC allocates registers across the whole function, so the callee-saved
+/// register holding `this` in the entry chunk is the same one in the others.
 fn annotate(
     pe: &Pe,
     buffer: &[u8],
@@ -1648,9 +1822,8 @@ fn annotate(
     instrs: &[Instr],
     spans: &[MemberSpan],
     symbols: &BTreeMap<u32, String>,
-    this: Option<Register>,
+    regs: &mut Regs,
 ) -> Vec<InstrOut> {
-    let mut regs = Regs::with_this(this);
     let mut out = Vec::with_capacity(instrs.len());
     for instr in instrs {
         let i = &instr.instruction;
@@ -1676,6 +1849,13 @@ fn annotate(
             .then(|| symbols.get(&(i.near_branch64() as u32)).cloned())
             .flatten();
 
+        // Only a `call`/`jmp` through the slot: a `mov` that merely loads an
+        // IAT entry is not a call to the import, and a tail-jump is.
+        let import = (matches!(i.mnemonic(), Mnemonic::Call | Mnemonic::Jmp)
+            && i.is_ip_rel_memory_operand())
+        .then(|| pe.imports.get(&(i.ip_rel_memory_address() as u32)).cloned())
+        .flatten();
+
         let at = (instr.rva - begin) as usize;
         let bytes = buffer
             .get(at..(at + i.len()).min(buffer.len()))
@@ -1687,6 +1867,7 @@ fn annotate(
             member,
             constant,
             call,
+            import,
         });
 
         regs.step(instr, pe);
@@ -1701,29 +1882,42 @@ fn disasm_one(
     symbols: &BTreeMap<u32, String>,
     symbol: &Symbol,
 ) -> DisasmOut {
-    let (buffer, size_source) = disasm_bounds(pe, symbol.rva);
-    let instrs = decode_all(&buffer, symbol.rva);
+    let (chunks, size_source) = disasm_chunks(pe, symbol.rva);
     let spans = symbol
         .class()
         .map(|class| member_spans(index, class))
         .unwrap_or_default();
     let this = this_register(&symbol.mangled).register();
+    // One tracker across every chunk, stepped in RVA order.
+    let mut regs = Regs::with_this(this.map(|(_, register)| register));
+    let mut instructions = Vec::new();
+    for chunk in &chunks {
+        let instrs = decode_all(&chunk.bytes, chunk.rva);
+        instructions.extend(annotate(
+            pe,
+            &chunk.bytes,
+            chunk.rva,
+            &instrs,
+            &spans,
+            symbols,
+            &mut regs,
+        ));
+    }
     DisasmOut {
         symbol: symbol.display().to_string(),
         mangled: symbol.mangled.clone(),
         rva: format!("{:#x}", symbol.rva),
-        size: buffer.len() as u32,
+        size: chunks.iter().map(|c| c.bytes.len() as u32).sum(),
         size_source,
+        chunks: chunks
+            .iter()
+            .map(|c| ChunkOut {
+                rva: format!("{:#x}", c.rva),
+                size: c.bytes.len() as u32,
+            })
+            .collect(),
         this_in: this.map(|(name, _)| name),
-        instructions: annotate(
-            pe,
-            &buffer,
-            symbol.rva,
-            &instrs,
-            &spans,
-            symbols,
-            this.map(|(_, register)| register),
-        ),
+        instructions,
     }
 }
 
@@ -2040,6 +2234,8 @@ mod tests {
             pdb_age: 0,
             pdb_name: String::new(),
             functions: BTreeMap::new(),
+            chunks: BTreeMap::new(),
+            imports: BTreeMap::new(),
             sha256: String::new(),
         }
     }
@@ -2431,7 +2627,7 @@ mod tests {
             &decode(&code),
             &spans,
             &BTreeMap::new(),
-            Some(Register::RCX),
+            &mut Regs::with_this(Some(Register::RCX)),
         );
         assert!(out[0].member.is_none(), "{:?}", out[0].member);
         let bend = out[1].member.as_ref().expect("[rbx+848h] was not a member");
@@ -2463,7 +2659,7 @@ mod tests {
             &decode(&code),
             &spans,
             &BTreeMap::new(),
-            Some(Register::RCX),
+            &mut Regs::with_this(Some(Register::RCX)),
         );
         assert_eq!(
             out[0].member.as_ref().map(|m| m.name.as_str()),
@@ -2540,7 +2736,7 @@ mod tests {
             &decode(&code),
             &spans,
             &BTreeMap::new(),
-            None,
+            &mut Regs::with_this(None),
         );
         assert!(out[0].member.is_none(), "{:?}", out[0].member);
     }
@@ -2568,9 +2764,11 @@ mod tests {
             &decode(&code),
             &spans,
             &BTreeMap::new(),
-            this_register("?GetAnyConnectedBuildables@AFGConveyorBeltHologram@@QEAA?AV?$TArray@PEAVAFGBuildable@@V?$TSizedDefaultAllocator@$0CA@@@@@XZ")
-                .register()
-                .map(|(_, register)| register),
+            &mut Regs::with_this(
+                this_register("?GetAnyConnectedBuildables@AFGConveyorBeltHologram@@QEAA?AV?$TArray@PEAVAFGBuildable@@V?$TSizedDefaultAllocator@$0CA@@@@@XZ")
+                    .register()
+                    .map(|(_, register)| register),
+            ),
         );
         assert!(
             out[0].member.is_none(),
@@ -2600,13 +2798,45 @@ mod tests {
             &decode(&code),
             &[],
             &symbols,
-            Some(Register::RCX),
+            &mut Regs::with_this(Some(Register::RCX)),
         );
         assert_eq!(
             out[0].call.as_deref(),
             Some("USplineComponent::GetSplineLength")
         );
         assert!(out[1].call.is_none());
+    }
+
+    #[test]
+    fn an_indirect_call_through_an_iat_slot_is_named_from_the_import_table() {
+        // call qword ptr [rip+0xffa] -> 0x2000 ; mov rax,[rip+0xff3] -> 0x2000
+        let code = [
+            0xff, 0x15, 0xfa, 0x0f, 0x00, 0x00, 0x48, 0x8b, 0x05, 0xf3, 0x0f, 0x00, 0x00,
+        ];
+        assert_eq!(
+            text_of(&code),
+            ["call qword ptr [2000h]", "mov rax,qword ptr [2000h]"]
+        );
+        let mut pe = fake_module(&code, &[]);
+        pe.imports.insert(
+            0x2000,
+            "?GetSplineLength@USplineComponent@@QEBAMXZ".to_string(),
+        );
+        let out = annotate(
+            &pe,
+            &code,
+            0x1000,
+            &decode(&code),
+            &[],
+            &BTreeMap::new(),
+            &mut Regs::with_this(Some(Register::RCX)),
+        );
+        assert_eq!(
+            out[0].import.as_deref(),
+            Some("?GetSplineLength@USplineComponent@@QEBAMXZ")
+        );
+        // A `mov` off the same slot loads the pointer; it does not call it.
+        assert!(out[1].import.is_none());
     }
 
     #[test]
@@ -2624,7 +2854,7 @@ mod tests {
             &decode(&code),
             &[],
             &BTreeMap::new(),
-            Some(Register::RCX),
+            &mut Regs::with_this(Some(Register::RCX)),
         );
         let constant = out[0]
             .constant
@@ -2648,7 +2878,7 @@ mod tests {
             &decode(&code),
             &[],
             &BTreeMap::new(),
-            Some(Register::RCX),
+            &mut Regs::with_this(Some(Register::RCX)),
         );
         assert!(out[0].constant.is_none(), "a `.data` global was reported");
     }
@@ -2659,12 +2889,19 @@ mod tests {
         let code = [0x90, 0x90, 0xc3, 0x90];
         let mut pe = fake_module(&code, &[]);
 
-        let (buffer, source) = disasm_bounds(&pe, 0x1000);
-        assert_eq!((buffer.len(), source), (3, "ret"));
+        let (chunks, source) = disasm_chunks(&pe, 0x1000);
+        assert_eq!((chunks[0].bytes.len(), source), (3, "ret"));
 
-        pe.functions.insert(0x1000, 0x1004);
-        let (buffer, source) = disasm_bounds(&pe, 0x1000);
-        assert_eq!((buffer.len(), source), (4, "pdata"));
+        pe.index_pdata(&[RuntimeFunction {
+            begin: 0x1000,
+            end: 0x1004,
+            unwind: 0x2000,
+        }]);
+        let (chunks, source) = disasm_chunks(&pe, 0x1000);
+        assert_eq!(
+            (chunks.len(), chunks[0].bytes.len(), source),
+            (1, 4, "pdata")
+        );
         assert_eq!(pe.pdata_bounds(0x1000), Some((0x1000, 0x1004)));
         // A chunk's symbol lands inside its entry, not on it.
         assert_eq!(pe.pdata_bounds(0x1002), Some((0x1000, 0x1004)));
@@ -2673,18 +2910,101 @@ mod tests {
         assert_eq!(pe.pdata_bounds(0x0800), None);
     }
 
+    /// `UNWIND_INFO`: version 1, `count` codes, optionally chained.
+    fn unwind_info(chained: bool, count: u8, parent: Option<RuntimeFunction>) -> Vec<u8> {
+        let flags = if chained { UNW_FLAG_CHAININFO } else { 0 };
+        let mut out = vec![1 | (flags << 3), 0, count, 0];
+        // `count` 2-byte codes, padded to an even count.
+        out.resize(4 + 2 * (count as usize + count as usize % 2), 0);
+        if let Some(parent) = parent {
+            out.extend_from_slice(&parent.begin.to_le_bytes());
+            out.extend_from_slice(&parent.end.to_le_bytes());
+            out.extend_from_slice(&parent.unwind.to_le_bytes());
+        }
+        out
+    }
+
+    #[test]
+    fn chained_pdata_entries_are_one_function_in_rva_order() {
+        // Three chunks of a split function, plus an unrelated neighbour.
+        let primary = RuntimeFunction {
+            begin: 0x1000,
+            end: 0x1008,
+            unwind: 0x2000,
+        };
+        let second = RuntimeFunction {
+            begin: 0x1020,
+            end: 0x1030,
+            unwind: 0x2010,
+        };
+        let third = RuntimeFunction {
+            begin: 0x1010,
+            end: 0x1018,
+            unwind: 0x2030,
+        };
+        let other = RuntimeFunction {
+            begin: 0x1040,
+            end: 0x1044,
+            unwind: 0x2060,
+        };
+
+        let mut unwind = vec![0u8; 0x80];
+        let mut put = |at: u32, bytes: Vec<u8>| {
+            let at = (at - 0x2000) as usize;
+            unwind[at..at + bytes.len()].copy_from_slice(&bytes);
+        };
+        put(0x2000, unwind_info(false, 0, None));
+        put(0x2010, unwind_info(true, 0, Some(primary)));
+        // One unwind code, so the parent sits past four bytes of padding --
+        // the chunk two links down the chain, not one.
+        put(0x2030, unwind_info(true, 1, Some(second)));
+        put(0x2060, unwind_info(false, 0, None));
+
+        let code = vec![0x90u8; 0x50];
+        let mut pe = fake_module(&code, &unwind);
+        // Deliberately not in `.pdata` order: the second chunk is indexed
+        // before the primary it chains to, and the third before the second.
+        pe.index_pdata(&[third, primary, second, other]);
+
+        assert_eq!(
+            pe.chunks.get(&0x1000),
+            Some(&vec![(0x1000, 0x1008), (0x1010, 0x1018), (0x1020, 0x1030)])
+        );
+        assert_eq!(pe.chunks.get(&0x1040), Some(&vec![(0x1040, 0x1044)]));
+
+        let (chunks, source) = disasm_chunks(&pe, 0x1000);
+        assert_eq!(source, "pdata-chained");
+        assert_eq!(
+            chunks
+                .iter()
+                .map(|c| (c.rva, c.bytes.len()))
+                .collect::<Vec<_>>(),
+            [(0x1000, 8), (0x1010, 8), (0x1020, 16)]
+        );
+
+        // A function nothing chains to is still one chunk, and still `pdata`.
+        let (chunks, source) = disasm_chunks(&pe, 0x1040);
+        assert_eq!(source, "pdata");
+        assert_eq!(chunks.len(), 1);
+        assert_eq!((chunks[0].rva, chunks[0].bytes.len()), (0x1040, 4));
+    }
+
     #[test]
     fn a_function_with_no_ret_in_range_says_it_was_truncated() {
         let code = [0x90, 0x90, 0x90, 0x90];
         let mut pe = fake_module(&code, &[]);
-        let (_, source) = disasm_bounds(&pe, 0x1000);
+        let (_, source) = disasm_chunks(&pe, 0x1000);
         assert_eq!(source, "truncated");
 
         // A `.pdata` range that runs past the section is not the function it
         // promised either, and must not pass for one.
-        pe.functions.insert(0x1000, 0x9000);
-        let (buffer, source) = disasm_bounds(&pe, 0x1000);
-        assert_eq!((buffer.len(), source), (0x1000, "truncated"));
+        pe.index_pdata(&[RuntimeFunction {
+            begin: 0x1000,
+            end: 0x9000,
+            unwind: 0x2000,
+        }]);
+        let (chunks, source) = disasm_chunks(&pe, 0x1000);
+        assert_eq!((chunks[0].bytes.len(), source), (0x1000, "truncated"));
     }
 
     #[test]

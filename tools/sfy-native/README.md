@@ -63,8 +63,13 @@ out about each instruction:
 ```json
 [{"symbol": "AFGConveyorBeltHologram::ValidateCurvature",
   "mangled": "?ValidateCurvature@AFGConveyorBeltHologram@@AEAA_NXZ",
-  "rva": "0xaa5280", "size": 722, "size_source": "pdata", "this": "rcx",
+  "rva": "0xaa5280", "size": 722, "size_source": "pdata",
+  "chunks": [{"rva": "0xaa5280", "size": 722}], "this": "rcx",
   "instructions": [
+    {"rva": "0xaa52d0", "bytes": "ff15f2641400",
+     "text": "call qword ptr [0EEB7C8h]",
+     "constant": {"at": "0xeeb7c8", "...": "the IAT slot's bytes"},
+     "import": "?GetSplineLength@USplineComponent@@QEBAMXZ"},
     {"rva": "0xaa52dd", "bytes": "f30f5915873b8100",
      "text": "mulss xmm2,dword ptr [12B8E6Ch]",
      "constant": {"at": "0x12b8e6c", "f32": 0.02, "f64": 7.105428962728437e-15,
@@ -98,8 +103,33 @@ with no entry, so its `ret` bound really is the first of possibly several
 exits. A function that reaches neither within 64 KiB, or whose `.pdata` range
 runs past its section, says `truncated` rather than cutting off silently; for
 those `size` is the byte range asked for and can exceed what actually decoded.
-Chained entries (`UNWIND_INFO` with a chained parent) are not followed, so a
-function MSVC split into chunks reports only the chunk the symbol is in.
+
+**Functions MSVC split.** The linker hands several `.pdata` entries to one
+function, and only the first is the function: every other chunk sets
+`UNW_FLAG_CHAININFO` (bit 2 of the flags in `UNWIND_INFO`'s first byte) and
+stores the parent's `RUNTIME_FUNCTION` after its unwind codes, padded to an
+even count. The tool resolves that chain transitively once per module and
+groups the entries by the primary they land on, so a split function comes back
+whole: `size_source` is `pdata-chained`, `chunks` lists every piece sorted by
+RVA, `size` is their sum and `instructions` covers all of them in address
+order. `.pdata` order does not matter — a chunk can and does sort before the
+entry it belongs to. `AFGConveyorBeltHologram::ValidateConveyorBelt` is three
+chunks (27 + 370 + 668 = 1065 bytes) whose entry alone gives 27;
+`AFGPipelineHologram::ValidatePipeline` is five. A function that was not split
+has one `chunks` entry — itself — and `size_source` stays `pdata`, byte for
+byte what it produced before chaining existed.
+
+The `this` tracker is *one* tracker stepped across the chunks in RVA order, not
+restarted per chunk. MSVC allocates registers over the whole function, so the
+callee-saved register holding `this` in the entry chunk is the same register in
+the others; the tracker is already linear rather than flow-sensitive within a
+chunk, and this is the same approximation across one.
+
+There is one case chaining cannot help: a function with **no** `.pdata` entry
+at all has no chain to follow, so it keeps the first-`ret` bound.
+`AFGBuildableHologram::GetRotationStep` at `0xa7c050` is one — the neighbouring
+entries are `0xa7bfc0..0xa7c04a` and `0xa7c0d0..0xa7c140`, neither covers it,
+and its later `return` statements stay out of reach.
 
 **Where `this` is.** The `this` field says which register the annotator seeded,
 and it comes from the mangling's access code:
@@ -119,7 +149,7 @@ and it comes from the mangling's access code:
   are left unannotated instead of being labelled with the wrong object's
   members.
 
-**The three annotations.** Each is present only when the tool is sure of it:
+**The four annotations.** Each is present only when the tool is sure of it:
 
 - `member` — the instruction's operand is `[reg+disp]`, `reg` is an alias of
   `this`, and `disp` falls on a member of the function's class or one of its
@@ -141,8 +171,16 @@ and it comes from the mangling's access code:
   reported, not only moves — `mulss xmm2,[12B8E6Ch]` naming its multiplier is
   the whole point here.
 - `call` — a `call rel32` whose target is a known symbol, named the same way
-  (`Class::Method`, else the mangling). An indirect `call [rip+K]` is not
-  resolved; it gets the `constant` annotation for its IAT slot instead.
+  (`Class::Method`, else the mangling).
+- `import` — a `call` or `jmp qword ptr [rip+K]` where `K` is an import address
+  table slot, named from the PE import directory as the *exporting* module
+  mangles it: `?GetSplineLength@USplineComponent@@QEBAMXZ`. Most of what a
+  hologram validator calls lives in the Engine or CoreUObject DLL and reaches
+  it this way, so without this an interpretation naming a callee could not be
+  reproduced from the tool's own output. The `constant` annotation for the slot
+  is still emitted alongside it — its `f32` is a pointer's bytes and means
+  nothing, the name is the useful half — and a plain `mov` that merely loads a
+  slot is *not* annotated, because loading a pointer is not calling it.
 
 Output is deterministic: functions sorted by RVA, instructions in address
 order, fixed key order, so two runs give byte-identical files.
@@ -295,9 +333,22 @@ tested the same way — a read through `this` against a hand-built layout with a
 primary base at 0 and a secondary base at 2300, a dead alias after a call, a
 static function annotating nothing against `rcx`, an sret function's return
 slot in `rdx` staying unannotated, a `call rel32` against a fake symbol map, a
-`.rdata` constant and the `.data` global it refuses, and the `.pdata`/`ret`/
-`truncated` bounds. `tests/sfy/test_native.py` holds the committed
-`native.json` to the oracle and to the evidence each value carries, and runs
-`disasm` against the installed game — skipping without one — to check that
-`AFGConveyorBeltHologram::ValidateCurvature` is found through `.pdata` and
-seen reading `mBendRadius`.
+`.rdata` constant and the `.data` global it refuses, an indirect call named from
+a seeded import table (and the `mov` off the same slot that is not), the
+`.pdata`/`ret`/`truncated` bounds, and a synthetic three-chunk function whose
+chained `UNWIND_INFO` — listed out of `.pdata` order, one link deep and two,
+with an odd unwind-code count so the parent entry sits past its padding — has to
+come back as one function in RVA order.
+
+`tests/sfy/test_native.py` holds the committed `native.json` to the oracle and
+to the evidence each value carries, and runs `disasm` against the installed
+game — skipping without one — to check that
+`AFGConveyorBeltHologram::ValidateCurvature` is found through `.pdata` and seen
+reading `mBendRadius`, that `ValidateConveyorBelt` comes back as all three of
+its chunks with the `mMaxSplineLength` comparison in the last one, and that
+`ValidateCurvature`'s output is still byte-for-byte what it was before chunk
+chaining existed. That last test compares against the committed
+`tests/sfy/data/disasm_validate_curvature_pre_chunks.json` after dropping the
+two keys that were *added* since — `chunks` on the function and `import` on an
+instruction — and then pins those import names, so an additive annotation stays
+a deliberate edit rather than silent drift.

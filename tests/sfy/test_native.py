@@ -88,16 +88,15 @@ def test_provenance_names_the_matching_pdb():
     assert p["pdb_age"] == 1
 
 
-def test_disasm_of_validate_curvature_reads_the_bend_radius(tmp_path):
-    """The disasm mode must find the belt hologram's curvature check and see it read mBendRadius."""
+def _disasm(tmp_path, symbol):
+    """Run ``sfy-native disasm`` for one symbol, or skip without cargo and a game."""
     import shutil
     import subprocess
 
     dll, pdb = _dll_and_pdb()
-    exe = shutil.which("cargo")
-    if exe is None or dll is None:
+    if shutil.which("cargo") is None or dll is None:
         pytest.skip("cargo or the game install is not available")
-    out = tmp_path / "vc.json"
+    out = tmp_path / "disasm.json"
     subprocess.run(
         [
             "cargo",
@@ -108,7 +107,7 @@ def test_disasm_of_validate_curvature_reads_the_bend_radius(tmp_path):
             str(dll),
             str(pdb),
             "disasm",
-            "AFGConveyorBeltHologram::ValidateCurvature",
+            symbol,
             "--out",
             str(out),
         ],
@@ -116,9 +115,75 @@ def test_disasm_of_validate_curvature_reads_the_bend_radius(tmp_path):
         check=True,
         timeout=600,
     )
-    data = json.loads(out.read_text())
+    return json.loads(out.read_text())
+
+
+def test_disasm_of_validate_curvature_reads_the_bend_radius(tmp_path):
+    """The disasm mode must find the belt hologram's curvature check and see it read mBendRadius."""
+    data = _disasm(tmp_path, "AFGConveyorBeltHologram::ValidateCurvature")
     assert len(data) == 1
     fn = data[0]
     assert fn["size_source"] == "pdata"
     members = {i["member"]["name"] for i in fn["instructions"] if i.get("member")}
     assert "mBendRadius" in members
+
+
+def test_a_single_chunk_function_disassembles_exactly_as_it_did_before_chaining(tmp_path):
+    """Following chained .pdata must not disturb a function MSVC did not split.
+
+    ``data/disasm_validate_curvature_pre_chunks.json`` is the tool's output for
+    ``ValidateCurvature`` from before Task 5. Two keys were *added* since, both
+    deliberately: ``chunks`` on the function and ``import`` on an instruction
+    whose ``call qword ptr [rip+K]`` goes through an import address table slot.
+    Drop those two and the output has to be identical, instruction for
+    instruction -- otherwise the chunk work changed something it should not
+    have.
+    """
+    before = json.loads(
+        (Path(__file__).parent / "data" / "disasm_validate_curvature_pre_chunks.json").read_text()
+    )
+    after = _disasm(tmp_path, "AFGConveyorBeltHologram::ValidateCurvature")
+
+    imports = {}
+    for fn in after:
+        assert fn.pop("chunks") == [{"rva": fn["rva"], "size": fn["size"]}]
+        assert fn["size_source"] == "pdata"
+        for instruction in fn["instructions"]:
+            name = instruction.pop("import", None)
+            if name is not None:
+                imports[instruction["rva"]] = name
+    assert after == before
+
+    # The one additive annotation, pinned: an indirect call now carries the
+    # imported symbol the interpretations name, not just its IAT address.
+    assert imports == {
+        "0xaa52d0": "?GetSplineLength@USplineComponent@@QEBAMXZ",
+        "0xaa535b": (
+            "?GetTangentAtDistanceAlongSpline@USplineComponent@@QEBA?AU?$TVector@N@Math@UE@@"
+            "MW4Type@ESplineCoordinateSpace@@@Z"
+        ),
+        "0xaa540f": (
+            "?GetTangentAtDistanceAlongSpline@USplineComponent@@QEBA?AU?$TVector@N@Math@UE@@"
+            "MW4Type@ESplineCoordinateSpace@@@Z"
+        ),
+    }
+
+
+def test_a_split_function_comes_back_whole_through_its_chained_pdata(tmp_path):
+    """MSVC cut ValidateConveyorBelt into three chunks; all three must decode."""
+    data = _disasm(tmp_path, "AFGConveyorBeltHologram::ValidateConveyorBelt")
+    assert len(data) == 1
+    fn = data[0]
+    assert fn["size_source"] == "pdata-chained"
+    assert fn["chunks"] == [
+        {"rva": "0xaa4e50", "size": 27},
+        {"rva": "0xaa4e6b", "size": 370},
+        {"rva": "0xaa4fdd", "size": 668},
+    ]
+    assert fn["size"] == 1065 == sum(c["size"] for c in fn["chunks"])
+
+    rvas = [int(i["rva"], 16) for i in fn["instructions"]]
+    assert rvas == sorted(rvas), "chunks must be decoded in RVA order"
+    # The bound the entry chunk cannot reach: the max-length comparison.
+    comparison = [i for i in fn["instructions"] if i["rva"] == "0xaa50a9"]
+    assert comparison and comparison[0]["member"]["name"] == "mMaxSplineLength"
