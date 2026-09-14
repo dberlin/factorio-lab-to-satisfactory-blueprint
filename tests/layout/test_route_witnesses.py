@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import replace
 from fractions import Fraction
 from time import monotonic
-from types import CellType, CodeType, FunctionType
 
 import pytest
 
@@ -614,38 +613,26 @@ def test_proposal_progress_tracks_actual_stakes_guards_and_canonical_witnesses()
     tap_a, tap_b = (0, 0, 0), (0, 1, 0)
     starts, goals = [start_a, start_b], {goal}
     offers = ({start_a: tap_a, start_b: tap_b}, {}, {start_a: tap_a, start_b: tap_b})
-    # `proposal_used` is a field of the run object now, not a closure cell of
-    # its own, so the fabricated closure is handed the run instead.
+    # `_restrict_proposal` is a method of the run object now, not a closure of
+    # `_route_all`, so the fifteen names it used to capture are fields filled
+    # here instead of cells fabricated from `co_freevars`.
     run = routing_domain._RouteAllRun(budget=WorkBudget(left=0), deadline=None)
-    context = dict(
-        run=run,
-        proposals={1: routing_domain._RouteProposal((tap_a, tap_a), None)},
-        corridor_reservations=routing_domain._CorridorReservations(canvas, grid, owner),
-        paths=paths,
-        source_hint={},
-        sink_hint={},
-        path_tap={},
-        primitives=primitives,
-        grid=grid,
-        canvas=canvas,
-        owner=owner,
-        guard_claims={},
-        path_guards={},
-        planned_taps={},
-        owned_source_starts={},
-        rejected_path_cells={},
-    )
-    code = next(
-        code
-        for code in routing_domain._route_all.__code__.co_consts
-        if isinstance(code, CodeType) and code.co_name == "_restrict_proposal"
-    )
-    cells = {name: CellType(context[name]) for name in code.co_freevars}
-    restrict = FunctionType(
-        code,
-        routing_domain.__dict__,
-        closure=tuple(cells[name] for name in code.co_freevars),
-    )
+    run.proposals = {1: routing_domain._RouteProposal((tap_a, tap_a), None)}
+    run.corridor_reservations = routing_domain._CorridorReservations(canvas, grid, owner)
+    run.paths = paths
+    run.source_hint = {}
+    run.sink_hint = {}
+    run.path_tap = {}
+    run.primitives = primitives
+    run.grid = grid
+    run.canvas = canvas
+    run.owner = owner
+    run.guard_claims = {}
+    run.path_guards = {}
+    run.planned_taps = {}
+    run.owned_source_starts = {}
+    run.rejected_path_cells = {}
+    restrict = run._restrict_proposal
 
     def next_pass(constraints=frozenset()):
         run.proposal_used = False
@@ -688,12 +675,12 @@ def test_proposal_progress_tracks_actual_stakes_guards_and_canonical_witnesses()
     guard = (3, 3, 0)
     canvas.guard.add(guard)
     grid.block(guard)
-    context["guard_claims"][guard] = {0}
+    run.guard_claims[guard] = {0}
     assert next_pass() == ([start_b], goals, frozenset())
     # Equal geometry with another causal owner is a distinct construction.
-    context["guard_claims"][guard] = {2}
+    run.guard_claims[guard] = {2}
     assert next_pass() == ([start_b], goals, frozenset())
-    context["guard_claims"][guard] = {0}
+    run.guard_claims[guard] = {0}
     assert next_pass() == (starts, goals, frozenset())
     # A CBS branch's concrete cell constraints also belong to construction,
     # not to another branch's consumed positive choices.
@@ -703,11 +690,11 @@ def test_proposal_progress_tracks_actual_stakes_guards_and_canonical_witnesses()
     assert next_pass() == (starts, goals, frozenset())
 
     detour = frozenset({(3, 0, 0)})
-    context["proposals"][1].detours.setdefault(detour, None)
+    run.proposals[1].detours.setdefault(detour, None)
     assert next_pass(constrained) == (starts, goals, constrained | detour)
     # A repeated identical refusal cannot refresh the consumed branch, and
     # removing its temporary mask must leave CBS's actual constraint intact.
-    context["proposals"][1].detours.setdefault(detour, None)
+    run.proposals[1].detours.setdefault(detour, None)
     assert next_pass(constrained) == (starts, goals, constrained)
 
 

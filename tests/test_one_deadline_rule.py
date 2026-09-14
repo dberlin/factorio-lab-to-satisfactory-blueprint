@@ -53,7 +53,7 @@ CARVE_SITES = {
     "src/flab2bp/layout/routing_domain.py:_RouteAllRun._repair._grouped_overcap_alternative": (
         "a grouped over-cap alternative's slice, capped at the parent's remainder"
     ),
-    "src/flab2bp/layout/routing_domain.py:_route_all._cluster_search": (
+    "src/flab2bp/layout/routing_domain.py:_RouteAllRun._cluster_search": (
         "one cluster search's private allowance, reconciled against the parent"
     ),
     "src/flab2bp/layout/sequence_solver.py:_route_detailed_candidate": (

@@ -569,8 +569,8 @@ def test_retain_commit_failures_uses_the_rounds_snapshot_not_the_live_dict() -> 
     through `self.retained_failures`, set once where the `def` used to stand.
     """
     source = SRC.read_text()
-    assert "run.retained_failures = round_failures" in source
-    assert "run.retained_blockers = search_blockers" in source
+    assert "run.retained_failures = run.round_failures" in source
+    assert "run.retained_blockers = run.search_blockers" in source
 
     run = domain._RouteAllRun(budget=WorkBudget(left=10), deadline=None)
     first: dict[int, Any] = {}
@@ -608,7 +608,10 @@ def test_the_snapshot_is_taken_where_the_def_stood() -> None:
             and len(child.targets) == 1
             and isinstance(child.targets[0], ast.Attribute)
             and child.targets[0].attr in ("retained_failures", "retained_blockers")
-            and isinstance(child.value, ast.Name)
+            # Both sources are fields since Task 6; the snapshot copies the
+            # reference the round holds now, not a name bound somewhere else.
+            and isinstance(child.value, ast.Attribute)
+            and child.value.attr in ("round_failures", "search_blockers")
         ):
             lines[child.targets[0].attr] = child.lineno
     assert sorted(lines) == ["retained_blockers", "retained_failures"], lines
@@ -636,16 +639,23 @@ def test_the_snapshot_is_taken_where_the_def_stood() -> None:
     snapshot = max(lines.values())
     assert snapshot < min(calls), (snapshot, sorted(calls))
 
-    rebinds = [
-        child.lineno
+    rebinds = {
+        child.lineno: child.value
         for child in ast.walk(node)
         if isinstance(child, ast.Assign)
         and any(
-            isinstance(target, ast.Name) and target.id == "round_failures"
+            isinstance(target, ast.Attribute) and target.attr == "round_failures"
             for target in child.targets
         )
-    ]
-    assert any(rebind < snapshot for rebind in rebinds), (snapshot, sorted(rebinds))
+    }
+    before = [rebind for rebind in rebinds if rebind < snapshot]
+    assert before, (snapshot, sorted(rebinds))
+    # The pin is the round's DERIVED rebind -- the table built from this
+    # round's stranded set -- not merely the `= {}` reset at the top of the
+    # round. A snapshot taken between the reset and the derived rebind would
+    # retain an empty dict and lose the round's commit evidence.
+    derived = rebinds[max(before)]
+    assert isinstance(derived, ast.DictComp), (max(before), ast.dump(derived))
 
 
 def _method_ast(name: str) -> ast.FunctionDef:
@@ -809,3 +819,142 @@ def test_the_late_last_mile_fields_are_unset_until_the_round_binds_them() -> Non
     for name in sorted(LAST_MILE_FIELDS):
         with pytest.raises(AttributeError):
             getattr(run, name)
+
+
+#: The sixteen depth-1 closures of the last-mile cluster, in source order.
+LAST_MILE_METHODS = (
+    "_restrict_proposal",
+    "_cluster_offers",
+    "_cluster_search",
+    "_pass_budget_left",
+    "_cluster_environment",
+    "_source_is_junctionable",
+    "_capture",
+    "_round_state",
+    "_restore_staked",
+    "_tally",
+    "_solve_cluster",
+    "_cluster_is_sibling_free",
+    "_relaxed_cluster_result",
+    "_record_cluster_relation",
+    "_complete_source_dependents",
+    "_last_mile",
+)
+
+#: Methods of earlier clusters the last-mile cluster captured as siblings.
+LAST_MILE_METHOD_CAPTURES = (
+    "_blocking_nets",
+    "_can_junction",
+    "_commit_once",
+    "_dependency_closure",
+    "_endpoint_cells",
+    "_endpoint_dependents",
+    "_ends",
+    "_failure",
+    "_net_id",
+    "_preserves_source_frontier",
+    "_retain_commit_failures",
+    "_route_order",
+    "_search_route",
+    "_selected_hints",
+    "_stake",
+    "_terminal_attempt",
+    "_unstake",
+)
+
+#: Fields of earlier clusters the last-mile cluster captured.
+LAST_MILE_CAPTURED_FIELDS = {
+    "admission_memo",
+    "bounds",
+    "budget",
+    "canvas",
+    "corridor_reservations",
+    "dst_group",
+    "grid",
+    "guard_claims",
+    "history",
+    "last_mile_counts",
+    "nets",
+    "owned_source_starts",
+    "owner",
+    "path_guards",
+    "path_tap",
+    "paths",
+    "planned_taps",
+    "primitives",
+    "proposals",
+    "proved_stranded",
+    "rejected_goals",
+    "rejected_path_cells",
+    "rejected_sink_hints",
+    "rejected_source_hints",
+    "rejected_starts",
+    "round_work",
+    "sink_hint",
+    "source_access_blockers",
+    "source_hint",
+    "src_group",
+}
+
+
+def test_the_last_mile_cluster_is_methods() -> None:
+    missing = [name for name in LAST_MILE_METHODS if name not in vars(domain._RouteAllRun)]
+    assert missing == [], missing
+
+
+def test_route_all_has_no_closures_left_except_the_six_nested_helpers() -> None:
+    """Everything liftable is lifted; what remains is nested inside a method."""
+    remaining = sorted(
+        node.name
+        for node in ast.iter_child_nodes(_route_all_node())
+        if isinstance(node, ast.FunctionDef)
+    )
+    assert remaining == [], remaining
+
+
+def test_the_run_object_already_carried_every_other_last_mile_capture() -> None:
+    """Only five of the cluster's captures were new; the rest were there."""
+    from dataclasses import fields
+
+    names = {field.name for field in fields(domain._RouteAllRun)}
+    assert names >= LAST_MILE_CAPTURED_FIELDS, sorted(LAST_MILE_CAPTURED_FIELDS - names)
+    missing = [name for name in LAST_MILE_METHOD_CAPTURES if name not in vars(domain._RouteAllRun)]
+    assert missing == [], missing
+
+
+def _budget_left_argument(method: str) -> ast.expr:
+    for node in ast.walk(_method_ast(method)):
+        if isinstance(node, ast.Call):
+            for keyword in node.keywords:
+                if keyword.arg == "budget_left":
+                    return keyword.value
+    raise AssertionError(f"_RouteAllRun.{method} passes no budget_left")
+
+
+def test_the_cluster_environment_passes_the_ledger_view_not_a_reading() -> None:
+    """`ClusterEnvironment.budget_left` is `Callable[[], int]`; `ClusterProblem`'s is `int`.
+
+    last_mile.py calls the environment's view repeatedly while the cluster
+    search spends the ledger. A reading frozen at construction turns a bounded
+    search into an unbounded one.
+    """
+    environment = _budget_left_argument("_cluster_environment")
+    assert isinstance(environment, ast.Attribute) and environment.attr == "_pass_budget_left", (
+        "pass the bound method itself, not a reading of it"
+    )
+
+    problem = _budget_left_argument("_capture")
+    assert isinstance(problem, ast.Call), "the recorded problem keeps its int snapshot"
+
+
+def test_both_budget_floors_are_the_same_field_read() -> None:
+    """`budget_floor` is an `int` at both sites and stays one."""
+    for method in ("_cluster_environment", "_capture"):
+        for node in ast.walk(_method_ast(method)):
+            if isinstance(node, ast.Call):
+                for keyword in node.keywords:
+                    if keyword.arg == "budget_floor":
+                        assert ast.unparse(keyword.value) == "self.last_mile_floor", (
+                            method,
+                            ast.unparse(keyword.value),
+                        )

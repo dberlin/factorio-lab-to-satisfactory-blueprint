@@ -8867,6 +8867,637 @@ class _RouteAllRun:
                 still.append(index)
         return still
 
+    def _restrict_proposal(
+        self,
+        index: int,
+        starts: list[Cell],
+        goals: set[Cell],
+        offers: tuple[Mapping[Cell, Cell], Mapping[Cell, Cell], Mapping[Cell, Cell]],
+        *,
+        constraints: Collection[Cell] = (),
+    ) -> tuple[list[Cell], set[Cell], frozenset[Cell]]:
+        proposal = self.proposals.get(index)
+        if proposal is None or self.proposal_used:
+            return starts, goals, frozenset(constraints)
+        # Freeze only when spending an implicated route's positive proposal.
+        # The packed buildings, grid base/domain, rules, power policy and spec
+        # are immutable owners of this routing call, not per-proposal copies.
+        # Preserve selected-path and reservation order, but compare occupancy
+        # and ownership maps by content so identical restaking keeps progress.
+        reservations = self.corridor_reservations.snapshot()
+        construction = (
+            self.paths.snapshot(),
+            frozenset(self.source_hint.items()),
+            frozenset(self.sink_hint.items()),
+            frozenset(self.path_tap.items()),
+            frozenset(self.primitives.witnesses.items()),
+            bytes(self.grid.occ),
+            frozenset(self.canvas.blocked.items()),
+            frozenset(self.canvas.guard),
+            frozenset(self.owner.items()),
+            frozenset((cell, frozenset(claims)) for cell, claims in self.guard_claims.items()),
+            frozenset((member, frozenset(cells)) for member, cells in self.path_guards.items()),
+            frozenset((tap, frozenset(members)) for tap, members in self.planned_taps.items()),
+            reservations.reserved,
+            reservations.corridors,
+            reservations.grid_reserved,
+            reservations.retired_roles,
+            self.canvas.routing_ports,
+            self.owned_source_starts.get(index, frozenset()),
+            frozenset(self.rejected_path_cells.get(index, ())) | frozenset(constraints),
+        )
+        starts, goals, detour, self.proposal_used = proposal.restrict(
+            starts,
+            goals,
+            offers,
+            construction=construction,
+        )
+        return starts, goals, frozenset(constraints) | detour
+
+    def _cluster_offers(
+        self,
+        index: int,
+    ) -> tuple[dict[Cell, Cell], dict[Cell, Cell], dict[Cell, Cell]]:
+        """This net's `_ends` offer maps, as of right now."""
+        _starts, _goals, offers = self._ends(index)
+        self.canvas.routing_ports = frozenset()
+        return offers
+
+    def _cluster_search(self, index: int, constraints: frozenset[Cell]) -> _PathSearchResult:
+        """One cluster net's search: the round's own call, capped and constrained.
+
+        The private budget is the deadline discipline.  `_MAX_SEARCH_WORK` lets
+        one search run for a large fraction of a second, and this pass makes
+        hundreds of them at the end of an attempt that is already near its
+        budget, so a quarter of that cap bounds how far past the last bound
+        check the pass can travel.  Exhausting it returns
+        `RouteFailureKind.BUDGET`, which `solve_cluster` turns into BOUNDED --
+        which is correct: a capped search decided nothing.
+
+        A constraint cell OUTSIDE the search's indexed extent is dropped in
+        silence, which degrades the run to a bound rather than proving anything
+        false -- but it burns the node budget getting there.  Every constraint
+        is a cell of a path this same pass routed on this same grid, so
+        containment is an invariant rather than a hope, and checking it costs
+        one comparison per constraint.
+        """
+        starts, goals, _offers = self._ends(index)
+        span_x0, span_y0, span_x1, span_y1 = self.grid.span
+        starts, goals, constraints = self._restrict_proposal(
+            index, starts, goals, _offers, constraints=constraints
+        )
+        assert all(
+            span_x0 <= cell[0] <= span_x1
+            and span_y0 <= cell[1] <= span_y1
+            and 0 <= cell[2] < self.grid.levels
+            for cell in constraints
+        ), "a cluster constraint left the routing grid's indexed extent"
+        allowance = min(
+            last_mile.B_LOW_LEVEL_WORK,
+            max(0, self.left - self.last_mile_floor),
+        )
+        private = budget_module.WorkBudget(left=allowance)
+        assert private.left is not None
+        try:
+            return self._search_route(
+                index, starts, goals, _offers, self.pressure, private, {}, constraints=constraints
+            )
+        finally:
+            self.canvas.routing_ports = frozenset()
+            self.budget.left = self.left - (allowance - private.left)
+
+    def _pass_budget_left(self) -> int:
+        """This pass's remaining work, for the consumers typed on plain ``int``.
+
+        The pass ledger is never unbounded -- see the assertion at the top of
+        ``_route_all`` -- so this narrows rather than defaults.
+        """
+        remaining = self.budget.left
+        assert remaining is not None, "a routing pass needs a ledger"
+        return remaining
+
+    def _cluster_environment(self) -> last_mile.ClusterEnvironment:
+        return last_mile.ClusterEnvironment(
+            search=self._cluster_search,
+            offers=self._cluster_offers,
+            budget_left=self._pass_budget_left,
+            budget_floor=self.last_mile_floor,
+            expired=lambda: _expired(self.deadline),
+            extra_occupancy=self.primitives.guards,
+        )
+
+    def _source_is_junctionable(self, index: int) -> bool:
+        """Whether this net's own source lane could take a splitter.
+
+        `build_cluster` needs it because a cluster is built out of UNSTAKED
+        nets, and unstaking is exactly what makes two stranded nets on one
+        source lane look independent of each other.  A net with no source port
+        has no lane to share, so it never constrains a sibling.
+        """
+        source = self.nets[index].src
+        if source is None:
+            return True
+        # Cluster admission runs outside an active endpoint search. Claim only
+        # this source, never foreign corridors, and restore the caller context.
+        routing_ports = self.canvas.routing_ports
+        self.canvas.routing_ports = frozenset({(source.x, source.y, source.z)})
+        try:
+            return self._can_junction(source.x, source.y, source.z)
+        finally:
+            self.canvas.routing_ports = routing_ports
+
+    def _capture(self, run_index: int, problem: last_mile.ClusterProblem) -> None:
+        """Hand a developer-tool hook everything needed to replay this run.
+
+        Called AFTER the unstake that builds each run's environment -- the
+        cluster release for run 1, the whole-pack sweep for run 2 -- so what
+        the bench snapshots is the grid the search will actually see.
+        """
+        hook = last_mile.CAPTURE
+        if hook is None:
+            return
+        ends: dict[int, tuple[list[Cell], set[Cell], frozenset[Cell]]] = {}
+        for index in problem.nets:
+            starts, goals, _offers = self._ends(index)
+            ends[index] = (list(starts), set(goals), self.canvas.routing_ports)
+            self.canvas.routing_ports = frozenset()
+        hook(
+            last_mile.ClusterCapture(
+                run=run_index,
+                canvas=self.canvas,
+                grid=self.grid,
+                history=self.history,
+                pressure=self.pressure,
+                bounds=self.bounds,
+                problem=problem,
+                ends=ends,
+                budget_left=self._pass_budget_left(),
+                budget_floor=self.last_mile_floor,
+                deadline_remaining=(
+                    None if self.deadline is None else self.deadline - time.monotonic()
+                ),
+                owned_starts={
+                    index: frozenset(self.owned_source_starts.get(index, ()))
+                    for index in problem.nets
+                },
+                rejected={
+                    index: frozenset(self.rejected_path_cells.get(index, ()))
+                    for index in problem.nets
+                },
+                blocking_owners=dict(self.owner),
+            )
+        )
+
+    def _round_state(self) -> tuple[object, ...]:
+        """Borrowed state, including observable path/reservation insertion order.
+
+        Endpoint walls/blockers and owned starts are deliberately excluded:
+        each `_ends` call derives and overwrites them for its next consumer.
+        """
+        return (
+            self.paths.snapshot(),
+            dict(self.owner),
+            bytes(self.grid.occ),
+            set(self.canvas.guard),
+            {cell for cell, holder in self.canvas.blocked.items() if holder == _TENTATIVE},
+            dict(self.path_tap),
+            dict(self.source_hint),
+            dict(self.sink_hint),
+            {tap: set(members) for tap, members in self.planned_taps.items()},
+            {index: set(cells) for index, cells in self.path_guards.items()},
+            {cell: set(claims) for cell, claims in self.guard_claims.items()},
+            self.corridor_reservations.snapshot(),
+        )
+
+    def _restore_staked(
+        self,
+        staked: StakedPathSnapshot,
+        held: Mapping[int, tuple[Cell | None, Cell | None, Cell | None]],
+        before: tuple[object, ...],
+        release: _CorridorRelease,
+    ) -> bool:
+        """Re-stake in the original order and report whether it worked.
+
+        Used by BOTH releases -- the cluster release in `_last_mile` and the
+        whole-pack sweep run 2 makes -- so run 2 cannot skip the check that run
+        1 must pass.  The order matters because `_claim_junction_guard` computes
+        its `excused` set from the sibling paths already down.
+
+        It DEGRADES rather than asserts: an `AssertionError` inside
+        `_route_all` becomes a CRASH row in `scripts/audit.py` and fails the
+        corpus gate on the very condition the gate is measuring.
+        """
+        for index, path, _linked_head in staked:
+            if index not in self.paths:
+                self._stake(index, path, hints=held[index])
+        self.paths.restore(staked)
+        self.corridor_reservations.restore(release)
+        if before == self._round_state():
+            return True
+        self.last_mile_counts["restore_mismatch"] += 1
+        return False
+
+    def _tally(self, result: last_mile.ClusterResult) -> None:
+        self.last_mile_counts["nodes"] += result.nodes
+        self.last_mile_counts["work"] += result.work
+        self.last_mile_seconds += result.seconds
+
+    def _solve_cluster(
+        self,
+        problem: last_mile.ClusterProblem,
+        environment: last_mile.ClusterEnvironment,
+    ) -> last_mile.ClusterResult:
+        entry_budget = self._pass_budget_left()
+        started = time.perf_counter()
+        try:
+            return last_mile.solve_cluster(problem, environment)
+        except _PreparationDeadline:
+            # No ClusterResult reaches _tally on interruption. The debited
+            # allowance includes earlier completed CBS searches and the stopped
+            # query; retain that work without inventing a closed tree or nodes.
+            self.last_mile_counts["work"] += entry_budget - self._pass_budget_left()
+            self.last_mile_counts["bounded"] += 1
+            self.last_mile_seconds += time.perf_counter() - started
+            raise
+
+    def _cluster_is_sibling_free(self, problem: last_mile.ClusterProblem) -> bool:
+        """Whether unstaking the pack can take nothing away from this cluster.
+
+        `_ends` offers merge points onto SIBLING paths, and for a walled-in
+        lane that is the only way in.  A net with no siblings had no merge
+        frontier to lose, so for such a cluster -- and only such a cluster --
+        "every other net removed" is a relaxation rather than a mutilation.
+        """
+        return not any(
+            self.src_group.get(index, ()) or self.dst_group.get(index, ()) for index in problem.nets
+        )
+
+    def _relaxed_cluster_result(
+        self,
+        problem: last_mile.ClusterProblem,
+    ) -> last_mile.ClusterResult | None:
+        """Re-run CBS in the LOOSEST world the cluster can face; see spec 5.2.
+
+        Callers MUST have checked `_cluster_is_sibling_free` first.
+
+        A relation no-good excludes a whole region, so it is sound only if run
+        2's world is at least as loose as every world the packer could realise
+        for these nets at this arrangement.  Looser than needed only weakens
+        the cut; TIGHTER makes it forbid placements that work.  Three things
+        are loosened, and each was a way for run 2 to come out tighter:
+
+        - Every net is unstaked, so no path, `_TENTATIVE` cell, conditional
+          guard or owner survives.
+        - Every port corridor is retired (`_open_every_corridor`), because
+          unstaking RE-RESERVES the corridors staked nets had retired.
+        - `planned_taps` starts EMPTY and only the cluster's own taps
+          accumulate, because those are the only taps every realizable world
+          has.  Run 1's table is saved and put back afterwards.  Three of
+          `_can_junction`'s four uses of that table get TIGHTER as it grows --
+          the frame-ban scan, the `len(planned_here) >= 2` cap and the
+          collider scan -- so keeping run 1's taps would over-constrain run 2.
+          The fourth use, the conditional-guard refusal, gets tighter as the
+          table SHRINKS, so `relaxed_junctions` exempts run 2 from that one.
+
+        The relaxation also needs every routing-derived constraint gone: four
+        of the five per-net rejection sets are read inside `_ends` and the
+        fifth, `rejected_path_cells`, is the search's `forbidden` argument.
+        All five are saved, emptied for the cluster's nets, and put back.
+
+        Everything taken away is restored in the `finally` before
+        `_restore_staked` re-stakes, so the `_round_state()` comparison sees
+        the round it was handed.
+        """
+        if self.left <= 0 or _expired(self.deadline):
+            return None
+        rejections = (
+            self.rejected_starts,
+            self.rejected_goals,
+            self.rejected_path_cells,
+            self.rejected_source_hints,
+            self.rejected_sink_hints,
+        )
+        saved = [
+            {index: set(table[index]) for index in problem.nets if index in table}
+            for table in rejections
+        ]
+        every = list(self.paths)
+        held_all = {
+            index: (
+                self.source_hint.get(index),
+                self.sink_hint.get(index),
+                self.path_tap.get(index),
+            )
+            for index in every
+        }
+        staked = self.paths.snapshot()
+        # Saved so the round gets its own table back whatever run 2 does to it;
+        # `_restore_staked` rebuilds the same content from the paths, and this
+        # is the belt to that braces.
+        taps_before = {cell: set(members) for cell, members in self.planned_taps.items()}
+        before_all = self._round_state()
+        with self.corridor_reservations.temporarily_released({}) as original:
+            try:
+                for table in rejections:
+                    for index in problem.nets:
+                        table[index].clear()
+                for index in every:
+                    self._unstake(index)
+                # Removing paths re-holds their roles. Release every corridor
+                # as well so this world cannot be tighter than the strict run.
+                with self.corridor_reservations.temporarily_released():
+                    self.planned_taps.clear()
+                    self.admission_memo.forget_all()
+                    self.relaxed_junctions = True
+                    self._capture(2, problem)
+                    return self._solve_cluster(problem, self._cluster_environment())
+            finally:
+                self.relaxed_junctions = False
+                self.planned_taps.clear()
+                self.planned_taps.update(taps_before)
+                self.admission_memo.forget_all()
+                self._restore_staked(staked, held_all, before_all, original)
+                for table, snapshot in zip(rejections, saved, strict=True):
+                    for index, cells in snapshot.items():
+                        table[index].clear()
+                        table[index].update(cells)
+
+    def _record_cluster_relation(self, problem: last_mile.ClusterProblem) -> None:
+        """Turn a closed run 1 into a relation no-good, or say why not.
+
+        Called ONLY after run 1 closed and the round came back, and it never
+        makes a claim of its own: the four ways out below either leave run 1's
+        proof exactly as it was or, on a lost round, withdraw it.
+        """
+        if not self._cluster_is_sibling_free(problem):
+            self.last_mile_counts["relation_skipped_siblings"] += 1
+            return
+        mismatches = self.last_mile_counts["restore_mismatch"]
+        relaxed = self._relaxed_cluster_result(problem)
+        if relaxed is None:
+            return
+        self._tally(relaxed)
+        if self.last_mile_counts["restore_mismatch"] != mismatches:
+            # Run 2 did not put the round back.  The incumbent the run-1 claim
+            # describes is no longer known to be the incumbent that was
+            # proved, so BOTH claims go.
+            self.last_mile_counts["proved"] -= 1
+            self.last_mile_counts["bounded"] += 1
+            self.proved_round = -1
+            self.proved_stranded.clear()
+            return
+        if relaxed.outcome is not last_mile.ClusterOutcome.PROVED:
+            return
+        instances = last_mile.cluster_strips(
+            problem,
+            {
+                index: (
+                    self._net_id(index).source_strip,
+                    self._net_id(index).destination_strip,
+                )
+                for index in problem.nets
+            },
+        )
+        # A cluster on one strip has no relative placement to forbid, and
+        # `LastMileReport` refuses to carry it.
+        if len(instances) < _RELATION_STRIP_PAIR:
+            return
+        self.relation_strips = instances
+        self.relation_evidence = (
+            f"cluster: nets={tuple(problem.nets)!r} "
+            f"truncated={problem.truncated} "
+            f"sibling_closed={problem.sibling_closed}"
+        )
+
+    def _complete_source_dependents(
+        self, stranded: list[int], providers: Collection[int]
+    ) -> list[int]:
+        """Consume source taps established by a solved, thinned cluster."""
+        remaining = list(stranded)
+        for index in stranded:
+            if not any(sibling in providers for sibling in self.src_group.get(index, ())):
+                continue
+            if _expired(self.deadline) or self.left <= 0:
+                break
+            before = self._round_state()
+            staked = self.paths.snapshot()
+            held = {
+                member: (
+                    self.source_hint.get(member),
+                    self.sink_hint.get(member),
+                    self.path_tap.get(member),
+                )
+                for member in self.paths
+            }
+            restored = True
+            with self.corridor_reservations.temporarily_released({}) as release:
+                try:
+                    starts, goals, offers = self._ends(index)
+                    searched = self._search_route(
+                        index, starts, goals, offers, self.pressure, self.budget, self.blame
+                    )
+                    self.canvas.routing_ports = frozenset()
+                    self.work += searched.work
+                    self.round_work[index] = self.round_work.get(index, 0) + searched.work
+                    if searched.path is None:
+                        self.search_failures[index] = searched
+                        self.search_blockers[index] = self._blocking_nets(
+                            searched.wall, self.source_access_blockers.get(index, ())
+                        )
+                        self.round_failures[index] = self._failure(
+                            index, searched, self.search_blockers[index]
+                        )
+                    else:
+                        self._stake(
+                            index, searched.path, hints=self._selected_hints(searched.path, offers)
+                        )
+                        candidate = self._commit_once()
+                        if self._terminal_attempt(candidate) or not candidate.unlinked:
+                            self.commit_attempt = candidate
+                            release.commit()
+                            remaining.remove(index)
+                            self.round_failures.pop(index, None)
+                        else:
+                            self._retain_commit_failures(
+                                (index,),
+                                {
+                                    index: candidate.details.get(
+                                        index, _CommitFailure(searched.path[0], "contextual")
+                                    )
+                                },
+                            )
+                finally:
+                    self.canvas.routing_ports = frozenset()
+                    if not release.finished:
+                        if index in self.paths:
+                            self._unstake(index)
+                        restored = self._restore_staked(staked, held, before, release)
+            if not restored or (
+                self.commit_attempt is not None and self._terminal_attempt(self.commit_attempt)
+            ):
+                break
+        return remaining
+
+    def _last_mile(self, round_stranded: list[int], round_index: int) -> list[int]:
+        """Search the conflict cluster once per pass; see the Phase B spec 5.6."""
+        if (
+            self.last_mile_done
+            or not round_stranded
+            or len(round_stranded) > last_mile.B_MAX_STRANDED
+            or self.left <= 0
+            or _expired(self.deadline)
+            or (
+                self.deadline is not None
+                and self.deadline - time.monotonic() < last_mile.B_MIN_SECONDS
+            )
+        ):
+            return round_stranded
+        self.last_mile_done = True
+        self.last_mile_counts["invocations"] += 1
+        self.last_mile_floor = self.left - int(last_mile.B_CBS_WORK_SHARE * self.left)
+        index_by_id = {self._net_id(index): index for index in range(len(self.nets))}
+        problem = last_mile.build_cluster(
+            sorted(round_stranded),
+            walls={
+                index: self.search_failures[index].wall
+                for index in round_stranded
+                if index in self.search_failures
+            },
+            blockers={
+                index: tuple(
+                    index_by_id[blocker]
+                    for blocker in self.search_blockers.get(index, ())
+                    if blocker in index_by_id
+                )
+                for index in round_stranded
+            },
+            owner=self.owner,
+            paths=self.paths,
+            endpoints={
+                index: self._endpoint_cells(self.nets[index]) for index in range(len(self.nets))
+            },
+            src_group=self.src_group,
+            dst_group=self.dst_group,
+            source_junctionable=self._source_is_junctionable,
+        )
+        members = set(problem.nets)
+        if not self._dependency_closure(members) <= members:
+            self.last_mile_counts["bounded"] += 1
+            return round_stranded
+        staging_order = self._route_order(members, self._endpoint_dependents())
+        if staging_order is None:
+            self.last_mile_counts["bounded"] += 1
+            return round_stranded
+        self.last_mile_counts["same_source_dropped"] += problem.same_source_dropped
+        # A stranded net the cluster refused is still stranded when the cluster
+        # is solved and committed: it was never in the problem, so nothing
+        # routed it.  Reporting an empty round for it would tell the caller the
+        # pack is finished when one net has no path at all.
+        left_out = [index for index in round_stranded if index not in set(problem.stranded)]
+        # `paths` is insertion-ordered and only `_stake` writes it, so
+        # `list(paths)` IS the stake order -- which the restore has to replay,
+        # because `_claim_junction_guard` computes its `excused` set from the
+        # sibling paths already down.
+        order = [index for index in self.paths if index in set(problem.nets)]
+        released = self.paths.snapshot()
+        held = {
+            index: (
+                self.source_hint.get(index),
+                self.sink_hint.get(index),
+                self.path_tap.get(index),
+            )
+            for index in order
+        }
+        before = self._round_state()
+        environment = self._cluster_environment()
+
+        restored = False
+        joint_refused = False
+        with self.corridor_reservations.temporarily_released({}) as release:
+            try:
+                for index in order:
+                    self._unstake(index)
+                self._capture(1, problem)
+                for _ in range(_COMMIT_REPAIR_PASSES + 1):
+                    self.proposal_used = False
+                    result = self._solve_cluster(problem, environment)
+                    self._tally(result)
+                    if result.outcome is not last_mile.ClusterOutcome.SOLVED:
+                        if (
+                            self.proposal_used
+                            and self.left > self.last_mile_floor
+                            and not _expired(self.deadline)
+                        ):
+                            # A positive branch cannot exhaust ordinary routes.
+                            # Keep the existing cluster slots and shared quota.
+                            continue
+                        break
+                    # Re-query offers after each stake: preceding cluster paths
+                    # may have consumed an endpoint or the only common frame.
+                    # A short solved mapping is a refused commit, not a proof.
+                    if not all(index in result.paths for index in problem.nets):
+                        joint_refused = True
+                        self.last_mile_counts["commit_rejected"] += 1
+                        break
+                    admitted = True
+                    for index in staging_order:
+                        path = result.paths[index]
+                        starts, goals, offers = self._ends(index)
+                        if (
+                            path[0] not in starts
+                            or path[-1] not in goals
+                            or not self._preserves_source_frontier(index, path, offers)
+                        ):
+                            admitted = False
+                            break
+                        self._stake(index, path, hints=self._selected_hints(path, offers))
+                    self.canvas.routing_ports = frozenset()
+                    if not admitted:
+                        joint_refused = True
+                        self.last_mile_counts["commit_rejected"] += 1
+                        break
+                    self.commit_attempt = self._commit_once()
+                    unlinked_now, details_now = (
+                        self.commit_attempt.unlinked,
+                        self.commit_attempt.details,
+                    )
+                    if self._terminal_attempt(self.commit_attempt) or not unlinked_now:
+                        release.commit()
+                        if not self._terminal_attempt(self.commit_attempt):
+                            self.last_mile_counts["solved"] += 1
+                            # Thinning protects the cluster's independent-root
+                            # search. Its accepted provider can now offer the
+                            # dropped sibling a dock that did not exist before.
+                            return self._complete_source_dependents(left_out, problem.stranded)
+                        return left_out
+                    joint_refused = True
+                    self.last_mile_counts["commit_rejected"] += 1
+                    self._retain_commit_failures(unlinked_now, details_now)
+                    for index in problem.nets:
+                        if index in self.paths:
+                            self._unstake(index)
+            finally:
+                if not release.finished:
+                    for index in problem.nets:
+                        if index in self.paths:
+                            self._unstake(index)
+                    restored = self._restore_staked(released, held, before, release)
+
+        if (
+            result.outcome is last_mile.ClusterOutcome.PROVED
+            and restored
+            and not joint_refused
+            and not self.contextual_seen
+        ):
+            self.last_mile_counts["proved"] += 1
+            self.proved_round = round_index
+            self.proved_stranded.clear()
+            self.proved_stranded.update(round_stranded)
+            self._record_cluster_relation(problem)
+        else:
+            self.last_mile_counts["bounded"] += 1
+        return round_stranded
+
 
 def _route_all(
     canvas: _Canvas,
@@ -9263,615 +9894,22 @@ def _route_all(
     run.proved_stranded = proved_stranded
     _last_mile_report = run._last_mile_report
 
-    def _restrict_proposal(
-        index: int,
-        starts: list[Cell],
-        goals: set[Cell],
-        offers: tuple[Mapping[Cell, Cell], Mapping[Cell, Cell], Mapping[Cell, Cell]],
-        *,
-        constraints: Collection[Cell] = (),
-    ) -> tuple[list[Cell], set[Cell], frozenset[Cell]]:
-        proposal = proposals.get(index)
-        if proposal is None or run.proposal_used:
-            return starts, goals, frozenset(constraints)
-        # Freeze only when spending an implicated route's positive proposal.
-        # The packed buildings, grid base/domain, rules, power policy and spec
-        # are immutable owners of this routing call, not per-proposal copies.
-        # Preserve selected-path and reservation order, but compare occupancy
-        # and ownership maps by content so identical restaking keeps progress.
-        reservations = corridor_reservations.snapshot()
-        construction = (
-            paths.snapshot(),
-            frozenset(source_hint.items()),
-            frozenset(sink_hint.items()),
-            frozenset(path_tap.items()),
-            frozenset(primitives.witnesses.items()),
-            bytes(grid.occ),
-            frozenset(canvas.blocked.items()),
-            frozenset(canvas.guard),
-            frozenset(owner.items()),
-            frozenset((cell, frozenset(claims)) for cell, claims in guard_claims.items()),
-            frozenset((member, frozenset(cells)) for member, cells in path_guards.items()),
-            frozenset((tap, frozenset(members)) for tap, members in planned_taps.items()),
-            reservations.reserved,
-            reservations.corridors,
-            reservations.grid_reserved,
-            reservations.retired_roles,
-            canvas.routing_ports,
-            owned_source_starts.get(index, frozenset()),
-            frozenset(rejected_path_cells.get(index, ())) | frozenset(constraints),
-        )
-        starts, goals, detour, run.proposal_used = proposal.restrict(
-            starts,
-            goals,
-            offers,
-            construction=construction,
-        )
-        return starts, goals, frozenset(constraints) | detour
-
-    def _cluster_offers(
-        index: int,
-    ) -> tuple[dict[Cell, Cell], dict[Cell, Cell], dict[Cell, Cell]]:
-        """This net's `_ends` offer maps, as of right now."""
-        _starts, _goals, offers = _ends(index)
-        canvas.routing_ports = frozenset()
-        return offers
-
-    def _cluster_search(index: int, constraints: frozenset[Cell]) -> _PathSearchResult:
-        """One cluster net's search: the round's own call, capped and constrained.
-
-        The private budget is the deadline discipline.  `_MAX_SEARCH_WORK` lets
-        one search run for a large fraction of a second, and this pass makes
-        hundreds of them at the end of an attempt that is already near its
-        budget, so a quarter of that cap bounds how far past the last bound
-        check the pass can travel.  Exhausting it returns
-        `RouteFailureKind.BUDGET`, which `solve_cluster` turns into BOUNDED --
-        which is correct: a capped search decided nothing.
-
-        A constraint cell OUTSIDE the search's indexed extent is dropped in
-        silence, which degrades the run to a bound rather than proving anything
-        false -- but it burns the node budget getting there.  Every constraint
-        is a cell of a path this same pass routed on this same grid, so
-        containment is an invariant rather than a hope, and checking it costs
-        one comparison per constraint.
-        """
-        starts, goals, _offers = _ends(index)
-        span_x0, span_y0, span_x1, span_y1 = grid.span
-        starts, goals, constraints = _restrict_proposal(
-            index, starts, goals, _offers, constraints=constraints
-        )
-        assert all(
-            span_x0 <= cell[0] <= span_x1
-            and span_y0 <= cell[1] <= span_y1
-            and 0 <= cell[2] < grid.levels
-            for cell in constraints
-        ), "a cluster constraint left the routing grid's indexed extent"
-        allowance = min(
-            last_mile.B_LOW_LEVEL_WORK,
-            max(0, run.left - run.last_mile_floor),
-        )
-        private = budget_module.WorkBudget(left=allowance)
-        assert private.left is not None
-        try:
-            return _search_route(
-                index, starts, goals, _offers, pressure, private, {}, constraints=constraints
-            )
-        finally:
-            canvas.routing_ports = frozenset()
-            budget.left = run.left - (allowance - private.left)
-
-    def _pass_budget_left() -> int:
-        """This pass's remaining work, for the consumers typed on plain ``int``.
-
-        The pass ledger is never unbounded -- see the assertion at the top of
-        ``_route_all`` -- so this narrows rather than defaults.
-        """
-        remaining = budget.left
-        assert remaining is not None, "a routing pass needs a ledger"
-        return remaining
-
-    def _cluster_environment() -> last_mile.ClusterEnvironment:
-        return last_mile.ClusterEnvironment(
-            search=_cluster_search,
-            offers=_cluster_offers,
-            budget_left=_pass_budget_left,
-            budget_floor=run.last_mile_floor,
-            expired=lambda: _expired(run.deadline),
-            extra_occupancy=primitives.guards,
-        )
-
-    def _source_is_junctionable(index: int) -> bool:
-        """Whether this net's own source lane could take a splitter.
-
-        `build_cluster` needs it because a cluster is built out of UNSTAKED
-        nets, and unstaking is exactly what makes two stranded nets on one
-        source lane look independent of each other.  A net with no source port
-        has no lane to share, so it never constrains a sibling.
-        """
-        source = nets[index].src
-        if source is None:
-            return True
-        # Cluster admission runs outside an active endpoint search. Claim only
-        # this source, never foreign corridors, and restore the caller context.
-        routing_ports = canvas.routing_ports
-        canvas.routing_ports = frozenset({(source.x, source.y, source.z)})
-        try:
-            return _can_junction(source.x, source.y, source.z)
-        finally:
-            canvas.routing_ports = routing_ports
-
-    def _capture(run_index: int, problem: last_mile.ClusterProblem) -> None:
-        """Hand a developer-tool hook everything needed to replay this run.
-
-        Called AFTER the unstake that builds each run's environment -- the
-        cluster release for run 1, the whole-pack sweep for run 2 -- so what
-        the bench snapshots is the grid the search will actually see.
-        """
-        hook = last_mile.CAPTURE
-        if hook is None:
-            return
-        ends: dict[int, tuple[list[Cell], set[Cell], frozenset[Cell]]] = {}
-        for index in problem.nets:
-            starts, goals, _offers = _ends(index)
-            ends[index] = (list(starts), set(goals), canvas.routing_ports)
-            canvas.routing_ports = frozenset()
-        hook(
-            last_mile.ClusterCapture(
-                run=run_index,
-                canvas=canvas,
-                grid=grid,
-                history=history,
-                pressure=pressure,
-                bounds=bounds,
-                problem=problem,
-                ends=ends,
-                budget_left=_pass_budget_left(),
-                budget_floor=run.last_mile_floor,
-                deadline_remaining=(
-                    None if run.deadline is None else run.deadline - time.monotonic()
-                ),
-                owned_starts={
-                    index: frozenset(owned_source_starts.get(index, ())) for index in problem.nets
-                },
-                rejected={
-                    index: frozenset(rejected_path_cells.get(index, ())) for index in problem.nets
-                },
-                blocking_owners=dict(owner),
-            )
-        )
-
-    def _round_state() -> tuple[object, ...]:
-        """Borrowed state, including observable path/reservation insertion order.
-
-        Endpoint walls/blockers and owned starts are deliberately excluded:
-        each `_ends` call derives and overwrites them for its next consumer.
-        """
-        return (
-            paths.snapshot(),
-            dict(owner),
-            bytes(grid.occ),
-            set(canvas.guard),
-            {cell for cell, holder in canvas.blocked.items() if holder == _TENTATIVE},
-            dict(path_tap),
-            dict(source_hint),
-            dict(sink_hint),
-            {tap: set(members) for tap, members in planned_taps.items()},
-            {index: set(cells) for index, cells in path_guards.items()},
-            {cell: set(claims) for cell, claims in guard_claims.items()},
-            corridor_reservations.snapshot(),
-        )
-
-    def _restore_staked(
-        staked: StakedPathSnapshot,
-        held: Mapping[int, tuple[Cell | None, Cell | None, Cell | None]],
-        before: tuple[object, ...],
-        release: _CorridorRelease,
-    ) -> bool:
-        """Re-stake in the original order and report whether it worked.
-
-        Used by BOTH releases -- the cluster release in `_last_mile` and the
-        whole-pack sweep run 2 makes -- so run 2 cannot skip the check that run
-        1 must pass.  The order matters because `_claim_junction_guard` computes
-        its `excused` set from the sibling paths already down.
-
-        It DEGRADES rather than asserts: an `AssertionError` inside
-        `_route_all` becomes a CRASH row in `scripts/audit.py` and fails the
-        corpus gate on the very condition the gate is measuring.
-        """
-        for index, path, _linked_head in staked:
-            if index not in paths:
-                _stake(index, path, hints=held[index])
-        paths.restore(staked)
-        corridor_reservations.restore(release)
-        if before == _round_state():
-            return True
-        last_mile_counts["restore_mismatch"] += 1
-        return False
-
-    def _tally(result: last_mile.ClusterResult) -> None:
-        last_mile_counts["nodes"] += result.nodes
-        last_mile_counts["work"] += result.work
-        run.last_mile_seconds += result.seconds
-
-    def _solve_cluster(
-        problem: last_mile.ClusterProblem,
-        environment: last_mile.ClusterEnvironment,
-    ) -> last_mile.ClusterResult:
-        entry_budget = _pass_budget_left()
-        started = time.perf_counter()
-        try:
-            return last_mile.solve_cluster(problem, environment)
-        except _PreparationDeadline:
-            # No ClusterResult reaches _tally on interruption. The debited
-            # allowance includes earlier completed CBS searches and the stopped
-            # query; retain that work without inventing a closed tree or nodes.
-            last_mile_counts["work"] += entry_budget - _pass_budget_left()
-            last_mile_counts["bounded"] += 1
-            run.last_mile_seconds += time.perf_counter() - started
-            raise
-
-    def _cluster_is_sibling_free(problem: last_mile.ClusterProblem) -> bool:
-        """Whether unstaking the pack can take nothing away from this cluster.
-
-        `_ends` offers merge points onto SIBLING paths, and for a walled-in
-        lane that is the only way in.  A net with no siblings had no merge
-        frontier to lose, so for such a cluster -- and only such a cluster --
-        "every other net removed" is a relaxation rather than a mutilation.
-        """
-        return not any(
-            src_group.get(index, ()) or dst_group.get(index, ()) for index in problem.nets
-        )
-
-    def _relaxed_cluster_result(
-        problem: last_mile.ClusterProblem,
-    ) -> last_mile.ClusterResult | None:
-        """Re-run CBS in the LOOSEST world the cluster can face; see spec 5.2.
-
-        Callers MUST have checked `_cluster_is_sibling_free` first.
-
-        A relation no-good excludes a whole region, so it is sound only if run
-        2's world is at least as loose as every world the packer could realise
-        for these nets at this arrangement.  Looser than needed only weakens
-        the cut; TIGHTER makes it forbid placements that work.  Three things
-        are loosened, and each was a way for run 2 to come out tighter:
-
-        - Every net is unstaked, so no path, `_TENTATIVE` cell, conditional
-          guard or owner survives.
-        - Every port corridor is retired (`_open_every_corridor`), because
-          unstaking RE-RESERVES the corridors staked nets had retired.
-        - `planned_taps` starts EMPTY and only the cluster's own taps
-          accumulate, because those are the only taps every realizable world
-          has.  Run 1's table is saved and put back afterwards.  Three of
-          `_can_junction`'s four uses of that table get TIGHTER as it grows --
-          the frame-ban scan, the `len(planned_here) >= 2` cap and the
-          collider scan -- so keeping run 1's taps would over-constrain run 2.
-          The fourth use, the conditional-guard refusal, gets tighter as the
-          table SHRINKS, so `relaxed_junctions` exempts run 2 from that one.
-
-        The relaxation also needs every routing-derived constraint gone: four
-        of the five per-net rejection sets are read inside `_ends` and the
-        fifth, `rejected_path_cells`, is the search's `forbidden` argument.
-        All five are saved, emptied for the cluster's nets, and put back.
-
-        Everything taken away is restored in the `finally` before
-        `_restore_staked` re-stakes, so the `_round_state()` comparison sees
-        the round it was handed.
-        """
-        if run.left <= 0 or _expired(run.deadline):
-            return None
-        rejections = (
-            rejected_starts,
-            rejected_goals,
-            rejected_path_cells,
-            rejected_source_hints,
-            rejected_sink_hints,
-        )
-        saved = [
-            {index: set(table[index]) for index in problem.nets if index in table}
-            for table in rejections
-        ]
-        every = list(paths)
-        held_all = {
-            index: (
-                source_hint.get(index),
-                sink_hint.get(index),
-                path_tap.get(index),
-            )
-            for index in every
-        }
-        staked = paths.snapshot()
-        # Saved so the round gets its own table back whatever run 2 does to it;
-        # `_restore_staked` rebuilds the same content from the paths, and this
-        # is the belt to that braces.
-        taps_before = {cell: set(members) for cell, members in planned_taps.items()}
-        before_all = _round_state()
-        with corridor_reservations.temporarily_released({}) as original:
-            try:
-                for table in rejections:
-                    for index in problem.nets:
-                        table[index].clear()
-                for index in every:
-                    _unstake(index)
-                # Removing paths re-holds their roles. Release every corridor
-                # as well so this world cannot be tighter than the strict run.
-                with corridor_reservations.temporarily_released():
-                    planned_taps.clear()
-                    admission_memo.forget_all()
-                    run.relaxed_junctions = True
-                    _capture(2, problem)
-                    return _solve_cluster(problem, _cluster_environment())
-            finally:
-                run.relaxed_junctions = False
-                planned_taps.clear()
-                planned_taps.update(taps_before)
-                admission_memo.forget_all()
-                _restore_staked(staked, held_all, before_all, original)
-                for table, snapshot in zip(rejections, saved, strict=True):
-                    for index, cells in snapshot.items():
-                        table[index].clear()
-                        table[index].update(cells)
-
-    def _record_cluster_relation(problem: last_mile.ClusterProblem) -> None:
-        """Turn a closed run 1 into a relation no-good, or say why not.
-
-        Called ONLY after run 1 closed and the round came back, and it never
-        makes a claim of its own: the four ways out below either leave run 1's
-        proof exactly as it was or, on a lost round, withdraw it.
-        """
-        if not _cluster_is_sibling_free(problem):
-            last_mile_counts["relation_skipped_siblings"] += 1
-            return
-        mismatches = last_mile_counts["restore_mismatch"]
-        relaxed = _relaxed_cluster_result(problem)
-        if relaxed is None:
-            return
-        _tally(relaxed)
-        if last_mile_counts["restore_mismatch"] != mismatches:
-            # Run 2 did not put the round back.  The incumbent the run-1 claim
-            # describes is no longer known to be the incumbent that was
-            # proved, so BOTH claims go.
-            last_mile_counts["proved"] -= 1
-            last_mile_counts["bounded"] += 1
-            run.proved_round = -1
-            proved_stranded.clear()
-            return
-        if relaxed.outcome is not last_mile.ClusterOutcome.PROVED:
-            return
-        instances = last_mile.cluster_strips(
-            problem,
-            {
-                index: (
-                    _net_id(index).source_strip,
-                    _net_id(index).destination_strip,
-                )
-                for index in problem.nets
-            },
-        )
-        # A cluster on one strip has no relative placement to forbid, and
-        # `LastMileReport` refuses to carry it.
-        if len(instances) < _RELATION_STRIP_PAIR:
-            return
-        run.relation_strips = instances
-        run.relation_evidence = (
-            f"cluster: nets={tuple(problem.nets)!r} "
-            f"truncated={problem.truncated} "
-            f"sibling_closed={problem.sibling_closed}"
-        )
-
-    def _complete_source_dependents(stranded: list[int], providers: Collection[int]) -> list[int]:
-        """Consume source taps established by a solved, thinned cluster."""
-        remaining = list(stranded)
-        for index in stranded:
-            if not any(sibling in providers for sibling in src_group.get(index, ())):
-                continue
-            if _expired(run.deadline) or run.left <= 0:
-                break
-            before = _round_state()
-            staked = paths.snapshot()
-            held = {
-                member: (source_hint.get(member), sink_hint.get(member), path_tap.get(member))
-                for member in paths
-            }
-            restored = True
-            with corridor_reservations.temporarily_released({}) as release:
-                try:
-                    starts, goals, offers = _ends(index)
-                    searched = _search_route(index, starts, goals, offers, pressure, budget, blame)
-                    canvas.routing_ports = frozenset()
-                    run.work += searched.work
-                    round_work[index] = round_work.get(index, 0) + searched.work
-                    if searched.path is None:
-                        search_failures[index] = searched
-                        search_blockers[index] = _blocking_nets(
-                            searched.wall, source_access_blockers.get(index, ())
-                        )
-                        round_failures[index] = _failure(index, searched, search_blockers[index])
-                    else:
-                        _stake(index, searched.path, hints=_selected_hints(searched.path, offers))
-                        candidate = commit_once()
-                        if terminal_attempt(candidate) or not candidate.unlinked:
-                            run.commit_attempt = candidate
-                            release.commit()
-                            remaining.remove(index)
-                            round_failures.pop(index, None)
-                        else:
-                            retain_commit_failures(
-                                (index,),
-                                {
-                                    index: candidate.details.get(
-                                        index, _CommitFailure(searched.path[0], "contextual")
-                                    )
-                                },
-                            )
-                finally:
-                    canvas.routing_ports = frozenset()
-                    if not release.finished:
-                        if index in paths:
-                            _unstake(index)
-                        restored = _restore_staked(staked, held, before, release)
-            if not restored or (
-                run.commit_attempt is not None and terminal_attempt(run.commit_attempt)
-            ):
-                break
-        return remaining
-
-    def _last_mile(round_stranded: list[int], round_index: int) -> list[int]:
-        """Search the conflict cluster once per pass; see the Phase B spec 5.6."""
-        if (
-            run.last_mile_done
-            or not round_stranded
-            or len(round_stranded) > last_mile.B_MAX_STRANDED
-            or run.left <= 0
-            or _expired(run.deadline)
-            or (
-                run.deadline is not None
-                and run.deadline - time.monotonic() < last_mile.B_MIN_SECONDS
-            )
-        ):
-            return round_stranded
-        run.last_mile_done = True
-        last_mile_counts["invocations"] += 1
-        run.last_mile_floor = run.left - int(last_mile.B_CBS_WORK_SHARE * run.left)
-        index_by_id = {_net_id(index): index for index in range(len(nets))}
-        problem = last_mile.build_cluster(
-            sorted(round_stranded),
-            walls={
-                index: search_failures[index].wall
-                for index in round_stranded
-                if index in search_failures
-            },
-            blockers={
-                index: tuple(
-                    index_by_id[blocker]
-                    for blocker in search_blockers.get(index, ())
-                    if blocker in index_by_id
-                )
-                for index in round_stranded
-            },
-            owner=owner,
-            paths=paths,
-            endpoints={index: _endpoint_cells(nets[index]) for index in range(len(nets))},
-            src_group=src_group,
-            dst_group=dst_group,
-            source_junctionable=_source_is_junctionable,
-        )
-        members = set(problem.nets)
-        if not _dependency_closure(members) <= members:
-            last_mile_counts["bounded"] += 1
-            return round_stranded
-        staging_order = _route_order(members, _endpoint_dependents())
-        if staging_order is None:
-            last_mile_counts["bounded"] += 1
-            return round_stranded
-        last_mile_counts["same_source_dropped"] += problem.same_source_dropped
-        # A stranded net the cluster refused is still stranded when the cluster
-        # is solved and committed: it was never in the problem, so nothing
-        # routed it.  Reporting an empty round for it would tell the caller the
-        # pack is finished when one net has no path at all.
-        left_out = [index for index in round_stranded if index not in set(problem.stranded)]
-        # `paths` is insertion-ordered and only `_stake` writes it, so
-        # `list(paths)` IS the stake order -- which the restore has to replay,
-        # because `_claim_junction_guard` computes its `excused` set from the
-        # sibling paths already down.
-        order = [index for index in paths if index in set(problem.nets)]
-        released = paths.snapshot()
-        held = {
-            index: (
-                source_hint.get(index),
-                sink_hint.get(index),
-                path_tap.get(index),
-            )
-            for index in order
-        }
-        before = _round_state()
-        environment = _cluster_environment()
-
-        restored = False
-        joint_refused = False
-        with corridor_reservations.temporarily_released({}) as release:
-            try:
-                for index in order:
-                    _unstake(index)
-                _capture(1, problem)
-                for _ in range(_COMMIT_REPAIR_PASSES + 1):
-                    run.proposal_used = False
-                    result = _solve_cluster(problem, environment)
-                    _tally(result)
-                    if result.outcome is not last_mile.ClusterOutcome.SOLVED:
-                        if (
-                            run.proposal_used
-                            and run.left > run.last_mile_floor
-                            and not _expired(run.deadline)
-                        ):
-                            # A positive branch cannot exhaust ordinary routes.
-                            # Keep the existing cluster slots and shared quota.
-                            continue
-                        break
-                    # Re-query offers after each stake: preceding cluster paths
-                    # may have consumed an endpoint or the only common frame.
-                    # A short solved mapping is a refused commit, not a proof.
-                    if not all(index in result.paths for index in problem.nets):
-                        joint_refused = True
-                        last_mile_counts["commit_rejected"] += 1
-                        break
-                    admitted = True
-                    for index in staging_order:
-                        path = result.paths[index]
-                        starts, goals, offers = _ends(index)
-                        if (
-                            path[0] not in starts
-                            or path[-1] not in goals
-                            or not _preserves_source_frontier(index, path, offers)
-                        ):
-                            admitted = False
-                            break
-                        _stake(index, path, hints=_selected_hints(path, offers))
-                    canvas.routing_ports = frozenset()
-                    if not admitted:
-                        joint_refused = True
-                        last_mile_counts["commit_rejected"] += 1
-                        break
-                    run.commit_attempt = commit_once()
-                    unlinked_now, details_now = (
-                        run.commit_attempt.unlinked,
-                        run.commit_attempt.details,
-                    )
-                    if terminal_attempt(run.commit_attempt) or not unlinked_now:
-                        release.commit()
-                        if not terminal_attempt(run.commit_attempt):
-                            last_mile_counts["solved"] += 1
-                            # Thinning protects the cluster's independent-root
-                            # search. Its accepted provider can now offer the
-                            # dropped sibling a dock that did not exist before.
-                            return _complete_source_dependents(left_out, problem.stranded)
-                        return left_out
-                    joint_refused = True
-                    last_mile_counts["commit_rejected"] += 1
-                    retain_commit_failures(unlinked_now, details_now)
-                    for index in problem.nets:
-                        if index in paths:
-                            _unstake(index)
-            finally:
-                if not release.finished:
-                    for index in problem.nets:
-                        if index in paths:
-                            _unstake(index)
-                    restored = _restore_staked(released, held, before, release)
-
-        if (
-            result.outcome is last_mile.ClusterOutcome.PROVED
-            and restored
-            and not joint_refused
-            and not run.contextual_seen
-        ):
-            last_mile_counts["proved"] += 1
-            run.proved_round = round_index
-            proved_stranded.clear()
-            proved_stranded.update(round_stranded)
-            _record_cluster_relation(problem)
-        else:
-            last_mile_counts["bounded"] += 1
-        return round_stranded
+    _restrict_proposal = run._restrict_proposal
+    _cluster_offers = run._cluster_offers
+    _cluster_search = run._cluster_search
+    _pass_budget_left = run._pass_budget_left
+    _cluster_environment = run._cluster_environment
+    _source_is_junctionable = run._source_is_junctionable
+    _capture = run._capture
+    _round_state = run._round_state
+    _restore_staked = run._restore_staked
+    _tally = run._tally
+    _solve_cluster = run._solve_cluster
+    _cluster_is_sibling_free = run._cluster_is_sibling_free
+    _relaxed_cluster_result = run._relaxed_cluster_result
+    _record_cluster_relation = run._record_cluster_relation
+    _complete_source_dependents = run._complete_source_dependents
+    _last_mile = run._last_mile
 
     route_distance = tuple(
         abs(net.source.x - net.dst.x) + abs(net.source.y - net.dst.y) for net in nets
@@ -9891,9 +9929,9 @@ def _route_all(
     run.priority = priority
     coverage_first = len(nets) >= _SINGLE_ROUND_NETS
     round_limit = 1 if coverage_first and settle is None else RRR_MAX
-    search_failures: dict[int, _PathSearchResult] = {}
-    search_blockers: dict[int, tuple[NetId, ...]] = {}
-    round_failures: dict[int, NetFailure] = {}
+    run.search_failures = {}
+    run.search_blockers = {}
+    run.round_failures = {}
     try:
         for it in range(round_limit):
             # Coverage is the first pass, not a permanent restriction on the
@@ -9908,16 +9946,16 @@ def _route_all(
             # `history` gained a round's worth of use and blame at the end of the
             # last iteration, and the search reads it flattened.
             grid.refresh_history(history)
-            pressure = 0.5 * (1.6**it)
+            run.pressure = 0.5 * (1.6**it)
             failed = 0
-            search_failures = {}
-            search_blockers = {}
-            round_failures = {}
+            run.search_failures = {}
+            run.search_blockers = {}
+            run.round_failures = {}
             #: Cells that CUT the board this round, and how many nets each cut off.
             #:
             #: Fresh every round, because a wall only exists while the path that
             #: built it does; `history` is where the charge accumulates.
-            blame: dict[Cell, float] = {}
+            run.blame = {}
             order = _route_order(range(len(nets)), {})
             assert order is not None
             stranded: list[int] = []
@@ -9926,8 +9964,8 @@ def _route_all(
                     current_failures = {
                         index: _failure(
                             index,
-                            search_failures[index],
-                            search_blockers[index],
+                            run.search_failures[index],
+                            run.search_blockers[index],
                         )
                         for index in stranded
                     }
@@ -9946,9 +9984,9 @@ def _route_all(
                         starts,
                         goals,
                         route_offers,
-                        pressure,
+                        run.pressure,
                         net_budget,
-                        blame,
+                        run.blame,
                         ordinary_only=coverage_pass,
                     )
                 finally:
@@ -9977,8 +10015,8 @@ def _route_all(
                 run.work += search_work
                 round_work[i] = round_work.get(i, 0) + search_work
                 if searched.path is None:
-                    search_failures[i] = searched
-                    search_blockers[i] = _blocking_nets(
+                    run.search_failures[i] = searched
+                    run.search_blockers[i] = _blocking_nets(
                         searched.wall,
                         source_access_blockers.get(i, ()),
                     )
@@ -10000,26 +10038,26 @@ def _route_all(
                     break
                 after = _repair(
                     stranded,
-                    pressure,
-                    blame,
-                    search_failures,
-                    search_blockers,
+                    run.pressure,
+                    run.blame,
+                    run.search_failures,
+                    run.search_blockers,
                 )
                 if len(after) >= len(stranded):
                     stranded = after
                     break
                 stranded = after
             failed = len(stranded)
-            round_failures = {
+            run.round_failures = {
                 index: _failure(
                     index,
-                    search_failures[index],
-                    search_blockers[index],
+                    run.search_failures[index],
+                    run.search_blockers[index],
                 )
                 for index in stranded
             }
             if _expired(run.deadline):
-                return _budget_result(paths, round_failures)
+                return _budget_result(paths, run.round_failures)
 
             # Linking is part of routing feasibility, not terminal emission. Prove
             # every path already found on a disposable workspace even when another
@@ -10033,15 +10071,15 @@ def _route_all(
             #: `round_failures` is rebuilt again further down this round, so a
             #: live read at call time would put the round's commit evidence in
             #: a dict nobody returns.
-            run.retained_failures = round_failures
-            run.retained_blockers = search_blockers
+            run.retained_failures = run.round_failures
+            run.retained_blockers = run.search_blockers
             retain_commit_failures = run._retain_commit_failures
 
             run.commit_attempt = commit_once()
             if terminal_attempt(run.commit_attempt):
                 return _finish(
                     paths,
-                    round_failures,
+                    run.round_failures,
                     source_hint,
                     sink_hint,
                     path_tap,
@@ -10100,9 +10138,9 @@ def _route_all(
                             starts,
                             goals,
                             reroute_offers,
-                            pressure,
+                            run.pressure,
                             budget,
-                            blame,
+                            run.blame,
                             constraints=constraints,
                         )
                         canvas.routing_ports = frozenset()
@@ -10129,7 +10167,7 @@ def _route_all(
                         if not _restore_staked(
                             staked_before, held_before, state_before, release_before
                         ):
-                            return _budget_result(paths, round_failures)
+                            return _budget_result(paths, run.round_failures)
                         if candidate_attempt is None and run.proposal_used:
                             # A spent positive branch cannot rule out ordinary
                             # routing or the remaining endpoint alternatives.
@@ -10140,7 +10178,7 @@ def _route_all(
                     if terminal_attempt(run.commit_attempt):
                         return _finish(
                             paths,
-                            round_failures,
+                            run.round_failures,
                             source_hint,
                             sink_hint,
                             path_tap,
@@ -10152,7 +10190,7 @@ def _route_all(
                         retain_commit_failures(pending, details)
                     failed_now = set(stalled_now) | set(pending)
                     for resolved in rejected_now - failed_now:
-                        round_failures.pop(resolved, None)
+                        run.round_failures.pop(resolved, None)
                     if not pending:
                         break
 
@@ -10163,7 +10201,7 @@ def _route_all(
                     withdrawn = _dependency_closure(pending)
                     # Preserve feedback for dependents too, while their selected
                     # provider coordinates still resolve in the live ownership map.
-                    for index in withdrawn - round_failures.keys():
+                    for index in withdrawn - run.round_failures.keys():
                         providers = {
                             owner[hint]
                             for hint in (
@@ -10173,7 +10211,7 @@ def _route_all(
                             )
                             if hint is not None and hint in owner and owner[hint] in withdrawn
                         }
-                        round_failures[index] = _failure(
+                        run.round_failures[index] = _failure(
                             index,
                             _PathSearchResult(None, RouteFailureKind.COMMIT_LINK, (), 0),
                             tuple(_net_id(provider) for provider in sorted(providers)),
@@ -10183,7 +10221,7 @@ def _route_all(
                             _unstake(index)
                     stalled_commit.extend(withdrawn)
                     if _expired(run.deadline):
-                        return _budget_result(paths, round_failures)
+                        return _budget_result(paths, run.round_failures)
                     run.commit_attempt = commit_once()
                     pending, details = run.commit_attempt.unlinked, run.commit_attempt.details
                     if pending:
@@ -10203,8 +10241,10 @@ def _route_all(
             if failed:
                 stranded = _last_mile(stranded, it)
                 failed = len(stranded)
-                round_failures = {
-                    index: round_failures[index] for index in stranded if index in round_failures
+                run.round_failures = {
+                    index: run.round_failures[index]
+                    for index in stranded
+                    if index in run.round_failures
                 }
                 if failed == 0:
                     return _finish(
@@ -10246,7 +10286,7 @@ def _route_all(
             # Measured on the pack it was built for: h=69 commits 139 of 140 paths
             # without it and ALL 140 with it, in 24.6s rather than 36.7s, because a
             # round that stops fighting over one cell converges in fewer rounds.
-            for cell, n in blame.items():
+            for cell, n in run.blame.items():
                 history[cell] += _BLAME_WEIGHT * n
             priority = set(stranded)
             run.priority = priority
@@ -10268,7 +10308,7 @@ def _route_all(
                 fewest_failed, stale, best_paths = failed, 0, MappingProxyType(dict(paths))
                 run.best_paths = best_paths
                 best_round = it
-                best_failures = dict(round_failures)
+                best_failures = dict(run.round_failures)
                 run.best_failures = best_failures
                 best_source_hints = {
                     index: hint for index, hint in source_hint.items() if index in best_paths
@@ -10311,11 +10351,11 @@ def _route_all(
         if error.net_index is not None:
             round_work[error.net_index] = round_work.get(error.net_index, 0) + error.work
         current_failures = {
-            index: _failure(index, failed_search, search_blockers.get(index, ()))
-            for index, failed_search in search_failures.items()
+            index: _failure(index, failed_search, run.search_blockers.get(index, ()))
+            for index, failed_search in run.search_failures.items()
             if index not in paths
         }
-        current_failures.update(round_failures)
+        current_failures.update(run.round_failures)
         current_failures.update(error.failures)
         return _budget_result(paths, current_failures, interrupted=True)
 
