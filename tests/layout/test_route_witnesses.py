@@ -614,8 +614,11 @@ def test_proposal_progress_tracks_actual_stakes_guards_and_canonical_witnesses()
     tap_a, tap_b = (0, 0, 0), (0, 1, 0)
     starts, goals = [start_a, start_b], {goal}
     offers = ({start_a: tap_a, start_b: tap_b}, {}, {start_a: tap_a, start_b: tap_b})
+    # `proposal_used` is a field of the run object now, not a closure cell of
+    # its own, so the fabricated closure is handed the run instead.
+    run = routing_domain._RouteAllRun(budget=WorkBudget(left=0), deadline=None)
     context = dict(
-        proposal_used=False,
+        run=run,
         proposals={1: routing_domain._RouteProposal((tap_a, tap_a), None)},
         corridor_reservations=routing_domain._CorridorReservations(canvas, grid, owner),
         paths=paths,
@@ -645,7 +648,7 @@ def test_proposal_progress_tracks_actual_stakes_guards_and_canonical_witnesses()
     )
 
     def next_pass(constraints=frozenset()):
-        cells["proposal_used"].cell_contents = False
+        run.proposal_used = False
         return restrict(1, starts, goals, offers, constraints=constraints)
 
     assert next_pass() == ([start_b], goals, frozenset())

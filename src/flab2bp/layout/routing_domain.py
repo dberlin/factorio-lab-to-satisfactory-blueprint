@@ -6350,8 +6350,6 @@ def _route_all(
 
     history: dict[tuple[int, int, int], float] = defaultdict(float)
     primitives = RoutePrimitives(canvas.belt_rules)
-    geometry_world: projection_world.ClearanceOracle | None = None
-    geometry_screen: FlatScreen | None = None
     #: The live routing -- net index to path -- and the same cells the other way
     #: round.  ``owner`` is what makes a TARGETED rip-up possible: a repair
     #: search that crosses a belt has to be able to say WHOSE belt it crossed.
@@ -6361,7 +6359,6 @@ def _route_all(
     paths = StakedPaths(_STEPS)
     owner: dict[Cell, int] = {}
     iterations = 0
-    work = 0
     # A TOTAL work budget across every net and every rip-up round.
     #
     # `_MAX_SEARCH_WORK` bounds one search; nothing bounded the product. At
@@ -6382,6 +6379,9 @@ def _route_all(
     # ledger builds it with one. It states the pass invariant -- a routing pass
     # is never unbounded -- and narrows `left` from ``int | None`` for the body.
     assert budget.left is not None, "a routing pass needs a ledger"
+    #: Everything one pass rebinds while it runs, in one place, so a closure
+    #: reads and writes `run.x` where it used to declare `nonlocal x`.
+    run = _RouteAllRun(budget=budget, deadline=deadline)
     fewest_failed = len(nets) + 1
     stale = 0
     #: The round `best_paths` was captured from, or ``-1`` before any round
@@ -6408,10 +6408,7 @@ def _route_all(
     best_path_taps: dict[int, Cell] = {}
     best_sink_hints: dict[int, Cell] = {}
     round_work: dict[int, int] = {}
-    contextual_seen = False
     proposals: dict[int, _RouteProposal] = {}
-    proposal_used = False
-    commit_attempt: _CommittedAttempt | None = None
     best_attempt: _CommittedAttempt | None = None
 
     def _net_id(index: int) -> NetId:
@@ -6422,7 +6419,7 @@ def _route_all(
 
     def _pass_budget_cause() -> BudgetCause:
         """Which bound stopped the pass, for the nets it never got to search."""
-        if _expired(deadline):
+        if _expired(run.deadline):
             return BudgetCause.DEADLINE
         # `left` is ``int | None`` on the ledger type, where ``None`` means
         # unbounded. A routing pass is never unbounded (see `_route_all`'s own
@@ -6538,7 +6535,7 @@ def _route_all(
                 best_sink_hints if selected_best else sink_hint,
                 best_path_taps if selected_best else path_tap,
                 budget_exhausted=True,
-                attempt=best_attempt if selected_best else commit_attempt,
+                attempt=best_attempt if selected_best else run.commit_attempt,
             )
         return DetailedRouteResult(
             status=DetailedRouteStatus.BUDGET,
@@ -6549,7 +6546,7 @@ def _route_all(
             ),
             failures=tuple(failures[index] for index in range(len(nets)) if index in failures),
             iterations=iterations,
-            work=work,
+            work=run.work,
             last_mile=_last_mile_report(),
         )
 
@@ -6607,7 +6604,7 @@ def _route_all(
                 failure_details=details,
                 primitives=primitives,
                 source_taps=selected_taps,
-                deadline=deadline,
+                deadline=run.deadline,
                 ownership=ownership,
             )
         except _PreparationDeadline as error:
@@ -6642,7 +6639,7 @@ def _route_all(
             try:
                 attempt.settlement = (
                     RouteSettlementCancelled("routing-settlement")
-                    if _expired(deadline)
+                    if _expired(run.deadline)
                     else settle(workspace, attempt.ownership)
                 )
                 if not isinstance(
@@ -6787,7 +6784,7 @@ def _route_all(
         exhaustive = (
             exhaustive_claim
             and status is DetailedRouteStatus.STRANDED
-            and not contextual_seen
+            and not run.contextual_seen
             and set(failures) == proved_stranded
             and not any(failure.kind is RouteFailureKind.BUDGET for failure in ordered_failures)
         )
@@ -6796,7 +6793,7 @@ def _route_all(
             routed=routed,
             failures=ordered_failures,
             iterations=iterations,
-            work=work,
+            work=run.work,
             exhaustive=exhaustive,
             last_mile=_last_mile_report(),
             settlement=None if attempt is None else attempt.settlement,
@@ -6808,7 +6805,7 @@ def _route_all(
                 _core_bounds(canvas),
                 canvas.limit or canvas.junction_projection.capacity,
                 canvas.junction_projection.policy,
-                deadline,
+                run.deadline,
             )
         except _PreparationDeadline:
             frame_bounds = None
@@ -6822,7 +6819,7 @@ def _route_all(
                 work=0,
                 settlement=(
                     None
-                    if _expired(deadline)
+                    if _expired(run.deadline)
                     else RouteSettlementRefused(
                         "no legal requested-band envelope contains the unmodified routing canvas",
                         None,
@@ -6928,16 +6925,7 @@ def _route_all(
     #: when a projected proof was involved).  Lives for this pass only, like
     #: `junction_ok`; see `junction_admission.JunctionAdmissionMemo`.
     admission_memo = JunctionAdmissionMemo()
-    #: True only while the relaxed cluster run is searching.  It relaxes ONE
-    #: refusal below -- the conditional-guard one -- because that refusal reads
-    #: `planned_taps`, and run 2 has to start with an empty tap table (see
-    #: `_relaxed_cluster_result`).  Set and cleared in that closure's
-    #: `try`/`finally`, so it cannot survive the run even on an exception.
-    relaxed_junctions = False
     junction_reservation_blockers: set[int] = set()
-    #: The blockers the latest `_can_junction` ask blamed, so a replayed source
-    #: walk (`_SourceWalk`) can restore that side effect without asking again.
-    last_junction_blame: tuple[int, ...] = ()
 
     @cache
     def _junction_stacks_collide(existing: Cell, candidate: Cell) -> bool:
@@ -6974,8 +6962,7 @@ def _route_all(
         project: bool = True,
         neighborhood: JunctionNeighborhood | None = None,
     ) -> bool:
-        nonlocal last_junction_blame
-        last_junction_blame = ()
+        run.last_junction_blame = ()
         cell = (x, y, level)
         planned_here = planned_taps.get(cell, ())
         if len(planned_here) >= 2:
@@ -6992,11 +6979,11 @@ def _route_all(
         # for this one check; the two checks that read `planned_taps` around it
         # stay as they are, now over the cluster's own taps alone.
         in_guard = cell in canvas.guard
-        if in_guard and not planned_here and not relaxed_junctions:
+        if in_guard and not planned_here and not run.relaxed_junctions:
             return False
         # Everything below is a function of this cell, the policy flags, the
         # net's own ports, and live inputs the memo pins each answer to.
-        memo_key = (cell, project, relaxed_junctions, neighborhood is None)
+        memo_key = (cell, project, run.relaxed_junctions, neighborhood is None)
         remembered = admission_memo.lookup(
             memo_key,
             planned_here=len(planned_here),
@@ -7055,7 +7042,7 @@ def _route_all(
         if project and canvas.junction_projection is not None:
             selection_dependent = True
             selected = primitives.selection(paths, (*planned_taps, cell))
-            if not canvas.projected_buildings_are_clear(selected, deadline=deadline):
+            if not canvas.projected_buildings_are_clear(selected, deadline=run.deadline):
                 return remember(False)
         elif canvas.junction_projection is None and junction_frame_bans:
             selection_dependent = True
@@ -7096,7 +7083,7 @@ def _route_all(
             # Carries blame that depends on corridor state the memo does not
             # follow; recomputed on every ask.
             junction_reservation_blockers.update(blamed)
-            last_junction_blame = tuple(sorted(blamed))
+            run.last_junction_blame = tuple(sorted(blamed))
             return False
         return remember(True, tuple(keepout), tuple(reserved_values))
 
@@ -7538,12 +7525,11 @@ def _route_all(
             tap: Cell, port: _Port, *, needs_junction: bool
         ) -> tuple[list[Cell], list[Cell]]:
             """`_prebuilt_source_starts` for ``tap``, replayed when its flag did not widen."""
-            nonlocal last_junction_blame
             if replay is not None and tap not in added:
                 docks, occupied, blame = replay.docks[tap]
                 junction_reservation_blockers.update(blame)
             else:
-                last_junction_blame = ()
+                run.last_junction_blame = ()
                 found, taken = _prebuilt_source_starts(
                     index,
                     port,
@@ -7553,7 +7539,7 @@ def _route_all(
                     project=tap in project_taps,
                     tentative_ok=tentative_ok,
                 )
-                docks, occupied, blame = tuple(found), tuple(taken), last_junction_blame
+                docks, occupied, blame = tuple(found), tuple(taken), run.last_junction_blame
             walk_docks[tap] = (docks, occupied, blame)
             return list(docks), list(occupied)
 
@@ -7584,7 +7570,7 @@ def _route_all(
                     cell in rejected_starts[index]
                     or cell in existing_sink_targets
                     or tap in rejected_source_hints[index]
-                    or _expired(deadline)
+                    or _expired(run.deadline)
                 ):
                     return False
                 admitted = checked_taps.get(tap)
@@ -7592,7 +7578,7 @@ def _route_all(
                     admitted = canvas.projected_buildings_are_clear(
                         () if tap in planned_taps else _splitter_stack_geometry(*tap),
                         selected=selected_primitives,
-                        deadline=deadline,
+                        deadline=run.deadline,
                     )
                     checked_taps[tap] = admitted
                 return admitted
@@ -7620,14 +7606,13 @@ def _route_all(
         # Construct lazily so an empty/ranged/witness-expired frontier does
         # not prepare geometry that it will never query.  A replayed walk
         # shares the owner of the walk it replays: no tap moved in between.
-        neighborhood: JunctionNeighborhood | None = None if replay is None else replay.neighborhood
+        run.neighborhood = None if replay is None else replay.neighborhood
         asks: list[tuple[Cell, bool, tuple[int, ...]]] = []
 
         def frontier_junctionable(x: int, y: int, level: int) -> bool:
-            nonlocal neighborhood
-            if neighborhood is None:
+            if run.neighborhood is None:
                 try:
-                    neighborhood = JunctionNeighborhood(planned_taps, deadline=deadline)
+                    run.neighborhood = JunctionNeighborhood(planned_taps, deadline=run.deadline)
                 except TimeoutError as error:
                     # Incomplete preparation publishes no admission answer.
                     raise _PreparationDeadline from error
@@ -7636,9 +7621,9 @@ def _route_all(
                 y,
                 level,
                 project=(x, y, level) in project_taps,
-                neighborhood=neighborhood,
+                neighborhood=run.neighborhood,
             )
-            asks.append(((x, y, level), admitted, last_junction_blame))
+            asks.append(((x, y, level), admitted, run.last_junction_blame))
             return admitted
 
         walk_offers: list[tuple[Cell, Cell, tuple[Cell, ...]]] = []
@@ -7656,7 +7641,7 @@ def _route_all(
                 source_choices=source_choices,
                 witness=witness,
                 admit_tap=admit_source_tap,
-                deadline=deadline,
+                deadline=run.deadline,
                 path_ranges=source_ranges,
                 merged_cells=existing_sink_targets,
                 source_feeds=source_feeds,
@@ -7732,7 +7717,7 @@ def _route_all(
                 tentative_ok=tentative_ok,
                 project_taps=project_taps | competing,
                 admit_source_tap=admit_source_tap,
-                replay=_SourceWalk(project_taps, asks, walk_offers, neighborhood, walk_docks),
+                replay=_SourceWalk(project_taps, asks, walk_offers, run.neighborhood, walk_docks),
             )
         source_access_walls[index] = tuple(occupied_source_access) if not starts else ()
         # A shared source can become unusable without an occupied access cell:
@@ -7848,7 +7833,7 @@ def _route_all(
                 if starts:
                     shared = starts[0], shared_offers[2][starts[0]]
             for sibling in remaining:
-                if _expired(deadline):
+                if _expired(run.deadline):
                     return {}
                 if (
                     shared is not None
@@ -7887,18 +7872,19 @@ def _route_all(
         admit_proposal: Callable[[tuple[Cell, ...], float | None], bool] | None,
     ) -> tuple[Cell, ...] | None:
         """Try complete overhead constructions inside the ordinary query's clock."""
-        nonlocal geometry_world, geometry_screen
         try:
-            if geometry_world is None:
-                geometry_world = projection_world.ClearanceOracle(canvas, deadline=query_deadline)
-            world = geometry_world
+            if run.geometry_world is None:
+                run.geometry_world = projection_world.ClearanceOracle(
+                    canvas, deadline=query_deadline
+                )
+            world = run.geometry_world
             world.history = search_history
             world.pressure = pressure
             world.forbidden = frozenset(forbidden)
             world.owned_starts = frozenset(owned_starts)
             world.released_starts = frozenset(released_starts)
-            if geometry_screen is None:
-                geometry_screen = FlatScreen((), query_deadline, world)
+            if run.geometry_screen is None:
+                run.geometry_screen = FlatScreen((), query_deadline, world)
             prepared = time.monotonic()
             # The staged proposal slice is part of, never additional to, the
             # existing ordinary allowance. A miss still takes the original geometric search.
@@ -7912,7 +7898,7 @@ def _route_all(
                 bounds,
                 proposal_deadline,
                 blocked=tuple(cell for cell in owner if cell in canvas.blocked),
-                screen=geometry_screen,
+                screen=run.geometry_screen,
                 admit_proposal=admit_proposal,
             )
         except _GeometricDeadline:
@@ -7920,10 +7906,10 @@ def _route_all(
             return None
 
     def _ordinary_query_deadline() -> float | None:
-        if deadline is None:
+        if run.deadline is None:
             return None
         now = time.monotonic()
-        return now + (deadline - now) / 8
+        return now + (run.deadline - now) / 8
 
     def _search(
         starts: list[Cell],
@@ -7953,7 +7939,7 @@ def _route_all(
         search_tap = next(iter(source_choices)) if len(source_choices) == 1 else None
         rejected: set[Cell] | None = None
         rejected_edges: set[tuple[Cell, Cell]] = set()
-        total_work = 0
+        run.total_work = 0
         # Every caller hands this closure the pass ledger or a carved child of
         # it, and both are built with an int allowance; `None` -- "unbounded" --
         # never reaches a routing search.
@@ -7962,22 +7948,21 @@ def _route_all(
             0 if ordinary_only else min(_MAX_SEARCH_WORK + 1, max(0, search_budget.left) // 2)
         )
         allowance = min(_MAX_SEARCH_WORK + 1, max(0, search_budget.left - connector_reserve))
-        if _expired(deadline):
+        if _expired(run.deadline):
             return _PathSearchResult(None, RouteFailureKind.BUDGET, (), 0, BudgetCause.DEADLINE)
         if ordinary_deadline is None:
             ordinary_deadline = _ordinary_query_deadline()
         ordinary = None
-        capped_ordinary = None
-        ordinary_remaining = allowance
+        run.capped_ordinary = None
+        run.ordinary_remaining = allowance
         ordinary_starts = starts
         ordinary_rejected: dict[Cell, set[Cell]] = {}
 
         def probe_ordinary(
             candidates: list[Cell], blocked: Collection[Cell]
         ) -> _PathSearchResult | None:
-            nonlocal ordinary_remaining, total_work, capped_ordinary
             if (
-                ordinary_remaining < 2
+                run.ordinary_remaining < 2
                 or _expired(ordinary_deadline)
                 or not candidates
                 or all(goal in blocked for goal in goals)
@@ -7997,7 +7982,7 @@ def _route_all(
                 )
                 if proposed is not None:
                     return _PathSearchResult(proposed, None, (), 0)
-            private = budget_module.WorkBudget(left=ordinary_remaining)
+            private = budget_module.WorkBudget(left=run.ordinary_remaining)
             result = _geometric_search(
                 canvas,
                 candidates,
@@ -8018,15 +8003,15 @@ def _route_all(
             private_left = private.left
             assert private_left is not None
             assert search_budget.left is not None
-            search_budget.left -= ordinary_remaining - private_left
-            ordinary_remaining = private_left
-            total_work += result.work
+            search_budget.left -= run.ordinary_remaining - private_left
+            run.ordinary_remaining = private_left
+            run.total_work += result.work
             if result.path is not None:
                 return result
             if result.kind is RouteFailureKind.BUDGET and (
-                result.work >= _MAX_SEARCH_WORK or ordinary_remaining <= 0
+                result.work >= _MAX_SEARCH_WORK or run.ordinary_remaining <= 0
             ):
-                capped_ordinary = result
+                run.capped_ordinary = result
             return None
 
         try:
@@ -8039,9 +8024,9 @@ def _route_all(
                         None,
                         RouteFailureKind.BUDGET,
                         (),
-                        total_work,
-                        capped_ordinary.cause
-                        if capped_ordinary is not None
+                        run.total_work,
+                        run.capped_ordinary.cause
+                        if run.capped_ordinary is not None
                         else BudgetCause.BOUNDED,
                     )
                 ordinary_attempt = ordinary is not None
@@ -8050,13 +8035,15 @@ def _route_all(
                     found = ordinary
                     ordinary = None
                 else:
-                    if _expired(deadline) or search_budget.left <= 0:
+                    if _expired(run.deadline) or search_budget.left <= 0:
                         return _PathSearchResult(
                             None,
                             RouteFailureKind.BUDGET,
                             (),
-                            total_work,
-                            BudgetCause.DEADLINE if _expired(deadline) else BudgetCause.ALLOWANCE,
+                            run.total_work,
+                            BudgetCause.DEADLINE
+                            if _expired(run.deadline)
+                            else BudgetCause.ALLOWANCE,
                         )
                     connector_edges = primitives.edges(
                         canvas,
@@ -8069,15 +8056,15 @@ def _route_all(
                         active_taps=(
                             planned_taps if search_tap is None else (*planned_taps, search_tap)
                         ),
-                        deadline=deadline,
+                        deadline=run.deadline,
                         power_allows=connector_is_powered if power_discs is not None else None,
                     )
-                    if retry == 0 and not connector_edges and capped_ordinary is not None:
+                    if retry == 0 and not connector_edges and run.capped_ordinary is not None:
                         # No graph inputs changed. The fallback has no larger
                         # work allowance than the exhausted ordinary search.
                         # Repeating its bounded prefix cannot find a new path;
                         # retain the shared quota for other nets, still refusing.
-                        return replace(capped_ordinary, work=total_work)
+                        return replace(run.capped_ordinary, work=run.total_work)
                     # The leaf SETS `left` on the ledger it is handed, never
                     # decrements it, so handing it this pass's own ledger
                     # charges exactly what the query spent.
@@ -8089,7 +8076,7 @@ def _route_all(
                         pressure,
                         bounds,
                         search_budget,
-                        deadline,
+                        run.deadline,
                         blame,
                         search_grid,
                         owned_starts=owned_starts,
@@ -8098,7 +8085,7 @@ def _route_all(
                         blocking_owners=owner,
                         extra_edges=connector_edges,
                     )
-                    total_work += found.work
+                    run.total_work += found.work
                 if found.path is None:
                     # Connector siting is bounded and keeps one physical witness
                     # per directed edge. Exhausting this subset cannot prove the
@@ -8108,7 +8095,7 @@ def _route_all(
                     return replace(
                         found,
                         kind=RouteFailureKind.BUDGET,
-                        work=total_work,
+                        work=run.total_work,
                         cause=(
                             found.cause
                             if found.kind is RouteFailureKind.BUDGET
@@ -8122,7 +8109,7 @@ def _route_all(
                             None,
                             RouteFailureKind.BUDGET,
                             (),
-                            total_work,
+                            run.total_work,
                             BudgetCause.BOUNDED,
                         )
                     if ordinary_attempt:
@@ -8138,14 +8125,14 @@ def _route_all(
                 if not canvas.projected_buildings_are_clear(
                     primitives.selection({0: found.path}, proposed_taps),
                     selected=primitives.selection(paths, planned_taps),
-                    deadline=deadline,
+                    deadline=run.deadline,
                 ):
-                    if retry == 4 or _expired(deadline):
+                    if retry == 4 or _expired(run.deadline):
                         return _PathSearchResult(
                             None,
                             RouteFailureKind.BUDGET,
                             (),
-                            total_work,
+                            run.total_work,
                             BudgetCause.BOUNDED,
                         )
                     if ordinary_attempt:
@@ -8176,7 +8163,7 @@ def _route_all(
                         ]
                     continue
                 if tap is None:
-                    return replace(found, work=total_work)
+                    return replace(found, work=run.total_work)
                 stack = _splitter_stack_geometry(*tap)
                 illegal: set[Cell] = set()
                 path_cells = set(found.path)
@@ -8197,10 +8184,10 @@ def _route_all(
                 if attachment in path_cells:
                     illegal.add(attachment)
                 if not illegal:
-                    return replace(found, work=total_work)
+                    return replace(found, work=run.total_work)
                 if retry == 4:
                     return _PathSearchResult(
-                        None, RouteFailureKind.BUDGET, (), total_work, BudgetCause.BOUNDED
+                        None, RouteFailureKind.BUDGET, (), run.total_work, BudgetCause.BOUNDED
                     )
                 if ordinary_attempt:
                     # Only this source owns these body constraints. Retrying it
@@ -8228,7 +8215,7 @@ def _route_all(
                 rejected.update(illegal)
             raise AssertionError("source admission retry must return")
         except _PreparationDeadline as error:
-            error.work += total_work
+            error.work += run.total_work
             raise
 
     def _preserves_source_frontier(
@@ -8240,7 +8227,7 @@ def _route_all(
     ) -> bool:
         if not any(sibling not in paths for sibling in src_group.get(index, ())):
             return True
-        if _expired(deadline):
+        if _expired(run.deadline):
             raise _PreparationDeadline
         future = (
             _future_source_offers(index, path, offers) if proved_future is None else proved_future
@@ -8269,30 +8256,31 @@ def _route_all(
         assert search_budget.left is not None, "a routing search needs a ledger"
         total = 0
         admit_proposal: Callable[[tuple[Cell, ...], float | None], bool] | None = None
-        admitted_path: tuple[Cell, ...] | None = None
-        admitted_future: dict[Cell, Cell] | None = None
+        run.admitted_path = None
+        run.admitted_future = None
         if any(sibling not in paths for sibling in src_group.get(index, ())):
 
             def admit_source_family(
                 path: tuple[Cell, ...], proposal_deadline: float | None
             ) -> bool:
-                nonlocal deadline, admitted_path, admitted_future
                 # All synchronous witness helpers share this route-local clock.
                 # Narrow it only for the proposal; outer admission keeps its clock.
-                route_deadline = deadline
+                route_deadline = run.deadline
                 if proposal_deadline is not None:
-                    deadline = (
-                        proposal_deadline if deadline is None else min(deadline, proposal_deadline)
+                    run.deadline = (
+                        proposal_deadline
+                        if run.deadline is None
+                        else min(run.deadline, proposal_deadline)
                     )
                 try:
                     future = _future_source_offers(index, path, offers)
                     if future:
-                        admitted_path, admitted_future = path, future
+                        run.admitted_path, run.admitted_future = path, future
                     return bool(future)
                 except _PreparationDeadline as error:
                     raise _GeometricDeadline from error
                 finally:
-                    deadline = route_deadline
+                    run.deadline = route_deadline
 
             admit_proposal = admit_source_family
 
@@ -8321,10 +8309,10 @@ def _route_all(
                     index,
                     found.path,
                     offers,
-                    proved_future=admitted_future if found.path is admitted_path else None,
+                    proved_future=run.admitted_future if found.path is run.admitted_path else None,
                 ):
                     return replace(found, work=total)
-                if retry == 4 or _expired(deadline) or search_budget.left <= 0:
+                if retry == 4 or _expired(run.deadline) or search_budget.left <= 0:
                     break
                 for cell in found.path:
                     history[cell] += _BLAME_WEIGHT
@@ -8426,8 +8414,8 @@ def _route_all(
             routing_flags=bytearray(grid.size),
             hist=None,
         )
-        repair_guards = set(guard_claims)
-        for guarded in repair_guards:
+        run.repair_guards = set(guard_claims)
+        for guarded in run.repair_guards:
             if _inside_grid(guarded):
                 open_grid.block(guarded)
         # The crossing charge rides on the history array, so the repair search
@@ -8476,18 +8464,15 @@ def _route_all(
             return _tap_guard_victims(tap, excused)
 
         def _refresh_repair_guards() -> None:
-            nonlocal repair_guards
-            for cell in repair_guards - guard_claims.keys():
+            for cell in run.repair_guards - guard_claims.keys():
                 if _inside_grid(cell):
                     open_grid.restore(cell)
-            for cell in guard_claims.keys() - repair_guards:
+            for cell in guard_claims.keys() - run.repair_guards:
                 if _inside_grid(cell):
                     open_grid.block(cell)
-            repair_guards = set(guard_claims)
+            run.repair_guards = set(guard_claims)
             # Role withdrawal/retirement rebinds the canonical reservation tuple.
             open_grid.reserved = grid.reserved
-
-        nonlocal work
 
         def _rebuild_route(
             index: int,
@@ -8495,7 +8480,6 @@ def _route_all(
             *,
             constraints: Collection[Cell] = (),
         ) -> _PathSearchResult:
-            nonlocal work
             starts, goals, offers = _ends(index)
             try:
                 found = _search_route(
@@ -8511,7 +8495,7 @@ def _route_all(
             finally:
                 canvas.routing_ports = frozenset()
             # Interrupted searches carry their partial work to _route_all.
-            work += found.work
+            run.work += found.work
             round_work[index] = round_work.get(index, 0) + found.work
             if found.path is not None:
                 _stake(index, found.path, hints=_selected_hints(found.path, offers))
@@ -8528,19 +8512,19 @@ def _route_all(
             query_deadline: float | None,
             query_ports: frozenset[Cell],
         ) -> _PathSearchResult | None:
-            nonlocal deadline, work
-            assert budget.left is not None, "a routing pass needs a ledger"
-            if remaining <= 0 or budget.left <= 0 or _expired(query_deadline):
+            if remaining <= 0 or run.left <= 0 or _expired(query_deadline):
                 return None
-            saved_deadline = deadline
+            saved_deadline = run.deadline
             saved_ports = canvas.routing_ports
             if query_deadline is not None:
-                deadline = query_deadline if deadline is None else min(deadline, query_deadline)
+                run.deadline = (
+                    query_deadline if run.deadline is None else min(run.deadline, query_deadline)
+                )
             try:
                 canvas.routing_ports = query_ports
                 closures: dict[int, set[int]] = {}
                 for hurt in paths:
-                    if _expired(deadline):
+                    if _expired(run.deadline):
                         return None
                     closures[hurt] = _dependency_closure({hurt}, dependents) - {index}
                 mandatory_by_tap: dict[Cell | None, frozenset[int]] = {}
@@ -8551,7 +8535,7 @@ def _route_all(
                 owned = owned_source_starts.get(index, ())
                 released = source_access_walls.get(index, ())
                 for cell in starts:
-                    if _expired(deadline):
+                    if _expired(run.deadline):
                         return None
                     tap = offers[2].get(cell)
                     mandatory = mandatory_by_tap.get(tap)
@@ -8565,7 +8549,7 @@ def _route_all(
                     if signature is None:
                         excluded: set[int] = set()
                         for hurt, closure in closures.items():
-                            if _expired(deadline):
+                            if _expired(run.deadline):
                                 return None
                             if len(mandatory | closure) > victim_cap:
                                 excluded.add(hurt)
@@ -8591,16 +8575,16 @@ def _route_all(
                             )
                             if signature not in distances or distance < distances[signature]:
                                 distances[signature] = distance
-                if _expired(deadline):
+                if _expired(run.deadline):
                     return None
                 ordered = sorted(
                     (signature for signature in groups if signature in distances),
                     key=lambda signature: (len(signature), distances[signature]),
                 )
-                logical = budget_module.WorkBudget(left=min(remaining, budget.left))
+                logical = budget_module.WorkBudget(left=min(remaining, run.left))
                 assert logical.left is not None
                 for signature in ordered:
-                    if logical.left <= 0 or budget.left <= 0 or _expired(deadline):
+                    if logical.left <= 0 or run.left <= 0 or _expired(run.deadline):
                         break
                     # Only returned path cells overwrite their current owner.
                     # Compatible provider hints and excused tap guards stay open.
@@ -8627,8 +8611,8 @@ def _route_all(
                         error.net_index = index
                         raise
                     finally:
-                        budget.left -= before - logical.left
-                    work += found.work
+                        budget.left = run.left - (before - logical.left)
+                    run.work += found.work
                     round_work[index] = round_work.get(index, 0) + found.work
                     if found.path is None:
                         continue
@@ -8641,16 +8625,15 @@ def _route_all(
                         return found
                 return None
             finally:
-                deadline = saved_deadline
+                run.deadline = saved_deadline
                 canvas.routing_ports = saved_ports
 
-        assert budget.left is not None, "a routing pass needs a ledger"
         still: list[int] = []
         for index in stranded:
             victims: set[int] = set()
             repaired = False
             pending_proposal: tuple[Cell, ...] | None = None
-            while not _expired(deadline) and budget.left > 0:
+            while not _expired(run.deadline) and run.left > 0:
                 if len(victims) > victim_cap:
                     break
                 dependents = _endpoint_dependents()
@@ -8662,7 +8645,7 @@ def _route_all(
                     hurt: (source_hint.get(hurt), sink_hint.get(hurt), path_tap.get(hurt))
                     for hurt in victims
                 }
-                policy_restricted = False
+                run.policy_restricted = False
                 proposed_constraints = pending_proposal
                 pending_proposal = None
                 candidate_path: tuple[Cell, ...] | None = None
@@ -8674,7 +8657,6 @@ def _route_all(
                     victims: set[int] = victims,
                     dependents: Mapping[int, Collection[int]] = dependents,
                 ) -> bool:
-                    nonlocal policy_restricted
                     # This transaction can never rebuild an over-limit guard
                     # closure, regardless of the path selected from this tap.
                     # Keep the original dependency graph: withdrawn providers'
@@ -8683,7 +8665,7 @@ def _route_all(
                         _source_tap_guard_victims(index, tap), dependents
                     )
                     admitted = len((victims | mandatory) - {index}) <= victim_cap
-                    policy_restricted |= not admitted
+                    run.policy_restricted |= not admitted
                     return admitted
 
                 discovered: set[int] = set()
@@ -8728,7 +8710,7 @@ def _route_all(
                                 )
                             else:
                                 query_deadline = _ordinary_query_deadline()
-                                query_allowance = min(_MAX_SEARCH_WORK, budget.left)
+                                query_allowance = min(_MAX_SEARCH_WORK, run.left)
                                 query_ports = canvas.routing_ports
                                 through = _search(
                                     starts,
@@ -8745,13 +8727,13 @@ def _route_all(
                                     ordinary_deadline=query_deadline,
                                 )
                                 canvas.routing_ports = frozenset()
-                                work += through.work
+                                run.work += through.work
                                 round_work[index] = round_work.get(index, 0) + through.work
                                 if through.path is None:
                                     # A policy-restricted query cannot replace the
                                     # canonical failure used by later repair passes.
                                     if (
-                                        not policy_restricted
+                                        not run.policy_restricted
                                         and through.kind is RouteFailureKind.BUDGET
                                     ):
                                         search_failures[index] = through
@@ -8887,16 +8869,7 @@ def _route_all(
         "nodes": 0,
         "work": 0,
     }
-    last_mile_seconds = 0.0
-    last_mile_done = False
-    #: One work allowance for the whole pass, shared by both runs.  Set
-    #: once at pass entry so run 2 cannot re-derive a fresh quarter of whatever
-    #: run 1 left behind.
-    last_mile_floor = 0
     proved_stranded: set[int] = set()
-    proved_round = -1
-    relation_strips: tuple[int, ...] = ()
-    relation_evidence = ""
 
     def _last_mile_report() -> LastMileReport:
         return LastMileReport(
@@ -8910,9 +8883,9 @@ def _route_all(
             same_source_dropped=last_mile_counts["same_source_dropped"],
             nodes=last_mile_counts["nodes"],
             work=last_mile_counts["work"],
-            seconds=last_mile_seconds,
-            relation_strips=relation_strips,
-            relation_evidence=relation_evidence,
+            seconds=run.last_mile_seconds,
+            relation_strips=run.relation_strips,
+            relation_evidence=run.relation_evidence,
         )
 
     def _restrict_proposal(
@@ -8923,9 +8896,8 @@ def _route_all(
         *,
         constraints: Collection[Cell] = (),
     ) -> tuple[list[Cell], set[Cell], frozenset[Cell]]:
-        nonlocal proposal_used
         proposal = proposals.get(index)
-        if proposal is None or proposal_used:
+        if proposal is None or run.proposal_used:
             return starts, goals, frozenset(constraints)
         # Freeze only when spending an implicated route's positive proposal.
         # The packed buildings, grid base/domain, rules, power policy and spec
@@ -8954,7 +8926,7 @@ def _route_all(
             owned_source_starts.get(index, frozenset()),
             frozenset(rejected_path_cells.get(index, ())) | frozenset(constraints),
         )
-        starts, goals, detour, proposal_used = proposal.restrict(
+        starts, goals, detour, run.proposal_used = proposal.restrict(
             starts,
             goals,
             offers,
@@ -8988,7 +8960,6 @@ def _route_all(
         containment is an invariant rather than a hope, and checking it costs
         one comparison per constraint.
         """
-        assert budget.left is not None, "a routing pass needs a ledger"
         starts, goals, _offers = _ends(index)
         span_x0, span_y0, span_x1, span_y1 = grid.span
         starts, goals, constraints = _restrict_proposal(
@@ -9002,7 +8973,7 @@ def _route_all(
         ), "a cluster constraint left the routing grid's indexed extent"
         allowance = min(
             last_mile.B_LOW_LEVEL_WORK,
-            max(0, budget.left - last_mile_floor),
+            max(0, run.left - run.last_mile_floor),
         )
         private = budget_module.WorkBudget(left=allowance)
         assert private.left is not None
@@ -9012,7 +8983,7 @@ def _route_all(
             )
         finally:
             canvas.routing_ports = frozenset()
-            budget.left -= allowance - private.left
+            budget.left = run.left - (allowance - private.left)
 
     def _pass_budget_left() -> int:
         """This pass's remaining work, for the consumers typed on plain ``int``.
@@ -9029,8 +9000,8 @@ def _route_all(
             search=_cluster_search,
             offers=_cluster_offers,
             budget_left=_pass_budget_left,
-            budget_floor=last_mile_floor,
-            expired=lambda: _expired(deadline),
+            budget_floor=run.last_mile_floor,
+            expired=lambda: _expired(run.deadline),
             extra_occupancy=primitives.guards,
         )
 
@@ -9054,7 +9025,7 @@ def _route_all(
         finally:
             canvas.routing_ports = routing_ports
 
-    def _capture(run: int, problem: last_mile.ClusterProblem) -> None:
+    def _capture(run_index: int, problem: last_mile.ClusterProblem) -> None:
         """Hand a developer-tool hook everything needed to replay this run.
 
         Called AFTER the unstake that builds each run's environment -- the
@@ -9071,7 +9042,7 @@ def _route_all(
             canvas.routing_ports = frozenset()
         hook(
             last_mile.ClusterCapture(
-                run=run,
+                run=run_index,
                 canvas=canvas,
                 grid=grid,
                 history=history,
@@ -9080,8 +9051,10 @@ def _route_all(
                 problem=problem,
                 ends=ends,
                 budget_left=_pass_budget_left(),
-                budget_floor=last_mile_floor,
-                deadline_remaining=(None if deadline is None else deadline - time.monotonic()),
+                budget_floor=run.last_mile_floor,
+                deadline_remaining=(
+                    None if run.deadline is None else run.deadline - time.monotonic()
+                ),
                 owned_starts={
                     index: frozenset(owned_source_starts.get(index, ())) for index in problem.nets
                 },
@@ -9141,16 +9114,14 @@ def _route_all(
         return False
 
     def _tally(result: last_mile.ClusterResult) -> None:
-        nonlocal last_mile_seconds
         last_mile_counts["nodes"] += result.nodes
         last_mile_counts["work"] += result.work
-        last_mile_seconds += result.seconds
+        run.last_mile_seconds += result.seconds
 
     def _solve_cluster(
         problem: last_mile.ClusterProblem,
         environment: last_mile.ClusterEnvironment,
     ) -> last_mile.ClusterResult:
-        nonlocal last_mile_seconds
         entry_budget = _pass_budget_left()
         started = time.perf_counter()
         try:
@@ -9161,7 +9132,7 @@ def _route_all(
             # query; retain that work without inventing a closed tree or nodes.
             last_mile_counts["work"] += entry_budget - _pass_budget_left()
             last_mile_counts["bounded"] += 1
-            last_mile_seconds += time.perf_counter() - started
+            run.last_mile_seconds += time.perf_counter() - started
             raise
 
     def _cluster_is_sibling_free(problem: last_mile.ClusterProblem) -> bool:
@@ -9211,9 +9182,7 @@ def _route_all(
         `_restore_staked` re-stakes, so the `_round_state()` comparison sees
         the round it was handed.
         """
-        nonlocal relaxed_junctions
-        assert budget.left is not None, "a routing pass needs a ledger"
-        if budget.left <= 0 or _expired(deadline):
+        if run.left <= 0 or _expired(run.deadline):
             return None
         rejections = (
             rejected_starts,
@@ -9253,11 +9222,11 @@ def _route_all(
                 with corridor_reservations.temporarily_released():
                     planned_taps.clear()
                     admission_memo.forget_all()
-                    relaxed_junctions = True
+                    run.relaxed_junctions = True
                     _capture(2, problem)
                     return _solve_cluster(problem, _cluster_environment())
             finally:
-                relaxed_junctions = False
+                run.relaxed_junctions = False
                 planned_taps.clear()
                 planned_taps.update(taps_before)
                 admission_memo.forget_all()
@@ -9274,7 +9243,6 @@ def _route_all(
         makes a claim of its own: the four ways out below either leave run 1's
         proof exactly as it was or, on a lost round, withdraw it.
         """
-        nonlocal proved_round, relation_strips, relation_evidence
         if not _cluster_is_sibling_free(problem):
             last_mile_counts["relation_skipped_siblings"] += 1
             return
@@ -9289,7 +9257,7 @@ def _route_all(
             # proved, so BOTH claims go.
             last_mile_counts["proved"] -= 1
             last_mile_counts["bounded"] += 1
-            proved_round = -1
+            run.proved_round = -1
             proved_stranded.clear()
             return
         if relaxed.outcome is not last_mile.ClusterOutcome.PROVED:
@@ -9308,8 +9276,8 @@ def _route_all(
         # `LastMileReport` refuses to carry it.
         if len(instances) < _RELATION_STRIP_PAIR:
             return
-        relation_strips = instances
-        relation_evidence = (
+        run.relation_strips = instances
+        run.relation_evidence = (
             f"cluster: nets={tuple(problem.nets)!r} "
             f"truncated={problem.truncated} "
             f"sibling_closed={problem.sibling_closed}"
@@ -9317,13 +9285,11 @@ def _route_all(
 
     def _complete_source_dependents(stranded: list[int], providers: Collection[int]) -> list[int]:
         """Consume source taps established by a solved, thinned cluster."""
-        nonlocal commit_attempt, work
-        assert budget.left is not None, "a routing pass needs a ledger"
         remaining = list(stranded)
         for index in stranded:
             if not any(sibling in providers for sibling in src_group.get(index, ())):
                 continue
-            if _expired(deadline) or budget.left <= 0:
+            if _expired(run.deadline) or run.left <= 0:
                 break
             before = _round_state()
             staked = paths.snapshot()
@@ -9337,7 +9303,7 @@ def _route_all(
                     starts, goals, offers = _ends(index)
                     searched = _search_route(index, starts, goals, offers, pressure, budget, blame)
                     canvas.routing_ports = frozenset()
-                    work += searched.work
+                    run.work += searched.work
                     round_work[index] = round_work.get(index, 0) + searched.work
                     if searched.path is None:
                         search_failures[index] = searched
@@ -9349,7 +9315,7 @@ def _route_all(
                         _stake(index, searched.path, hints=_selected_hints(searched.path, offers))
                         candidate = commit_once()
                         if terminal_attempt(candidate) or not candidate.unlinked:
-                            commit_attempt = candidate
+                            run.commit_attempt = candidate
                             release.commit()
                             remaining.remove(index)
                             round_failures.pop(index, None)
@@ -9368,27 +9334,29 @@ def _route_all(
                         if index in paths:
                             _unstake(index)
                         restored = _restore_staked(staked, held, before, release)
-            if not restored or (commit_attempt is not None and terminal_attempt(commit_attempt)):
+            if not restored or (
+                run.commit_attempt is not None and terminal_attempt(run.commit_attempt)
+            ):
                 break
         return remaining
 
     def _last_mile(round_stranded: list[int], round_index: int) -> list[int]:
         """Search the conflict cluster once per pass; see the Phase B spec 5.6."""
-        nonlocal last_mile_done, last_mile_floor, proved_round
-        nonlocal commit_attempt, proposal_used
-        assert budget.left is not None, "a routing pass needs a ledger"
         if (
-            last_mile_done
+            run.last_mile_done
             or not round_stranded
             or len(round_stranded) > last_mile.B_MAX_STRANDED
-            or budget.left <= 0
-            or _expired(deadline)
-            or (deadline is not None and deadline - time.monotonic() < last_mile.B_MIN_SECONDS)
+            or run.left <= 0
+            or _expired(run.deadline)
+            or (
+                run.deadline is not None
+                and run.deadline - time.monotonic() < last_mile.B_MIN_SECONDS
+            )
         ):
             return round_stranded
-        last_mile_done = True
+        run.last_mile_done = True
         last_mile_counts["invocations"] += 1
-        last_mile_floor = budget.left - int(last_mile.B_CBS_WORK_SHARE * budget.left)
+        run.last_mile_floor = run.left - int(last_mile.B_CBS_WORK_SHARE * run.left)
         index_by_id = {_net_id(index): index for index in range(len(nets))}
         problem = last_mile.build_cluster(
             sorted(round_stranded),
@@ -9451,14 +9419,14 @@ def _route_all(
                     _unstake(index)
                 _capture(1, problem)
                 for _ in range(_COMMIT_REPAIR_PASSES + 1):
-                    proposal_used = False
+                    run.proposal_used = False
                     result = _solve_cluster(problem, environment)
                     _tally(result)
                     if result.outcome is not last_mile.ClusterOutcome.SOLVED:
                         if (
-                            proposal_used
-                            and budget.left > last_mile_floor
-                            and not _expired(deadline)
+                            run.proposal_used
+                            and run.left > run.last_mile_floor
+                            and not _expired(run.deadline)
                         ):
                             # A positive branch cannot exhaust ordinary routes.
                             # Keep the existing cluster slots and shared quota.
@@ -9488,11 +9456,14 @@ def _route_all(
                         joint_refused = True
                         last_mile_counts["commit_rejected"] += 1
                         break
-                    commit_attempt = commit_once()
-                    unlinked_now, details_now = commit_attempt.unlinked, commit_attempt.details
-                    if terminal_attempt(commit_attempt) or not unlinked_now:
+                    run.commit_attempt = commit_once()
+                    unlinked_now, details_now = (
+                        run.commit_attempt.unlinked,
+                        run.commit_attempt.details,
+                    )
+                    if terminal_attempt(run.commit_attempt) or not unlinked_now:
                         release.commit()
-                        if not terminal_attempt(commit_attempt):
+                        if not terminal_attempt(run.commit_attempt):
                             last_mile_counts["solved"] += 1
                             # Thinning protects the cluster's independent-root
                             # search. Its accepted provider can now offer the
@@ -9516,10 +9487,10 @@ def _route_all(
             result.outcome is last_mile.ClusterOutcome.PROVED
             and restored
             and not joint_refused
-            and not contextual_seen
+            and not run.contextual_seen
         ):
             last_mile_counts["proved"] += 1
-            proved_round = round_index
+            run.proved_round = round_index
             proved_stranded.clear()
             proved_stranded.update(round_stranded)
             _record_cluster_relation(problem)
@@ -9571,7 +9542,7 @@ def _route_all(
             assert order is not None
             stranded: list[int] = []
             for position, i in enumerate(order):
-                if _expired(deadline):
+                if _expired(run.deadline):
                     current_failures = {
                         index: _failure(
                             index,
@@ -9623,7 +9594,7 @@ def _route_all(
                             cause=BudgetCause.UNKNOWN,
                         )
                 canvas.routing_ports = frozenset()
-                work += search_work
+                run.work += search_work
                 round_work[i] = round_work.get(i, 0) + search_work
                 if searched.path is None:
                     search_failures[i] = searched
@@ -9645,7 +9616,7 @@ def _route_all(
             # same move. It stops the moment a pass places nobody, which is when the
             # contention has stopped being local and negotiation should price it.
             for _ in range(_REPAIR_PASSES):
-                if not stranded or _expired(deadline):
+                if not stranded or _expired(run.deadline):
                     break
                 after = _repair(
                     stranded,
@@ -9667,7 +9638,7 @@ def _route_all(
                 )
                 for index in stranded
             }
-            if _expired(deadline):
+            if _expired(run.deadline):
                 return _budget_result(paths, round_failures)
 
             # Linking is part of routing feasibility, not terminal emission. Prove
@@ -9691,14 +9662,13 @@ def _route_all(
                 retained_failures: dict[int, NetFailure] = round_failures,
                 retained_blockers: dict[int, tuple[NetId, ...]] = search_blockers,
             ) -> None:
-                nonlocal contextual_seen
                 for index in unlinked:
                     detail = details.get(
                         index,
                         _CommitFailure(paths[index][0], "path"),
                     )
                     if detail.side == "contextual":
-                        contextual_seen = True
+                        run.contextual_seen = True
                         if index not in proposals:
                             proposals[index] = _RouteProposal(
                                 (source_hint.get(index), path_tap.get(index)),
@@ -9739,8 +9709,8 @@ def _route_all(
                     if detail.side == "contextual":
                         retained_blockers[index] = blockers
 
-            commit_attempt = commit_once()
-            if terminal_attempt(commit_attempt):
+            run.commit_attempt = commit_once()
+            if terminal_attempt(run.commit_attempt):
                 return _finish(
                     paths,
                     round_failures,
@@ -9748,9 +9718,9 @@ def _route_all(
                     sink_hint,
                     path_tap,
                     budget_exhausted=False,
-                    attempt=commit_attempt,
+                    attempt=run.commit_attempt,
                 )
-            unlinked, details = commit_attempt.unlinked, commit_attempt.details
+            unlinked, details = run.commit_attempt.unlinked, run.commit_attempt.details
             if not unlinked:
                 if failed == 0:
                     return _finish(
@@ -9760,7 +9730,7 @@ def _route_all(
                         sink_hint,
                         path_tap,
                         budget_exhausted=False,
-                        attempt=commit_attempt,
+                        attempt=run.commit_attempt,
                     )
             else:
                 retain_commit_failures(unlinked, details)
@@ -9771,14 +9741,14 @@ def _route_all(
                 pending = tuple(unlinked)
                 stalled_commit: list[int] = []
                 for _ in range(_COMMIT_REPAIR_PASSES):
-                    if _expired(deadline) or budget.left <= 0:
+                    if _expired(run.deadline) or budget.left <= 0:
                         break
                     rejected_now = set(pending)
                     participants = _dependency_closure(pending)
                     order = _route_order(participants, _endpoint_dependents())
                     if order is None:
                         break
-                    proposal_used = False
+                    run.proposal_used = False
                     staked_before = paths.snapshot()
                     held_before = {
                         index: (source_hint.get(index), sink_hint.get(index), path_tap.get(index))
@@ -9790,7 +9760,7 @@ def _route_all(
                         _unstake(index)
                     stalled_now: list[int] = []
                     for index in order:
-                        if _expired(deadline) or budget.left <= 0:
+                        if _expired(run.deadline) or budget.left <= 0:
                             stalled_now.append(index)
                             break
                         starts, goals, reroute_offers = _ends(index)
@@ -9808,7 +9778,7 @@ def _route_all(
                             constraints=constraints,
                         )
                         canvas.routing_ports = frozenset()
-                        work += searched.work
+                        run.work += searched.work
                         round_work[index] = round_work.get(index, 0) + searched.work
                         if searched.path is None:
                             stalled_now.append(index)
@@ -9832,14 +9802,14 @@ def _route_all(
                             staked_before, held_before, state_before, release_before
                         ):
                             return _budget_result(paths, round_failures)
-                        if candidate_attempt is None and proposal_used:
+                        if candidate_attempt is None and run.proposal_used:
                             # A spent positive branch cannot rule out ordinary
                             # routing or the remaining endpoint alternatives.
                             # Use only the repair slots already allocated.
                             continue
                         break
-                    commit_attempt = candidate_attempt
-                    if terminal_attempt(commit_attempt):
+                    run.commit_attempt = candidate_attempt
+                    if terminal_attempt(run.commit_attempt):
                         return _finish(
                             paths,
                             round_failures,
@@ -9847,9 +9817,9 @@ def _route_all(
                             sink_hint,
                             path_tap,
                             budget_exhausted=False,
-                            attempt=commit_attempt,
+                            attempt=run.commit_attempt,
                         )
-                    pending, details = commit_attempt.unlinked, commit_attempt.details
+                    pending, details = run.commit_attempt.unlinked, run.commit_attempt.details
                     if pending:
                         retain_commit_failures(pending, details)
                     failed_now = set(stalled_now) | set(pending)
@@ -9884,10 +9854,10 @@ def _route_all(
                         if index in paths:
                             _unstake(index)
                     stalled_commit.extend(withdrawn)
-                    if _expired(deadline):
+                    if _expired(run.deadline):
                         return _budget_result(paths, round_failures)
-                    commit_attempt = commit_once()
-                    pending, details = commit_attempt.unlinked, commit_attempt.details
+                    run.commit_attempt = commit_once()
+                    pending, details = run.commit_attempt.unlinked, run.commit_attempt.details
                     if pending:
                         retain_commit_failures(pending, details)
                 stranded = list(dict.fromkeys((*stranded, *stalled_commit)))
@@ -9900,7 +9870,7 @@ def _route_all(
                         sink_hint,
                         path_tap,
                         budget_exhausted=False,
-                        attempt=commit_attempt,
+                        attempt=run.commit_attempt,
                     )
             if failed:
                 stranded = _last_mile(stranded, it)
@@ -9916,7 +9886,7 @@ def _route_all(
                         sink_hint,
                         path_tap,
                         budget_exhausted=False,
-                        attempt=commit_attempt,
+                        attempt=run.commit_attempt,
                     )
             for path in paths.values():
                 for cell in path:
@@ -9978,14 +9948,14 @@ def _route_all(
                 best_path_taps = {
                     index: tap for index, tap in path_tap.items() if index in best_paths
                 }
-                best_attempt = commit_attempt
+                best_attempt = run.commit_attempt
             else:
                 stale += 1
             # An exhausted work budget ends the search as surely as a stale
             # round does: every further round would re-run every net against a
             # budget of zero and fail all of them, and the counters would read as
             # congestion rather than as work nobody had left to do.
-            if _expired(deadline):
+            if _expired(run.deadline):
                 return _budget_result()
             if stale >= _RRR_STALE_ROUNDS or it == RRR_MAX - 1 or budget.left <= 0:
                 break
@@ -9996,13 +9966,13 @@ def _route_all(
             best_sink_hints,
             best_path_taps,
             budget_exhausted=budget.left <= 0,
-            exhaustive_claim=proved_round >= 0 and proved_round == best_round,
+            exhaustive_claim=run.proved_round >= 0 and run.proved_round == best_round,
             attempt=best_attempt,
         )
     except _PreparationDeadline as error:
         # Interrupted exact projection/linking provides no geometry verdict.
         # Preserve only completed searches and failures recorded before it.
-        work += error.work
+        run.work += error.work
         if error.net_index is not None:
             round_work[error.net_index] = round_work.get(error.net_index, 0) + error.work
         current_failures = {

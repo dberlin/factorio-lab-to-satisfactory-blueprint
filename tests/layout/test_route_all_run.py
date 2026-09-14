@@ -226,7 +226,34 @@ def test_the_two_deadline_restores_are_still_finally_clauses() -> None:
 
 
 def test_the_run_object_holds_no_copy_of_the_ledger() -> None:
-    """Plan B's carve sites need the ledger aliased, so nothing may replace it."""
-    source = SRC.read_text()
-    for forbidden in ("replace(run", "run.budget = ", "copy(run"):
-        assert forbidden not in source, f"the run object must not copy its ledger: {forbidden!r}"
+    """Plan B's carve sites need the ledger aliased, so nothing may replace it.
+
+    `run.budget` IS the caller's `WorkBudget`. Copying the run object, calling
+    `dataclasses.replace` on it, or rebinding `run.budget` would hand the
+    spending sites a ledger the caller never sees.
+    """
+    node = _route_all_node()
+    copies = [
+        f"{call.lineno}: {ast.unparse(call)[:60]}"
+        for call in ast.walk(node)
+        if isinstance(call, ast.Call)
+        and call.args
+        and isinstance(call.args[0], ast.Name)
+        and call.args[0].id == "run"
+        and (
+            (isinstance(call.func, ast.Name) and call.func.id in {"replace", "copy", "deepcopy"})
+            or (isinstance(call.func, ast.Attribute) and call.func.attr in {"replace", "copy"})
+        )
+    ]
+    assert copies == [], f"the run object is never copied: {copies}"
+    rebinds = [
+        stmt.lineno
+        for stmt in ast.walk(node)
+        if isinstance(stmt, (ast.Assign, ast.AugAssign, ast.AnnAssign))
+        for target in (stmt.targets if isinstance(stmt, ast.Assign) else [stmt.target])
+        if isinstance(target, ast.Attribute)
+        and target.attr == "budget"
+        and isinstance(target.value, ast.Name)
+        and target.value.id == "run"
+    ]
+    assert rebinds == [], f"the run object's ledger is never rebound: {rebinds}"
