@@ -182,8 +182,8 @@ def test_the_measured_envelope_lies_inside_the_limits_the_game_states():
     """What players built stays inside what the game allows -- except one key.
 
     The corpus is restricted to save version 58 and up, so it is the same game
-    the registry describes. The belt bend radius is the exception and has its
-    own strict xfail below.
+    the registry describes. ``belt_bend_radius_cm`` is not in here because it is
+    not a bound at all; the test below says what it is instead.
     """
     measured = json.loads(MEASURED_JSON.read_text())["limits"]
     lim = load_registry().limits
@@ -194,28 +194,28 @@ def test_the_measured_envelope_lies_inside_the_limits_the_game_states():
     assert measured["lift_max_cm"]["max"] <= lim.lift_max_cm
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "The corpus bends tighter than AFGConveyorBeltHologram::mBendRadius. "
-        "The binary says 199.0 cm; over the 370 belts in the current-family "
-        "corpus that actually turn, measured.json reports min 129.8362, p05 "
-        "176.5426, p50 197.4262. 28 belts read under 190 cm, spread over 11 "
-        "fixtures -- logistics-21, -22, -24, -25, production-11, -16, -17, "
-        "-18, -20, -21 and -22 -- so this is not one bad blueprint and it is "
-        "not the pre-1.0 fixtures, which are already excluded. The likely "
-        "reading is that mBendRadius is the radius the hologram lays its own "
-        "arcs on, not a floor it enforces on a player-guided spline, in which "
-        "case the envelope may legitimately be tighter and this test is asking "
-        "the wrong question. Needs a ruling: either establish what mBendRadius "
-        "constrains and rewrite the assertion, or drop it. The registry is "
-        "unaffected either way -- it carries the binary's 199.0."
-    ),
-)
-def test_the_measured_bend_radius_lies_inside_the_binary_limit():
-    measured = json.loads(MEASURED_JSON.read_text())["limits"]
-    lim = load_registry().limits
-    assert measured["belt_bend_radius_cm"]["min"] >= lim.belt_bend_radius_cm - 1.0
+def test_the_bend_radius_is_a_default_and_not_a_floor():
+    """The corpus bends tighter than ``mBendRadius``, and that is the point.
+
+    ``AFGConveyorBeltHologram::mBendRadius`` is the radius the hologram lays its
+    own arc on when the game auto-routes a belt, not a legality floor on a
+    spline the player guided through pole positions. The corpus settles it: 28
+    of the 370 curved belts in the current-family fixtures read under 190 cm,
+    across 11 blueprints and no pre-1.0 ones.
+
+    So this asserts the documented relation rather than the floor it is not. If
+    a future build did make it a floor -- or if the measurement changed such
+    that nothing bent tighter -- the corpus minimum would rise above the default
+    and this would fail, which is exactly when somebody should look again.
+    """
+    measured = json.loads(MEASURED_JSON.read_text())["limits"]["belt_bend_radius_cm"]
+    reg = load_registry()
+    assert measured["min"] < reg.limits.belt_bend_radius_cm
+    # And the registry says so beside the number, so nobody reads 199 as a limit.
+    note = reg.provenance["limits"]["belt_bend_radius_cm"]
+    assert note["is_a_proven_minimum"] is False
+    assert note["corpus_min"] == measured["min"]
+    assert note["corpus_min_fixture"] == measured["fixture"]
 
 
 def test_splitter_has_one_input_and_three_outputs():

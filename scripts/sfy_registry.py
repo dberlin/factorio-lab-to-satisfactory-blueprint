@@ -107,6 +107,22 @@ LIFT_HEIGHT_FORMULAS: dict[str, tuple[str, float, float]] = {
 }
 LIFT_CLASS_PREFIX = "Build_ConveyorLift"
 
+# Binary values that are not what their name suggests, with the caveat recorded
+# in ``registry.json``'s provenance next to the corpus number that establishes
+# it. ``mBendRadius`` is the radius the hologram lays its own arc on when the
+# game auto-routes a belt; it is *not* a floor the game enforces on a spline the
+# player guided through pole positions, and the corpus proves it by containing
+# belts that bend tighter.
+BINARY_NOTES: dict[str, tuple[str, str]] = {
+    "belt_bend_radius_cm": (
+        "AFGConveyorBeltHologram::mBendRadius -- the hologram's default curve "
+        "radius when the game auto-routes a belt. It is NOT a proven minimum: "
+        "a player-guided spline may bend tighter, and the current-family corpus "
+        "does.",
+        "belt_bend_radius_cm",
+    ),
+}
+
 # Limits that are not game data at all. Each is a constant this project chose,
 # with the reason; ``registry.json`` tags them ``"constant"`` so that nobody
 # reads them as something the game states.
@@ -225,7 +241,10 @@ def _mesh_height(docs: dict[str, Any]) -> float:
 
 
 def _limits(
-    docs: dict[str, Any], assets: dict[str, Any], native: dict[str, Any]
+    docs: dict[str, Any],
+    assets: dict[str, Any],
+    native: dict[str, Any],
+    measured: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, str], dict[str, Any]]:
     """The merged limits, where each came from, and the provenance of the odd ones.
 
@@ -249,6 +268,17 @@ def _limits(
         "assets",
     )
     _fill(limits, sources, from_binary, "binary")
+    for key, (note, measured_key) in BINARY_NOTES.items():
+        spread = measured["limits"][measured_key]
+        provenance[key] = {
+            "note": note,
+            "is_a_proven_minimum": False,
+            "corpus_min": spread["min"],
+            "corpus_min_fixture": spread["fixture"],
+            "corpus_min_object": spread["object"],
+            "corpus_min_detail": spread["detail"],
+            "corpus_n": spread["n"],
+        }
 
     mesh_height = _mesh_height(docs)
     derived = {}
@@ -382,7 +412,7 @@ def main(out: Path | None = None) -> int:
     sha = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True, check=True
     ).stdout.strip()
-    limits, sources, limit_provenance = _limits(docs, assets, native)
+    limits, sources, limit_provenance = _limits(docs, assets, native, measured)
     registry = {
         "provenance": {
             "docs": docs["provenance"],

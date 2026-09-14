@@ -23,6 +23,10 @@ in. ``tools/sfy-extract`` cannot read a direction the cooked asset leaves to the
 component archetype, so ``scripts/sfy_registry.py`` resolves those, and this is
 one of the two things it resolves them from.
 
+Open item for Milestone 2: the validator has no minimum legal belt bend radius
+yet -- ``belt_bend_radius_cm`` is the hologram's default curve radius, not a
+floor -- and the candidate evidence for one is this file's corpus minimum.
+
 Run it after adding fixtures::
 
     uv run python scripts/sfy_measure_limits.py

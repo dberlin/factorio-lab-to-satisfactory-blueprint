@@ -212,6 +212,15 @@ class Limits:
     """
 
     belt_max_spline_cm: float = BELT_MAX_SPLINE_CM
+    # AFGConveyorBeltHologram::mBendRadius, read from the shipped DLL (source
+    # ``binary``): the radius the hologram lays its own arc on when the game
+    # auto-routes a belt. **It is not a proven minimum.** A spline the player
+    # guides through pole positions may bend tighter, and the current-family
+    # corpus does -- 129.84 cm on a belt in logistics-24.sbp, against this
+    # field's 199.0, with 28 of 370 curved belts under 190. A placer may use it
+    # as the radius to lay its own turns on; it may not use it as the tightest
+    # turn the game will accept. ``Registry.provenance["limits"]`` repeats this
+    # beside the number, and ``Registry.limits_measured`` carries the spread.
     belt_bend_radius_cm: float | None = None
     belt_max_incline_deg: float | None = None
     lift_step_cm: float | None = None
