@@ -145,9 +145,10 @@ BINARY_NOTES: dict[str, str] = {
 # with the effect copied from the rule itself, so a reader of the registry
 # cannot take a clamp or a snap for a refusal -- which is what the old
 # ``enforced_by`` invited: it named ``lift.height_range`` (a clamp),
-# ``buildable.grid_snap`` and ``buildable.rotation_step`` (snaps) and
-# ``lift.step`` (no enforcement found at all) as things that "turn the value
-# away".
+# ``buildable.grid_snap`` and ``buildable.rotation_step`` (snaps) as things that
+# "turn the value away". It also named ``lift.step``, where nothing was found to
+# be enforced at all; that limit is in :data:`NOT_GOVERNED` now, because a rule
+# whose effect is ``none`` governs nothing.
 #
 # Every key of :class:`Limits` is in this table or in :data:`NOT_GOVERNED`, and
 # ``_check_rules`` holds the named ids and the copied effects against
@@ -157,7 +158,6 @@ GOVERNED_BY: dict[str, str] = {
     "belt_max_spline_cm": "belt.max_length",
     "belt_bend_radius_cm": "belt.curvature",
     "belt_max_incline_deg": "belt.incline",
-    "lift_step_cm": "lift.step",
     "lift_min_cm": "lift.height_range",
     "lift_max_cm": "lift.height_range",
     "lift_min_vertical_cm": "lift.height_range",
@@ -170,6 +170,11 @@ GOVERNED_BY: dict[str, str] = {
 # The limits no hologram rule governs at all, with the reason. A number here is
 # still game data; what it is not is a bound the game applies to a placement.
 NOT_GOVERNED: dict[str, str] = {
+    "lift_step_cm": (
+        "AFGConveyorLiftHologram compares mStepHeight (lift.step evidence) but "
+        "never quantises a height to it; the multiple is this project's own "
+        "stricter rule (spec section 10)."
+    ),
     "pipe_bend_radius_cm": (
         "AFGPipelineHologram::mBendRadius is the radius AutoRouteSpline builds "
         "its bends on, not a bound anything compares against. The bound on a "

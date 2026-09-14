@@ -310,6 +310,7 @@ may not invent one in its place. The first consequence is concrete —
   `mBendRadius`). Per lift: height within min/max and the vertical-connection
   minimum when attached to a port; the step multiple is our own stricter rule,
   because `lift.step` is `partial` and no quantisation was found in the game.
+  `lift_step_cm` is therefore *ungoverned* in the registry and says so.
 - Every port is connected exactly once with matching direction; every net's
   throughput <= its tier; pipes: flow <= tier and head lift within pump limits.
 - Wires <= max length and pole connection counts respected; every machine is

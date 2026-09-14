@@ -177,7 +177,6 @@ def test_every_limit_names_the_rule_that_governs_it_or_why_none_does():
         "belt_max_spline_cm",
         "lift_min_cm",
         "lift_max_cm",
-        "lift_step_cm",
         "hologram_grid_cm",
     ):
         entry = reg.provenance["limits"][key]
@@ -214,8 +213,9 @@ def test_what_the_game_does_with_each_governed_limit():
 
     ``enforced_by`` used to claim every one of these was turned away, which the
     rules themselves contradict: a lift's height is clamped into range, the grid
-    and the rotation step are snapped to, and no instruction was seen quantising
-    a lift's height to ``mStepHeight`` at all.
+    and the rotation step are snapped to. ``lift_step_cm`` is not here at all:
+    no instruction was seen quantising a lift's height to ``mStepHeight``, so
+    nothing governs it and it says so under ``ungoverned``.
     """
     governed = {
         key: entry["governed_by"]["effect"]
@@ -226,7 +226,6 @@ def test_what_the_game_does_with_each_governed_limit():
         "belt_max_spline_cm": "refuse",
         "belt_bend_radius_cm": "refuse",
         "belt_max_incline_deg": "refuse",
-        "lift_step_cm": "none",
         "lift_min_cm": "clamp",
         "lift_max_cm": "clamp",
         "lift_min_vertical_cm": "clamp",
@@ -244,8 +243,18 @@ def test_the_limits_no_rule_governs_say_why():
         for key, entry in reg.provenance["limits"].items()
         if not entry["governed_by"]
     }
-    assert set(ungoverned) == {"pipe_bend_radius_cm", "pipe_bend_radius_2d_cm", "wire_max_cm"}
+    assert set(ungoverned) == {
+        "lift_step_cm",
+        "pipe_bend_radius_cm",
+        "pipe_bend_radius_2d_cm",
+        "wire_max_cm",
+    }
     assert all(reason for reason in ungoverned.values())
+    # The lift step is still read out of the binary; what it is not is a bound
+    # the game applies. The multiple this project keeps to is its own rule.
+    assert "mStepHeight" in ungoverned["lift_step_cm"]
+    assert "never quantises" in ungoverned["lift_step_cm"]
+    assert load_registry().limits_sources["lift_step_cm"] == "binary"
 
 
 def test_nothing_in_the_registry_comes_from_the_blueprint_corpus():

@@ -206,9 +206,11 @@ functions, their RVAs and the instructions behind it. Every limit also gets
 for the hologram rule that governs it, with the effect copied from that rule, or
 `null` and an `ungoverned` sentence saying why no rule does. **Only the effect
 `refuse` turns a placement away**: `clamp` and `snap` move the hologram instead,
-and `none` says nothing was seen enforcing the number at all, so a validator that
-treats any of the three as a bound refuses builds the game accepts. The merge
-refuses to write when a limit's copied effect is not the one its rule states.
+so a validator that treats either as a bound refuses builds the game accepts. A
+rule whose effect is `none` governs nothing and is never named here — the limit
+it was read beside is `ungoverned`, with the rule's id in the reason (this is
+`lift_step_cm` and `lift.step`). The merge refuses to write when a limit's
+copied effect is not the one its rule states.
 
 It refuses to write when the sources contradict each other: a header against the
 binary, a port whose `direction_source` is not one of the four game sources, an

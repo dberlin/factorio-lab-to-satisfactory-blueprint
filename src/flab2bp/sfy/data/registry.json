@@ -34942,10 +34942,8 @@
     }
    },
    "lift_step_cm": {
-    "governed_by": {
-     "effect": "none",
-     "rule": "lift.step"
-    }
+    "governed_by": null,
+    "ungoverned": "AFGConveyorLiftHologram compares mStepHeight (lift.step evidence) but never quantises a height to it; the multiple is this project's own stricter rule (spec section 10)."
    },
    "pipe_bend_radius_2d_cm": {
     "governed_by": null,
@@ -34972,7 +34970,7 @@
     "ungoverned": "no rule was extracted for it. AFGBuildableWire::mMaxLength is a buildable's property rather than a hologram member, and AFGWireHologram was not disassembled; what refuses an over-long wire is still unread."
    }
   },
-  "merged_at_commit": "5f00c828472d67afeecb5488dc44e05b9e56afe6",
+  "merged_at_commit": "58279e5a810382b7fca6735232fa970dcf06f14f",
   "native": {
    "dll": "FactoryGameEGS-FactoryGame-Win64-Shipping.dll",
    "dll_sha256": "65fc5a6bde6d44782da387976b144a41a6b94e4fa78ec6e1bc49c3dad2d47513",

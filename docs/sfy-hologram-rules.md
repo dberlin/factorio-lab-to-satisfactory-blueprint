@@ -229,8 +229,15 @@ refusal — is not.
 `{"rule": <id>, "effect": <effect>}`, and the merge refuses to write a copy that
 disagrees with the rule. That replaced an `enforced_by` field which claimed the
 grid, the rotation step, the lift heights and the lift step were all *enforced*,
-when the rules behind them clamp, snap, and — for `lift.step` — do nothing that
-has been found.
+when the rules behind them clamp and snap.
+
+`lift.step` governs nothing: a rule whose effect is `none` does nothing to the
+number, so `lift_step_cm` is *ungoverned* in `registry.json` and carries the
+reason "AFGConveyorLiftHologram compares mStepHeight (lift.step evidence) but
+never quantises a height to it; the multiple is this project's own stricter rule
+(spec section 10)". Its source stays `binary` — the constructor value is real
+game data; what is not game data is the claim that a lift's height has to be a
+multiple of it.
 
 ## What was extracted, and what was not
 
