@@ -69,13 +69,23 @@ cd $S && python -m compileall -q $S/src && taskset -c 96-127 env PYTHONHASHSEED=
 
 Router gate (every routing-touching task, alongside the corpus gate):
 ```
-taskset -c 96-127 env PYTHONHASHSEED=0 ./.venv/bin/python3.14 scripts/route_bench.py
+# At BASE, once per task: take a capture. `route_bench.py` with no arguments
+# exits immediately with `--cases or --capture required`; there is no committed
+# capture that unpickles on this tree (Tasks 7 and 8 both found this).
+#   (the capture is written to `--cases` if given, else to
+#   /tmp/route-cases-<capture>-<policy>.pkl)
+CASES=<scratchpad>/route-cases-base.pkl
+taskset -c 96-127 env PYTHONHASHSEED=0 ./.venv/bin/python3.14 scripts/route_bench.py \
+    --capture quantum-chip --budget 8 --every 1 --cap 128 --cases $CASES
+# At HEAD: replay that capture and read the MATCH line.
+taskset -c 96-127 env PYTHONHASHSEED=0 ./.venv/bin/python3.14 scripts/route_bench.py \
+    --cases $CASES --rounds 9 --check
 ```
 Record the `MATCH` line. It replays a committed A\* capture and is the byte-identity witness for the search itself. A `MATCH` is **router-only evidence** and does not speak for sequence-pair or ALNS; the corpus compare is what covers those. A `DIFFER` fails the task outright — there is no run-to-run noise allowance on the replay.
 
 **Control:** `.local-evidence/2026-09-13-session/audit-master-control-9758411d.jsonl` — 180 rows, **167 CLEAN / 13 REFUSED**, audit exit 1, no `TEARDOWN FAULT`. Its notes are in `audit-master-control-9758411d.md`. Do not take a new control and do not use Plan A's `audit-master-control-20260913.jsonl`.
 
-Pass: 167 CLEAN / 13 REFUSED, zero status changes versus the control, and area changes only on the known run-to-run movers the notes list: super-magnetic-ring (all strategies), electromagnetic-matrix (freeform), casimir-crystal (freeform, best, hierarchical), processor-1 best, information-matrix (0 freeform and hierarchical, 1 best, 2 sequence-pair and hierarchical), plastic-1 (best and freeform), quantum-chip-1 best, quantum-chip-2 hierarchical, universe-matrix-0 freeform and best. A status change on any cell, or an area change outside that list, fails the task — and **before calling it a regression, run a paired same-commit second round**, which is what the notes require; an area mover that is not on that list needs a paired second round at the same commit before it may be reported as a regression or accepted as noise. The audit exits 1 on any refusal; that is expected, and the 13 are the fixed set of universe-matrix cells the notes name. A `TEARDOWN FAULT` line after the rows is a harness cleanup fault, not a result.
+Pass: 167 CLEAN / 13 REFUSED, zero status changes versus the control, and area changes only on the known run-to-run movers the notes list, copied verbatim from `audit-master-control-9758411d.md`'s "Known run-to-run movers (union of every same-code pair this session)": super-magnetic-ring (all), electromagnetic-matrix (freeform, -1 freeform, -2 best, -1 best), information-matrix-1 hierarchical, casimir-crystal (freeform, best, hierarchical), processor-0 sequence-pair, processor-1 best and freeform, processor-2 best and freeform, quantum-chip-1 sequence-pair, information-matrix (0 freeform/hierarchical, 1 best, 2 sequence-pair and hierarchical), plastic-1 (best and freeform, 820/900/936), quantum-chip-1 best (about 14 % swing, 3478..4248) and quantum-chip-2 hierarchical, universe-matrix-0 freeform/best (36,498/36,729). A status change on any cell, or an area change outside that list, fails the task — and **before calling it a regression, run a paired same-commit second round**, which is what the notes require; an area mover that is not on that list needs a paired second round at the same commit before it may be reported as a regression or accepted as noise. The audit exits 1 on any refusal; that is expected, and the 13 are the fixed set of universe-matrix cells the notes name. A `TEARDOWN FAULT` line after the rows is a harness cleanup fault, not a result.
 
 ---
 
