@@ -309,6 +309,23 @@ def _belt_cost(length: float) -> list[tuple[str, int]]:
     return [(c.item.name, c.amount) for c in bp.header.cost]
 
 
+def test_the_cost_round_is_taken_at_the_width_the_game_takes_it() -> None:
+    """``FMath::RoundToInt`` is ``divss``/``addss``/``cvtss2si``: single, throughout.
+
+    A ratio that is not a tie as a double can be one as a float, and then the
+    game rounds up where a double-width copy of the same arithmetic rounds
+    down. Every step is taken at float width for that reason.
+    """
+    from flab2bp.sfy.templates import _round_to_int
+
+    # 2.4999999999 is not 2.5 as a double; as a float it is exactly 2.5.
+    assert _round_to_int(2.4999999999) == 3
+    assert (round(2.4999999999 + 2.4999999999 + 0.5) >> 1) == 2  # the double answer
+    # The half goes towards +infinity: not away from zero, not to even.
+    assert [_round_to_int(v) for v in (0.5, 1.5, 2.5, 3.5)] == [1, 2, 3, 4]
+    assert [_round_to_int(v) for v in (-0.5, -1.5, -2.5, -3.5)] == [0, -1, -2, -3]
+
+
 def test_a_belt_is_costed_by_the_cost_segment_the_registry_read_from_the_game() -> None:
     """``AFGBuildableConveyorBelt::GetDismantleRefundReturnsMultiplier``'s segment.
 

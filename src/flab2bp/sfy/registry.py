@@ -286,9 +286,12 @@ class Limits:
     """Spline, lift and hologram limits the placer must respect.
 
     Only the four values the public headers state outright have defaults; every
-    other field stays ``None`` until the merge fills it from the game assets or
-    from the measured envelope. :attr:`Registry.limits_sources` says which of
-    the three each field in a loaded registry came from.
+    other field stays ``None`` until the merge fills it from a game source --
+    the cooked assets, the shipped binary, a formula read out of that binary,
+    Docs.json, a header, or this project's own stated constant.
+    :attr:`Registry.limits_sources` says which of those six
+    (:data:`LIMIT_SOURCES`) each field in a loaded registry came from. There is
+    no "measured envelope": nothing here is measured off a blueprint corpus.
     """
 
     belt_max_spline_cm: float = BELT_MAX_SPLINE_CM

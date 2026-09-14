@@ -26,6 +26,7 @@ other format, so a tag built wrongly fails loudly at write time.
 from __future__ import annotations
 
 import math
+from array import array
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -56,6 +57,9 @@ __all__ = [
     "ITEM_DESCRIPTOR_CLASS",
     "LEVEL",
     "SPLINE_POINT_FIELD_TAGS",
+    "STRAIGHT_TANGENT_HALF",
+    "STRAIGHT_TANGENT_MAX_CM",
+    "STRAIGHT_TANGENT_MIN_CM",
     "TEMPLATE_MIN_SAVE_VERSION",
     "Template",
     "TemplateError",
@@ -221,10 +225,19 @@ def connect(
 
 
 STRAIGHT_TANGENT_HALF = 0.5
+"""The fraction of a straight run's length its inner tangents start at, before
+the clamp: ``0xafcf0d`` ``mulsd xmm0, 0.5`` in
+``FSplineUtils::BuildStraightSpline2D`` (and ``0xafd2a5`` in its 3D twin)."""
+
 STRAIGHT_TANGENT_MIN_CM = 50.0
+"""The floor that half-length is clamped up to, in centimetres: ``0xafcf1d``
+``maxsd xmm0, 50.0`` (``0xafd2b5`` in the 3D builder). A 60 cm run gets 50 cm
+tangents, not 30."""
+
 STRAIGHT_TANGENT_MAX_CM = 600.0
 """How long the inner tangents of a straight conveyor run are: half its length,
-clamped between 50 and 600 centimetres.
+clamped between 50 and 600 centimetres. This constant is the ceiling --
+``0xafcf15`` ``minsd xmm0, 600.0`` -- and the docstring for all three.
 
 Read out of the game, not off a blueprint. ``FSplineUtils::BuildStraightSpline2D``
 (``0xafcf0d`` ``mulsd 0.5``, ``0xafcf15`` ``minsd 600.0``, ``0xafcf1d``
@@ -447,16 +460,36 @@ def _recipe_ref(h: ObjectHeader, d: ObjectData) -> ObjectRef:
     return value.ref
 
 
+def _f32(value: float) -> float:
+    """``value`` as the nearest IEEE-754 single, which is the width the game works in.
+
+    Every float in the ``belt.cost`` arithmetic is a 32-bit one -- ``divss``,
+    ``addss``, ``cvtss2si`` -- so a sum Python carries at 64 bits can sit on the
+    far side of a tie from the number the game actually rounds. ``array("f")``
+    is the round trip; no dependency and no packing format to get wrong.
+    """
+    return array("f", (value,))[0]
+
+
 def _round_to_int(value: float) -> int:
     """``FMath::RoundToInt``, as the shipped binary computes it.
 
     UE's SSE form, quoted in the ``belt.cost`` rule at ``0x4a6bc2``..``0x4a6bd2``:
     double the value, add a half, convert with the round-to-nearest-even the
-    hardware is in, and shift the result right by one. That is a half rounded
-    *away from zero*, not the half-to-even Python's own ``round`` does, which is
-    why this is spelled out rather than called.
+    hardware is in, and shift the result right by one.
+
+    Halving an even result of that is a half rounded **towards positive
+    infinity**, not away from zero and not the half-to-even Python's own
+    ``round`` does: 1.5 goes to 2 and -1.5 goes to -1, because ``-1.5`` doubled
+    plus a half is ``-2.5``, which the hardware's round-to-nearest-even makes
+    ``-2``, and ``-2 >> 1`` is ``-1``. (Every length this module costs is
+    positive, so the negative half only matters to whoever reads this next.)
+
+    Each step is taken at ``float`` width for the same reason the game's is:
+    a tie in single precision is not always a tie in double.
     """
-    return round(value + value + 0.5) >> 1
+    single = _f32(value)
+    return round(_f32(_f32(single + single) + 0.5)) >> 1
 
 
 def _segments(header: ObjectHeader, d: ObjectData, registry: Registry) -> int:
@@ -474,6 +507,9 @@ def _segments(header: ObjectHeader, d: ObjectData, registry: Registry) -> int:
     game divides ``mLength``, which a belt takes from its spline component's
     ``GetSplineLength``. The two agree on the straight runs this module authors
     and diverge on a curve, where the arc is longer than its chords.
+
+    The divide is taken at ``float`` width because ``0x4a6bb9`` is a ``divss``:
+    see :func:`_f32`.
     """
     buildable = registry.buildables.get(header.class_name)
     segment = None if buildable is None else buildable.length_per_cost_cm
@@ -492,7 +528,7 @@ def _segments(header: ObjectHeader, d: ObjectData, registry: Registry) -> int:
         if previous is not None:
             length += math.dist(previous, current)
         previous = current
-    return max(1, _round_to_int(length / segment))
+    return max(1, _round_to_int(_f32(_f32(length) / _f32(segment))))
 
 
 def _set_property(d: ObjectData, name: str, value: Value, tag: Tag | None = None) -> ObjectData:

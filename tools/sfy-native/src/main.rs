@@ -3052,8 +3052,19 @@ mod tests {
 
     /// `UNWIND_INFO`: version 1, `count` codes, optionally chained.
     fn unwind_info(chained: bool, count: u8, parent: Option<RuntimeFunction>) -> Vec<u8> {
+        unwind_info_version(1, chained, count, parent)
+    }
+
+    /// The same, with the version field spelled out -- 1 and 2 are the two
+    /// MSVC emits and the only two the tool reads.
+    fn unwind_info_version(
+        version: u8,
+        chained: bool,
+        count: u8,
+        parent: Option<RuntimeFunction>,
+    ) -> Vec<u8> {
         let flags = if chained { UNW_FLAG_CHAININFO } else { 0 };
-        let mut out = vec![1 | (flags << 3), 0, count, 0];
+        let mut out = vec![version | (flags << 3), 0, count, 0];
         // `count` 2-byte codes, padded to an even count.
         out.resize(4 + 2 * (count as usize + count as usize % 2), 0);
         if let Some(parent) = parent {
@@ -3127,6 +3138,100 @@ mod tests {
         assert_eq!(source, "pdata");
         assert_eq!(chunks.len(), 1);
         assert_eq!((chunks[0].rva, chunks[0].bytes.len()), (0x1040, 4));
+    }
+
+    /// `n` entries, each chaining to the next; the last one is a primary.
+    ///
+    /// Entry `i` covers `[0x1000 + 8i, 0x1008 + 8i)` and its `UNWIND_INFO` sits
+    /// at `0x2000 + 0x10 * i`, which is room enough for a header and a parent.
+    fn chain_of(n: usize, cyclic: bool) -> (Pe, Vec<RuntimeFunction>) {
+        let entry = |i: usize| RuntimeFunction {
+            begin: 0x1000 + 8 * i as u32,
+            end: 0x1008 + 8 * i as u32,
+            unwind: 0x2000 + 0x10 * i as u32,
+        };
+        let entries: Vec<RuntimeFunction> = (0..n).map(entry).collect();
+        let mut unwind = vec![0u8; 0x10 * n];
+        for i in 0..n {
+            // The last link chains back to the first when `cyclic`, and is a
+            // primary otherwise.
+            let parent = match (i + 1 < n, cyclic) {
+                (true, _) => Some(entries[i + 1]),
+                (false, true) => Some(entries[0]),
+                (false, false) => None,
+            };
+            let bytes = unwind_info(parent.is_some(), 0, parent);
+            unwind[0x10 * i..0x10 * i + bytes.len()].copy_from_slice(&bytes);
+        }
+        (fake_module(&vec![0x90u8; 0x1000], &unwind), entries)
+    }
+
+    #[test]
+    fn an_unwind_chain_that_loops_or_runs_long_stops_instead_of_spinning() {
+        // A cycle: two entries, each naming the other as its parent. Without
+        // the seen-set this never returns.
+        // Each walks the other and comes back to where it started, which is
+        // the conservative answer: its own begin, and no chunk stolen.
+        let (pe, entries) = chain_of(2, true);
+        assert_eq!(pe.primary_of(entries[0]), entries[0].begin);
+        assert_eq!(pe.primary_of(entries[1]), entries[1].begin);
+
+        // A chain longer than MAX_CHAIN_DEPTH stops at that many hops rather
+        // than walking a `.pdata` a hostile or corrupt module made arbitrarily
+        // deep. The answer is wrong -- it is not the root -- but it is an
+        // address in the module and the run finishes.
+        let depth = MAX_CHAIN_DEPTH + 4;
+        let (pe, entries) = chain_of(depth, false);
+        assert_eq!(pe.primary_of(entries[0]), entries[MAX_CHAIN_DEPTH].begin);
+        // Everything within reach of the end still resolves to the real root.
+        assert_eq!(pe.primary_of(entries[depth - 1]), entries[depth - 1].begin);
+        assert_eq!(pe.primary_of(entries[4]), entries[depth - 1].begin);
+
+        // And the grouping that comes out of it terminates too: the deep chain
+        // does not put every chunk under one primary.
+        let mut pe = pe;
+        pe.index_pdata(&entries);
+        assert!(pe.chunks.contains_key(&entries[MAX_CHAIN_DEPTH].begin));
+        assert!(pe.chunks.contains_key(&entries[depth - 1].begin));
+    }
+
+    #[test]
+    fn an_unwind_info_version_the_tool_does_not_know_chains_to_nothing() {
+        let parent = RuntimeFunction {
+            begin: 0x1000,
+            end: 0x1008,
+            unwind: 0x2000,
+        };
+        let child = RuntimeFunction {
+            begin: 0x1010,
+            end: 0x1018,
+            unwind: 0x2010,
+        };
+        let build = |version: u8| {
+            let mut unwind = vec![0u8; 0x40];
+            let head = unwind_info(false, 0, None);
+            unwind[..head.len()].copy_from_slice(&head);
+            let chained = unwind_info_version(version, true, 0, Some(parent));
+            unwind[0x10..0x10 + chained.len()].copy_from_slice(&chained);
+            fake_module(&[0x90u8; 0x40], &unwind)
+        };
+
+        // The two MSVC emits. Version 2 is the epilogue-annotated variant and
+        // has the same header layout, so refusing it would silently drop chunks.
+        for version in [1u8, 2] {
+            let pe = build(version);
+            assert_eq!(pe.chained_parent(child.unwind), Some(parent), "v{version}");
+        }
+        // Anything else is an UNWIND_INFO this tool has not read the layout of,
+        // so the entry is its own primary rather than a parse of unknown bytes.
+        for version in [0u8, 3, 4, 7] {
+            let pe = build(version);
+            assert_eq!(pe.chained_parent(child.unwind), None, "v{version}");
+            let mut pe = pe;
+            pe.index_pdata(&[parent, child]);
+            assert_eq!(pe.chunks.get(&child.begin), Some(&vec![(0x1010, 0x1018)]));
+            assert_eq!(pe.chunks.get(&parent.begin), Some(&vec![(0x1000, 0x1008)]));
+        }
     }
 
     #[test]
