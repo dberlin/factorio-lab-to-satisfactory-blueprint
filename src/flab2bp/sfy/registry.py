@@ -26,7 +26,6 @@ __all__ = [
     "PIPE_MAX_SPLINE_CM",
     "PIPE_MIN_BEND_RADIUS_CM",
     "PORT_DIRECTION_SOURCES",
-    "SPREAD_KEYS",
     "Buildable",
     "ClearanceBox",
     "Limits",
@@ -55,12 +54,13 @@ PIPE_MIN_BEND_RADIUS_CM = 75.0
 # ``header``          an in-class initialiser in ``CommunityResources/Headers.zip``
 # ``constant``        not a game value at all, but a constant this project chose;
 #                     ``provenance`` carries the reason
-# ``measured``        the envelope ``scripts/sfy_measure_limits.py`` takes from the
-#                     blueprint corpus, for a value no game data states anywhere
 #
-# ``measured`` is the only one of these that is not a fact about the game, and
-# :attr:`Registry.limits_measured` carries the spread behind every such value so
-# that it reads as the envelope it is rather than as a constraint.
+# There is deliberately no source for "what a blueprint corpus contains". A
+# community blueprint can carry clipped geometry, a hacked save or an older game
+# version, so what one holds is not a fact about the game: it is not a source,
+# not a cross-check and not evidence, here or anywhere else in the registry.
+# What the game *refuses* is in :mod:`flab2bp.sfy.rules`, and
+# ``provenance["limits"][key]["enforced_by"]`` names the rule for each limit.
 LIMIT_SOURCES = (
     "assets",
     "binary",
@@ -68,7 +68,6 @@ LIMIT_SOURCES = (
     "constant",
     "docs",
     "header",
-    "measured",
 )
 
 # Where a port's direction came from. A cooked asset omits ``mDirection``
@@ -78,14 +77,9 @@ LIMIT_SOURCES = (
 #
 # ``asset``   the asset spells the direction out
 # ``header``  a conveyor end, from ``Buildables/FGBuildableConveyorBase.h:380``
-# ``corpus``  the fixtures wire it to a belt end whose direction the header gives
 # ``name``    the component's own name, a convention that agrees with every port
 #             in the content that does spell its direction
-PORT_DIRECTION_SOURCES = ("asset", "header", "corpus", "name")
-
-# What a ``limits_measured`` entry has to carry: the whole spread of the corpus
-# behind the value, not just the extreme that became the limit.
-SPREAD_KEYS = frozenset({"min", "p05", "p50", "p95", "max", "n", "fixture", "object"})
+PORT_DIRECTION_SOURCES = ("asset", "header", "name")
 
 _HEADER_DEFAULTED = (
     "belt_max_spline_cm",
@@ -221,14 +215,13 @@ class Limits:
 
     belt_max_spline_cm: float = BELT_MAX_SPLINE_CM
     # AFGConveyorBeltHologram::mBendRadius, read from the shipped DLL (source
-    # ``binary``): the radius the hologram lays its own arc on when the game
-    # auto-routes a belt. **It is not a proven minimum.** A spline the player
-    # guides through pole positions may bend tighter, and the current-family
-    # corpus does -- 129.84 cm on a belt in logistics-24.sbp, against this
-    # field's 199.0, with 28 of 370 curved belts under 190. A placer may use it
-    # as the radius to lay its own turns on; it may not use it as the tightest
-    # turn the game will accept. ``Registry.provenance["limits"]`` repeats this
-    # beside the number, and ``Registry.limits_measured`` carries the spread.
+    # ``binary``): the radius the hologram lays its own arcs on when it
+    # auto-routes a belt. **It is not the tightest turn the game accepts.**
+    # ``AFGConveyorBeltHologram::ValidateCurvature`` refuses a horizontal radius
+    # of curvature below ``mBendRadius * 1.5 - 15`` -- 283.5 cm at this field's
+    # 199.0 -- and only checks it at all in the curve build mode. Use this as
+    # the radius to lay turns on and the ``belt.curvature`` rule in
+    # :mod:`flab2bp.sfy.rules` as the bound.
     belt_bend_radius_cm: float | None = None
     belt_max_incline_deg: float | None = None
     lift_step_cm: float | None = None
@@ -264,13 +257,6 @@ class Registry:
     recipe_paths: dict[str, str]
     limits: Limits
     limits_sources: dict[str, str]  # Limits field -> one of LIMIT_SOURCES
-    # The spread of the corpus beside a limit: ``min``, ``p05``, ``p50``,
-    # ``p95``, ``max``, ``n`` and the witness fixture and object. Every entry
-    # says ``"role": "cross-check"``, because that is all it is -- no limit in
-    # the shipped registry is sourced from here. A measured value is an envelope
-    # -- the game accepted every number in that spread -- never a constraint the
-    # game enforces.
-    limits_measured: dict[str, Any]
 
     @classmethod
     def from_docs_only(cls, data: Mapping[str, Any]) -> Registry:
@@ -291,7 +277,6 @@ class Registry:
             recipe_paths={},
             limits=Limits(),
             limits_sources=dict.fromkeys(_HEADER_DEFAULTED, "header"),
-            limits_measured={},
         )
 
 
@@ -436,24 +421,23 @@ def _limits_sources(raw: Mapping[str, Any], limits: Limits) -> dict[str, str]:
     return {str(k): str(v) for k, v in raw.items()}
 
 
-def _limits_measured(raw: Mapping[str, Any], sources: Mapping[str, str]) -> dict[str, Any]:
-    """Check the corpus spreads: every one names a limit, every measured limit has one.
+def _enforcement(provenance: Mapping[str, Any], limits: Limits) -> None:
+    """Check that every limit says what turns it away, or why nothing does.
 
-    A key here is corroboration, not a source: most of these sit beside a value
-    the game states, so that the two can be compared. A limit whose *value* came
-    from the corpus must have one, or nothing says how wide the envelope behind
-    it was.
+    A number with no ``enforced_by`` is a value somebody found in the game's
+    data, not a limit. ``scripts/sfy_registry.py`` fills these from its
+    ``ENFORCED_BY`` and ``NOT_ENFORCED`` tables and holds the rule ids against
+    ``data/hologram_rules.json``; this is the same claim, checked on load.
     """
-    unknown = sorted(set(raw) - {f.name for f in fields(Limits)})
-    if unknown:
-        raise RegistryError(f"registry limits_measured names unknown limits: {unknown}")
-    missing = sorted({k for k, v in sources.items() if v == "measured"} - set(raw))
-    if missing:
-        raise RegistryError(f"registry limits_measured has no spread for: {missing}")
-    incomplete = sorted(k for k, v in raw.items() if not set(v) >= SPREAD_KEYS)
-    if incomplete:
-        raise RegistryError(f"registry limits_measured entries are missing a spread: {incomplete}")
-    return {str(k): dict(v) for k, v in raw.items()}
+    entries = provenance.get("limits", {})
+    silent = sorted(
+        f.name
+        for f in fields(Limits)
+        if not (entry := entries.get(f.name, {})).get("enforced_by")
+        and not entry.get("reason")
+    )
+    if silent:
+        raise RegistryError(f"registry limits do not say what enforces them: {silent}")
 
 
 def load_registry(path: Path | None = None) -> Registry:
@@ -471,8 +455,10 @@ def load_registry(path: Path | None = None) -> Registry:
         raise RegistryError(f"registry at {path} is not JSON: {exc}") from exc
     limits = _limits(_require(data, "limits"))
     sources = _limits_sources(_require(data, "limits_sources"), limits)
+    provenance = dict(_require(data, "provenance"))
+    _enforcement(provenance, limits)
     return Registry(
-        provenance=dict(_require(data, "provenance")),
+        provenance=provenance,
         buildables=_buildables(_require(data, "buildables")),
         recipes=_recipes(_require(data, "recipes")),
         descriptors=dict(_require(data, "descriptors")),
@@ -481,5 +467,4 @@ def load_registry(path: Path | None = None) -> Registry:
         recipe_paths=_paths(_require(data, "recipe_paths"), "recipe_paths"),
         limits=limits,
         limits_sources=sources,
-        limits_measured=_limits_measured(_require(data, "limits_measured"), sources),
     )

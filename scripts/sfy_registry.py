@@ -7,15 +7,20 @@ Blueprints override, and the full asset path of every class the game's Docs.json
 states one for -- which is how a blueprint names an item descriptor or a recipe.
 ``native.json`` (``tools/sfy-native``) is what the shipped
 DLL's machine code states for the hologram limits no asset carries.
-``measured.json`` (``scripts/sfy_measure_limits.py``) is what the blueprint
-corpus shows. This script joins the four and writes the registry that
-:func:`flab2bp.sfy.registry.load_registry` reads.
+``hologram_rules.json`` (``scripts/sfy_native_rules.py``) is what the build
+gun's hologram does with those numbers. This script joins the four and writes
+the registry that :func:`flab2bp.sfy.registry.load_registry` reads.
 
-**Every limit in the registry comes from game data.** The corpus fills none of
-them: it corroborates them, through ``registry.json``'s ``limits_measured``,
-and it resolves port directions the cooked asset leaves to a component
-archetype. A measured number is an envelope -- what the game was seen to accept
--- and an envelope must never become a constraint.
+**Every limit in the registry comes from game data, and says what turns it into
+a refusal.** ``provenance.limits[key].enforced_by`` names the hologram rule that
+enforces it, or is ``null`` with the reason none does.
+
+**Nothing here comes from a blueprint corpus.** A community blueprint can carry
+clipped geometry, a hacked save or an older game version, so what one contains
+is not a fact about the game: it is not a source, not a cross-check and not
+evidence, for a limit or for anything else in the registry.
+``scripts/sfy_measure_limits.py`` still measures the fixtures, and this script
+does not read what it writes.
 
 Run it after re-running the extractors for a new game build::
 
@@ -23,8 +28,8 @@ Run it after re-running the extractors for a new game build::
 
 It prints where each limit came from, and any it could not fill at all. It
 refuses to write a registry when the sources contradict each other: a header
-against the binary, or an asset's stated port direction against the corpus or
-the naming convention.
+against the binary, an asset's stated port direction against the naming
+convention, or a limit naming a hologram rule that does not exist.
 """
 
 from __future__ import annotations
@@ -35,7 +40,8 @@ from dataclasses import fields
 from pathlib import Path
 from typing import Any
 
-from flab2bp.sfy.registry import Limits
+from flab2bp.sfy.registry import PORT_DIRECTION_SOURCES, Limits
+from flab2bp.sfy.rules import load_rules
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "src" / "flab2bp" / "sfy" / "data"
@@ -110,18 +116,56 @@ LIFT_HEIGHT_FORMULAS: dict[str, tuple[str, float, float]] = {
 LIFT_CLASS_PREFIX = "Build_ConveyorLift"
 
 # Binary values that are not what their name suggests, with the caveat recorded
-# in ``registry.json``'s provenance next to the corpus number that establishes
-# it. ``mBendRadius`` is the radius the hologram lays its own arc on when the
-# game auto-routes a belt; it is *not* a floor the game enforces on a spline the
-# player guided through pole positions, and the corpus proves it by containing
-# belts that bend tighter.
-BINARY_NOTES: dict[str, tuple[str, str]] = {
+# in ``registry.json``'s provenance next to the number. ``mBendRadius`` is two
+# things at once, and neither of them is "the tightest turn the game accepts":
+# ``AFGConveyorBeltHologram::AutoRouteSpline`` lays its arcs on it (0xa6412d
+# feeds it to ``FSplineUtils::Build90DegreeSpline2D``), and ``ValidateCurvature``
+# turns it into the actual floor, ``mBendRadius * 1.5 - 15``. See the
+# ``belt.curvature`` rule in ``data/hologram_rules.json``.
+BINARY_NOTES: dict[str, str] = {
     "belt_bend_radius_cm": (
-        "AFGConveyorBeltHologram::mBendRadius -- the hologram's default curve "
-        "radius when the game auto-routes a belt. It is NOT a proven minimum: "
-        "a player-guided spline may bend tighter, and the current-family corpus "
-        "does.",
-        "belt_bend_radius_cm",
+        "AFGConveyorBeltHologram::mBendRadius -- the radius the hologram lays "
+        "its own arcs on when it auto-routes a belt. It is NOT the legality "
+        "floor: ValidateCurvature rejects a horizontal radius below "
+        "mBendRadius * 1.5 - 15, which is 283.5 cm here, and it only runs that "
+        "check in the curve build mode. Take the bound from the belt.curvature "
+        "rule, not from this number."
+    ),
+}
+
+# Which hologram rule enforces each limit, or ``None`` with the reason nothing
+# does. Every key of :class:`Limits` is here, and ``_check_rules`` holds the
+# named ids against ``data/hologram_rules.json``, so a limit whose rule was
+# renamed or dropped fails the merge rather than shipping an empty claim.
+ENFORCED_BY: dict[str, str] = {
+    "belt_max_spline_cm": "belt.max_length",
+    "belt_bend_radius_cm": "belt.curvature",
+    "belt_max_incline_deg": "belt.incline",
+    "lift_step_cm": "lift.step",
+    "lift_min_cm": "lift.height_range",
+    "lift_max_cm": "lift.height_range",
+    "lift_min_vertical_cm": "lift.height_range",
+    "pipe_max_spline_cm": "pipe.max_length",
+    "pipe_min_bend_radius_cm": "pipe.curvature",
+    "hologram_grid_cm": "buildable.grid_snap",
+    "hologram_rotation_step_deg": "buildable.rotation_step",
+}
+
+NOT_ENFORCED: dict[str, str] = {
+    "pipe_bend_radius_cm": (
+        "AFGPipelineHologram::mBendRadius is the radius AutoRouteSpline builds "
+        "its bends on, not a bound anything compares against. The bound on a "
+        "pipeline's curvature is mMinBendRadius, under the pipe.curvature rule."
+    ),
+    "pipe_bend_radius_2d_cm": (
+        "the same, for Auto2DRouteSpline's conveyor-like mode (0xaafef0 reads "
+        "mBendRadius2D): a construction radius, not a limit."
+    ),
+    "wire_max_cm": (
+        "no rule was extracted for it. AFGBuildableWire::mMaxLength is a "
+        "buildable's property rather than a hologram member, and "
+        "AFGWireHologram was not disassembled; what refuses an over-long wire "
+        "is still unread."
     ),
 }
 
@@ -242,21 +286,48 @@ def _mesh_height(docs: dict[str, Any]) -> float:
     return float(distinct.pop())
 
 
+def _check_rules() -> None:
+    """Refuse to merge if :data:`ENFORCED_BY` names a rule that is not extracted.
+
+    ``enforced_by`` is a claim that something in the game turns the number away,
+    so it has to point at a rule that exists. A game update that renames a
+    validator shows up here rather than as a registry that says a limit is
+    enforced by a function nobody can find.
+    """
+    rules = load_rules()
+    unknown = sorted({rule_id for rule_id in ENFORCED_BY.values() if rule_id not in rules})
+    if unknown:
+        raise SystemExit(
+            f"registry limits name hologram rules that do not exist: {unknown}; "
+            "re-run scripts/sfy_native_rules.py"
+        )
+    both = sorted(set(ENFORCED_BY) & set(NOT_ENFORCED))
+    if both:
+        raise SystemExit(f"limits are both enforced and not enforced: {both}")
+    known = {f.name for f in fields(Limits)}
+    unplaced = sorted(known - set(ENFORCED_BY) - set(NOT_ENFORCED))
+    if unplaced:
+        raise SystemExit(f"limits say nothing about what enforces them: {unplaced}")
+
+
 def _limits(
     docs: dict[str, Any],
     assets: dict[str, Any],
     native: dict[str, Any],
-    measured: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, str], dict[str, Any]]:
-    """The merged limits, where each came from, and the provenance of the odd ones.
+    """The merged limits, where each came from, and what the game does with each.
 
     The order is the order of authority: what a cooked asset says, then what the
     shipped binary was compiled with, then a formula the binary applies to a
     Docs.json input, then Docs.json itself, then a header, and last this
-    project's own constants. Nothing is filled from the blueprint corpus any
-    more -- every limit has a game-data source, and
-    ``scripts/sfy_measure_limits.py``'s numbers are corroboration beside them.
+    project's own constants. A blueprint corpus is not among them and is not
+    evidence for any of them.
+
+    Every limit also says which hologram rule turns it into a refusal -- or that
+    none does, and why. That is what makes a number in here a limit rather than
+    a value somebody found in the game's data.
     """
+    _check_rules()
     holograms = assets["holograms"]
     limits: dict[str, Any] = dict.fromkeys(f.name for f in fields(Limits))
     sources: dict[str, str] = {}
@@ -270,17 +341,8 @@ def _limits(
         "assets",
     )
     _fill(limits, sources, from_binary, "binary")
-    for key, (note, measured_key) in BINARY_NOTES.items():
-        spread = measured["limits"][measured_key]
-        provenance[key] = {
-            "note": note,
-            "is_a_proven_minimum": False,
-            "corpus_min": spread["min"],
-            "corpus_min_fixture": spread["fixture"],
-            "corpus_min_object": spread["object"],
-            "corpus_min_detail": spread["detail"],
-            "corpus_n": spread["n"],
-        }
+    for key, note in BINARY_NOTES.items():
+        provenance[key] = {"note": note, "is_a_proven_minimum": False}
 
     mesh_height = _mesh_height(docs)
     derived = {}
@@ -308,6 +370,11 @@ def _limits(
     _fill(limits, sources, {k: v for k, (v, _) in PROJECT_CONSTANTS.items()}, "constant")
     for key, (_, reason) in PROJECT_CONSTANTS.items():
         provenance[key] = {"reason": reason}
+    for key in sorted(f.name for f in fields(Limits)):
+        entry = provenance.setdefault(key, {})
+        entry["enforced_by"] = ENFORCED_BY.get(key)
+        if key in NOT_ENFORCED:
+            entry["reason"] = NOT_ENFORCED[key]
     return limits, sources, provenance
 
 
@@ -351,12 +418,12 @@ def _by_name(port_name: str) -> str | None:
     return None
 
 
-def _check_directions(ports: dict[str, list[dict[str, Any]]], corpus: dict[str, Any]) -> None:
-    """Refuse the merge if the two fallbacks contradict the game's own data.
+def _check_directions(ports: dict[str, list[dict[str, Any]]]) -> None:
+    """Refuse the merge if the naming convention contradicts the game's own data.
 
-    The name convention and the corpus are only usable because everything that
-    *is* stated agrees with them. If a game update breaks either, that has to
-    stop the merge, not quietly reshape the registry.
+    The convention is only usable because every port that *does* state its
+    direction agrees with it. If a game update breaks that, it has to stop the
+    merge, not quietly reshape the registry.
     """
     wrong = []
     for class_name, entries in sorted(ports.items()):
@@ -367,33 +434,26 @@ def _check_directions(ports: dict[str, list[dict[str, Any]]], corpus: dict[str, 
             guess = _by_name(port["name"])
             if guess is not None and guess != stated:
                 wrong.append(f"{class_name}.{port['name']}: asset says {stated}, name says {guess}")
-            seen = corpus.get(f"{class_name}.{port['name']}")
-            # A port the asset calls "any" really does take either, so the one
-            # direction players happened to wire it is not a disagreement. The
-            # conveyor-lift splitter and merger are the four such ports.
-            if stated in ("any", "snap_only"):
-                continue
-            if seen is not None and not seen["conflict"] and seen["direction"] != stated:
-                wrong.append(
-                    f"{class_name}.{port['name']}: asset says {stated}, "
-                    f"the corpus wires it as {seen['direction']} on {seen['links']} links"
-                )
     if wrong:
         raise SystemExit("port directions contradict each other:\n  " + "\n  ".join(wrong))
 
 
-def _resolve_directions(
-    ports: dict[str, list[dict[str, Any]]], corpus: dict[str, Any]
-) -> dict[str, int]:
+def _resolve_directions(ports: dict[str, list[dict[str, Any]]]) -> dict[str, int]:
     """Give every port a direction and a ``direction_source``, in place.
 
     ``tools/sfy-extract`` reports ``"unknown"`` for a belt connection whose
     ``mDirection`` the cooked asset omits, because the value then comes from the
-    component's archetype -- a native constructor the pak does not carry. Three
-    things resolve those, strongest first: the conveyor header, the corpus, and
-    the naming convention. A port that none of them resolves stops the merge.
+    component's archetype -- a native constructor the pak does not carry. Two
+    things resolve those, strongest first: the conveyor header and the naming
+    convention. A port that neither resolves stops the merge.
+
+    What a blueprint corpus wires a port to used to be the middle of those
+    three. It is gone: a corpus says what somebody once built, which is not a
+    fact about the game, and it is not a source for any registry datum. It
+    resolved 24 ports, every one of which the naming convention resolves to the
+    same direction.
     """
-    counts = {source: 0 for source in ("asset", "header", "corpus", "name")}
+    counts = {source: 0 for source in PORT_DIRECTION_SOURCES}
     unresolved = []
     for class_name, entries in sorted(ports.items()):
         conveyor = class_name.startswith(("Build_ConveyorBelt", LIFT_CLASS_PREFIX))
@@ -402,8 +462,6 @@ def _resolve_directions(
                 source = "asset"
             elif conveyor and port["name"] in CONVEYOR_ENDS:
                 port["direction"], source = CONVEYOR_ENDS[port["name"]], "header"
-            elif (seen := corpus.get(f"{class_name}.{port['name']}")) and not seen["conflict"]:
-                port["direction"], source = seen["direction"], "corpus"
             elif (guess := _by_name(port["name"])) is not None:
                 port["direction"], source = guess, "name"
             else:
@@ -428,7 +486,7 @@ def _shipped_direction_counts(buildables: dict[str, Any]) -> dict[str, int]:
     registry nobody loads, so the provenance counts these, over the ports that
     are on a shipped buildable.
     """
-    counts = {source: 0 for source in ("asset", "header", "corpus", "name")}
+    counts = {source: 0 for source in PORT_DIRECTION_SOURCES}
     for entry in buildables.values():
         for port in entry["ports"]:
             counts[port["direction_source"]] += 1
@@ -444,11 +502,12 @@ def main(out: Path | None = None) -> int:
     docs = json.loads((DATA / "docs.json").read_text(encoding="utf-8"))
     assets = json.loads((DATA / "assets.json").read_text(encoding="utf-8"))
     native = json.loads((DATA / "native.json").read_text(encoding="utf-8"))
-    measured = json.loads((DATA / "measured.json").read_text(encoding="utf-8"))
+    rules_provenance = json.loads(
+        (DATA / "hologram_rules.json").read_text(encoding="utf-8")
+    )["provenance"]
 
-    corpus_directions = measured["port_directions"]
-    _check_directions(assets["ports"], corpus_directions)
-    extracted_counts = _resolve_directions(assets["ports"], corpus_directions)
+    _check_directions(assets["ports"])
+    extracted_counts = _resolve_directions(assets["ports"])
 
     for class_name, buildable in docs["buildables"].items():
         buildable["ports"] = assets["ports"].get(class_name, [])
@@ -465,13 +524,13 @@ def main(out: Path | None = None) -> int:
     sha = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True, check=True
     ).stdout.strip()
-    limits, sources, limit_provenance = _limits(docs, assets, native, measured)
+    limits, sources, limit_provenance = _limits(docs, assets, native)
     registry = {
         "provenance": {
             "docs": docs["provenance"],
             "assets": assets["provenance"],
             "native": native["provenance"],
-            "measured": measured["provenance"] | {"corpus": measured["corpus"]},
+            "hologram_rules": rules_provenance,
             "limits": limit_provenance,
             "port_directions": {
                 "header": CONVEYOR_END_HEADER,
@@ -492,7 +551,6 @@ def main(out: Path | None = None) -> int:
         "recipe_paths": recipe_paths,
         "limits": limits,
         "limits_sources": sources,
-        "limits_measured": measured["limits"],
     }
     target = DATA / "registry.json" if out is None else Path(out)
     target.write_text(json.dumps(registry, indent=1, sort_keys=True) + "\n", encoding="utf-8")

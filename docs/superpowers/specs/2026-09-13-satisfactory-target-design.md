@@ -275,15 +275,33 @@ most likely to pass the in-game gates early.
 
 ## 10. Validation (our gate, stricter than the game)
 
+**Legality is what the build gun's hologram allows, and a blueprint corpus is
+never evidence of it.** A `.sbp` can hold clipped geometry, a hacked save or a
+build from an older game version, so a number measured out of one says only that
+something once produced it — it is not a source, not a cross-check and not
+evidence, for a limit or for any other game datum. What the game refuses is read
+out of the validators the hologram itself runs, into
+`src/flab2bp/sfy/data/hologram_rules.json`, and every limit in `registry.json`
+names the rule that enforces it (`provenance.limits[key].enforced_by`) or says
+why nothing does. Each rule is `extracted`, `partial` or `unextractable`: a
+`partial` rule is a bound the validator must not assume it knows, and this gate
+may not invent one in its place. The first consequence is concrete —
+`mBendRadius` (199 cm) is the radius the hologram lays its own arcs on, while
+`AFGConveyorBeltHologram::ValidateCurvature` refuses a horizontal radius below
+`mBendRadius * 1.5 - 15` = 283.5 cm, and only in the curve build mode. See
+`docs/sfy-hologram-rules.md`.
+
 - Hard clearance boxes never intersect; soft boxes may intersect only soft
   boxes.
 - Belt clearance capsules (built from the spline like the game's
   `CreateClearanceData`) never intersect other belts or hard boxes, except
   within a small tolerance (target 5 cm, tuned against fixtures) at the belt's
   own connection points. Belts through belts are refused.
-- Per belt run: length <= max spline length, bend radius >= registry, incline
-  <= max incline. Per lift: height within min/max, a step multiple, the
-  vertical-connection minimum when attached to a port.
+- Per belt run: length <= max spline length, incline <= max incline, and
+  horizontal radius of curvature >= the `belt.curvature` floor (not
+  `mBendRadius`). Per lift: height within min/max and the vertical-connection
+  minimum when attached to a port; the step multiple is our own stricter rule,
+  because `lift.step` is `partial` and no quantisation was found in the game.
 - Every port is connected exactly once with matching direction; every net's
   throughput <= its tier; pipes: flow <= tier and head lift within pump limits.
 - Wires <= max length and pole connection counts respected; every machine is

@@ -11,6 +11,7 @@
   "belt_bend_radius_cm": {
    "detail": "segment 2 of 3 at s=0.016",
    "fixture": "logistics-24.sbp",
+   "legality_evidence": false,
    "max": 2386.0764,
    "min": 129.8362,
    "n": 370,
@@ -18,12 +19,13 @@
    "p05": 176.5426,
    "p50": 197.4262,
    "p95": 198.9167,
-   "role": "cross-check",
+   "role": "statistics",
    "value": 129.8362
   },
   "belt_max_incline_deg": {
    "detail": "chord of segment 1 of 2",
    "fixture": "production-2.sbp",
+   "legality_evidence": false,
    "max": 33.6903,
    "min": 0.0,
    "n": 880,
@@ -31,12 +33,13 @@
    "p05": 0.0,
    "p50": 0.0,
    "p95": 5.3689,
-   "role": "cross-check",
+   "role": "statistics",
    "value": 33.6903
   },
   "lift_max_cm": {
    "detail": "wired to Build_ConveyorAttachmentMerger_C, Build_ConveyorLiftMk3_C",
    "fixture": "production-17.sbp",
+   "legality_evidence": false,
    "max": 1500.0,
    "min": 149.9921,
    "n": 348,
@@ -44,12 +47,13 @@
    "p05": 150.0049,
    "p50": 400.0,
    "p95": 1150.0001,
-   "role": "cross-check",
+   "role": "statistics",
    "value": 1500.0
   },
   "lift_min_cm": {
    "detail": "wired to Build_ConveyorAttachmentSplitter_C, Build_ConveyorLiftMk1_C",
    "fixture": "production-17.sbp",
+   "legality_evidence": false,
    "max": 1500.0,
    "min": 149.9921,
    "n": 348,
@@ -57,7 +61,7 @@
    "p05": 150.0049,
    "p50": 400.0,
    "p95": 1150.0001,
-   "role": "cross-check",
+   "role": "statistics",
    "value": 149.9921
   }
  },
@@ -738,8 +742,8 @@
   }
  },
  "provenance": {
-  "measured_at_commit": "5b5657b397c3eb72d33a6c5b66cf9246c5cd1c76",
-  "method": "envelope over the current-family blueprint corpus; every value is what the game was observed to accept, never a limit it enforces",
+  "measured_at_commit": "5803eac3681d27fbaa7fef3bddc2771e7cf96c42",
+  "method": "statistics over the current-family fixture corpus. Not evidence: a blueprint can carry clipped geometry, a hacked save or an older game version, so nothing here is a source, a cross-check or evidence for legality or for any registry datum. registry.json does not carry these numbers and no validator reads them; what the game refuses is in data/hologram_rules.json",
   "min_save_version": 58,
   "samples_per_segment": 64
  }

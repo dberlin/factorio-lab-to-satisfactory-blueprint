@@ -15,10 +15,10 @@ from flab2bp.sfy import docs
 from flab2bp.sfy.registry import (
     LIMIT_SOURCES,
     PORT_DIRECTION_SOURCES,
-    SPREAD_KEYS,
     Limits,
     load_registry,
 )
+from flab2bp.sfy.rules import load_rules
 
 # The limits that are native C++ constructor immediates: no cooked asset and no
 # header initialiser carries them, so ``tools/sfy-native`` reads them out of the
@@ -42,8 +42,6 @@ BINARY_DERIVED = ("lift_max_cm", "lift_min_cm", "lift_min_vertical_cm")
 
 # Every lift mark's Docs.json mMeshHeight, and the three heights that follow.
 MESH_HEIGHT_CM = 200.0
-
-MEASURED_JSON = Path(docs.__file__).parent / "data" / "measured.json"
 
 
 def test_registry_has_ports_for_the_core_machines():
@@ -168,58 +166,59 @@ def test_a_hologram_that_snaps_finer_carries_its_own_grid():
     assert reg.buildables["Build_ConstructorMk1_C"].grid_snap_cm is None
 
 
-def test_every_measured_limit_carries_the_spread_behind_it():
-    """A measured number without its distribution is an outlier waiting to be quoted."""
+def test_every_limit_names_the_rule_that_enforces_it():
     reg = load_registry()
-    assert set(reg.limits_measured) == set(json.loads(MEASURED_JSON.read_text())["limits"])
-    for key, spread in reg.limits_measured.items():
-        assert set(spread) >= SPREAD_KEYS, key
-        assert spread["min"] <= spread["p05"] <= spread["p50"] <= spread["p95"] <= spread["max"]
-        assert spread["n"] > 0
-        # Not a source: no limit is filled from here. Calling the key "source"
-        # was how the section read as one.
-        assert spread["role"] == "cross-check", key
-        assert "source" not in spread, key
+    for key in (
+        "belt_bend_radius_cm",
+        "belt_max_incline_deg",
+        "belt_max_spline_cm",
+        "lift_min_cm",
+        "lift_max_cm",
+        "lift_step_cm",
+        "hologram_grid_cm",
+    ):
+        entry = reg.provenance["limits"][key]
+        assert "enforced_by" in entry, key
+        assert entry["enforced_by"] or entry.get("reason"), key
+    # And every one of them, not just the seven above.
+    for field in fields(Limits):
+        entry = reg.provenance["limits"][field.name]
+        assert entry["enforced_by"] or entry.get("reason"), field.name
 
 
-def test_the_measured_envelope_lies_inside_the_limits_the_game_states():
-    """What players built stays inside what the game allows -- except one key.
-
-    The corpus is restricted to save version 58 and up, so it is the same game
-    the registry describes. ``belt_bend_radius_cm`` is not in here because it is
-    not a bound at all; the test below says what it is instead.
-    """
-    measured = json.loads(MEASURED_JSON.read_text())["limits"]
-    lim = load_registry().limits
-    assert measured["belt_max_incline_deg"]["max"] <= lim.belt_max_incline_deg
-    # The floor for a lift is the height it may be when it meets a vertical
-    # connection, not the ordinary minimum: that is what the third height is for.
-    assert measured["lift_min_cm"]["min"] >= lim.lift_min_vertical_cm - 1.0
-    assert measured["lift_max_cm"]["max"] <= lim.lift_max_cm
-
-
-def test_the_bend_radius_is_a_default_and_not_a_floor():
-    """The corpus bends tighter than ``mBendRadius``, and that is the point.
-
-    ``AFGConveyorBeltHologram::mBendRadius`` is the radius the hologram lays its
-    own arc on when the game auto-routes a belt, not a legality floor on a
-    spline the player guided through pole positions. The corpus settles it: 28
-    of the 370 curved belts in the current-family fixtures read under 190 cm,
-    across 11 blueprints and no pre-1.0 ones.
-
-    So this asserts the documented relation rather than the floor it is not. If
-    a future build did make it a floor -- or if the measurement changed such
-    that nothing bent tighter -- the corpus minimum would rise above the default
-    and this would fail, which is exactly when somebody should look again.
-    """
-    measured = json.loads(MEASURED_JSON.read_text())["limits"]["belt_bend_radius_cm"]
+def test_every_rule_a_limit_names_exists_and_is_about_that_limit():
+    """An ``enforced_by`` that names no rule would be a claim with nothing behind it."""
     reg = load_registry()
-    assert measured["min"] < reg.limits.belt_bend_radius_cm
-    # And the registry says so beside the number, so nobody reads 199 as a limit.
-    note = reg.provenance["limits"]["belt_bend_radius_cm"]
-    assert note["is_a_proven_minimum"] is False
-    assert note["corpus_min"] == measured["min"]
-    assert note["corpus_min_fixture"] == measured["fixture"]
+    rules = load_rules()
+    named = {
+        key: entry["enforced_by"]
+        for key, entry in reg.provenance["limits"].items()
+        if entry["enforced_by"]
+    }
+    assert named
+    assert set(named.values()) <= set(rules)
+    assert named["belt_bend_radius_cm"] == "belt.curvature"
+    assert "mBendRadius" in rules[named["belt_bend_radius_cm"]].reads
+    assert "mMaxIncline" in rules[named["belt_max_incline_deg"]].reads
+
+
+def test_nothing_in_the_registry_comes_from_the_blueprint_corpus():
+    """A corpus says what somebody once built, which is not a fact about the game.
+
+    It carries clipped geometry, hacked saves and older game versions, so it is
+    not a source, not a cross-check and not evidence -- for a limit or for
+    anything else here. ``scripts/sfy_measure_limits.py`` still measures the
+    fixtures; the merge does not read what it writes.
+    """
+    reg = load_registry()
+    assert "measured" not in LIMIT_SOURCES
+    assert "corpus" not in PORT_DIRECTION_SOURCES
+    assert set(reg.limits_sources.values()) <= set(LIMIT_SOURCES)
+    ports = [p for b in reg.buildables.values() for p in b.ports]
+    assert {p.direction_source for p in ports} <= set(PORT_DIRECTION_SOURCES)
+    assert "measured" not in reg.provenance
+    assert not hasattr(reg, "limits_measured")
+    assert not hasattr(reg, "corpus_statistics")
 
 
 def test_splitter_has_one_input_and_three_outputs():

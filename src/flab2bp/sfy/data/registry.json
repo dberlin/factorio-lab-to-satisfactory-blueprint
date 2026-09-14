@@ -729,7 +729,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "corpus",
+     "direction_source": "name",
      "kind": "belt",
      "max_connections": null,
      "name": "Input0",
@@ -747,7 +747,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "corpus",
+     "direction_source": "name",
      "kind": "belt",
      "max_connections": null,
      "name": "Input1",
@@ -2580,7 +2580,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "corpus",
+     "direction_source": "name",
      "kind": "belt",
      "max_connections": null,
      "name": "Input0",
@@ -2851,7 +2851,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "corpus",
+     "direction_source": "name",
      "kind": "belt",
      "max_connections": null,
      "name": "Input1",
@@ -2869,7 +2869,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "corpus",
+     "direction_source": "name",
      "kind": "belt",
      "max_connections": null,
      "name": "Input2",
@@ -2887,7 +2887,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "corpus",
+     "direction_source": "name",
      "kind": "belt",
      "max_connections": null,
      "name": "Input3",
@@ -2972,7 +2972,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "corpus",
+     "direction_source": "name",
      "kind": "belt",
      "max_connections": null,
      "name": "Input1",
@@ -2990,7 +2990,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "corpus",
+     "direction_source": "name",
      "kind": "belt",
      "max_connections": null,
      "name": "Input2",
@@ -3008,7 +3008,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "corpus",
+     "direction_source": "name",
      "kind": "belt",
      "max_connections": null,
      "name": "Input3",
@@ -3214,7 +3214,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "corpus",
+     "direction_source": "name",
      "kind": "belt",
      "max_connections": null,
      "name": "Input1",
@@ -3335,7 +3335,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "corpus",
+     "direction_source": "name",
      "kind": "belt",
      "max_connections": null,
      "name": "Input1",
@@ -6756,7 +6756,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "corpus",
+     "direction_source": "name",
      "kind": "belt",
      "max_connections": null,
      "name": "Input0",
@@ -6774,7 +6774,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "corpus",
+     "direction_source": "name",
      "kind": "belt",
      "max_connections": null,
      "name": "Input1",
@@ -11607,7 +11607,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "corpus",
+     "direction_source": "name",
      "kind": "belt",
      "max_connections": null,
      "name": "Input0",
@@ -11625,7 +11625,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "corpus",
+     "direction_source": "name",
      "kind": "belt",
      "max_connections": null,
      "name": "Input1",
@@ -11643,7 +11643,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "corpus",
+     "direction_source": "name",
      "kind": "belt",
      "max_connections": null,
      "name": "Input2",
@@ -11661,7 +11661,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "corpus",
+     "direction_source": "name",
      "kind": "belt",
      "max_connections": null,
      "name": "Input3",
@@ -12394,7 +12394,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "corpus",
+     "direction_source": "name",
      "kind": "belt",
      "max_connections": null,
      "name": "Input0",
@@ -12533,7 +12533,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "corpus",
+     "direction_source": "name",
      "kind": "belt",
      "max_connections": null,
      "name": "Input0",
@@ -22719,7 +22719,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "corpus",
+     "direction_source": "name",
      "kind": "belt",
      "max_connections": null,
      "name": "Input0",
@@ -24793,7 +24793,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "corpus",
+     "direction_source": "name",
      "kind": "belt",
      "max_connections": null,
      "name": "Input0",
@@ -27406,7 +27406,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "corpus",
+     "direction_source": "name",
      "kind": "belt",
      "max_connections": null,
      "name": "Input0",
@@ -27491,7 +27491,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "corpus",
+     "direction_source": "name",
      "kind": "belt",
      "max_connections": null,
      "name": "Input0",
@@ -27509,7 +27509,7 @@
     {
      "clearance": null,
      "direction": "input",
-     "direction_source": "corpus",
+     "direction_source": "name",
      "kind": "belt",
      "max_connections": null,
      "name": "Input1",
@@ -34442,60 +34442,6 @@
    "Build_XmassLightsLine_C": 10000.0
   }
  },
- "limits_measured": {
-  "belt_bend_radius_cm": {
-   "detail": "segment 2 of 3 at s=0.016",
-   "fixture": "logistics-24.sbp",
-   "max": 2386.0764,
-   "min": 129.8362,
-   "n": 370,
-   "object": "Build_ConveyorBeltMk1_C_2142959879",
-   "p05": 176.5426,
-   "p50": 197.4262,
-   "p95": 198.9167,
-   "role": "cross-check",
-   "value": 129.8362
-  },
-  "belt_max_incline_deg": {
-   "detail": "chord of segment 1 of 2",
-   "fixture": "production-2.sbp",
-   "max": 33.6903,
-   "min": 0.0,
-   "n": 880,
-   "object": "Build_ConveyorBeltMk4_C_2146487963",
-   "p05": 0.0,
-   "p50": 0.0,
-   "p95": 5.3689,
-   "role": "cross-check",
-   "value": 33.6903
-  },
-  "lift_max_cm": {
-   "detail": "wired to Build_ConveyorAttachmentMerger_C, Build_ConveyorLiftMk3_C",
-   "fixture": "production-17.sbp",
-   "max": 1500.0,
-   "min": 149.9921,
-   "n": 348,
-   "object": "Build_ConveyorLiftMk3_C_2146631809",
-   "p05": 150.0049,
-   "p50": 400.0,
-   "p95": 1150.0001,
-   "role": "cross-check",
-   "value": 1500.0
-  },
-  "lift_min_cm": {
-   "detail": "wired to Build_ConveyorAttachmentSplitter_C, Build_ConveyorLiftMk1_C",
-   "fixture": "production-17.sbp",
-   "max": 1500.0,
-   "min": 149.9921,
-   "n": 348,
-   "object": "Build_ConveyorLiftMk1_C_2147296606",
-   "p05": 150.0049,
-   "p50": 400.0,
-   "p95": 1150.0001,
-   "role": "cross-check",
-   "value": 149.9921
-  }
- },
  "limits_sources": {
   "belt_bend_radius_cm": "binary",
   "belt_max_incline_deg": "binary",
@@ -34530,53 +34476,78 @@
    "docs_sha256": "a81d250e96aa13db3c0bf8c332c199ad930b2f15323e2c1a069afa4c07f971bb",
    "extracted": "2026-09-14"
   },
+  "hologram_rules": {
+   "dll": "FactoryGameEGS-FactoryGame-Win64-Shipping.dll",
+   "dll_sha256": "65fc5a6bde6d44782da387976b144a41a6b94e4fa78ec6e1bc49c3dad2d47513",
+   "extracted": "2026-09-14",
+   "headers_sha256": "f4d96098afb214ee73d73365425db69c839e07a07fe498ff5c8334af0c0f2a5f",
+   "method": "sfy-native disasm, one run per rule; reads, constants, calls and the entry RVA are the tool's, the evidence lines are copied from it by address, and only comparison/interpretation/status are written by hand. The blueprint corpus is not an input and is never evidence for a rule.",
+   "pdb_guid": "A2691F7C-B45E-7947-65C6-535DE373BA04",
+   "tool": "sfy-native 0.1.0"
+  },
   "limits": {
    "belt_bend_radius_cm": {
-    "corpus_min": 129.8362,
-    "corpus_min_detail": "segment 2 of 3 at s=0.016",
-    "corpus_min_fixture": "logistics-24.sbp",
-    "corpus_min_object": "Build_ConveyorBeltMk1_C_2142959879",
-    "corpus_n": 370,
+    "enforced_by": "belt.curvature",
     "is_a_proven_minimum": false,
-    "note": "AFGConveyorBeltHologram::mBendRadius -- the hologram's default curve radius when the game auto-routes a belt. It is NOT a proven minimum: a player-guided spline may bend tighter, and the current-family corpus does."
+    "note": "AFGConveyorBeltHologram::mBendRadius -- the radius the hologram lays its own arcs on when it auto-routes a belt. It is NOT the legality floor: ValidateCurvature rejects a horizontal radius below mBendRadius * 1.5 - 15, which is 283.5 cm here, and it only runs that check in the curve build mode. Take the bound from the belt.curvature rule, not from this number."
+   },
+   "belt_max_incline_deg": {
+    "enforced_by": "belt.incline"
+   },
+   "belt_max_spline_cm": {
+    "enforced_by": "belt.max_length"
+   },
+   "hologram_grid_cm": {
+    "enforced_by": "buildable.grid_snap"
    },
    "hologram_rotation_step_deg": {
+    "enforced_by": "buildable.rotation_step",
     "reason": "the step the build gun rotates a hologram by. It is in no cooked asset, no shipped header and no constructor immediate tools/sfy-native found; 90 degrees is this project's constant, not a number read from the game."
    },
    "lift_max_cm": {
     "H": 200.0,
     "H_from": "Docs.json mMeshHeight on Build_ConveyorLiftMk1_C and its five siblings",
+    "enforced_by": "lift.height_range",
     "evaluated_in": "AFGConveyorLiftHologram::BeginPlay at 0xa64e70 (see native.json)",
     "formula": "24 * H"
    },
    "lift_min_cm": {
     "H": 200.0,
     "H_from": "Docs.json mMeshHeight on Build_ConveyorLiftMk1_C and its five siblings",
+    "enforced_by": "lift.height_range",
     "evaluated_in": "AFGConveyorLiftHologram::BeginPlay at 0xa64e70 (see native.json)",
     "formula": "2 * H"
    },
    "lift_min_vertical_cm": {
     "H": 200.0,
     "H_from": "Docs.json mMeshHeight on Build_ConveyorLiftMk1_C and its five siblings",
+    "enforced_by": "lift.height_range",
     "evaluated_in": "AFGConveyorLiftHologram::BeginPlay at 0xa64e70 (see native.json)",
     "formula": "H - 50"
+   },
+   "lift_step_cm": {
+    "enforced_by": "lift.step"
+   },
+   "pipe_bend_radius_2d_cm": {
+    "enforced_by": null,
+    "reason": "the same, for Auto2DRouteSpline's conveyor-like mode (0xaafef0 reads mBendRadius2D): a construction radius, not a limit."
+   },
+   "pipe_bend_radius_cm": {
+    "enforced_by": null,
+    "reason": "AFGPipelineHologram::mBendRadius is the radius AutoRouteSpline builds its bends on, not a bound anything compares against. The bound on a pipeline's curvature is mMinBendRadius, under the pipe.curvature rule."
+   },
+   "pipe_max_spline_cm": {
+    "enforced_by": "pipe.max_length"
+   },
+   "pipe_min_bend_radius_cm": {
+    "enforced_by": "pipe.curvature"
+   },
+   "wire_max_cm": {
+    "enforced_by": null,
+    "reason": "no rule was extracted for it. AFGBuildableWire::mMaxLength is a buildable's property rather than a hologram member, and AFGWireHologram was not disassembled; what refuses an over-long wire is still unread."
    }
   },
-  "measured": {
-   "corpus": {
-    "belts_with_a_spline": 880,
-    "conveyor_lifts": 348,
-    "conveyor_lifts_on_a_non_belt_port": 248,
-    "fixtures_available": 49,
-    "fixtures_used": 36,
-    "objects": 11424
-   },
-   "measured_at_commit": "5b5657b397c3eb72d33a6c5b66cf9246c5cd1c76",
-   "method": "envelope over the current-family blueprint corpus; every value is what the game was observed to accept, never a limit it enforces",
-   "min_save_version": 58,
-   "samples_per_segment": 64
-  },
-  "merged_at_commit": "5b5657b397c3eb72d33a6c5b66cf9246c5cd1c76",
+  "merged_at_commit": "5803eac3681d27fbaa7fef3bddc2771e7cf96c42",
   "native": {
    "dll": "FactoryGameEGS-FactoryGame-Win64-Shipping.dll",
    "dll_sha256": "65fc5a6bde6d44782da387976b144a41a6b94e4fa78ec6e1bc49c3dad2d47513",
@@ -34589,15 +34560,13 @@
    "header": "Buildables/FGBuildableConveyorBase.h:380",
    "resolved_from": {
     "asset": 180,
-    "corpus": 24,
     "header": 24,
-    "name": 31
+    "name": 55
    },
    "resolved_from_all_extracted": {
     "asset": 204,
-    "corpus": 27,
     "header": 24,
-    "name": 33
+    "name": 60
    }
   }
  },

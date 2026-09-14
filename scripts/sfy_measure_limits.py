@@ -1,31 +1,23 @@
-"""Measure what the blueprint corpus shows, as corroboration for the registry.
+"""Describe the fixture corpus. Nothing reads the result.
 
-Every hologram limit the registry carries now has a game-data source: a cooked
-asset, the shipped DLL's machine code (``tools/sfy-native``), or a formula the
-DLL applies to a Docs.json input. Nothing here fills a limit any more.
+**This output is statistics, and it is not evidence of anything.** A community
+blueprint can carry clipped geometry, a hacked save or a build from an older
+game version, so what one contains is not a fact about the game: it is not a
+source, not a cross-check and not evidence -- for legality, for a limit, or for
+any other registry datum. ``registry.json`` no longer carries these numbers,
+``flab2bp.sfy.registry`` no longer loads them, and no validator consults them.
 
-**What this measures is an envelope, never a constraint.** A tightest observed
-bend of 197 cm says the game accepted 197 cm in some blueprint somebody built;
-it says nothing about what the game refuses, and it is not a number a placer may
-use as its own limit. The registry's ``limits`` are the constraints; these
-numbers sit beside them in ``registry.json``'s ``limits_measured`` so that the
-game's constants can be checked against what players actually built --
-``tests/sfy/test_registry.py::test_measured_envelope_lies_inside_binary_limits``
-is that check, and it is the reason this file still exists.
+What the game actually refuses is in ``src/flab2bp/sfy/data/hologram_rules.json``
+(``scripts/sfy_native_rules.py``), read out of the validators the build gun's
+hologram runs. A tightest observed bend of 197 cm says the game accepted 197 cm
+in one blueprint somebody built; ``belt.curvature`` says what the hologram
+rejects, and only the second of those is a limit.
 
-The corpus is restricted to save version 58 and up, the class family the
-registry describes. Older blueprints were built under older limits: measuring
-them mixes two games' rules together, and it was what put a 111 cm bend radius
-and a 39.8-degree incline in front of the earlier version of this script.
-
-It also records, per belt-connected port, which direction the corpus wires it
-in. ``tools/sfy-extract`` cannot read a direction the cooked asset leaves to the
-component archetype, so ``scripts/sfy_registry.py`` resolves those, and this is
-one of the two things it resolves them from.
-
-Open item for Milestone 2: the validator has no minimum legal belt bend radius
-yet -- ``belt_bend_radius_cm`` is the hologram's default curve radius, not a
-floor -- and the candidate evidence for one is this file's corpus minimum.
+This is kept as a description of the fixture corpus, which is useful when
+choosing fixtures and when a round-trip test disagrees with a file: it says
+what shapes the fixtures contain. The corpus is restricted to save version 58
+and up, the class family the registry describes, because older blueprints were
+built under older rules.
 
 Run it after adding fixtures::
 
@@ -271,10 +263,11 @@ def _spread(population: list[Extreme], low: bool) -> dict[str, Any]:
 
     return {
         "value": round(pick.value, 4),
-        # Not a source. Every limit in the registry is sourced from game data;
-        # what this section does is stand beside those values so they can be
-        # compared with what the corpus was seen to contain.
-        "role": "cross-check",
+        # Not a source and not a cross-check: a description of the fixtures,
+        # which nothing in the package reads. What the game refuses is in
+        # data/hologram_rules.json.
+        "role": "statistics",
+        "legality_evidence": False,
         "fixture": pick.fixture,
         "object": pick.obj,
         "detail": pick.detail,
@@ -341,8 +334,12 @@ def measure() -> dict[str, Any]:
         "provenance": {
             "measured_at_commit": sha,
             "method": (
-                "envelope over the current-family blueprint corpus; every value is what "
-                "the game was observed to accept, never a limit it enforces"
+                "statistics over the current-family fixture corpus. Not evidence: a "
+                "blueprint can carry clipped geometry, a hacked save or an older game "
+                "version, so nothing here is a source, a cross-check or evidence for "
+                "legality or for any registry datum. registry.json does not carry these "
+                "numbers and no validator reads them; what the game refuses is in "
+                "data/hologram_rules.json"
             ),
             "min_save_version": CURRENT_SAVE_VERSION,
             "samples_per_segment": SAMPLES,
