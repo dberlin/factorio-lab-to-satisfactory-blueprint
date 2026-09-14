@@ -82,6 +82,47 @@ def test_the_three_lift_heights_are_computed_and_say_so():
         assert zeroed and all(f["evidence"] for f in zeroed), m
 
 
+#: How a function's end may have been established for its stores to be
+#: trusted. ``ret`` and ``truncated`` are the two that mean the rest of the
+#: function was never read, so a value read out of one is a value read out of
+#: half a function.
+BOUNDED = {"pdata", "pdata-chained", "pdb-procedure-length"}
+
+
+def test_every_reported_store_says_how_its_function_was_bounded():
+    """``extract`` takes the same three-source bound ``disasm`` does, and says so.
+
+    It used to cut a function at its first ``ret`` even inside a ``.pdata``
+    range, so a store MSVC emitted after an early return, or in a chained chunk,
+    was never traced. Every record in ``native.json`` that names a function now
+    carries the ``size_source`` that bounded it, and none of them is a guess.
+    """
+    seen = 0
+    for cls in _native()["classes"].values():
+        for name, member in cls["members"].items():
+            assert (member.get("size_source") is None) == (member.get("set_in") is None), name
+            for record in (member, *member.get("also_set_in", ())):
+                if record.get("set_in") is None:
+                    continue
+                assert record["size_source"] in BOUNDED, (name, record)
+                seen += 1
+    assert seen > 10
+
+
+def test_the_lift_heights_name_both_functions_that_overwrite_them():
+    """``UpdateTopTransform``'s stores sit past its first ``ret``.
+
+    They are the ones the old first-``ret`` bound could not see: the rule that
+    the lift heights are computed rather than constant was right, but only one
+    of the two functions that compute them was on record.
+    """
+    members = _native()["classes"]["AFGConveyorLiftHologram"]["members"]
+    for member in ("mMinimumHeight", "mMinimumHeightWithVerticalConnection"):
+        reason = members[member]["reason"]
+        assert "AFGConveyorLiftHologram::BeginPlay" in reason, reason
+        assert "AFGConveyorLiftHologram::UpdateTopTransform" in reason, reason
+
+
 def test_provenance_names_the_matching_pdb():
     p = _native()["provenance"]
     assert p["pdb_guid"].upper().replace("-", "") == "A2691F7CB45E794765C6535DE373BA04"

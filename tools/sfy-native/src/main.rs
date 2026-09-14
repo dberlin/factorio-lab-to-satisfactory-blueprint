@@ -302,14 +302,6 @@ impl Pe {
         (parent.end > parent.begin).then_some(parent)
     }
 
-    /// The `[begin, end)` of the function starting at `rva`, `.pdata` first.
-    fn function_range(&self, rva: u32) -> (u32, u32) {
-        match self.functions.get(&rva) {
-            Some(end) => (rva, *end),
-            None => (rva, rva.saturating_add(0x1_0000)),
-        }
-    }
-
     /// The `.pdata` `RUNTIME_FUNCTION` entry covering `rva`, as `[begin, end)`.
     ///
     /// A function's entry usually begins at its own RVA, but MSVC splits a
@@ -872,40 +864,6 @@ fn evidence_formatter() -> IntelFormatter {
     formatter
 }
 
-/// Decode the function at `rva` until its `.pdata` end, or its first `ret`.
-fn disassemble(pe: &Pe, rva: u32) -> Vec<Instr> {
-    const CAP: usize = 0x1_0000;
-    let (begin, end) = pe.function_range(rva);
-    let wanted = (end - begin) as usize;
-    let Some(bytes) = pe.rva_to_bytes(begin, wanted.min(CAP)) else {
-        return Vec::new();
-    };
-    let mut decoder = Decoder::with_ip(64, bytes, begin as u64, DecoderOptions::NONE);
-    let mut formatter = evidence_formatter();
-    let mut instrs = Vec::new();
-    let mut instruction = Instruction::default();
-    while decoder.can_decode() {
-        decoder.decode_out(&mut instruction);
-        if instruction.is_invalid() {
-            break;
-        }
-        let mut text = String::new();
-        formatter.format(&instruction, &mut text);
-        let rva = instruction.ip() as u32;
-        let done =
-            instruction.mnemonic() == Mnemonic::Ret || instruction.mnemonic() == Mnemonic::Int3;
-        instrs.push(Instr {
-            rva,
-            instruction,
-            text,
-        });
-        if done {
-            break;
-        }
-    }
-    instrs
-}
-
 // ---------------------------------------------------------------------------
 // 4. The store tracer
 // ---------------------------------------------------------------------------
@@ -954,8 +912,16 @@ impl Stores {
     }
 }
 
+/// One traced function: what it is, how its end was established, what it stored.
+///
+/// The `&'static str` is `disasm_chunks`' `size_source`, carried all the way
+/// into `native.json` so that every number the tracer reports says which game
+/// datum bounded the function it was read from -- `.pdata`, the PDB's procedure
+/// record, or, when neither knows the function, a `ret` the decoder walked to.
+type TracedFunction = (Function, &'static str, Stores);
+
 /// Every traced function of a class, by the class it is a member of.
-type Traced = HashMap<String, Vec<(Function, Stores)>>;
+type Traced = HashMap<String, Vec<TracedFunction>>;
 
 /// The constant last loaded into a register, and the instruction that did it.
 #[derive(Clone, Debug)]
@@ -1341,6 +1307,10 @@ struct Found {
     set_in: String,
     value: serde_json::Value,
     evidence: String,
+    /// How the end of `set_in` was established -- see [`TracedFunction`]. A
+    /// store is only as trustworthy as the bound on the function it sits in,
+    /// and a `ret` or a `truncated` says the rest of that function was not read.
+    size_source: &'static str,
 }
 
 #[derive(Serialize)]
@@ -1353,6 +1323,10 @@ struct MemberOut {
     set_in: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     evidence: Option<String>,
+    /// How the end of the function named in `set_in` was established -- see
+    /// [`TracedFunction`]. Absent exactly when `set_in` is.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    size_source: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     reason: Option<String>,
     /// Other functions of the chain that store a *different* constant here.
@@ -1434,7 +1408,7 @@ struct Writes {
 fn writes_to(chain: &[String], member: &Member, traced: &Traced) -> Writes {
     let mut writes = Writes::default();
     for owner in chain {
-        for (function, stores) in traced.get(owner).into_iter().flatten() {
+        for (function, size_source, stores) in traced.get(owner).into_iter().flatten() {
             if let Some(text) = stores.computed_over(member.offset, member.size) {
                 writes.computed.push(format!("{} -- {text}", function.name));
             }
@@ -1448,6 +1422,7 @@ fn writes_to(chain: &[String], member: &Member, traced: &Traced) -> Writes {
                 set_in: function.name.clone(),
                 value,
                 evidence,
+                size_source,
             };
             if function.is_constructor {
                 writes.from_constructors.push(found);
@@ -1510,6 +1485,7 @@ fn settle(member_name: &str, writes: &Writes, out: &mut MemberOut) {
     out.value = Some(primary.value.clone());
     out.set_in = Some(primary.set_in.clone());
     out.evidence = Some(primary.evidence.clone());
+    out.size_source = Some(primary.size_source);
     out.also_set_in = writes
         .from_constructors
         .iter()
@@ -1550,6 +1526,7 @@ fn resolve(class: &str, wanted: &[String], index: &PdbIndex, traced: &Traced) ->
             value: None,
             set_in: None,
             evidence: None,
+            size_source: None,
             reason: None,
             also_set_in: Vec::new(),
         };
@@ -2185,7 +2162,12 @@ fn default_members(class: &str) -> Vec<String> {
 
 fn run(args: &Args) -> Result<()> {
     let pe = Pe::load(&args.dll)?;
-    let index = PdbIndex::open(&args.pdb, &pe, false)?;
+    // `true` asks for the PDB's procedure lengths as well. They are what bounds
+    // a leaf function MSVC gave no `.pdata` entry, and a constructor read only
+    // as far as its first `ret` would miss every store after it -- so `extract`
+    // pays the module-symbol walk (about 1.7 s) for the same three-source bound
+    // `disasm` uses rather than guessing at an end.
+    let index = PdbIndex::open(&args.pdb, &pe, true)?;
 
     // Every class in every requested chain gets each of its member functions
     // disassembled and traced once.
@@ -2197,16 +2179,28 @@ fn run(args: &Args) -> Result<()> {
             }
             let mut per_function = Vec::new();
             for function in index.functions.get(&owner).into_iter().flatten() {
-                let instrs = disassemble(&pe, function.rva);
+                // The same bound, and the same stitching of a split function's
+                // chained chunks, that `disasm` reports.
+                let (chunks, size_source) = disasm_chunks(&pe, &index.lengths, function.rva);
+                let instrs: Vec<Instr> = chunks
+                    .iter()
+                    .flat_map(|chunk| decode_all(&chunk.bytes, chunk.rva))
+                    .collect();
                 if Some(function.name.as_str()) == args.dump.as_deref()
                     || Some(owner.as_str()) == args.dump.as_deref()
                 {
-                    println!("; {} @ {:#x}", function.name, function.rva);
+                    println!(
+                        "; {} @ {:#x} ({} bytes from {size_source}, {} chunks)",
+                        function.name,
+                        function.rva,
+                        chunks.iter().map(|c| c.bytes.len()).sum::<usize>(),
+                        chunks.len(),
+                    );
                     for instr in &instrs {
                         println!("{:#010x}  {}", instr.rva, instr.text);
                     }
                 }
-                per_function.push((function.clone(), trace_stores(&instrs, &pe)));
+                per_function.push((function.clone(), size_source, trace_stores(&instrs, &pe)));
             }
             traced.insert(owner, per_function);
         }
@@ -2337,7 +2331,7 @@ mod tests {
         }
     }
 
-    /// Decode `code` at RVA 0x1000 the way `disassemble` would.
+    /// Decode `code` at RVA 0x1000, with the evidence formatter the tool uses.
     fn decode(code: &[u8]) -> Vec<Instr> {
         let mut decoder = Decoder::with_ip(64, code, 0x1000, DecoderOptions::NONE);
         let mut formatter = evidence_formatter();
@@ -3006,6 +3000,54 @@ mod tests {
         // The end is exclusive, and an RVA no entry covers has no bounds.
         assert_eq!(pe.pdata_bounds(0x1004), None);
         assert_eq!(pe.pdata_bounds(0x0800), None);
+    }
+
+    #[test]
+    fn a_constructors_store_past_its_first_ret_is_traced_because_pdata_bounds_it() {
+        // mov dword ptr [rcx+10h],41200000h ; ret
+        // mov dword ptr [rcx+14h],42480000h ; ret
+        //
+        // The second store is the one `extract` used to miss: it bounded a
+        // function at its first `ret` even inside a `.pdata` range, so anything
+        // MSVC emitted after an early return -- or in a chained chunk -- was
+        // never traced. This is the shape of that bug, in eighteen bytes.
+        let code = [
+            0xc7, 0x41, 0x10, 0x00, 0x00, 0x20, 0x41, // [rcx+10h] = 10.0f
+            0xc3, // ret
+            0xc7, 0x41, 0x14, 0x00, 0x00, 0x48, 0x42, // [rcx+14h] = 50.0f
+            0xc3, // ret
+        ];
+        let mut pe = fake_module(&code, &[]);
+        pe.index_pdata(&[RuntimeFunction {
+            begin: 0x1000,
+            end: 0x1000 + code.len() as u32,
+            unwind: 0x2000,
+        }]);
+
+        let (chunks, source) = disasm_chunks(&pe, &BTreeMap::new(), 0x1000);
+        assert_eq!(
+            (chunks.len(), chunks[0].bytes.len(), source),
+            (1, 16, "pdata")
+        );
+        let instrs: Vec<Instr> = chunks
+            .iter()
+            .flat_map(|chunk| decode_all(&chunk.bytes, chunk.rva))
+            .collect();
+        assert_eq!(instrs.len(), 4, "the whole `.pdata` range has to decode");
+
+        let stores = trace_stores(&instrs, &pe);
+        let (first, _) = stores.read(0x10, 4).expect("the store before the ret");
+        let (second, evidence) = stores.read(0x14, 4).expect("the store after the ret");
+        assert_eq!(f32::from_le_bytes(first.try_into().unwrap()), 10.0);
+        assert_eq!(f32::from_le_bytes(second.try_into().unwrap()), 50.0);
+        assert_eq!(evidence, "mov dword ptr [rcx+14h],42480000h @ 0x1008");
+
+        // Without the `.pdata` entry there is nothing to bound it and the
+        // decoder stops at that first `ret`, which is exactly why a bound the
+        // game states is what `extract` asks for.
+        let unbounded = fake_module(&code, &[]);
+        let (chunks, source) = disasm_chunks(&unbounded, &BTreeMap::new(), 0x1000);
+        assert_eq!((chunks[0].bytes.len(), source), (8, "ret"));
     }
 
     /// `UNWIND_INFO`: version 1, `count` codes, optionally chained.

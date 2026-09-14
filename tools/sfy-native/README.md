@@ -96,7 +96,13 @@ identical-COMDAT folding gives several functions one body, and the surviving
 name is the one reported, so the members are annotated against *that* class.
 
 **Where a function ends.** Three sources, tried in that order, and
-`size_source` always says which one answered:
+`size_source` always says which one answered. **Both modes use them**: the
+constructor tracer behind `native.json` is bounded exactly as `disasm` is, and
+every record in `native.json` that names a function carries the `size_source`
+that bounded it. (It did not always. Until fix round 3 `extract` stopped at a
+function's first `ret` even inside a `.pdata` range, so a store MSVC emitted
+after an early return, or in a chained chunk, was invisible to it —
+`AFGConveyorLiftHologram::UpdateTopTransform`'s two stores were.)
 
 1. **`.pdata`** — authoritative. The `RUNTIME_FUNCTION` entry covering the RVA
    gives `[begin, end)` and `size_source` is `pdata` (or `pdata-chained`, see
@@ -110,8 +116,7 @@ name is the one reported, so the members are annotated against *that* class.
    exactly the kind the member offsets are, so the tool takes `[rva, rva + len)`
    from it. Procedure records live in the per-module symbol streams (the global
    stream publishes mostly `S_PUB32`, which has no length), so both streams are
-   walked once when the symbol list is asked for — about 1.7 s on this module,
-   and `extract` never pays it.
+   walked once when the symbol list is asked for — about 1.7 s on this module.
 3. **The first `ret`** (`ret`) — only when neither of those knows the function.
 
 A range the section or the 64 KiB cap cuts short says `truncated` whichever
@@ -330,10 +335,15 @@ that exist today are Blueprint ones, and `assets.json` has those.
     "ctor_rva": {"<Class>::<Class>": ["0x...", "0x..."]},
     "members": {"<member>": {
        "offset", "type",
-       "value" | null, "set_in", "evidence",      // when a constant was found
+       "value" | null, "set_in", "evidence", "size_source",  // a constant found
        "reason",                                  // when it was not
-       "also_set_in": [{"set_in", "value", "evidence"}]}}}}}
+       "also_set_in": [{"set_in", "value", "evidence", "size_source"}]}}}}}
 ```
+
+`size_source` is the bound on the function named beside it, from the same
+three-source ladder as `disasm`'s. Every entry in the committed file says
+`pdata`; a `ret` or a `truncated` there would mean the value was read out of a
+function whose end the game does not state, and the rest of it never looked at.
 
 A class has two constructors whenever UE emits its `FVTableHelper` one as well.
 That one carries only the in-class initialisers; the real one also carries the
