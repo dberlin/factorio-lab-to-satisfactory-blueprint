@@ -158,9 +158,9 @@ def bench(path: Path, rounds: int, check: bool) -> int:
             "(all rounds: outcome, paths, nodes, work, bound; seconds measured separately)"
         )
         # Say what a MATCH is worth.  `offers` is a stub here and the commit
-        # path (`_stake` + `commit_once`) is outside the capture entirely, so
-        # this proves the SEARCH is unchanged and says nothing about whether
-        # the pass would stake and link the result.
+        # path (`_stake` + `_RouteAllRun._commit_once`) is outside the
+        # capture entirely, so this proves the SEARCH is unchanged and says
+        # nothing about whether the pass would stake and link the result.
         print(
             "  (scope: the CBS search only -- `offers` is a stub and the commit "
             "path is not captured)"

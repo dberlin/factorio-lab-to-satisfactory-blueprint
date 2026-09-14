@@ -4038,8 +4038,8 @@ def test_the_window_is_withheld_on_a_pack_that_only_ties_the_best_failing_one(
     )
     launched: list[object] = []
 
-    def record_window(*_args: object, **kwargs: object) -> None:
-        launched.append(kwargs)
+    def record_window(_strips: object, request: object) -> None:
+        launched.append(request)
 
     monkeypatch.setattr(freeform, "_pack_window", record_window)
 
@@ -4071,8 +4071,8 @@ def test_the_window_is_withheld_on_a_pack_worse_than_the_best_failing_one(
     )
     launched: list[object] = []
 
-    def record_window(*_args: object, **kwargs: object) -> None:
-        launched.append(kwargs)
+    def record_window(_strips: object, request: object) -> None:
+        launched.append(request)
 
     monkeypatch.setattr(freeform, "_pack_window", record_window)
 
@@ -4650,12 +4650,13 @@ def test_a_window_reentry_preserves_both_diversification_cuts_for_the_next_arran
     repaired_origins: list[tuple[tuple[int, int], ...]] = []
 
     def repair_window(
-        *_args: object,
-        seed: routing_domain._Pack,
-        exact_pack_no_goods: tuple[freeform.ExactPackNoGood, ...],
-        **_kwargs: object,
+        _strips: object, request: freeform._PackWindowRequest
     ) -> freeform._PackSolveOutcome:
-        assert exact_pack_no_goods == (), "diversification is local, never global proof state"
+        assert request.exact_pack_no_goods == (), (
+            "diversification is local, never global proof state"
+        )
+        seed = request.seed
+        assert isinstance(seed, routing_domain._Pack)
         repaired = replace(
             seed,
             at={index: (x + (5 if index == 0 else 0), y) for index, (x, y) in seed.at.items()},
@@ -5467,8 +5468,8 @@ def test_exact_one_net_feedback_admits_the_next_configured_arrangement(
 ) -> None:
     launched: list[object] = []
 
-    def record_window(*_args: object, **kwargs: object) -> None:
-        launched.append(kwargs)
+    def record_window(_strips: object, request: object) -> None:
+        launched.append(request)
 
     monkeypatch.setattr(freeform, "_pack_window", record_window)
     result, seen, attempts = _sweep_after_first_routing(
@@ -7875,14 +7876,16 @@ def test_pack_window_over_every_strip_reproduces_the_full_pack() -> None:
     assert full is not None
     outcome = freeform._pack_window(
         strips,
-        height=height,
-        width_bound=bound,
-        direct_candidates=candidates,
-        window=frozenset(range(len(strips))),
-        fixed_at={},
-        seed=None,
-        time_budget_s=5.0,
-        deterministic_work=freeform._DETERMINISTIC_PACK_WORK_AT_CALIBRATED_SIZE,
+        freeform._PackWindowRequest(
+            height=height,
+            width_bound=bound,
+            direct_candidates=candidates,
+            window=frozenset(range(len(strips))),
+            fixed_at={},
+            seed=None,
+            time_budget_s=5.0,
+            deterministic_work=freeform._DETERMINISTIC_PACK_WORK_AT_CALIBRATED_SIZE,
+        ),
     )
     assert outcome is not None
     windowed = outcome.pack
@@ -7896,14 +7899,16 @@ def test_pack_window_reports_its_exact_cp_sat_outcome() -> None:
     strips, height, bound, candidates = _plastic_pack_inputs()
     outcome = freeform._pack_window(
         strips,
-        height=height,
-        width_bound=bound,
-        direct_candidates=candidates,
-        window=frozenset(range(len(strips))),
-        fixed_at={},
-        seed=None,
-        time_budget_s=5.0,
-        deterministic_work=freeform._DETERMINISTIC_PACK_WORK_AT_CALIBRATED_SIZE,
+        freeform._PackWindowRequest(
+            height=height,
+            width_bound=bound,
+            direct_candidates=candidates,
+            window=frozenset(range(len(strips))),
+            fixed_at={},
+            seed=None,
+            time_budget_s=5.0,
+            deterministic_work=freeform._DETERMINISTIC_PACK_WORK_AT_CALIBRATED_SIZE,
+        ),
     )
     assert outcome is not None
     assert outcome.status == "OPTIMAL"
@@ -7919,11 +7924,13 @@ def test_pack_window_distinguishes_infeasible_from_unknown() -> None:
     strips = _three_unit_strips()
     outcome = freeform._pack_window(
         strips,
-        height=6,
-        width_bound=8,
-        direct_candidates={},
-        window=frozenset({0}),
-        fixed_at={1: (0, 0), 2: (0, 0)},
+        freeform._PackWindowRequest(
+            height=6,
+            width_bound=8,
+            direct_candidates={},
+            window=frozenset({0}),
+            fixed_at={1: (0, 0), 2: (0, 0)},
+        ),
     )
     assert outcome is not None
     assert outcome.status == "INFEASIBLE"
@@ -7972,12 +7979,14 @@ def test_pack_window_leaves_every_pinned_strip_where_it_was() -> None:
     fixed = {index: origin for index, origin in seed.at.items() if index not in window}
     outcome = freeform._pack_window(
         strips,
-        height=height,
-        width_bound=seed.width,
-        direct_candidates=candidates,
-        window=window,
-        fixed_at=fixed,
-        seed=seed,
+        freeform._PackWindowRequest(
+            height=height,
+            width_bound=seed.width,
+            direct_candidates=candidates,
+            window=window,
+            fixed_at=fixed,
+            seed=seed,
+        ),
     )
     assert outcome is not None
     windowed = outcome.pack
@@ -8002,12 +8011,14 @@ def test_pack_window_never_widens_past_its_bound() -> None:
     free = min(3, len(strips))
     outcome = freeform._pack_window(
         strips,
-        height=height,
-        width_bound=seed.width,
-        direct_candidates=candidates,
-        window=frozenset(range(free)),
-        fixed_at={index: origin for index, origin in seed.at.items() if index >= free},
-        seed=seed,
+        freeform._PackWindowRequest(
+            height=height,
+            width_bound=seed.width,
+            direct_candidates=candidates,
+            window=frozenset(range(free)),
+            fixed_at={index: origin for index, origin in seed.at.items() if index >= free},
+            seed=seed,
+        ),
     )
     assert outcome is None or outcome.pack is None or outcome.pack.width <= seed.width
 
@@ -8024,11 +8035,13 @@ def test_pack_window_keeps_pins_the_free_model_would_have_broken() -> None:
     fixed = {1: (4, 0), 2: (6, 2)}
     outcome = freeform._pack_window(
         strips,
-        height=6,
-        width_bound=8,
-        direct_candidates={},
-        window=frozenset({0}),
-        fixed_at=fixed,
+        freeform._PackWindowRequest(
+            height=6,
+            width_bound=8,
+            direct_candidates={},
+            window=frozenset({0}),
+            fixed_at=fixed,
+        ),
     )
     assert outcome is not None
     windowed = outcome.pack
@@ -8073,13 +8086,15 @@ def test_pack_window_pins_one_worker_and_a_deterministic_work_bound(
     for budget, work in ((4.0, 0.25), (0.1, 0.5)):
         freeform._pack_window(
             strips,
-            height=6,
-            width_bound=8,
-            direct_candidates={},
-            window=frozenset({0}),
-            fixed_at={1: (4, 0), 2: (6, 2)},
-            time_budget_s=budget,
-            deterministic_work=work,
+            freeform._PackWindowRequest(
+                height=6,
+                width_bound=8,
+                direct_candidates={},
+                window=frozenset({0}),
+                fixed_at={1: (4, 0), 2: (6, 2)},
+                time_budget_s=budget,
+                deterministic_work=work,
+            ),
         )
 
     assert len(seen) == 2
@@ -8179,14 +8194,16 @@ def test_pack_window_keeps_a_no_good_that_still_has_a_free_strip() -> None:
     skipped: list[int] = []
     outcome = freeform._pack_window(
         strips,
-        height=height,
-        width_bound=seed.width,
-        direct_candidates=candidates,
-        window=frozenset({0}),
-        fixed_at={index: origin for index, origin in seed.at.items() if index != 0},
-        seed=seed,
-        exact_pack_no_goods=(_pinned_exact_no_good(strips, height, seed),),
-        on_skipped=skipped.append,
+        freeform._PackWindowRequest(
+            height=height,
+            width_bound=seed.width,
+            direct_candidates=candidates,
+            window=frozenset({0}),
+            fixed_at={index: origin for index, origin in seed.at.items() if index != 0},
+            seed=seed,
+            exact_pack_no_goods=(_pinned_exact_no_good(strips, height, seed),),
+            on_skipped=skipped.append,
+        ),
     )
     assert skipped == []
     # The forbidden assignment is the seed's, so the solve must move strip 0 or
@@ -8209,14 +8226,16 @@ def test_pack_window_reports_a_skip_through_on_skipped() -> None:
     skipped: list[int] = []
     freeform._pack_window(
         strips,
-        height=height,
-        width_bound=seed.width,
-        direct_candidates=candidates,
-        window=frozenset({0}),
-        fixed_at={index: origin for index, origin in seed.at.items() if index != 0},
-        seed=seed,
-        width_target=1,
-        on_skipped=skipped.append,
+        freeform._PackWindowRequest(
+            height=height,
+            width_bound=seed.width,
+            direct_candidates=candidates,
+            window=frozenset({0}),
+            fixed_at={index: origin for index, origin in seed.at.items() if index != 0},
+            seed=seed,
+            width_target=1,
+            on_skipped=skipped.append,
+        ),
     )
     assert skipped == [1]
 
@@ -8226,11 +8245,13 @@ def test_pack_window_refuses_an_empty_window() -> None:
     with pytest.raises(ValueError, match="at least one strip"):
         freeform._pack_window(
             strips,
-            height=height,
-            width_bound=bound,
-            direct_candidates=candidates,
-            window=frozenset(),
-            fixed_at={index: (0, 0) for index in range(len(strips))},
+            freeform._PackWindowRequest(
+                height=height,
+                width_bound=bound,
+                direct_candidates=candidates,
+                window=frozenset(),
+                fixed_at={index: (0, 0) for index in range(len(strips))},
+            ),
         )
 
 
@@ -8239,11 +8260,13 @@ def test_pack_window_refuses_a_strip_that_is_both_free_and_pinned() -> None:
     with pytest.raises(ValueError, match="must not also be pinned"):
         freeform._pack_window(
             strips,
-            height=height,
-            width_bound=bound,
-            direct_candidates=candidates,
-            window=frozenset({0}),
-            fixed_at={index: (0, 0) for index in range(len(strips))},
+            freeform._PackWindowRequest(
+                height=height,
+                width_bound=bound,
+                direct_candidates=candidates,
+                window=frozenset({0}),
+                fixed_at={index: (0, 0) for index in range(len(strips))},
+            ),
         )
 
 
@@ -8252,11 +8275,13 @@ def test_pack_window_refuses_a_partition_that_misses_a_strip() -> None:
     with pytest.raises(ValueError, match="cover every strip"):
         freeform._pack_window(
             strips,
-            height=height,
-            width_bound=bound,
-            direct_candidates=candidates,
-            window=frozenset({0}),
-            fixed_at={},
+            freeform._PackWindowRequest(
+                height=height,
+                width_bound=bound,
+                direct_candidates=candidates,
+                window=frozenset({0}),
+                fixed_at={},
+            ),
         )
 
 
@@ -14188,7 +14213,9 @@ class TestSelectedSplitterSurvivesLaterMerge:
             canvas,
             held,
             (0,),
-            protected_sinks=routing_domain._protected_merge_cells(held, (0,), {1: (0, 0, 14)}),
+            request=routing_domain._MergeFrontierRequest(
+                protected_sinks=routing_domain._protected_merge_cells(held, (0,), {1: (0, 0, 14)})
+            ),
         )
         assert (1, -1, 14) not in offers
         assert (-1, -1, 14) in offers  # Upstream merges still reach the Splitter.
@@ -14208,8 +14235,9 @@ class TestSelectedSplitterSurvivesLaterMerge:
                 held,
                 (0,),
                 canvas.junction_is_clear,
-                belt_prefab=(2003, 37),
-                merged_cells={(merge_x, 0, 14)},
+                routing_domain._MergeFrontierRequest(
+                    belt_prefab=(2003, 37), merged_cells={(merge_x, 0, 14)}
+                ),
             )
             assert ((0, 1, 14) in offers) == (merge_x < 0)
 
@@ -14619,8 +14647,7 @@ class TestABranchLeavesFromItsOwnSource:
             {0: first_path},
             (0,),
             lambda _x, _y, _level: True,
-            provenance=provenance,
-            belt_prefab=(2001, 35),
+            routing_domain._MergeFrontierRequest(provenance=provenance, belt_prefab=(2001, 35)),
         )
         for cell in first_path:
             del canvas.blocked[cell]
@@ -15165,8 +15192,7 @@ class TestDetailedRoutingDiagnostics:
             {0: path},
             (0,),
             lambda _x, _y, _level: True,
-            provenance=provenance,
-            tentative_ok=True,
+            routing_domain._MergeFrontierRequest(provenance=provenance, tentative_ok=True),
         )
         assert strict == set()
         assert (0, 1, 0) in repair
@@ -15183,9 +15209,11 @@ class TestDetailedRoutingDiagnostics:
             paths,
             (0, 1),
             lambda _x, _y, _level: True,
-            provenance=provenance,
-            source_choices=choices,
-            admit_tap=lambda tap: tap != (0, 0, 0),
+            routing_domain._MergeFrontierRequest(
+                provenance=provenance,
+                source_choices=choices,
+                admit_tap=lambda tap: tap != (0, 0, 0),
+            ),
         )
 
         assert (1, 0, 0) in frontier
@@ -15213,7 +15241,11 @@ class TestDetailedRoutingDiagnostics:
             routing_domain.RoutingFlowLimits((Fraction(60), Fraction(50), rate), Fraction(120)),
         )
         frontier = routing_domain._merge_frontier(
-            canvas, paths, (0,), lambda _x, _y, _level: True, path_ranges=source_ranges
+            canvas,
+            paths,
+            (0,),
+            lambda _x, _y, _level: True,
+            routing_domain._MergeFrontierRequest(path_ranges=source_ranges),
         )
         assert (1, 1, 0) in frontier
         assert ((5, 1, 0) in frontier) is shared_allowed
@@ -15237,7 +15269,12 @@ class TestDetailedRoutingDiagnostics:
             {},
             routing_domain.RoutingFlowLimits((Fraction(60), Fraction(50), rate), Fraction(120)),
         )
-        frontier = routing_domain._merge_frontier(canvas, paths, (0,), path_ranges=sink_ranges)
+        frontier = routing_domain._merge_frontier(
+            canvas,
+            paths,
+            (0,),
+            request=routing_domain._MergeFrontierRequest(path_ranges=sink_ranges),
+        )
         assert (5, 1, 0) in frontier
         assert ((1, 1, 0) in frontier) is shared_allowed
 
@@ -15259,7 +15296,11 @@ class TestDetailedRoutingDiagnostics:
             4, paths, owner, sources, {3: (2, 0, 0)}, limits
         )
         assert not routing_domain._merge_frontier(
-            canvas, paths, (2,), lambda _x, _y, _level: True, path_ranges=restricted
+            canvas,
+            paths,
+            (2,),
+            lambda _x, _y, _level: True,
+            routing_domain._MergeFrontierRequest(path_ranges=restricted),
         )
         # Ripping up the incoming flow restores capacity on the entire ancestry.
         del paths[3]
@@ -15267,7 +15308,11 @@ class TestDetailedRoutingDiagnostics:
             4, paths, owner, sources, {3: (2, 0, 0)}, limits
         )
         assert (6, 3, 0) in routing_domain._merge_frontier(
-            canvas, paths, (2,), lambda _x, _y, _level: True, path_ranges=restored
+            canvas,
+            paths,
+            (2,),
+            lambda _x, _y, _level: True,
+            routing_domain._MergeFrontierRequest(path_ranges=restored),
         )
 
     def test_merge_frontier_offers_an_owned_junction_guard_port(self) -> None:
@@ -15283,15 +15328,16 @@ class TestDetailedRoutingDiagnostics:
             {0: path},
             (0,),
             lambda x, y, level: (x, y, level) == (0, 0, 0),
-            belt_prefab=(2001, 35),
+            routing_domain._MergeFrontierRequest(belt_prefab=(2001, 35)),
         )
         owned = routing_domain._merge_frontier(
             canvas,
             {0: path},
             (0,),
             lambda x, y, level: (x, y, level) == (0, 0, 0),
-            belt_prefab=(2001, 35),
-            owned_guard={branch: (0, 0, 0)},
+            routing_domain._MergeFrontierRequest(
+                belt_prefab=(2001, 35), owned_guard={branch: (0, 0, 0)}
+            ),
         )
 
         assert branch not in refused
@@ -16911,7 +16957,7 @@ class TestSourceTapPreservesPhysicalSplitterPortIdentity:
             {5: path},
             (5,),
             lambda x, y, level: (x, y, level) == (0, 0, 2),
-            belt_prefab=(2001, 35),
+            routing_domain._MergeFrontierRequest(belt_prefab=(2001, 35)),
         )
 
         assert frontier == {(-1, 0, 2), (1, 0, 2)}
@@ -16929,7 +16975,7 @@ class TestSourceTapPreservesPhysicalSplitterPortIdentity:
             {5: path},
             (5,),
             lambda x, y, level: (x, y, level) == (0, 0, 1),
-            belt_prefab=(2001, 35),
+            routing_domain._MergeFrontierRequest(belt_prefab=(2001, 35)),
         )
 
         assert frontier == {(-1, 0, 0), (1, 0, 0)}
@@ -17055,8 +17101,9 @@ class TestTheMergeFrontierWithdrawsSitesAJunctionCannotHold:
                 {5: path},
                 (5,),
                 lambda x, y, level: (x, y, level) == (0, 0, 0),
-                belt_prefab=(2001, 35),
-                source_feeds={5: source},
+                routing_domain._MergeFrontierRequest(
+                    belt_prefab=(2001, 35), source_feeds={5: source}
+                ),
             )
 
         assert frontier() == {(0, -1, 0), (0, 1, 0)}
@@ -21283,11 +21330,14 @@ def _capture_can_junction(
         merge_paths: Mapping[int, Sequence[Cell]],
         siblings: tuple[int, ...],
         junctionable: Callable[[int, int, int], bool] | None = None,
-        **kwargs: object,
+        request: routing_domain._MergeFrontierRequest = routing_domain._DEFAULT_MERGE_REQUEST,
     ) -> set[Cell]:
         if junctionable is not None:
             context = inspect.getclosurevars(junctionable).nonlocals
-            can_junction = cast(Callable[..., bool], context["_can_junction"])
+            # `_can_junction` is a `_RouteAllRun` method since the Plan C
+            # search-cluster lift, so the gate now reaches it through the run
+            # object `frontier_junctionable` closes over instead of directly.
+            can_junction = cast(Callable[..., bool], context["self"]._can_junction)
             project_taps = cast(frozenset[Cell], context["project_taps"])
 
             def live_gate(x: int, y: int, level: int) -> bool:
@@ -21299,7 +21349,7 @@ def _capture_can_junction(
             merge_paths,
             siblings,
             junctionable,
-            **kwargs,  # type: ignore[arg-type]
+            request,
         )
 
     monkeypatch.setattr(routing_domain, "_merge_frontier", capturing)
@@ -21720,15 +21770,17 @@ def _window_solve_outcome(pack: routing_domain._Pack) -> freeform._PackSolveOutc
 def _recording_window_refusal(
     calls: list[object],
 ) -> Callable[..., freeform._PackSolveOutcome | None]:
-    """A `_pack_window` stub that records its keywords and repairs nothing.
+    """A `_pack_window` stub that records its request and repairs nothing.
 
-    Written out rather than as `lambda *_a, **kw: calls.append(kw) or None`,
+    Written out rather than as `lambda _s, request: calls.append(request) or None`,
     which reads as returning `None` and does -- but by feeding `or` a value
     `list.append` never had, which mypy reports.
     """
 
-    def refuse(*_args: object, **kwargs: object) -> freeform._PackSolveOutcome | None:
-        calls.append(kwargs)
+    def refuse(
+        _strips: object, request: freeform._PackWindowRequest
+    ) -> freeform._PackSolveOutcome | None:
+        calls.append(request)
         return None
 
     return refuse
@@ -21882,8 +21934,8 @@ def _sweep_over_a_stranded_first_candidate(
             towers=(),
         )
 
-    def repair(*_args: object, **kwargs: object) -> freeform._PackSolveOutcome:
-        seed = kwargs["seed"]
+    def repair(_strips: object, request: freeform._PackWindowRequest) -> freeform._PackSolveOutcome:
+        seed = request.seed
         assert isinstance(seed, routing_domain._Pack)
         return _window_solve_outcome(
             replace(
@@ -22054,11 +22106,13 @@ def test_the_sweep_repairs_a_window_when_a_full_resolve_is_unaffordable(
     that candidate.
     """
     session = OperatorSession()
-    windows: list[dict[str, object]] = []
+    windows: list[freeform._PackWindowRequest] = []
 
-    def recording(*_args: object, **kwargs: object) -> freeform._PackSolveOutcome:
-        windows.append(dict(kwargs))
-        seed = kwargs["seed"]
+    def recording(
+        _strips: object, request: freeform._PackWindowRequest
+    ) -> freeform._PackSolveOutcome:
+        windows.append(request)
+        seed = request.seed
         assert isinstance(seed, routing_domain._Pack)
         return _window_solve_outcome(
             replace(
@@ -22082,10 +22136,10 @@ def test_the_sweep_repairs_a_window_when_a_full_resolve_is_unaffordable(
     # The repaired candidate is re-evaluated, never re-packed.
     assert packed == [(20, 0)]
     assert len(windows) == 1
-    assert windows[0]["window"] == frozenset({0})
-    assert windows[0]["fixed_at"] == {1: (30, 0)}
-    assert windows[0]["arrangement"] == 0
-    assert windows[0]["width_bound"] == 60
+    assert windows[0].window == frozenset({0})
+    assert windows[0].fixed_at == {1: (30, 0)}
+    assert windows[0].arrangement == 0
+    assert windows[0].width_bound == 60
     # The choice that produced the repair is credited by the outcome it earned.
     assert session.applied == 1
     assert len(session.choices) == 1
@@ -22103,13 +22157,13 @@ def test_the_sweep_never_solves_the_same_window_twice(
     session = OperatorSession()
     keys: list[tuple[int, int, frozenset[int]]] = []
 
-    def recording(*_args: object, **kwargs: object) -> freeform._PackSolveOutcome:
-        window = kwargs["window"]
-        assert isinstance(window, frozenset)
-        key = (int(str(kwargs["height"])), int(str(kwargs["arrangement"])), window)
+    def recording(
+        _strips: object, request: freeform._PackWindowRequest
+    ) -> freeform._PackSolveOutcome:
+        key = (request.height, request.arrangement, request.window)
         assert key not in keys, f"window {key} solved twice"
         keys.append(key)
-        seed = kwargs["seed"]
+        seed = request.seed
         assert isinstance(seed, routing_domain._Pack)
         return _window_solve_outcome(
             replace(
@@ -22381,9 +22435,11 @@ def test_a_repair_that_fails_again_settles_before_it_asks_for_another_window(
     log: list[str] = []
     session = _RecordingSession(log)
 
-    def solving(*_args: object, **kwargs: object) -> freeform._PackSolveOutcome:
+    def solving(
+        _strips: object, request: freeform._PackWindowRequest
+    ) -> freeform._PackSolveOutcome:
         log.append("solve")
-        seed = kwargs["seed"]
+        seed = request.seed
         assert isinstance(seed, routing_domain._Pack)
         return _window_solve_outcome(
             replace(
@@ -22699,8 +22755,10 @@ def test_a_window_launches_at_a_width_the_band_scan_will_not_target(
         targets.append(kwargs["band_target_width"])
         return frozenset({0})
 
-    def refuse(*_args: object, **kwargs: object) -> freeform._PackSolveOutcome | None:
-        targets.append(kwargs["width_target"])
+    def refuse(
+        _strips: object, request: freeform._PackWindowRequest
+    ) -> freeform._PackSolveOutcome | None:
+        targets.append(request.width_target)
         return None
 
     result, packed, _builds = _sweep_over_a_stranded_first_candidate(
@@ -22795,8 +22853,8 @@ def test_the_window_solves_against_the_cluster_no_goods_the_packer_holds(
     assert result is None
     assert len(calls) == 1
     window_call = calls[0]
-    assert isinstance(window_call, dict)
-    assert window_call["cluster_relation_no_goods"] == (cut,)
+    assert isinstance(window_call, freeform._PackWindowRequest)
+    assert window_call.cluster_relation_no_goods == (cut,)
 
 
 def test_a_replan_drops_a_pending_window_repair_and_settles_it_once(
@@ -25572,3 +25630,34 @@ def test_the_mall_block_the_packer_convicted_is_placed_or_names_the_cause() -> N
     else:
         report = validate.certify(placement, block_spec, belt_rules=_BELT_RULES, expect_power=True)
         assert report.ok, report.errors
+
+
+def test_pack_window_takes_a_request_built_at_each_call_site() -> None:
+    """`time_budget_s` is derived from a live clock at both call sites."""
+    import ast
+    import inspect
+    from pathlib import Path
+
+    from flab2bp.layout import freeform
+
+    assert list(inspect.signature(freeform._pack_window).parameters) == ["strips", "request"]
+
+    layout = Path(__file__).resolve().parents[2] / "src" / "flab2bp" / "layout"
+    for name, expected in (("freeform.py", 1), ("sequence_solver.py", 1)):
+        tree = ast.parse((layout / name).read_text())
+        calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_pack_window"
+        ]
+        assert len(calls) == expected, (name, [node.lineno for node in calls])
+        for call in calls:
+            arguments = [*call.args, *(keyword.value for keyword in call.keywords)]
+            assert any(
+                isinstance(argument, ast.Call)
+                and isinstance(argument.func, ast.Name)
+                and argument.func.id == "_PackWindowRequest"
+                for argument in arguments
+            ), f"{name}:{call.lineno} must build its request inline"

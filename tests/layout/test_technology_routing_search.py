@@ -199,14 +199,18 @@ def _scheduler(canvas, bounds, *, deadline=None, outer_budget=None):
     def capture(frame, event, arg):
         if previous_profile is not None:
             previous_profile(frame, event, arg)
-        if (
-            event == "return"
-            and frame.f_code is routing_domain._route_all.__code__
-            and "_search" in frame.f_locals
-        ):
-            captured.update(
-                search=frame.f_locals["_search"], primitives=frame.f_locals["primitives"]
-            )
+        if event != "return" or frame.f_code is not routing_domain._route_all.__code__:
+            return
+        # The scheduler used to be a `_route_all` local -- first the `_search`
+        # closure, then Plan C task 3's `_search = run._search` alias. Task 7
+        # deleted the alias, so it is reached through the run object now.
+        # `last_mile_counts` is the field bound where that alias stood, and
+        # standing in for the old `"_search" in frame.f_locals` guard it keeps
+        # the frames that took the prologue's early BUDGET return out of the
+        # capture.
+        run = frame.f_locals.get("run")
+        if run is not None and hasattr(run, "last_mile_counts"):
+            captured.update(search=run._search, primitives=run.primitives)
 
     try:
         sys.setprofile(capture)

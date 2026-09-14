@@ -3127,25 +3127,37 @@ def _pack_result(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _PackWindowRequest:
+    """The 16 keyword-only inputs `_pack_window` reads.
+
+    Frozen: `_pack_window` only READS these, and both call sites build the
+    request inside the call expression.  `time_budget_s` in particular is
+    derived from a live clock at the sequence-pair site, so a request hoisted
+    out of that loop would pin the first iteration's allowance for every later
+    one.
+    """
+
+    height: int
+    width_bound: int
+    direct_candidates: Mapping[tuple[int, int], _DirectCandidate]
+    window: frozenset[int]
+    fixed_at: Mapping[int, tuple[int, int]]
+    seed: routing_domain._Pack | None = None
+    width_target: int | None = None
+    arrangement: int = 0
+    projection_no_goods: tuple[ProjectionNoGood, ...] = ()
+    exact_pack_no_goods: tuple[ExactPackNoGood, ...] = ()
+    direct_relation_no_goods: tuple[_DirectRelationNoGood, ...] = ()
+    cluster_relation_no_goods: tuple[ClusterRelationNoGood, ...] = ()
+    feedback: FeedbackState | None = None
+    time_budget_s: float = C_WINDOW_SECONDS
+    deterministic_work: float = C_WINDOW_DETERMINISTIC_WORK
+    on_skipped: Callable[[int], None] | None = None
+
+
 def _pack_window(
-    strips: list[routing_domain.Strip],
-    *,
-    height: int,
-    width_bound: int,
-    direct_candidates: Mapping[tuple[int, int], _DirectCandidate],
-    window: frozenset[int],
-    fixed_at: Mapping[int, tuple[int, int]],
-    seed: routing_domain._Pack | None = None,
-    width_target: int | None = None,
-    arrangement: int = 0,
-    projection_no_goods: tuple[ProjectionNoGood, ...] = (),
-    exact_pack_no_goods: tuple[ExactPackNoGood, ...] = (),
-    direct_relation_no_goods: tuple[_DirectRelationNoGood, ...] = (),
-    cluster_relation_no_goods: tuple[ClusterRelationNoGood, ...] = (),
-    feedback: FeedbackState | None = None,
-    time_budget_s: float = C_WINDOW_SECONDS,
-    deterministic_work: float = C_WINDOW_DETERMINISTIC_WORK,
-    on_skipped: Callable[[int], None] | None = None,
+    strips: list[routing_domain.Strip], request: _PackWindowRequest
 ) -> _PackSolveOutcome | None:
     """Re-solve `_pack`'s formulation for ``window`` with everything else pinned.
 
@@ -3162,48 +3174,50 @@ def _pack_window(
     has no incumbent.  ``None`` means no model was solved because the request was
     statically unaffordable or inconsistent.
     """
-    if not window:
+    if not request.window:
         raise ValueError("a repair window must name at least one strip")
-    if any(index in fixed_at for index in window):
+    if any(index in request.fixed_at for index in request.window):
         raise ValueError("window strips must not also be pinned")
-    if set(fixed_at) | window != set(range(len(strips))):
+    if set(request.fixed_at) | request.window != set(range(len(strips))):
         raise ValueError("window and pinned strips must cover every strip")
-    if time_budget_s <= 0:
+    if request.time_budget_s <= 0:
         return None
     built = _pack_model(
         strips,
-        height=height,
-        width_bound=width_bound,
-        direct_candidates=direct_candidates,
-        fixed_at=fixed_at,
-        width_target=width_target,
-        projection_no_goods=projection_no_goods,
-        exact_pack_no_goods=exact_pack_no_goods,
-        direct_relation_no_goods=direct_relation_no_goods,
-        cluster_relation_no_goods=cluster_relation_no_goods,
-        feedback=feedback,
-        seed=seed,
+        height=request.height,
+        width_bound=request.width_bound,
+        direct_candidates=request.direct_candidates,
+        fixed_at=request.fixed_at,
+        width_target=request.width_target,
+        projection_no_goods=request.projection_no_goods,
+        exact_pack_no_goods=request.exact_pack_no_goods,
+        direct_relation_no_goods=request.direct_relation_no_goods,
+        cluster_relation_no_goods=request.cluster_relation_no_goods,
+        feedback=request.feedback,
+        seed=request.seed,
     )
     if built is None:
         return None
-    if on_skipped is not None and built.skipped_no_goods:
-        on_skipped(built.skipped_no_goods)
+    if request.on_skipped is not None and built.skipped_no_goods:
+        request.on_skipped(built.skipped_no_goods)
     solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = time_budget_s
+    solver.parameters.max_time_in_seconds = request.time_budget_s
     # One worker and a deterministic-work bound, always: a window runs BESIDE a
     # packer that already saturates the box, and its result must not depend on
     # wall time except through the wall limit above firing as a hard deadline.
     solver.parameters.num_search_workers = C_WINDOW_WORKERS
-    solver.parameters.max_deterministic_time = min(time_budget_s, deterministic_work)
+    solver.parameters.max_deterministic_time = min(
+        request.time_budget_s, request.deterministic_work
+    )
     # A function of `arrangement` and nothing else -- see `_pack`.
-    solver.parameters.random_seed = _PACK_RANDOM_SEED + _ARRANGEMENT_STRIDE * arrangement
+    solver.parameters.random_seed = _PACK_RANDOM_SEED + _ARRANGEMENT_STRIDE * request.arrangement
     fingerprint = hashlib.sha256(str(built.model.Proto()).encode()).hexdigest()
     outcome = _pack_result(
         built,
         solver,
         strips,
-        direct_candidates,
-        height,
+        request.direct_candidates,
+        request.height,
         None,
         model_fingerprint=fingerprint,
     )
@@ -6437,30 +6451,36 @@ class FreeformLayout:
                                     window_started = time.monotonic()
                                     outcome = _pack_window(
                                         strips,
-                                        height=height,
-                                        width_bound=pack.width,
-                                        direct_candidates=net_candidates,
-                                        window=window,
-                                        fixed_at={
-                                            index: origin
-                                            for index, origin in pack.at.items()
-                                            if index not in window
-                                        },
-                                        seed=pack,
-                                        width_target=target,
-                                        arrangement=arrangement,
-                                        projection_no_goods=tuple(projection_no_goods),
-                                        exact_pack_no_goods=exact_pack_no_goods,
-                                        direct_relation_no_goods=tuple(direct_relation_no_goods),
-                                        # THE SAME PROOFS `_pack` GETS.  A window
-                                        # is a sub-model of the full formulation,
-                                        # so a collection the packer is forbidden
-                                        # to violate cannot be dropped here: the
-                                        # window would hand back a pack the sweep
-                                        # has already proved unroutable.
-                                        cluster_relation_no_goods=tuple(cluster_relation_no_goods),
-                                        feedback=feedback_by_height.get(height),
-                                        on_skipped=_count_window_skips,
+                                        _PackWindowRequest(
+                                            height=height,
+                                            width_bound=pack.width,
+                                            direct_candidates=net_candidates,
+                                            window=window,
+                                            fixed_at={
+                                                index: origin
+                                                for index, origin in pack.at.items()
+                                                if index not in window
+                                            },
+                                            seed=pack,
+                                            width_target=target,
+                                            arrangement=arrangement,
+                                            projection_no_goods=tuple(projection_no_goods),
+                                            exact_pack_no_goods=exact_pack_no_goods,
+                                            direct_relation_no_goods=tuple(
+                                                direct_relation_no_goods
+                                            ),
+                                            # THE SAME PROOFS `_pack` GETS.  A window
+                                            # is a sub-model of the full formulation,
+                                            # so a collection the packer is forbidden
+                                            # to violate cannot be dropped here: the
+                                            # window would hand back a pack the sweep
+                                            # has already proved unroutable.
+                                            cluster_relation_no_goods=tuple(
+                                                cluster_relation_no_goods
+                                            ),
+                                            feedback=feedback_by_height.get(height),
+                                            on_skipped=_count_window_skips,
+                                        ),
                                     )
                                     window_seconds += time.monotonic() - window_started
                                     repaired = None if outcome is None else outcome.pack
