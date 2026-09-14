@@ -48,12 +48,12 @@ from flab2bp.sfy.properties import (
 from flab2bp.sfy.query import find
 from flab2bp.sfy.registry import Registry
 from flab2bp.sfy.trailers import trailer_for_new
+from flab2bp.sfy.versions import BLUEPRINT_HEADER_VERSION
 
 __all__ = [
     "BLUEPRINT_HEADER_VERSION",
     "CONVEYOR_SEGMENT_CM",
     "DEFAULT_SAVE_VERSION",
-    "ITEM_CLASS_PATHS",
     "LEVEL",
     "SPLINE_POINT_FIELD_TAGS",
     "TEMPLATE_MIN_SAVE_VERSION",
@@ -76,7 +76,6 @@ TEMPLATE_MIN_SAVE_VERSION = 58
 """Templates come from this save version up: the 1.0-and-later class family,
 with the modern property tag, which is what a blueprint written today needs."""
 
-BLUEPRINT_HEADER_VERSION = 2
 DEFAULT_SAVE_VERSION = 60
 
 CONVEYOR_SEGMENT_CM = 200.0
@@ -88,53 +87,6 @@ buildings, which is ``sum(ceil(length / 200))``; ``logistics-9``'s twelve belts
 come to 34 the same way. A fixture's whole bill is not reproducible -- it also
 counts items sitting in inventories and lightweight buildables that are not
 saved as objects at all -- but the belts in it are."""
-
-_PARTS = "/Game/FactoryGame/Resource/Parts"
-
-# Which folder each item descriptor's asset lives in. Nothing in Docs.json
-# survives into ``registry.json`` with its asset path, so these are harvested
-# from the fixture corpus's own header costs, where the game wrote them;
-# ``tests/sfy/test_templates.py`` checks every path against every fixture.
-_ITEM_FOLDERS: dict[str, str] = {
-    "Desc_AluminumCasing_C": f"{_PARTS}/AluminumCasing",
-    "Desc_AluminumPlate_C": f"{_PARTS}/AluminumPlate",
-    "Desc_Cable_C": f"{_PARTS}/Cable",
-    "Desc_Cement_C": f"{_PARTS}/Cement",
-    "Desc_CircuitBoardHighSpeed_C": f"{_PARTS}/CircuitBoardHighSpeed",
-    "Desc_Computer_C": f"{_PARTS}/Computer",
-    "Desc_CopperIngot_C": f"{_PARTS}/CopperIngot",
-    "Desc_CopperSheet_C": f"{_PARTS}/CopperSheet",
-    "Desc_CrystalOscillator_C": f"{_PARTS}/CrystalOscillator",
-    "Desc_CrystalShard_C": "/Game/FactoryGame/Resource/Environment/Crystal",
-    "Desc_FicsiteMesh_C": f"{_PARTS}/FicsiteMesh",
-    "Desc_Fuel_C": f"{_PARTS}/Fuel",
-    "Desc_HighSpeedWire_C": f"{_PARTS}/HighSpeedWire",
-    "Desc_IronIngot_C": f"{_PARTS}/IronIngot",
-    "Desc_IronPlateReinforced_C": f"{_PARTS}/IronPlateReinforced",
-    "Desc_IronPlate_C": f"{_PARTS}/IronPlate",
-    "Desc_IronRod_C": f"{_PARTS}/IronRod",
-    "Desc_Leaves_C": f"{_PARTS}/GenericBiomass",
-    "Desc_ModularFrameHeavy_C": f"{_PARTS}/ModularFrameHeavy",
-    "Desc_ModularFrame_C": f"{_PARTS}/ModularFrame",
-    "Desc_Motor_C": f"{_PARTS}/Motor",
-    "Desc_Plastic_C": f"{_PARTS}/Plastic",
-    "Desc_QuartzCrystal_C": f"{_PARTS}/QuartzCrystal",
-    "Desc_Rotor_C": f"{_PARTS}/Rotor",
-    "Desc_Rubber_C": f"{_PARTS}/Rubber",
-    "Desc_SAMFluctuator_C": f"{_PARTS}/SAMFluctuator",
-    "Desc_Silica_C": f"{_PARTS}/Silica",
-    "Desc_SteelPipe_C": f"{_PARTS}/SteelPipe",
-    "Desc_SteelPlateReinforced_C": f"{_PARTS}/SteelPlateReinforced",
-    "Desc_SteelPlate_C": f"{_PARTS}/SteelPlate",
-    "Desc_TimeCrystal_C": f"{_PARTS}/TimeCrystal",
-    "Desc_WAT2_C": "/Game/FactoryGame/Prototype/WAT",
-    "Desc_Wire_C": f"{_PARTS}/Wire",
-}
-
-ITEM_CLASS_PATHS: dict[str, str] = {
-    item: f"{folder}/{item.removesuffix('_C')}.{item}" for item, folder in _ITEM_FOLDERS.items()
-}
-"""Item descriptors, as the game spells them in a blueprint's cost list."""
 
 SPLINE_POINT_FIELD_TAGS: tuple[Tag, ...] = tuple(
     Tag(name, "StructProperty", 0, struct_name="Vector").as_modern(TAG_NATIVE_SERIALIZE)
@@ -344,7 +296,7 @@ def apply_recipe(
     out = [(actor_header, actor_data)]
     for header, data in objects[1:]:
         items = wanted.get(header.path)
-        out.append((header, data if items is None else _set_filter(header, data, items)))
+        out.append((header, data if items is None else _set_filter(header, data, items, registry)))
     return tuple(out)
 
 
@@ -355,7 +307,9 @@ def _inventory_path(header: ObjectHeader, data: ObjectData, name: str) -> str:
     return value.ref.path
 
 
-def _set_filter(header: ObjectHeader, data: ObjectData, items: Sequence[str]) -> ObjectData:
+def _set_filter(
+    header: ObjectHeader, data: ObjectData, items: Sequence[str], registry: Registry
+) -> ObjectData:
     """Rewrite the leading ``mAllowedItemDescriptors`` entries, keeping the slots."""
     current = find(data.properties, ALLOWED_ITEMS)
     if not isinstance(current, Array):
@@ -364,7 +318,7 @@ def _set_filter(header: ObjectHeader, data: ObjectData, items: Sequence[str]) ->
         raise TemplateError(
             f"{header.path} has {len(current.items)} inventory slots, the recipe needs {len(items)}"
         )
-    filled: tuple[Value, ...] = tuple(Object(_item_ref(item)) for item in items)
+    filled: tuple[Value, ...] = tuple(Object(_item_ref(registry, item)) for item in items)
     return _set_property(
         data, ALLOWED_ITEMS, replace(current, items=filled + current.items[len(items) :])
     )
@@ -406,18 +360,19 @@ def assemble(
         save_version=save_version,
         build_version=build_version,
         dimensions=dimensions,
-        cost=tuple(ItemAmount(_item_ref(name), amount) for name, amount in cost.items()),
+        cost=tuple(ItemAmount(_item_ref(registry, name), amount) for name, amount in cost.items()),
         recipes=tuple(recipes.values()),
         version_data=version_data,
     )
     return Blueprint(header, tuple(actors) + tuple(components))
 
 
-def _item_ref(item: str) -> ObjectRef:
+def _item_ref(registry: Registry, item: str) -> ObjectRef:
+    """How the game names one item descriptor: its asset path, with no level."""
     try:
-        return ObjectRef("", ITEM_CLASS_PATHS[item])
+        return ObjectRef("", registry.item_paths[item])
     except KeyError:
-        raise TemplateError(f"no asset path known for the item descriptor {item}") from None
+        raise TemplateError(f"the registry has no asset path for the item {item}") from None
 
 
 def _recipe_ref(h: ObjectHeader, d: ObjectData) -> ObjectRef:

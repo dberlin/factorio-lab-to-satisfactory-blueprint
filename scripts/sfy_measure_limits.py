@@ -271,7 +271,10 @@ def _spread(population: list[Extreme], low: bool) -> dict[str, Any]:
 
     return {
         "value": round(pick.value, 4),
-        "source": "measured",
+        # Not a source. Every limit in the registry is sourced from game data;
+        # what this section does is stand beside those values so they can be
+        # compared with what the corpus was seen to contain.
+        "role": "cross-check",
         "fixture": pick.fixture,
         "object": pick.obj,
         "detail": pick.detail,

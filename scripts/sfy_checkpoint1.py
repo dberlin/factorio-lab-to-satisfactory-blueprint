@@ -66,8 +66,9 @@ CONSTRUCTOR = "Build_ConstructorMk1_C"
 BELT = "Build_ConveyorBeltMk1_C"
 POLE = "Build_PowerPoleMk1_C"
 
-# The Iron Plate recipe's asset path, as every fixture that runs it spells it.
-IRON_PLATE_RECIPE = "/Game/FactoryGame/Recipes/Constructor/Recipe_IronPlate.Recipe_IronPlate_C"
+# The recipe the Constructor runs. A machine names its recipe by asset path, and
+# ``Registry.recipe_paths`` has that path from the game's own Docs.json.
+IRON_PLATE_RECIPE = "Recipe_IronPlate_C"
 
 # A Blueprint Designer Mk.1 is 4x4x4 foundations of 8 m, with its origin at the
 # centre of the floor, so everything must sit inside +-1600 cm horizontally and
@@ -160,7 +161,9 @@ def build() -> Blueprint:
 
     constructor_at = _at(0.0, 0.0, SLAB_TOP_CM)
     constructor = apply_recipe(
-        library.instantiate(CONSTRUCTOR, next(ids), constructor_at), IRON_PLATE_RECIPE, registry
+        library.instantiate(CONSTRUCTOR, next(ids), constructor_at),
+        registry.recipe_paths[IRON_PLATE_RECIPE],
+        registry,
     )
 
     output = _port(registry, CONSTRUCTOR, "Output0")
@@ -224,14 +227,14 @@ def check(built: Blueprint, path: Path, config: Path) -> None:
             raise SystemExit(f"{point[0]} reaches ({x}, {y}, {z}), outside the designer")
     print(f"decoded {path.name}: identical to what was assembled")
     print(f"belt start to Output0: {residual:.3f} cm")
-    print(f"inventory filters match {IRON_PLATE_RECIPE.rsplit('.', 1)[-1]}")
+    print(f"inventory filters match {IRON_PLATE_RECIPE}")
 
 
 def _check_filters(built: Blueprint, registry: Registry) -> None:
     """The constructor's inventories must accept what its recipe needs and makes."""
     index = object_index(built)
     header, data = next((h, d) for h, d in built.objects if h.class_name == CONSTRUCTOR)
-    recipe = registry.recipes[IRON_PLATE_RECIPE.rsplit(".", 1)[-1]]
+    recipe = registry.recipes[IRON_PLATE_RECIPE]
     for name, wanted in (
         ("mInputInventory", [item for item, _ in recipe.ingredients]),
         ("mOutputInventory", [item for item, _ in recipe.products]),

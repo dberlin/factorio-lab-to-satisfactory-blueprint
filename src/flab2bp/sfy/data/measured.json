@@ -18,7 +18,7 @@
    "p05": 176.5426,
    "p50": 197.4262,
    "p95": 198.9167,
-   "source": "measured",
+   "role": "cross-check",
    "value": 129.8362
   },
   "belt_max_incline_deg": {
@@ -31,7 +31,7 @@
    "p05": 0.0,
    "p50": 0.0,
    "p95": 5.3689,
-   "source": "measured",
+   "role": "cross-check",
    "value": 33.6903
   },
   "lift_max_cm": {
@@ -44,7 +44,7 @@
    "p05": 150.0049,
    "p50": 400.0,
    "p95": 1150.0001,
-   "source": "measured",
+   "role": "cross-check",
    "value": 1500.0
   },
   "lift_min_cm": {
@@ -57,7 +57,7 @@
    "p05": 150.0049,
    "p50": 400.0,
    "p95": 1150.0001,
-   "source": "measured",
+   "role": "cross-check",
    "value": 149.9921
   }
  },
@@ -738,7 +738,7 @@
   }
  },
  "provenance": {
-  "measured_at_commit": "45475ac1efc8684c5822e4c56f37ec00bb6bafc7",
+  "measured_at_commit": "5b5657b397c3eb72d33a6c5b66cf9246c5cd1c76",
   "method": "envelope over the current-family blueprint corpus; every value is what the game was observed to accept, never a limit it enforces",
   "min_save_version": 58,
   "samples_per_segment": 64

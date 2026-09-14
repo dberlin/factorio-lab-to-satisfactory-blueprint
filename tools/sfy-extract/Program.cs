@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Security.Cryptography;
+using System.Text.RegularExpressions;
 using CUE4Parse.FileProvider;
 using CUE4Parse.MappingsProvider.Usmap;
 using CUE4Parse.UE4.Assets.Exports;
@@ -94,6 +95,11 @@ foreach (var pkg in buildPackages)
     if (hologram is not null) holograms[className] = hologram;
 }
 
+// File.ReadAllText detects the byte-order mark, which this dump carries: it is
+// UTF-16 LE, not the UTF-8 the extension suggests.
+var docsText = File.ReadAllText(DocsPath(gameDir));
+var (classPaths, ambiguousClasses) = ClassPaths(docsText);
+
 var output = new
 {
     provenance = new
@@ -108,7 +114,9 @@ var output = new
     },
     ports,
     holograms,
-    wires = WireLengths(gameDir),
+    wires = WireLengths(docsText),
+    class_paths = classPaths,
+    class_paths_ambiguous = ambiguousClasses,
     grid = new Dictionary<string, object?>
     {
         // No cooked asset carries AFGBuildableHologram::mGridSnapSize's default;
@@ -116,10 +124,12 @@ var output = new
         // per-hologram overrides that do exist (Holo_PowerPole, Holo_StreetLight,
         // both 50) are in `holograms`, and the merge puts them on the buildable.
         ["mGridSnapSize"] = null,
-        // Not a game value: 90 degrees is the step the build gun rotates by, and
-        // it is in no asset, no header and no constructor immediate. Recorded
-        // here so the merge has one place to find it, and tagged "constant" in
-        // registry.json's limits_sources so it is never read as game data.
+        // Not a game value, and not read from here: 90 degrees is the step the
+        // build gun rotates by, and it is in no asset, no header and no
+        // constructor immediate. The merge takes it from its own
+        // PROJECT_CONSTANTS, which carries the reason with it and tags it
+        // "constant" in registry.json's limits_sources. It stays in this file
+        // as the record of a value the assets were searched for and do not have.
         ["rotation_step"] = 90,
     },
 };
@@ -127,6 +137,7 @@ var output = new
 var outPath = arg2.Length > 0 ? arg2 : "assets.json";
 File.WriteAllText(outPath, JsonConvert.SerializeObject(output, Formatting.Indented) + "\n");
 Console.Error.WriteLine($"wrote {outPath}: {ports.Count} classes with ports, {holograms.Count} with a hologram class");
+Console.Error.WriteLine($"{classPaths.Count} class asset paths, {ambiguousClasses.Count} class names left out as ambiguous");
 Console.Error.WriteLine($"connection classes left out on purpose: {string.Join(", ", unmodelled)}");
 return 0;
 
@@ -177,6 +188,14 @@ static UObject? SuperClass(UObject generatedClass)
     catch (Exception) { return null; }
 }
 
+/// One connection component, as the registry's `Port` wants it.
+///
+/// `max_connections` is `FGCircuitConnectionComponent::mMaxNumConnectionLinks`,
+/// how many wires may end on this connection. The UPROPERTY is on the circuit
+/// connection, so only a power port can carry one, and it is serialised only
+/// where the Blueprint overrides the native default: the three power poles say
+/// 4, 7 and 10, and a machine's power input says nothing, which is emitted as
+/// null rather than as a number this tool made up.
 object Port(string name, UObject template)
 {
     var location = template.GetOrDefault("RelativeLocation", FVector.ZeroVector);
@@ -190,6 +209,7 @@ object Port(string name, UObject template)
         translation = new[] { location.X, location.Y, location.Z },
         rotation = new[] { rotation.Pitch, rotation.Yaw, rotation.Roll },
         clearance = Number(template, "mConnectorClearance"),
+        max_connections = kind == "power" ? Integer(template, "mMaxNumConnectionLinks") : null,
     };
 }
 
@@ -274,17 +294,54 @@ Dictionary<string, object?>? HologramLimits(UObject cdo)
     return limits;
 }
 
+static string DocsPath(string gameDir) =>
+    Path.Combine(gameDir, "CommunityResources", "Docs", "en-US.json");
+
+/// Every Blueprint class Docs.json states a full asset path for, by class name.
+///
+/// A blueprint's cost list names an item by its whole asset path --
+/// `/Game/FactoryGame/Resource/Parts/IronPlate/Desc_IronPlate.Desc_IronPlate_C`
+/// -- and so does a machine's inventory filter and its `mCurrentRecipe`. The
+/// class name alone, which is all `docs.json` keeps, does not give the path
+/// back: the folder is not derivable from it. Docs.json spells those paths out
+/// inline wherever one entry refers to another (`mIngredients`, `mProduct`,
+/// `mProducedIn`, a schematic's unlocked recipes), so every path here is the
+/// game's own text, matched out of the dump rather than reconstructed.
+/// `scripts/sfy_registry.py` keeps the ones the registry needs and refuses if
+/// one is missing.
+///
+/// A class name that turns up under two different packages cannot be resolved
+/// by name and is listed instead: in 1.2.0 the 17 such names are icon, audio
+/// and material Blueprints -- no item, recipe or buildable among them.
+static (SortedDictionary<string, string>, SortedSet<string>) ClassPaths(string docsText)
+{
+    var byName = new SortedDictionary<string, SortedSet<string>>(StringComparer.Ordinal);
+    foreach (Match match in Regex.Matches(docsText, @"/Game/[A-Za-z0-9_/\-]+\.([A-Za-z0-9_\-]+_C)\b"))
+    {
+        var name = match.Groups[1].Value;
+        if (!byName.TryGetValue(name, out var paths))
+            byName[name] = paths = new SortedSet<string>(StringComparer.Ordinal);
+        paths.Add(match.Value);
+    }
+    var resolved = new SortedDictionary<string, string>(StringComparer.Ordinal);
+    var ambiguous = new SortedSet<string>(StringComparer.Ordinal);
+    foreach (var (name, paths) in byName)
+    {
+        if (paths.Count == 1) resolved[name] = paths.First();
+        else ambiguous.Add(name);
+    }
+    return (resolved, ambiguous);
+}
+
 /// Maximum wire lengths, read from the game's own Docs.json class-default dump.
 ///
 /// `AFGBuildableWire::mMaxLength` is a native default, so `Build_PowerLine_C`'s
 /// cooked class default object does not carry it -- but Docs.json is a
 /// reflection dump of those same class defaults and does.
-static SortedDictionary<string, Dictionary<string, object?>> WireLengths(string gameDir)
+static SortedDictionary<string, Dictionary<string, object?>> WireLengths(string docsText)
 {
     var wires = new SortedDictionary<string, Dictionary<string, object?>>(StringComparer.Ordinal);
-    var docs = Path.Combine(gameDir, "CommunityResources", "Docs", "en-US.json");
-    using var reader = new StreamReader(docs, detectEncodingFromByteOrderMarks: true);
-    dynamic groups = JsonConvert.DeserializeObject(reader.ReadToEnd())!;
+    dynamic groups = JsonConvert.DeserializeObject(docsText)!;
     foreach (var group in groups)
     {
         if (!((string)group.NativeClass).Contains("FGBuildableWire", StringComparison.Ordinal)) continue;
@@ -309,6 +366,12 @@ static double? Number(UObject export, string name)
 {
     var raw = export.Properties.FirstOrDefault(p => p.Name.Text == name)?.Tag?.GenericValue;
     return raw is null ? null : Convert.ToDouble(raw, CultureInfo.InvariantCulture);
+}
+
+static int? Integer(UObject export, string name)
+{
+    var raw = export.Properties.FirstOrDefault(p => p.Name.Text == name)?.Tag?.GenericValue;
+    return raw is null ? null : Convert.ToInt32(raw, CultureInfo.InvariantCulture);
 }
 
 static int? BuildVersion(string gameDir)

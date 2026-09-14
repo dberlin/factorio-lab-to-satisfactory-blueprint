@@ -176,6 +176,10 @@ def test_every_measured_limit_carries_the_spread_behind_it():
         assert set(spread) >= SPREAD_KEYS, key
         assert spread["min"] <= spread["p05"] <= spread["p50"] <= spread["p95"] <= spread["max"]
         assert spread["n"] > 0
+        # Not a source: no limit is filled from here. Calling the key "source"
+        # was how the section read as one.
+        assert spread["role"] == "cross-check", key
+        assert "source" not in spread, key
 
 
 def test_the_measured_envelope_lies_inside_the_limits_the_game_states():
@@ -252,6 +256,83 @@ def test_a_conveyor_takes_in_at_end_0_and_puts_out_at_end_1():
         assert ends["ConveyorAny1"].direction == "output", class_name
         for port in ends.values():
             assert port.direction_source == "header", class_name
+
+
+def test_the_power_poles_carry_the_connection_counts_the_assets_state():
+    """Spec 5.1 wants pole connection counts, and the pole Blueprints state them.
+
+    ``FGCircuitConnectionComponent::mMaxNumConnectionLinks`` is serialised on
+    every pole because each mark overrides the native default. The game's own
+    poles take 4, 7 and 10 wires, and these are what the cooked assets say --
+    the assertion is on the extraction, and it would fail rather than be edited
+    if a game update changed the numbers.
+    """
+    reg = load_registry()
+    counts = []
+    for mark in ("Build_PowerPoleMk1_C", "Build_PowerPoleMk2_C", "Build_PowerPoleMk3_C"):
+        (power,) = [p for p in reg.buildables[mark].ports if p.kind == "power"]
+        assert power.max_connections is not None and power.max_connections > 0, mark
+        counts.append(power.max_connections)
+    assert counts == [4, 7, 10]
+    assert counts == sorted(counts) and len(set(counts)) == 3
+
+
+def test_only_power_ports_can_carry_a_connection_count():
+    """The property is on the circuit connection; a belt or pipe has no such thing.
+
+    A power port whose Blueprint does not override the native default carries
+    ``None``: the value then lives in a native constructor the pak does not
+    ship, and nothing here invents one. Every wall-mounted pole repeats its
+    free-standing mark's count, which is how the null ones can be told from a
+    number that went missing.
+    """
+    reg = load_registry()
+    ports = [(c, p) for c, b in reg.buildables.items() for p in b.ports]
+    assert [f"{c}.{p.name}" for c, p in ports if p.kind != "power" and p.max_connections] == []
+    stated = {f"{c}.{p.name}": p.max_connections for c, p in ports if p.max_connections}
+    assert stated["Build_PowerPoleWall_Mk2_C.PowerConnection"] == 7
+    assert stated["Build_PowerTower_C.PowerTowerConnection"] == 3
+    assert reg.buildables["Build_AssemblerMk1_C"].ports  # a machine has ports
+    assert all(
+        p.max_connections is None
+        for p in reg.buildables["Build_AssemblerMk1_C"].ports
+        if p.kind == "power"
+    )
+
+
+def test_the_direction_provenance_counts_the_ports_the_registry_ships():
+    """The count has to be of this registry, not of everything the extractor read.
+
+    ``tools/sfy-extract`` reads ports off every cooked ``Build_*`` class, and
+    Docs.json lists fewer buildables than that, so the wider count describes a
+    registry nobody loads. Both are recorded, each under its own name.
+    """
+    reg = load_registry()
+    resolved = reg.provenance["port_directions"]["resolved_from"]
+    shipped: dict[str, int] = {}
+    for buildable in reg.buildables.values():
+        for port in buildable.ports:
+            shipped[port.direction_source] = shipped.get(port.direction_source, 0) + 1
+    assert {k: v for k, v in resolved.items() if v} == shipped
+    assert sum(resolved.values()) == sum(len(b.ports) for b in reg.buildables.values())
+    wider = reg.provenance["port_directions"]["resolved_from_all_extracted"]
+    assert sum(wider.values()) > sum(resolved.values())
+
+
+def test_every_item_a_recipe_names_has_an_asset_path():
+    """A blueprint names an item by asset path, so authoring needs one per item."""
+    reg = load_registry()
+    wanted = {
+        item for r in reg.recipes.values() for item, _ in (*r.ingredients, *r.products)
+    } | set(reg.descriptors)
+    assert not wanted - set(reg.item_paths)
+    assert set(reg.recipe_paths) == set(reg.recipes)
+    assert (
+        reg.item_paths["Desc_IronPlate_C"]
+        == "/Game/FactoryGame/Resource/Parts/IronPlate/Desc_IronPlate.Desc_IronPlate_C"
+    )
+    assert all(path.endswith(f".{name}") for name, path in reg.item_paths.items())
+    assert all(path.startswith("/Game/") for path in reg.recipe_paths.values())
 
 
 def test_every_port_says_how_its_direction_was_established():

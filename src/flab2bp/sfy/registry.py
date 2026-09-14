@@ -144,6 +144,13 @@ class Port:
     cooked asset only answers for the ports that spell ``mDirection`` out; see
     :data:`PORT_DIRECTION_SOURCES`. ``direction`` is ``"unknown"`` only if
     nothing resolved it, which no port in the shipped registry is.
+
+    ``max_connections`` is how many wires may end on a power connection, from
+    ``FGCircuitConnectionComponent::mMaxNumConnectionLinks``. It is ``None`` on
+    every belt and pipe port, which have no such property, and on a power port
+    whose Blueprint does not override the native default -- 53 of the 74 power
+    ports in the content, all of them machine power inputs. The three pole marks
+    say 4, 7 and 10, and their wall variants say the same.
     """
 
     name: str
@@ -153,6 +160,7 @@ class Port:
     translation: Vector
     rotation: Vector
     clearance: float | None
+    max_connections: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -245,12 +253,23 @@ class Registry:
     recipes: dict[str, Recipe]
     descriptors: dict[str, str]  # Desc_X_C -> Build_X_C
     build_recipes: dict[str, str]  # Build_X_C -> Recipe_X_C
+    # The full asset path of every item descriptor a recipe names and of every
+    # recipe, e.g. ``Desc_IronPlate_C`` ->
+    # ``/Game/FactoryGame/Resource/Parts/IronPlate/Desc_IronPlate.Desc_IronPlate_C``.
+    # A blueprint's cost list, a machine's inventory filter and its
+    # ``mCurrentRecipe`` all name the class that way, and the path is not
+    # derivable from the class name -- the folder is not in it. Docs.json states
+    # these paths and ``tools/sfy-extract`` collects them.
+    item_paths: dict[str, str]
+    recipe_paths: dict[str, str]
     limits: Limits
     limits_sources: dict[str, str]  # Limits field -> one of LIMIT_SOURCES
-    # For every limit sourced ``"measured"``, the spread of the corpus behind it:
-    # ``min``, ``p05``, ``p50``, ``p95``, ``max``, ``n`` and the witness fixture
-    # and object. A measured value is an envelope -- the game accepted every
-    # number in that spread -- never a constraint the game enforces.
+    # The spread of the corpus beside a limit: ``min``, ``p05``, ``p50``,
+    # ``p95``, ``max``, ``n`` and the witness fixture and object. Every entry
+    # says ``"role": "cross-check"``, because that is all it is -- no limit in
+    # the shipped registry is sourced from here. A measured value is an envelope
+    # -- the game accepted every number in that spread -- never a constraint the
+    # game enforces.
     limits_measured: dict[str, Any]
 
     @classmethod
@@ -268,6 +287,8 @@ class Registry:
             recipes=_recipes(_require(data, "recipes")),
             descriptors=dict(_require(data, "descriptors")),
             build_recipes=dict(_require(data, "build_recipes")),
+            item_paths={},
+            recipe_paths={},
             limits=Limits(),
             limits_sources=dict.fromkeys(_HEADER_DEFAULTED, "header"),
             limits_measured={},
@@ -312,6 +333,7 @@ def _ports(raw: Iterable[Mapping[str, Any]]) -> tuple[Port, ...]:
             translation=_vector(port["translation"]),
             rotation=_vector(port["rotation"]),
             clearance=None if port.get("clearance") is None else float(port["clearance"]),
+            max_connections=_opt_int(port.get("max_connections")),
         )
         for port in raw
     )
@@ -375,6 +397,19 @@ def _opt_float(value: Any) -> float | None:
 
 def _opt_int(value: Any) -> int | None:
     return None if value is None else int(value)
+
+
+def _paths(raw: Mapping[str, Any], section: str) -> dict[str, str]:
+    """Check that every asset path names the class it is keyed by.
+
+    An Unreal class path ends ``<package>.<ClassName>``, so a path whose tail is
+    not the key is a mismatched entry and would put the wrong asset into a
+    blueprint, where it fails only in the game.
+    """
+    wrong = sorted(k for k, v in raw.items() if not str(v).endswith("." + k))
+    if wrong:
+        raise RegistryError(f"registry {section} has paths that name another class: {wrong}")
+    return {str(k): str(v) for k, v in raw.items()}
 
 
 def _limits(raw: Mapping[str, Any]) -> Limits:
@@ -442,6 +477,8 @@ def load_registry(path: Path | None = None) -> Registry:
         recipes=_recipes(_require(data, "recipes")),
         descriptors=dict(_require(data, "descriptors")),
         build_recipes=dict(_require(data, "build_recipes")),
+        item_paths=_paths(_require(data, "item_paths"), "item_paths"),
+        recipe_paths=_paths(_require(data, "recipe_paths"), "recipe_paths"),
         limits=limits,
         limits_sources=sources,
         limits_measured=_limits_measured(_require(data, "limits_measured"), sources),

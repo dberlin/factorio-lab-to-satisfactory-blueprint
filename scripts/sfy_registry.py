@@ -2,8 +2,10 @@
 
 ``docs.json`` (Task 9) is the game's own Docs.json dump: buildables, recipes and
 descriptors. ``assets.json`` (``tools/sfy-extract``) is what the cooked assets
-add: the connection ports of every buildable and whatever limits the hologram
-Blueprints override. ``native.json`` (``tools/sfy-native``) is what the shipped
+add: the connection ports of every buildable, whatever limits the hologram
+Blueprints override, and the full asset path of every class the game's Docs.json
+states one for -- which is how a blueprint names an item descriptor or a recipe.
+``native.json`` (``tools/sfy-native``) is what the shipped
 DLL's machine code states for the hologram limits no asset carries.
 ``measured.json`` (``scripts/sfy_measure_limits.py``) is what the blueprint
 corpus shows. This script joins the four and writes the registry that
@@ -309,6 +311,38 @@ def _limits(
     return limits, sources, provenance
 
 
+def _asset_paths(class_paths: dict[str, str], wanted: set[str], what: str) -> dict[str, str]:
+    """The asset path of every class in ``wanted``, or refuse naming the gaps.
+
+    ``tools/sfy-extract`` collects these out of the game's own Docs.json, where
+    one entry refers to another by its whole path. A class the registry names
+    and no path was found for would be a class nothing can author, so this stops
+    rather than shipping a registry with a hole in it.
+    """
+    missing = sorted(name for name in wanted if name not in class_paths)
+    if missing:
+        raise SystemExit(
+            f"assets.json states no asset path for {len(missing)} {what} classes, "
+            f"starting with {missing[:10]}; re-run tools/sfy-extract"
+        )
+    return {name: class_paths[name] for name in sorted(wanted)}
+
+
+def _item_classes(docs: dict[str, Any]) -> set[str]:
+    """Every item descriptor the registry can be asked for a path to.
+
+    That is what a recipe names -- its ingredients and its products, which is
+    what a blueprint's cost list and a machine's inventory filters are built
+    from -- plus the building descriptors, which the build menu's own recipes
+    produce.
+    """
+    items = set(docs["descriptors"])
+    for recipe in docs["recipes"].values():
+        items.update(item for item, _ in recipe["ingredients"])
+        items.update(item for item, _ in recipe["products"])
+    return items
+
+
 def _by_name(port_name: str) -> str | None:
     """The direction the component's own name implies, or ``None``."""
     for prefixes, direction in NAME_DIRECTIONS:
@@ -385,6 +419,22 @@ def _resolve_directions(
     return counts
 
 
+def _shipped_direction_counts(buildables: dict[str, Any]) -> dict[str, int]:
+    """How the directions of the ports the registry actually ships were resolved.
+
+    ``_resolve_directions`` walks every class ``tools/sfy-extract`` read, and it
+    reads every cooked ``Build_*`` class -- including the ones Docs.json does not
+    list, which never become a buildable here. Counting those would describe a
+    registry nobody loads, so the provenance counts these, over the ports that
+    are on a shipped buildable.
+    """
+    counts = {source: 0 for source in ("asset", "header", "corpus", "name")}
+    for entry in buildables.values():
+        for port in entry["ports"]:
+            counts[port["direction_source"]] += 1
+    return counts
+
+
 def main(out: Path | None = None) -> int:
     """Write the registry, by default over the committed ``data/registry.json``.
 
@@ -398,7 +448,7 @@ def main(out: Path | None = None) -> int:
 
     corpus_directions = measured["port_directions"]
     _check_directions(assets["ports"], corpus_directions)
-    direction_counts = _resolve_directions(assets["ports"], corpus_directions)
+    extracted_counts = _resolve_directions(assets["ports"], corpus_directions)
 
     for class_name, buildable in docs["buildables"].items():
         buildable["ports"] = assets["ports"].get(class_name, [])
@@ -408,6 +458,9 @@ def main(out: Path | None = None) -> int:
         hologram = assets["holograms"].get(class_name) or {}
         buildable["grid_snap_cm"] = hologram.get("mGridSnapSize")
     missing_ports = sorted(set(docs["buildables"]) - set(assets["ports"]))
+    direction_counts = _shipped_direction_counts(docs["buildables"])
+    item_paths = _asset_paths(assets["class_paths"], _item_classes(docs), "item descriptor")
+    recipe_paths = _asset_paths(assets["class_paths"], set(docs["recipes"]), "recipe")
 
     sha = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True, check=True
@@ -422,7 +475,12 @@ def main(out: Path | None = None) -> int:
             "limits": limit_provenance,
             "port_directions": {
                 "header": CONVEYOR_END_HEADER,
+                # Over the ports this registry ships. The extractor reads ports
+                # off every cooked Build_* class, Docs.json lists fewer of them
+                # than that, and the wider count is kept beside this one rather
+                # than in place of it.
                 "resolved_from": direction_counts,
+                "resolved_from_all_extracted": extracted_counts,
             },
             "merged_at_commit": sha,
         },
@@ -430,6 +488,8 @@ def main(out: Path | None = None) -> int:
         "recipes": docs["recipes"],
         "descriptors": docs["descriptors"],
         "build_recipes": docs["build_recipes"],
+        "item_paths": item_paths,
+        "recipe_paths": recipe_paths,
         "limits": limits,
         "limits_sources": sources,
         "limits_measured": measured["limits"],
@@ -443,6 +503,8 @@ def main(out: Path | None = None) -> int:
         print(f"limits from {source}:", sorted(k for k, v in sources.items() if v == source))
     print("limits still None:", [k for k, v in limits.items() if v is None])
     print("port directions resolved from:", direction_counts)
+    print("over every extracted class:", extracted_counts)
+    print(f"asset paths: {len(item_paths)} item descriptors, {len(recipe_paths)} recipes")
     return 0
 
 
