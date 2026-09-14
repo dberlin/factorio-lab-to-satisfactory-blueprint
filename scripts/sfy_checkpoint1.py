@@ -44,7 +44,7 @@ from flab2bp.sfy.codec import (
 from flab2bp.sfy.geometry import distance, port_forward, quat_rotate, world_port
 from flab2bp.sfy.header import BlueprintHeader, BlueprintRecord, read_header
 from flab2bp.sfy.objects import ACTOR, ObjectData, ObjectHeader, Transform
-from flab2bp.sfy.properties import Array, Object, Vector
+from flab2bp.sfy.properties import Array, Object
 from flab2bp.sfy.query import object_index, spline_points
 from flab2bp.sfy.registry import Port, Registry, load_registry
 from flab2bp.sfy.templates import (
@@ -53,6 +53,7 @@ from flab2bp.sfy.templates import (
     assemble,
     connect,
     set_spline,
+    straight_spline,
 )
 
 REPO = Path(__file__).resolve().parent.parent
@@ -128,27 +129,6 @@ def _port(registry: Registry, class_name: str, port_name: str) -> Port:
     return next(p for p in ports if p.name == port_name)
 
 
-def _straight_spline(
-    direction: tuple[float, float, float], length: float
-) -> tuple[tuple[Vector, Vector, Vector], ...]:
-    """A two-point straight conveyor spline in the belt actor's own frame.
-
-    The shape is the one the template blueprints this script clones from write:
-    outer tangents that are unit vectors along the run, inner tangents that are
-    the run scaled to half its length (capped at 600 cm) -- 56 straight belts of
-    exactly this length in those files carry ``(1, 200, 200, 1)``. It is the
-    shape of the files we copy rather than a rule read out of the game; what
-    ``AFGConveyorBeltHologram::AutoRouteSpline`` builds has not been read.
-    The belt actor stands at the first point, so that point is the local origin.
-    """
-    x, y, z = direction
-    half = min(length / 2, 600.0)
-    unit = Vector(x, y, z)
-    inner = Vector(x * half, y * half, z * half)
-    end = Vector(x * length, y * length, z * length)
-    return ((Vector(0.0, 0.0, 0.0), unit, inner), (end, inner, unit))
-
-
 def build() -> Blueprint:
     """Assemble the checkpoint blueprint from fixture templates."""
     library = TemplateLibrary.from_fixtures(sorted(FIXTURES.glob("*.sbp")))
@@ -173,7 +153,7 @@ def build() -> Blueprint:
     facing = port_forward(constructor_at, output)
     belt = library.instantiate(BELT, next(ids), _at(*start))
     belt = (
-        (belt[0][0], set_spline(belt[0][1], _straight_spline(facing, BELT_LENGTH_CM))),
+        (belt[0][0], set_spline(belt[0][1], straight_spline(facing, BELT_LENGTH_CM))),
     ) + tuple(belt[1:])
 
     port_header, port_data = next((h, d) for h, d in constructor[1:] if h.name == "Output0")

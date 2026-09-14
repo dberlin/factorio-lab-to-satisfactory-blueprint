@@ -16,7 +16,8 @@ comes from. Line numbers are into `CommunityResources/Headers.zip`, under
 Most of what is here is a *validation*: code that turns a placement away, or
 moves it. A few rules are the other kind — code that **works out** a value the
 game then writes, which this project has to reproduce rather than enforce when
-it authors a blueprint. Those carry the effect `compute`; `belt.cost` and `manufacturer.inventory_filters` are the two.
+it authors a blueprint. Those carry the effect `compute`; `belt.cost`, `belt.straight_tangents` and
+`manufacturer.inventory_filters` are the three.
 
 ## How a placement is refused
 
@@ -90,6 +91,45 @@ So `mBendRadius` is two things, and neither is "the tightest legal turn":
 
 Validation is the binding one, and it binds only in the curve build mode. See
 the `belt.curvature` rule for the instructions.
+
+### What a straight run's tangents are — `belt.straight_tangents`
+
+`AutoRouteSpline` (97) builds `mSplineData` through an `FSplineBuilder`:
+`FSplineBuilder::Start(location, tangent)` for the first point, then one
+`FSplineUtils::Build*` call per leg, each ending in `FSplineBuilder::AddSegment`.
+For a straight run that is one `BuildStraightSpline2D`.
+
+- **`Start`** (`0xb220b0`) normalises the tangent it is given and stores that
+  **unit** vector into *both* of point 0's tangents — `ArriveTangent` at `+18h`
+  and `LeaveTangent` at `+30h` of the 72-byte `FSplinePointData`.
+- **`BuildStraightSpline2D`** (`0xafcac0`) takes the 3D distance to the new
+  point, halves it, clamps it to **[50, 600] cm** (`0xafcf0d` `mulsd 0.5`,
+  `0xafcf15` `minsd 600.0`, `0xafcf1d` `maxsd 50.0`), and multiplies the unit
+  run direction by it. `BuildStraightSpline3D` uses the same three constants.
+- **`AddSegment`** (`0xaf1e80`) rescales the **previous** point's `LeaveTangent`
+  to the new tangent's length, keeping its direction, and writes the new point:
+  `Location` from the caller, `ArriveTangent` the tangent it was given,
+  `LeaveTangent` that tangent normalised.
+
+So a straight run of length L along a unit `d` is exactly:
+
+| Point | Location | ArriveTangent | LeaveTangent |
+| --- | --- | --- | --- |
+| 0 | start | `d` | `d * T` |
+| 1 | end | `d * T` | `d` |
+
+with `T = clamp(L / 2, 50, 600)`. A 400 cm belt is `(1, 200, 200, 1)`.
+`flab2bp.sfy.templates.straight_spline` is that, and it is the only place the
+shape is written.
+
+**What this does not settle** is which way a belt leaves a port. The declaration
+is `AutoRouteSpline(startConnectionPos, startConnectionNormal, endConnectionPos,
+endConnectionNormal)`, so the router does take the connection's facing, but the
+vector it hands `Start` is built by inlined vector code (`0xa632f2`–`0xa63346`)
+this extraction did not unpick. Nothing refuses a spline for leaving off-facing
+either — `ValidateConveyorBelt`'s four checks are length, minimum length,
+incline and curvature. So "a belt leaves a port along the port's facing" is this
+project's own authoring rule, and `flab2bp.sfy.geometry.port_forward` says so.
 
 ### What a belt costs — `belt.cost`
 
@@ -278,7 +318,7 @@ anything. Five values:
 `flab2bp.sfy.rules.load_rules` refuses it on an `extracted` rule, because a
 branch that was read says what it does. `compute` is the opposite case and is
 allowed beside `extracted`: the code was read in full, and it does nothing to a
-placement because it is not a validator. The shipped nineteen:
+placement because it is not a validator. The shipped twenty:
 
 | `effect` | rules |
 | --- | --- |
@@ -286,7 +326,7 @@ placement because it is not a validator. The shipped nineteen:
 | `clamp` | `lift.height_range` |
 | `snap` | `belt.snap_directions`, `buildable.grid_snap`, `buildable.rotation_step` |
 | `none` | `belt.clearance`, `lift.step`, `lift.clearance` |
-| `compute` | `belt.cost`, `manufacturer.inventory_filters` |
+| `compute` | `belt.cost`, `belt.straight_tangents`, `manufacturer.inventory_filters` |
 
 Two of those deserve their own sentence. `buildable.clearance` is `partial` —
 the box-against-box test is in `AFGHologram::TestClearanceOverlap`, which was
@@ -313,7 +353,7 @@ multiple of it.
 
 ## What was extracted, and what was not
 
-`hologram_rules.json` carries nineteen rules; fourteen are `extracted` and five
+`hologram_rules.json` carries twenty rules; fifteen are `extracted` and five
 `partial`. A `partial` rule is a **bound the placer must not assume it knows** —
 its `comparison` names where the comparison actually is, and its
 `interpretation` is a lead for the next extraction, not a constraint.

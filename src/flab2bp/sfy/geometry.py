@@ -44,9 +44,15 @@ def port_forward(transform: Transform, port: Port) -> Vector:
 
     That a belt wired to a port must *leave* along this direction, whichever way
     the items flow, is a modelling assumption this project builds on and not a
-    rule read out of the game: no hologram validator has been read that states
-    it. What the game's own router does with a connection's facing is in
-    ``data/hologram_rules.json`` under ``belt.straight_tangents``.
+    rule read out of the game. The game's own router takes a connection's
+    facing as an input -- ``AFGConveyorBeltHologram::AutoRouteSpline`` is
+    declared over ``startConnectionNormal`` and ``endConnectionNormal``
+    (``Hologram/FGConveyorBeltHologram.h:97``) -- but which vector it hands the
+    spline builder is inlined vector code that has not been unpicked, and
+    nothing refuses a spline for leaving off-facing: ``ValidateConveyorBelt``
+    checks length, minimum length, incline and curvature and none of the four
+    looks at the first segment's direction. See the ``belt.straight_tangents``
+    rule in ``data/hologram_rules.json``.
     """
     pitch, yaw = math.radians(port.rotation[0]), math.radians(port.rotation[1])
     local = (math.cos(pitch) * math.cos(yaw), math.cos(pitch) * math.sin(yaw), math.sin(pitch))

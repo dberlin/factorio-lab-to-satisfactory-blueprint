@@ -65,6 +65,7 @@ __all__ = [
     "connect",
     "set_recipe",
     "set_spline",
+    "straight_spline",
 ]
 
 LEVEL = "Persistent_Level"
@@ -219,12 +220,57 @@ def connect(
     )
 
 
+STRAIGHT_TANGENT_HALF = 0.5
+STRAIGHT_TANGENT_MIN_CM = 50.0
+STRAIGHT_TANGENT_MAX_CM = 600.0
+"""How long the inner tangents of a straight conveyor run are: half its length,
+clamped between 50 and 600 centimetres.
+
+Read out of the game, not off a blueprint. ``FSplineUtils::BuildStraightSpline2D``
+(``0xafcf0d`` ``mulsd 0.5``, ``0xafcf15`` ``minsd 600.0``, ``0xafcf1d``
+``maxsd 50.0``) and its 3D twin scale the unit run direction by that, and the
+belt hologram's ``AutoRouteSpline`` is what calls them. See the
+``belt.straight_tangents`` rule in ``data/hologram_rules.json``."""
+
+
+def straight_spline(
+    direction: tuple[float, float, float], length: float
+) -> tuple[tuple[Vector, Vector, Vector], ...]:
+    """A two-point straight conveyor spline, shaped the way the game shapes one.
+
+    ``direction`` is a unit vector and the points are in the belt actor's own
+    frame, so a belt placed at its first point starts at the local origin.
+
+    The shape is ``AFGConveyorBeltHologram::AutoRouteSpline``'s, through
+    ``FSplineBuilder`` -- see the ``belt.straight_tangents`` rule. ``Start``
+    (``0xb220b0``) normalises the tangent it is given into *both* of the first
+    point's tangents, so the outer ones are unit vectors;
+    ``BuildStraightSpline2D`` scales the run direction by
+    ``clamp(length / 2, 50, 600)`` and ``AddSegment`` (``0xaf1e80``) rescales
+    the first point's leave tangent to that length and gives the second point
+    that tangent to arrive on and its unit direction to leave by. A 400 cm run
+    is ``(1, 200, 200, 1)``.
+    """
+    x, y, z = direction
+    inner_length = min(
+        max(length * STRAIGHT_TANGENT_HALF, STRAIGHT_TANGENT_MIN_CM), STRAIGHT_TANGENT_MAX_CM
+    )
+    unit = Vector(x, y, z)
+    inner = Vector(x * inner_length, y * inner_length, z * inner_length)
+    end = Vector(x * length, y * length, z * length)
+    return ((Vector(0.0, 0.0, 0.0), unit, inner), (end, inner, unit))
+
+
 def set_spline(belt: ObjectData, points: Sequence[tuple[Vector, Vector, Vector]]) -> ObjectData:
     """Replace a conveyor's ``mSplineData`` with ``(location, arrive, leave)`` triples.
 
     The locations are in the belt actor's own frame, so a belt placed at its
     first point starts its spline at the origin. The array keeps the template's
     own tag; the points are built with :data:`SPLINE_POINT_FIELD_TAGS`.
+
+    What a *straight* run's triples are is a fact about the game rather than a
+    choice: :func:`straight_spline` builds them the way the belt hologram's own
+    router does.
     """
     current = find(belt.properties, SPLINE_DATA)
     if not isinstance(current, Array):

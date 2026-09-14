@@ -167,6 +167,11 @@ TARGETS: dict[str, tuple[str, str, str]] = {
         "SetUpInventoryFilters",
         "Buildables/FGBuildableManufacturer.h:220",
     ),
+    "belt.straight_tangents": (
+        "AFGConveyorBeltHologram",
+        "AutoRouteSpline",
+        "Hologram/FGConveyorBeltHologram.h:97",
+    ),
 }
 
 # Rules the game spreads over more than one function. The entry above is the one
@@ -190,6 +195,12 @@ ALSO_READ: dict[str, tuple[str, ...]] = {
     "manufacturer.inventory_filters": (
         "AFGBuildableManufacturer::SetRecipe",
         "AFGBuildableManufacturer::AFGBuildableManufacturer@0x1dd590",
+    ),
+    "belt.straight_tangents": (
+        "FSplineBuilder::Start",
+        "FSplineBuilder::AddSegment",
+        "FSplineUtils::BuildStraightSpline2D",
+        "FSplineUtils::BuildStraightSpline3D",
     ),
 }
 
@@ -338,6 +349,29 @@ EVIDENCE: dict[str, tuple[str, ...]] = {
         "0x54a263", "0x54a269", "0x54a28c", "0x54a292",
         "0x54a6a1", "0x54a6c8", "0x54a6ce",
         "0x54a8e8", "0x54a8eb", "0x54a8f5", "0x54a8fc",
+    ),
+    "belt.straight_tangents": (
+        # AutoRouteSpline: the builder over mSplineData, its first point and the
+        # tangent handed with it, then one straight segment.
+        "0xa63791", "0xa6379e", "0xa637a6", "0xa637af", "0xa63833", "0xa63912",
+        "0xa6399b",
+        # FSplineBuilder::Start: the location, then the tangent normalised into
+        # BOTH of point 0's tangents.
+        "0xb221e6", "0xb221ec", "0xb221ef", "0xb221f4", "0xb22257", "0xb22261",
+        "0xb22265", "0xb22269", "0xb2226d", "0xb22291", "0xb22295", "0xb22299",
+        "0xb2229e",
+        # FSplineUtils::BuildStraightSpline2D: |delta| * 0.5, clamped to
+        # [50, 600] and rounded through a float, times the unit direction.
+        "0xafcf03", "0xafcf08", "0xafcf0d", "0xafcf15", "0xafcf1d", "0xafcf25",
+        "0xafcf29", "0xafcf32", "0xafcf36", "0xafcf3a", "0xafcf50",
+        # The 3D builder does the same arithmetic with the same three constants.
+        "0xafd295", "0xafd2a5", "0xafd2ad", "0xafd2b5", "0xafd2e4",
+        # FSplineBuilder::AddSegment: the new tangent's length, the previous
+        # point's leave tangent rescaled to it, and the new point's three fields.
+        "0xaf206b", "0xaf2076", "0xaf20ce", "0xaf20db", "0xaf20df", "0xaf20e3",
+        "0xaf20e7", "0xaf20fa", "0xaf2101", "0xaf2108", "0xaf2111", "0xaf2117",
+        "0xaf211d", "0xaf2123", "0xaf2129", "0xaf212c", "0xaf213c", "0xaf213f",
+        "0xaf214c", "0xaf2156", "0xaf215c", "0xaf2164", "0xaf216f", "0xaf2175",
     ),
 }
 
@@ -854,6 +888,61 @@ INTERPRETATIONS: dict[str, tuple[str, str, str, str]] = {
         "(FGInventoryComponent.h:660), so what a blueprint carries is whatever "
         "the array held when it was saved, and a machine whose recipe was never "
         "set carries whatever its Blueprint default was.",
+    ),
+    "belt.straight_tangents": (
+        "extracted",
+        "compute",
+        "AutoRouteSpline builds mSplineData (0xa63791) through an FSplineBuilder: "
+        "FSplineBuilder::Start(location, tangent) at 0xa63833, with the location "
+        "at [rbp-30h] (0xa637a6) and the tangent at [rsp+78h] (0xa6379e), then "
+        "one FSplineUtils::BuildStraightSpline2D (0xa63912) or, for the curved "
+        "modes, a bend builder and FSplineBuilder::AddSegment (0xa6399b). "
+        "Start (0xb220b0) copies the location into point 0 (0xb221e6/0xb221ec, "
+        "0xb221ef/0xb221f4), normalises the tangent it was given (0xb22257 "
+        "sqrtsd, 0xb22261 divsd 1.0, 0xb22265/0xb22269/0xb2226d mulsd) and "
+        "stores that UNIT vector into both of point 0's tangents -- "
+        "ArriveTangent at +18h (0xb22291, 0xb22299) and LeaveTangent at +30h "
+        "(0xb22295, 0xb2229e) of the 72-byte FSplinePointData. "
+        "BuildStraightSpline2D (0xafcac0) takes the 3D distance to the new point "
+        "(0xafcf03 dz^2 + dxy^2, 0xafcf08 sqrtpd), halves it (0xafcf0d mulsd "
+        "0.5), clamps it to [50, 600] (0xafcf15 minsd 600.0, 0xafcf1d maxsd "
+        "50.0), rounds it through a float (0xafcf25 cvtpd2ps, 0xafcf29 "
+        "cvtps2pd) and multiplies the unit run direction by it "
+        "(0xafcf32/0xafcf36/0xafcf3a) before calling AddSegment (0xafcf50). "
+        "BuildStraightSpline3D does the same with the same three constants "
+        "(0xafd295 sqrtpd, 0xafd2a5 mulsd 0.5, 0xafd2ad minsd 600.0, 0xafd2b5 "
+        "maxsd 50.0, 0xafd2e4 AddSegment). "
+        "AddSegment (0xaf1e80) takes the new tangent's length as a float "
+        "(0xaf206b sqrtpd, 0xaf2076 cvtpd2ps), normalises the PREVIOUS point's "
+        "LeaveTangent (0xaf20ce sqrtsd, 0xaf20db divsd, "
+        "0xaf20df/0xaf20e3/0xaf20e7 mulsd) and rescales it to that length "
+        "(0xaf20fa cvtps2pd, 0xaf2101/0xaf2108, 0xaf2111/0xaf2117, "
+        "0xaf211d/0xaf2123), then writes the new point: Location from the "
+        "caller (0xaf2129/0xaf212c), ArriveTangent the full tangent it was "
+        "given (0xaf213c/0xaf213f) and LeaveTangent that tangent divided by its "
+        "own length (0xaf214c comiss against 0, 0xaf215c divsd, 0xaf2164 mulpd, "
+        "0xaf216f/0xaf2175) -- a unit vector again, or the zero vector when the "
+        "tangent has no length (0xaf2156 jbe).",
+        "A straight conveyor run of length L along a unit direction d gets "
+        "exactly two points. Point 0: Location at the start, ArriveTangent = d, "
+        "LeaveTangent = d * T. Point 1: Location at the end, ArriveTangent = "
+        "d * T, LeaveTangent = d. T is clamp(L * 0.5, 50, 600) in centimetres, "
+        "so arrive and leave differ at both ends: the OUTER tangents are unit "
+        "vectors and the INNER ones carry the length. A 400 cm belt is "
+        "(1, 200, 200, 1), and the 50 cm floor means a 60 cm belt is "
+        "(1, 50, 50, 1) rather than (1, 30, 30, 1). The clamp is on the 3D "
+        "distance even in the 2D builder, and both builders use the same three "
+        "constants, so an inclined straight run is scaled by its true length. "
+        "What the start tangent IS is the hologram's business, not this rule's: "
+        "AutoRouteSpline is declared as AutoRouteSpline(startConnectionPos, "
+        "startConnectionNormal, endConnectionPos, endConnectionNormal) "
+        "(Hologram/FGConveyorBeltHologram.h:97) and the vector it hands Start is "
+        "built by inlined vector code this did not unpick, so that a belt leaves "
+        "a port along the port's facing is this project's own rule rather than "
+        "one quoted here. Nothing refuses a spline for leaving off-facing "
+        "either: ValidateConveyorBelt's four checks are length, minimum length, "
+        "incline and -- in the curve mode only -- curvature, and none of them "
+        "looks at the first segment's direction.",
     ),
 }
 

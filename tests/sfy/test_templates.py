@@ -15,6 +15,8 @@ from flab2bp.sfy.rules import load_rules
 from flab2bp.sfy.templates import (
     ITEM_DESCRIPTOR_CLASS,
     SPLINE_POINT_FIELD_TAGS,
+    STRAIGHT_TANGENT_MAX_CM,
+    STRAIGHT_TANGENT_MIN_CM,
     TEMPLATE_MIN_SAVE_VERSION,
     TemplateLibrary,
     apply_recipe,
@@ -22,6 +24,7 @@ from flab2bp.sfy.templates import (
     connect,
     set_recipe,
     set_spline,
+    straight_spline,
 )
 from flab2bp.sfy.trailers import trailer_for_new
 from tests.sfy.conftest import fixture_paths
@@ -549,3 +552,43 @@ def test_a_spare_slot_gets_the_wildcard_and_not_what_the_template_had() -> None:
     got = _filter_items(after_one, after_one[0][1], "mInputInventory")
     assert got[0] == reg.recipes["Recipe_Alternate_PolymerResin_C"].ingredients[0][0]
     assert set(got[1:]) == {"FGItemDescriptor"}
+
+
+def test_a_straight_spline_is_shaped_the_way_the_game_shapes_one() -> None:
+    """``belt.straight_tangents``: unit vectors outside, clamp(L/2, 50, 600) inside.
+
+    ``FSplineBuilder::Start`` normalises the tangent it is given into both of
+    the first point's tangents, ``BuildStraightSpline2D`` scales the run
+    direction by half the run's length clamped to [50, 600], and ``AddSegment``
+    gives the second point that tangent to arrive on and its unit direction to
+    leave by.
+    """
+    assert load_rules()["belt.straight_tangents"].effect == "compute"
+    points = straight_spline((1.0, 0.0, 0.0), 400.0)
+    assert len(points) == 2
+    (first_loc, first_arrive, first_leave), (last_loc, last_arrive, last_leave) = points
+    assert (first_loc.x, first_loc.y, first_loc.z) == (0.0, 0.0, 0.0)
+    assert (last_loc.x, last_loc.y, last_loc.z) == (400.0, 0.0, 0.0)
+    # The outer tangents are the unit direction; the inner ones carry the length.
+    assert (first_arrive.x, last_leave.x) == (1.0, 1.0)
+    assert (first_leave.x, last_arrive.x) == (200.0, 200.0)
+    assert first_arrive != first_leave and last_arrive != last_leave
+
+
+def test_a_short_straight_spline_keeps_the_games_fifty_centimetre_floor() -> None:
+    """``maxsd 50.0`` at 0xafcf1d: a 60 cm run still gets 50 cm tangents."""
+    short = straight_spline((0.0, 1.0, 0.0), 60.0)
+    assert short[0][2].y == STRAIGHT_TANGENT_MIN_CM
+    assert short[1][1].y == STRAIGHT_TANGENT_MIN_CM
+    # And the 600 cm cap at the other end: minsd 600.0 at 0xafcf15.
+    long = straight_spline((0.0, 0.0, 1.0), 5000.0)
+    assert long[0][2].z == STRAIGHT_TANGENT_MAX_CM
+    assert long[1][1].z == STRAIGHT_TANGENT_MAX_CM
+
+
+def test_a_straight_spline_scales_by_the_full_three_dimensional_length() -> None:
+    """The clamp is on the 3D distance even in the 2D builder (0xafcf03/0xafcf08)."""
+    diagonal = (0.6, 0.0, 0.8)
+    points = straight_spline(diagonal, 1000.0)
+    assert points[0][2].x == 0.6 * 500.0
+    assert points[0][2].z == 0.8 * 500.0

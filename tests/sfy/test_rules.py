@@ -107,6 +107,7 @@ def test_the_effects_the_shipped_rules_state():
         "buildable.clearance": "refuse",
         "belt.cost": "compute",
         "manufacturer.inventory_filters": "compute",
+        "belt.straight_tangents": "compute",
     }
 
 
@@ -150,7 +151,7 @@ def test_the_cost_rule_names_every_function_it_was_read_across():
     )
     # Every rule that was read from one function says so.
     spread = {r.id for r in load_rules().values() if r.also_read}
-    assert spread == {"belt.cost", "manufacturer.inventory_filters"}
+    assert spread == {"belt.cost", "manufacturer.inventory_filters", "belt.straight_tangents"}
 
 
 def test_the_cost_rules_evidence_carries_the_rounding_and_the_multiply():
@@ -195,6 +196,44 @@ def test_the_inventory_filter_rule_states_the_slot_to_ingredient_assignment():
     # SetRecipe is what calls it, after storing the recipe.
     assert "mCurrentRecipe" in at["0x548d5e"]
     assert "0A80h" in at["0x548f5b"]
+
+
+def test_the_straight_tangent_rule_states_the_tangent_of_a_straight_run():
+    """Half the length, clamped to [50, 600], and unit vectors on the outside."""
+    rule = load_rules()["belt.straight_tangents"]
+    assert (rule.status, rule.effect) == ("extracted", "compute")
+    assert rule.cls == "AFGConveyorBeltHologram"
+    assert rule.function == "AutoRouteSpline"
+    assert rule.header == "Hologram/FGConveyorBeltHologram.h:97"
+    assert {line.split(" @ ")[0] for line in rule.also_read} == {
+        "FSplineBuilder::Start",
+        "FSplineBuilder::AddSegment",
+        "FSplineUtils::BuildStraightSpline2D",
+        "FSplineUtils::BuildStraightSpline3D",
+    }
+    at = {line.split(":")[0]: line for line in rule.evidence}
+    # The three constants the run length is scaled and clamped by.
+    assert "f64=0.5" in at["0xafcf0d"]
+    assert "f64=600.0" in at["0xafcf15"]
+    assert "f64=50.0" in at["0xafcf1d"]
+    # And the same three in the 3D builder.
+    assert "f64=0.5" in at["0xafd2a5"] and "f64=600.0" in at["0xafd2ad"]
+    assert "f64=50.0" in at["0xafd2b5"]
+    # Start writes one normalised vector into both of point 0's tangents.
+    assert "rcx+18h" in at["0xb22291"] and "rcx+30h" in at["0xb22295"]
+    # AddSegment gives the new point the full tangent to arrive on...
+    assert "movups" in at["0xaf213f"]
+    # ...and rescales the previous point's leave tangent to its length.
+    assert "mulsd" in at["0xaf2101"]
+
+
+def test_the_straight_tangent_rule_says_the_port_facing_rule_is_ours():
+    """The game does not constrain which way a belt leaves a port, and it says so."""
+    rule = load_rules()["belt.straight_tangents"]
+    assert "this project's own rule" in rule.interpretation
+    assert "startConnectionNormal" in rule.interpretation
+    # And nothing refuses a spline for it: the four checks are elsewhere.
+    assert "none of them" in rule.interpretation
 
 
 def test_belt_curvature_rule_reads_the_bend_radius():

@@ -85,6 +85,7 @@ REQUIRED_RULE_IDS = (
     "buildable.clearance",
     "belt.cost",
     "manufacturer.inventory_filters",
+    "belt.straight_tangents",
 )
 
 RULE_STATUSES = ("extracted", "partial", "unextractable")
