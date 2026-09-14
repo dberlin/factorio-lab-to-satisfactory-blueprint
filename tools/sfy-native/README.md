@@ -117,7 +117,9 @@ constant in the block.
 ### The grid snap size
 
 `AFGBuildableHologram::mGridSnapSize` is a `UPROPERTY( EditDefaultsOnly )`
-(`Hologram/FGBuildableHologram.h:445`), so a hologram Blueprint can override it,
+(`Hologram/FGBuildableHologram.h:445`, the `float mGridSnapSize;` declaration
+itself — the `UPROPERTY` macro is the line above it, the doc comment two above),
+so a hologram Blueprint can override it,
 and three do: `assets.json` has `Holo_PowerPole_C`, `Holo_PowerTower_C` and
 `Holo_StreetLight_C` at 50, which the merge puts on each buildable as
 `grid_snap_cm`. The native constructor default — the value every

@@ -253,6 +253,20 @@ sequence-pair per-island exact-layout search's non-convergence. Full measurement
 refusal text, and the ranked residual blockers are in
 `docs/superpowers/evidence/2026-09-07-lane-fanout/gate/verdict.md`.
 
+## Satisfactory (in progress)
+
+A second target is being built alongside the DSP one: `flab2bp.sfy` reads and writes Satisfactory
+blueprints (`.sbp`/`.sbpcfg`) byte-for-byte, and carries a game-data registry — every buildable,
+recipe, connection port and placement limit — extracted from an installed copy of the game into
+`src/flab2bp/sfy/data/`. Nothing in it is typed in by hand. Milestone 1 is the format, the
+registry and a first authored blueprint: `uv run python scripts/sfy_checkpoint1.py` builds one
+into `out/sfy/` (not committed) and checks it; its docstring says how to load it in game. Layout
+and routing for this target are not written yet.
+
+The committed data files mean neither the tests nor a build need a game install.
+[docs/sfy-regenerating-game-data.md](docs/sfy-regenerating-game-data.md) is the runbook for
+regenerating them after a game update, in order, with the prerequisites each step needs.
+
 ## Development
 
 Run the Python and web gates relevant to the files changed:
