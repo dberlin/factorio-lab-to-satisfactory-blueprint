@@ -50,7 +50,7 @@ CARVE_SITES = {
     "src/flab2bp/layout/routing_domain.py:_RouteAllRun._search.probe_ordinary": (
         "an ordinary-query probe's private slice of what the pass has left"
     ),
-    "src/flab2bp/layout/routing_domain.py:_route_all._repair._grouped_overcap_alternative": (
+    "src/flab2bp/layout/routing_domain.py:_RouteAllRun._repair._grouped_overcap_alternative": (
         "a grouped over-cap alternative's slice, capped at the parent's remainder"
     ),
     "src/flab2bp/layout/routing_domain.py:_route_all._cluster_search": (

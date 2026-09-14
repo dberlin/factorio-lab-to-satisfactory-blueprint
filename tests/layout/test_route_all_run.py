@@ -283,8 +283,8 @@ def test_the_per_call_resets_are_still_per_call() -> None:
         ("_ends", "self.neighborhood = None if replay is None else replay.neighborhood"),
         ("_search_route", "self.admitted_path = None"),
         ("_search_route", "self.admitted_future = None"),
-        ("_repair", "run.repair_guards = set(guard_claims)"),
-        ("_repair", "run.policy_restricted = False"),
+        ("_repair", "self.repair_guards = set(self.guard_claims)"),
+        ("_repair", "self.policy_restricted = False"),
     ):
         assert reset in source, f"{owner} must still reset {reset!r} on every call"
 
@@ -646,3 +646,139 @@ def test_the_snapshot_is_taken_where_the_def_stood() -> None:
         )
     ]
     assert any(rebind < snapshot for rebind in rebinds), (snapshot, sorted(rebinds))
+
+
+def _method_ast(name: str) -> ast.FunctionDef:
+    for child in _run_class_node().body:
+        if isinstance(child, ast.FunctionDef) and child.name == name:
+            return child
+    raise AssertionError(f"_RouteAllRun.{name} is missing")
+
+
+#: The nineteen data names `_repair` captured from `_route_all`'s scope. Every
+#: one was already a field before this task: Task 1 gave `budget`, Task 3 the
+#: search cluster's fifteen, Task 4 `round_work`.
+REPAIR_FIELDS = {
+    "budget",
+    "canvas",
+    "corridor_reservations",
+    "destination_access_walls",
+    "grid",
+    "guard_claims",
+    "history",
+    "nets",
+    "owned_source_starts",
+    "owner",
+    "path_tap",
+    "paths",
+    "rejected_path_cells",
+    "round_work",
+    "sink_hint",
+    "source_access_blockers",
+    "source_access_walls",
+    "source_hint",
+    "src_group",
+}
+
+#: The fourteen sibling closures it captured, all already methods.
+REPAIR_METHOD_CAPTURES = (
+    "_dependency_closure",
+    "_endpoint_dependents",
+    "_ends",
+    "_future_source_offers",
+    "_inside_grid",
+    "_net_id",
+    "_ordinary_query_deadline",
+    "_preserves_source_frontier",
+    "_route_order",
+    "_search",
+    "_search_route",
+    "_selected_hints",
+    "_stake",
+    "_unstake",
+)
+
+
+def test_the_repair_cluster_is_a_method_with_its_helpers_nested() -> None:
+    assert callable(vars(domain._RouteAllRun).get("_repair"))
+    repair = _method_ast("_repair")
+    nested = {
+        node.name
+        for node in ast.walk(repair)
+        if isinstance(node, ast.FunctionDef) and node is not repair
+    }
+    assert nested == {
+        "_tap_guard_victims",
+        "_source_tap_guard_victims",
+        "_refresh_repair_guards",
+        "_rebuild_route",
+        "_grouped_overcap_alternative",
+        "admit_repair_tap",
+    }, sorted(nested)
+
+
+def test_admit_repair_tap_keeps_its_default_argument_snapshot() -> None:
+    """Its defaults bind `_repair`'s locals, which stay locals of the method."""
+    repair = _method_ast("_repair")
+    tap = next(
+        node
+        for node in ast.walk(repair)
+        if isinstance(node, ast.FunctionDef) and node.name == "admit_repair_tap"
+    )
+    defaults = [
+        node.id
+        for node in list(tap.args.defaults) + [d for d in tap.args.kw_defaults if d is not None]
+        if isinstance(node, ast.Name)
+    ]
+    assert defaults == ["index", "victims", "dependents"], defaults
+    # ... and none of the three became a field read anywhere in the method.
+    reads = {
+        node.attr
+        for node in ast.walk(repair)
+        if isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "self"
+    }
+    assert reads.isdisjoint({"index", "victims", "dependents"}), sorted(reads)
+
+
+def test_the_repair_cluster_added_no_new_field() -> None:
+    from dataclasses import fields
+
+    names = {field.name for field in fields(domain._RouteAllRun)}
+    assert "repair_guards" in names
+    assert "policy_restricted" in names
+
+
+def test_the_run_object_already_carried_every_repair_capture() -> None:
+    """The lift adds no state: all 33 captures were fields or methods already."""
+    from dataclasses import fields
+
+    names = {field.name for field in fields(domain._RouteAllRun)}
+    assert names >= REPAIR_FIELDS, sorted(REPAIR_FIELDS - names)
+    missing = [name for name in REPAIR_METHOD_CAPTURES if name not in vars(domain._RouteAllRun)]
+    assert missing == [], missing
+
+
+def test_repair_is_the_last_closure_lifted_out_of_the_route_order_cluster() -> None:
+    """`_route_all` keeps an alias in the slot the `def` held, and nothing else."""
+    node = _route_all_node()
+    defs = [
+        child.name
+        for child in ast.walk(node)
+        if isinstance(child, ast.FunctionDef) and child.name == "_repair"
+    ]
+    assert defs == [], defs
+    aliases = [
+        child.lineno
+        for child in ast.iter_child_nodes(node)
+        if isinstance(child, ast.Assign)
+        and len(child.targets) == 1
+        and isinstance(child.targets[0], ast.Name)
+        and child.targets[0].id == "_repair"
+        and isinstance(child.value, ast.Attribute)
+        and child.value.attr == "_repair"
+        and isinstance(child.value.value, ast.Name)
+        and child.value.value.id == "run"
+    ]
+    assert len(aliases) == 1, aliases

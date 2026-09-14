@@ -8353,6 +8353,509 @@ class _RouteAllRun:
             if detail.side == "contextual":
                 self.retained_blockers[index] = blockers
 
+    def _repair(
+        self,
+        stranded: list[int],
+        pressure: float,
+        blame: dict[Cell, float],
+        search_failures: dict[int, _PathSearchResult],
+        search_blockers: dict[int, tuple[NetId, ...]],
+    ) -> list[int]:
+        """Place stranded nets by CROSSING settled belts and moving those.
+
+        A round is greedy sequential routing, so a net that reaches a full
+        corridor last simply fails, and the next round runs the same nets in the
+        same order against a map that differs only in price.  On
+        `universe-matrix` that costs 3.1-4.0s a round to shuffle one or two
+        failures about, and the sweep's whole ceiling buys three or four of them.
+
+        What the failure IS, every time it has been looked at, is contention and
+        never geometry.  Re-searching each stranded net on a grid where settled
+        belts are passable found a path for all 31 stranded nets across five
+        packs, in 0.001-0.025s each, and every one crossed between 1 and 11 of
+        the 93-140 paths already down.  So: take that path, rip up only the
+        handful it crosses, and send those looking again.  It is aimed at the
+        nets that are actually in the way rather than at all of them, and it is
+        roughly twenty-five times cheaper than the round it saves.
+
+        This is also the overuse signal negotiation never had here.  A settled
+        path is `blocked` rather than dear, so two nets never overlap and the
+        history term can only ever record that a cell was USED.  A crossing
+        search is the one place this router learns that a cell was WANTED by
+        somebody who could not have it.
+
+        Returns whatever is still stranded, which the caller counts as failed.
+        """
+        if not stranded:
+            return stranded
+        #: The cap this repair trades under, sized to the pack rather than to
+        #: the census -- see :data:`_REPAIR_VICTIM_SHARE`.  Read once so every
+        #: test in the round asks the same question.
+        victim_cap = max(_REPAIR_MAX_VICTIMS, len(self.nets) // _REPAIR_VICTIM_SHARE)
+        # A grid whose belts are passable but dear.  `base` is the occupancy
+        # before any path settled, so restoring it opens exactly the cells this
+        # pass has taken -- machines, keep-outs and the routing box stay shut.
+        open_grid = replace(
+            self.grid,
+            occ=bytearray(self.grid.base),
+            routing_flags=bytearray(self.grid.size),
+            hist=None,
+        )
+        self.repair_guards = set(self.guard_claims)
+        for guarded in self.repair_guards:
+            if self._inside_grid(guarded):
+                open_grid.block(guarded)
+        # The crossing charge rides on the history array, so the repair search
+        # prices congestion exactly as the round does and adds a toll on top.
+        # `pressure` is folded in here and the search is given 1.0, which keeps
+        # the toll a fixed number of tiles rather than one that grows with the
+        # round number.
+        settled = self.grid.hist
+        crossing = [0.0] * self.grid.size if settled is None else [v * pressure for v in settled]
+        for cell in self.owner:
+            crossing[self.grid.index(cell)] += _REPAIR_CROSSING
+        open_grid.hist = crossing
+
+        def _tap_guard_victims(tap: Cell, excused: Collection[Cell]) -> set[int]:
+            victims: set[int] = set()
+            stack = _splitter_stack_geometry(*tap)
+            for offset, stack_member in enumerate(stack):
+                victims.update(
+                    _junction_guard_victims(
+                        self.owner,
+                        junction.keepout_cells(
+                            tap[0],
+                            tap[1],
+                            int(stack_member.z),
+                            model_index=stack_member.model_index,
+                            yaw=stack_member.yaw,
+                        ),
+                        excused=excused if offset == len(stack) - 1 else (),
+                    )
+                )
+            return victims
+
+        def _source_tap_guard_victims(index: int, tap: Cell) -> set[int]:
+            tapped = next(
+                (
+                    (sibling, position)
+                    for sibling in self.src_group.get(index, ())
+                    if (position := self.paths.position_in(sibling, tap)) is not None
+                ),
+                None,
+            )
+            excused: Collection[Cell] = ()
+            if tapped is not None:
+                sibling, tap_at = tapped
+                excused = self.paths[sibling][max(0, tap_at - 2) : tap_at + 3]
+            return _tap_guard_victims(tap, excused)
+
+        def _refresh_repair_guards() -> None:
+            for cell in self.repair_guards - self.guard_claims.keys():
+                if self._inside_grid(cell):
+                    open_grid.restore(cell)
+            for cell in self.guard_claims.keys() - self.repair_guards:
+                if self._inside_grid(cell):
+                    open_grid.block(cell)
+            self.repair_guards = set(self.guard_claims)
+            # Role withdrawal/retirement rebinds the canonical reservation tuple.
+            open_grid.reserved = self.grid.reserved
+
+        def _rebuild_route(
+            index: int,
+            feedback: dict[Cell, float],
+            *,
+            constraints: Collection[Cell] = (),
+        ) -> _PathSearchResult:
+            starts, goals, offers = self._ends(index)
+            try:
+                found = self._search_route(
+                    index,
+                    starts,
+                    goals,
+                    offers,
+                    pressure,
+                    self.budget,
+                    feedback,
+                    constraints=constraints,
+                )
+            finally:
+                self.canvas.routing_ports = frozenset()
+            # Interrupted searches carry their partial work to _route_all.
+            self.work += found.work
+            self.round_work[index] = self.round_work.get(index, 0) + found.work
+            if found.path is not None:
+                self._stake(index, found.path, hints=self._selected_hints(found.path, offers))
+            return found
+
+        def _grouped_overcap_alternative(
+            index: int,
+            starts: list[Cell],
+            goals: set[Cell],
+            offers: tuple[dict[Cell, Cell], dict[Cell, Cell], dict[Cell, Cell]],
+            victims: set[int],
+            dependents: Mapping[int, Collection[int]],
+            remaining: int,
+            query_deadline: float | None,
+            query_ports: frozenset[Cell],
+        ) -> _PathSearchResult | None:
+            if remaining <= 0 or self.left <= 0 or _expired(query_deadline):
+                return None
+            saved_deadline = self.deadline
+            saved_ports = self.canvas.routing_ports
+            if query_deadline is not None:
+                self.deadline = (
+                    query_deadline if self.deadline is None else min(self.deadline, query_deadline)
+                )
+            try:
+                self.canvas.routing_ports = query_ports
+                closures: dict[int, set[int]] = {}
+                for hurt in self.paths:
+                    if _expired(self.deadline):
+                        return None
+                    closures[hurt] = self._dependency_closure({hurt}, dependents) - {index}
+                mandatory_by_tap: dict[Cell | None, frozenset[int]] = {}
+                signatures: dict[frozenset[int], frozenset[int]] = {}
+                groups: dict[frozenset[int], list[Cell]] = {}
+                distances: dict[frozenset[int], int] = {}
+                forbidden_before = frozenset(self.rejected_path_cells.get(index, ()))
+                owned = self.owned_source_starts.get(index, ())
+                released = self.source_access_walls.get(index, ())
+                for cell in starts:
+                    if _expired(self.deadline):
+                        return None
+                    tap = offers[2].get(cell)
+                    mandatory = mandatory_by_tap.get(tap)
+                    if mandatory is None:
+                        guards = set() if tap is None else _source_tap_guard_victims(index, tap)
+                        mandatory = frozenset(
+                            (self._dependency_closure(guards, dependents) | victims) - {index}
+                        )
+                        mandatory_by_tap[tap] = mandatory
+                    signature = signatures.get(mandatory)
+                    if signature is None:
+                        excluded: set[int] = set()
+                        for hurt, closure in closures.items():
+                            if _expired(self.deadline):
+                                return None
+                            if len(mandatory | closure) > victim_cap:
+                                excluded.add(hurt)
+                        signature = frozenset(excluded)
+                        signatures[mandatory] = signature
+                    groups.setdefault(signature, []).append(cell)
+                    # Rank only starts admitted by the same physical exceptions
+                    # as _geometric_search, but retain every first-wins offer in its group.
+                    if (
+                        0 <= cell[2] < self.canvas.levels
+                        and cell not in forbidden_before
+                        and (
+                            self.canvas.free(cell)
+                            or (cell in owned and self.canvas.free_owned_guard(cell))
+                            or (cell in released and self.canvas.blocked.get(cell) == _TENTATIVE)
+                        )
+                    ):
+                        for goal in goals:
+                            distance = (
+                                abs(cell[0] - goal[0])
+                                + abs(cell[1] - goal[1])
+                                + abs(cell[2] - goal[2])
+                            )
+                            if signature not in distances or distance < distances[signature]:
+                                distances[signature] = distance
+                if _expired(self.deadline):
+                    return None
+                ordered = sorted(
+                    (signature for signature in groups if signature in distances),
+                    key=lambda signature: (len(signature), distances[signature]),
+                )
+                logical = budget_module.WorkBudget(left=min(remaining, self.left))
+                assert logical.left is not None
+                for signature in ordered:
+                    if logical.left <= 0 or self.left <= 0 or _expired(self.deadline):
+                        break
+                    # Only returned path cells overwrite their current owner.
+                    # Compatible provider hints and excused tap guards stay open.
+                    forbidden = forbidden_before | frozenset(
+                        cell for cell, hurt in self.owner.items() if hurt in signature
+                    )
+                    before = logical.left
+                    try:
+                        found = self._search(
+                            groups[signature],
+                            goals,
+                            offers[2],
+                            self.history,
+                            1.0,
+                            logical,
+                            None,
+                            open_grid,
+                            owned_starts=owned,
+                            released_starts=released,
+                            forbidden=forbidden,
+                            ordinary_deadline=query_deadline,
+                        )
+                    except _PreparationDeadline as error:
+                        error.net_index = index
+                        raise
+                    finally:
+                        self.budget.left = self.left - (before - logical.left)
+                    self.work += found.work
+                    self.round_work[index] = self.round_work.get(index, 0) + found.work
+                    if found.path is None:
+                        continue
+                    contacts = {self.owner[cell] for cell in found.path if cell in self.owner}
+                    tap = offers[2].get(found.path[0])
+                    if tap is not None:
+                        contacts.update(_source_tap_guard_victims(index, tap))
+                    joint = (self._dependency_closure(contacts, dependents) | victims) - {index}
+                    if len(joint) <= victim_cap:
+                        return found
+                return None
+            finally:
+                self.deadline = saved_deadline
+                self.canvas.routing_ports = saved_ports
+
+        still: list[int] = []
+        for index in stranded:
+            victims: set[int] = set()
+            repaired = False
+            pending_proposal: tuple[Cell, ...] | None = None
+            while not _expired(self.deadline) and self.left > 0:
+                if len(victims) > victim_cap:
+                    break
+                dependents = self._endpoint_dependents()
+                rebuild_order = self._route_order(victims, dependents)
+                if rebuild_order is None:
+                    break
+                staked_before = self.paths.snapshot()
+                saved_hints = {
+                    hurt: (
+                        self.source_hint.get(hurt),
+                        self.sink_hint.get(hurt),
+                        self.path_tap.get(hurt),
+                    )
+                    for hurt in victims
+                }
+                self.policy_restricted = False
+                proposed_constraints = pending_proposal
+                pending_proposal = None
+                candidate_path: tuple[Cell, ...] | None = None
+
+                def admit_repair_tap(
+                    tap: Cell,
+                    *,
+                    index: int = index,
+                    victims: set[int] = victims,
+                    dependents: Mapping[int, Collection[int]] = dependents,
+                ) -> bool:
+                    # This transaction can never rebuild an over-limit guard
+                    # closure, regardless of the path selected from this tap.
+                    # Keep the original dependency graph: withdrawn providers'
+                    # endpoint promises remain obligations of the transaction.
+                    mandatory = self._dependency_closure(
+                        _source_tap_guard_victims(index, tap), dependents
+                    )
+                    admitted = len((victims | mandatory) - {index}) <= victim_cap
+                    self.policy_restricted |= not admitted
+                    return admitted
+
+                discovered: set[int] = set()
+                with self.corridor_reservations.temporarily_released({}) as release:
+                    try:
+                        for hurt in reversed(rebuild_order):
+                            self._unstake(hurt)
+                        _refresh_repair_guards()
+                        if proposed_constraints is not None:
+                            # The old proposal is only a constraint, never an
+                            # attachment or a path we may publish. Serving the
+                            # victims first can retire a replaceable corridor.
+                            feedback: dict[Cell, float] = {}
+                            for hurt in rebuild_order:
+                                if (
+                                    _rebuild_route(
+                                        hurt, feedback, constraints=proposed_constraints
+                                    ).path
+                                    is None
+                                ):
+                                    break
+                            else:
+                                # Providers moved: obtain every target offer
+                                # afresh and search the strict canonical grid.
+                                if _rebuild_route(index, feedback).path is not None:
+                                    release.commit()
+                                    repaired = True
+                        else:
+                            # Removing a provider changes both endpoint offers and
+                            # their provenance. Never reuse its old attachment.
+                            starts, goals, through_offers = self._ends(
+                                index, tentative_ok=True, admit_source_tap=admit_repair_tap
+                            )
+                            starts.extend(self.source_access_walls.get(index, ()))
+                            goals.update(self.destination_access_walls.get(index, ()))
+                            if not starts:
+                                blocked_sources = set(self.source_access_blockers.get(index, ()))
+                                discovered.update(
+                                    sibling
+                                    for sibling in self.paths
+                                    if self._net_id(sibling) in blocked_sources
+                                )
+                            else:
+                                query_deadline = self._ordinary_query_deadline()
+                                query_allowance = min(_MAX_SEARCH_WORK, self.left)
+                                query_ports = self.canvas.routing_ports
+                                through = self._search(
+                                    starts,
+                                    goals,
+                                    through_offers[2],
+                                    self.history,
+                                    1.0,
+                                    self.budget,
+                                    None,
+                                    open_grid,
+                                    owned_starts=self.owned_source_starts.get(index, ()),
+                                    released_starts=self.source_access_walls.get(index, ()),
+                                    forbidden=self.rejected_path_cells.get(index, ()),
+                                    ordinary_deadline=query_deadline,
+                                )
+                                self.canvas.routing_ports = frozenset()
+                                self.work += through.work
+                                self.round_work[index] = (
+                                    self.round_work.get(index, 0) + through.work
+                                )
+                                if through.path is None:
+                                    # A policy-restricted query cannot replace the
+                                    # canonical failure used by later repair passes.
+                                    if (
+                                        not self.policy_restricted
+                                        and through.kind is RouteFailureKind.BUDGET
+                                    ):
+                                        search_failures[index] = through
+                                        search_blockers[index] = ()
+                                else:
+                                    through_path = through.path
+                                    candidate_path = through_path
+                                    discovered.update(
+                                        self.owner[cell]
+                                        for cell in through_path
+                                        if cell in self.owner
+                                    )
+                                    selected_tap = through_offers[2].get(through_path[0])
+                                    if selected_tap is not None:
+                                        discovered.update(
+                                            _source_tap_guard_victims(index, selected_tap)
+                                        )
+                                    discovered.discard(index)
+                                    joint = (
+                                        self._dependency_closure(discovered, dependents) | victims
+                                    ) - {index}
+                                    if len(joint) > victim_cap:
+                                        alternative = _grouped_overcap_alternative(
+                                            index,
+                                            starts,
+                                            goals,
+                                            through_offers,
+                                            victims,
+                                            dependents,
+                                            query_allowance - through.work,
+                                            query_deadline,
+                                            query_ports,
+                                        )
+                                        if alternative is not None:
+                                            assert alternative.path is not None
+                                            through_path = alternative.path
+                                            candidate_path = through_path
+                                            discovered = {
+                                                self.owner[cell]
+                                                for cell in through_path
+                                                if cell in self.owner
+                                            }
+                                            selected_tap = through_offers[2].get(through_path[0])
+                                            if selected_tap is not None:
+                                                discovered.update(
+                                                    _source_tap_guard_victims(index, selected_tap)
+                                                )
+                                            discovered.discard(index)
+                                    if not discovered:
+                                        if self._preserves_source_frontier(
+                                            index, through_path, through_offers
+                                        ):
+                                            self._stake(
+                                                index,
+                                                through_path,
+                                                hints=self._selected_hints(
+                                                    through_path, through_offers
+                                                ),
+                                            )
+                                            for hurt in rebuild_order:
+                                                again = _rebuild_route(hurt, blame)
+                                                if again.path is None:
+                                                    if again.kind is RouteFailureKind.BUDGET:
+                                                        search_failures[index] = again
+                                                        search_blockers[index] = ()
+                                                    break
+                                            else:
+                                                release.commit()
+                                                repaired = True
+                                        else:
+                                            # A future sibling's Splitter may hit an
+                                            # owner that this path never crosses.
+                                            future = self._future_source_offers(
+                                                index,
+                                                through_path,
+                                                through_offers,
+                                                tentative_ok=True,
+                                            )
+                                            for tap in future.values():
+                                                tap_path: Sequence[Cell] = through_path
+                                                try:
+                                                    at = tap_path.index(tap)
+                                                except ValueError:
+                                                    tap_path = self.paths.get(
+                                                        self.owner.get(tap, -1), ()
+                                                    )
+                                                    try:
+                                                        at = tap_path.index(tap)
+                                                    except ValueError:
+                                                        at = -1
+                                                future_excused = (
+                                                    ()
+                                                    if at < 0
+                                                    else tap_path[max(0, at - 2) : at + 3]
+                                                )
+                                                discovered.update(
+                                                    _tap_guard_victims(tap, future_excused)
+                                                )
+                    finally:
+                        if not release.finished:
+                            self.canvas.routing_ports = frozenset()
+                            for hurt in (index, *victims):
+                                if hurt in self.paths:
+                                    self._unstake(hurt)
+                            for hurt, path, _linked_head in staked_before:
+                                if hurt in saved_hints:
+                                    self._stake(hurt, path, hints=saved_hints[hurt])
+                            self.paths.restore(staked_before)
+                _refresh_repair_guards()
+                if repaired:
+                    search_failures.pop(index, None)
+                    search_blockers.pop(index, None)
+                    break
+                if proposed_constraints is not None:
+                    # Hypothesis failures publish no canonical negative evidence.
+                    # Its token is spent; after exact rollback and refresh, retain
+                    # the existing discovery opportunity at this same victim set.
+                    continue
+                # Close dependencies only after restoring the original hints.
+                # Only strict closure growth can arm another bounded hypothesis.
+                additional = self._dependency_closure(discovered) - victims - {index}
+                if not additional:
+                    break
+                victims.update(additional)
+                pending_proposal = candidate_path
+            if not repaired:
+                still.append(index)
+        return still
+
 
 def _route_all(
     canvas: _Canvas,
@@ -8730,495 +9233,7 @@ def _route_all(
     _endpoint_dependents = run._endpoint_dependents
     _dependency_closure = run._dependency_closure
 
-    def _repair(
-        stranded: list[int],
-        pressure: float,
-        blame: dict[Cell, float],
-        search_failures: dict[int, _PathSearchResult],
-        search_blockers: dict[int, tuple[NetId, ...]],
-    ) -> list[int]:
-        """Place stranded nets by CROSSING settled belts and moving those.
-
-        A round is greedy sequential routing, so a net that reaches a full
-        corridor last simply fails, and the next round runs the same nets in the
-        same order against a map that differs only in price.  On
-        `universe-matrix` that costs 3.1-4.0s a round to shuffle one or two
-        failures about, and the sweep's whole ceiling buys three or four of them.
-
-        What the failure IS, every time it has been looked at, is contention and
-        never geometry.  Re-searching each stranded net on a grid where settled
-        belts are passable found a path for all 31 stranded nets across five
-        packs, in 0.001-0.025s each, and every one crossed between 1 and 11 of
-        the 93-140 paths already down.  So: take that path, rip up only the
-        handful it crosses, and send those looking again.  It is aimed at the
-        nets that are actually in the way rather than at all of them, and it is
-        roughly twenty-five times cheaper than the round it saves.
-
-        This is also the overuse signal negotiation never had here.  A settled
-        path is `blocked` rather than dear, so two nets never overlap and the
-        history term can only ever record that a cell was USED.  A crossing
-        search is the one place this router learns that a cell was WANTED by
-        somebody who could not have it.
-
-        Returns whatever is still stranded, which the caller counts as failed.
-        """
-        if not stranded:
-            return stranded
-        #: The cap this repair trades under, sized to the pack rather than to
-        #: the census -- see :data:`_REPAIR_VICTIM_SHARE`.  Read once so every
-        #: test in the round asks the same question.
-        victim_cap = max(_REPAIR_MAX_VICTIMS, len(nets) // _REPAIR_VICTIM_SHARE)
-        # A grid whose belts are passable but dear.  `base` is the occupancy
-        # before any path settled, so restoring it opens exactly the cells this
-        # pass has taken -- machines, keep-outs and the routing box stay shut.
-        open_grid = replace(
-            grid,
-            occ=bytearray(grid.base),
-            routing_flags=bytearray(grid.size),
-            hist=None,
-        )
-        run.repair_guards = set(guard_claims)
-        for guarded in run.repair_guards:
-            if _inside_grid(guarded):
-                open_grid.block(guarded)
-        # The crossing charge rides on the history array, so the repair search
-        # prices congestion exactly as the round does and adds a toll on top.
-        # `pressure` is folded in here and the search is given 1.0, which keeps
-        # the toll a fixed number of tiles rather than one that grows with the
-        # round number.
-        settled = grid.hist
-        crossing = [0.0] * grid.size if settled is None else [v * pressure for v in settled]
-        for cell in owner:
-            crossing[grid.index(cell)] += _REPAIR_CROSSING
-        open_grid.hist = crossing
-
-        def _tap_guard_victims(tap: Cell, excused: Collection[Cell]) -> set[int]:
-            victims: set[int] = set()
-            stack = _splitter_stack_geometry(*tap)
-            for offset, stack_member in enumerate(stack):
-                victims.update(
-                    _junction_guard_victims(
-                        owner,
-                        junction.keepout_cells(
-                            tap[0],
-                            tap[1],
-                            int(stack_member.z),
-                            model_index=stack_member.model_index,
-                            yaw=stack_member.yaw,
-                        ),
-                        excused=excused if offset == len(stack) - 1 else (),
-                    )
-                )
-            return victims
-
-        def _source_tap_guard_victims(index: int, tap: Cell) -> set[int]:
-            tapped = next(
-                (
-                    (sibling, position)
-                    for sibling in src_group.get(index, ())
-                    if (position := paths.position_in(sibling, tap)) is not None
-                ),
-                None,
-            )
-            excused: Collection[Cell] = ()
-            if tapped is not None:
-                sibling, tap_at = tapped
-                excused = paths[sibling][max(0, tap_at - 2) : tap_at + 3]
-            return _tap_guard_victims(tap, excused)
-
-        def _refresh_repair_guards() -> None:
-            for cell in run.repair_guards - guard_claims.keys():
-                if _inside_grid(cell):
-                    open_grid.restore(cell)
-            for cell in guard_claims.keys() - run.repair_guards:
-                if _inside_grid(cell):
-                    open_grid.block(cell)
-            run.repair_guards = set(guard_claims)
-            # Role withdrawal/retirement rebinds the canonical reservation tuple.
-            open_grid.reserved = grid.reserved
-
-        def _rebuild_route(
-            index: int,
-            feedback: dict[Cell, float],
-            *,
-            constraints: Collection[Cell] = (),
-        ) -> _PathSearchResult:
-            starts, goals, offers = _ends(index)
-            try:
-                found = _search_route(
-                    index,
-                    starts,
-                    goals,
-                    offers,
-                    pressure,
-                    budget,
-                    feedback,
-                    constraints=constraints,
-                )
-            finally:
-                canvas.routing_ports = frozenset()
-            # Interrupted searches carry their partial work to _route_all.
-            run.work += found.work
-            round_work[index] = round_work.get(index, 0) + found.work
-            if found.path is not None:
-                _stake(index, found.path, hints=_selected_hints(found.path, offers))
-            return found
-
-        def _grouped_overcap_alternative(
-            index: int,
-            starts: list[Cell],
-            goals: set[Cell],
-            offers: tuple[dict[Cell, Cell], dict[Cell, Cell], dict[Cell, Cell]],
-            victims: set[int],
-            dependents: Mapping[int, Collection[int]],
-            remaining: int,
-            query_deadline: float | None,
-            query_ports: frozenset[Cell],
-        ) -> _PathSearchResult | None:
-            if remaining <= 0 or run.left <= 0 or _expired(query_deadline):
-                return None
-            saved_deadline = run.deadline
-            saved_ports = canvas.routing_ports
-            if query_deadline is not None:
-                run.deadline = (
-                    query_deadline if run.deadline is None else min(run.deadline, query_deadline)
-                )
-            try:
-                canvas.routing_ports = query_ports
-                closures: dict[int, set[int]] = {}
-                for hurt in paths:
-                    if _expired(run.deadline):
-                        return None
-                    closures[hurt] = _dependency_closure({hurt}, dependents) - {index}
-                mandatory_by_tap: dict[Cell | None, frozenset[int]] = {}
-                signatures: dict[frozenset[int], frozenset[int]] = {}
-                groups: dict[frozenset[int], list[Cell]] = {}
-                distances: dict[frozenset[int], int] = {}
-                forbidden_before = frozenset(rejected_path_cells.get(index, ()))
-                owned = owned_source_starts.get(index, ())
-                released = source_access_walls.get(index, ())
-                for cell in starts:
-                    if _expired(run.deadline):
-                        return None
-                    tap = offers[2].get(cell)
-                    mandatory = mandatory_by_tap.get(tap)
-                    if mandatory is None:
-                        guards = set() if tap is None else _source_tap_guard_victims(index, tap)
-                        mandatory = frozenset(
-                            (_dependency_closure(guards, dependents) | victims) - {index}
-                        )
-                        mandatory_by_tap[tap] = mandatory
-                    signature = signatures.get(mandatory)
-                    if signature is None:
-                        excluded: set[int] = set()
-                        for hurt, closure in closures.items():
-                            if _expired(run.deadline):
-                                return None
-                            if len(mandatory | closure) > victim_cap:
-                                excluded.add(hurt)
-                        signature = frozenset(excluded)
-                        signatures[mandatory] = signature
-                    groups.setdefault(signature, []).append(cell)
-                    # Rank only starts admitted by the same physical exceptions
-                    # as _geometric_search, but retain every first-wins offer in its group.
-                    if (
-                        0 <= cell[2] < canvas.levels
-                        and cell not in forbidden_before
-                        and (
-                            canvas.free(cell)
-                            or (cell in owned and canvas.free_owned_guard(cell))
-                            or (cell in released and canvas.blocked.get(cell) == _TENTATIVE)
-                        )
-                    ):
-                        for goal in goals:
-                            distance = (
-                                abs(cell[0] - goal[0])
-                                + abs(cell[1] - goal[1])
-                                + abs(cell[2] - goal[2])
-                            )
-                            if signature not in distances or distance < distances[signature]:
-                                distances[signature] = distance
-                if _expired(run.deadline):
-                    return None
-                ordered = sorted(
-                    (signature for signature in groups if signature in distances),
-                    key=lambda signature: (len(signature), distances[signature]),
-                )
-                logical = budget_module.WorkBudget(left=min(remaining, run.left))
-                assert logical.left is not None
-                for signature in ordered:
-                    if logical.left <= 0 or run.left <= 0 or _expired(run.deadline):
-                        break
-                    # Only returned path cells overwrite their current owner.
-                    # Compatible provider hints and excused tap guards stay open.
-                    forbidden = forbidden_before | frozenset(
-                        cell for cell, hurt in owner.items() if hurt in signature
-                    )
-                    before = logical.left
-                    try:
-                        found = _search(
-                            groups[signature],
-                            goals,
-                            offers[2],
-                            history,
-                            1.0,
-                            logical,
-                            None,
-                            open_grid,
-                            owned_starts=owned,
-                            released_starts=released,
-                            forbidden=forbidden,
-                            ordinary_deadline=query_deadline,
-                        )
-                    except _PreparationDeadline as error:
-                        error.net_index = index
-                        raise
-                    finally:
-                        budget.left = run.left - (before - logical.left)
-                    run.work += found.work
-                    round_work[index] = round_work.get(index, 0) + found.work
-                    if found.path is None:
-                        continue
-                    contacts = {owner[cell] for cell in found.path if cell in owner}
-                    tap = offers[2].get(found.path[0])
-                    if tap is not None:
-                        contacts.update(_source_tap_guard_victims(index, tap))
-                    joint = (_dependency_closure(contacts, dependents) | victims) - {index}
-                    if len(joint) <= victim_cap:
-                        return found
-                return None
-            finally:
-                run.deadline = saved_deadline
-                canvas.routing_ports = saved_ports
-
-        still: list[int] = []
-        for index in stranded:
-            victims: set[int] = set()
-            repaired = False
-            pending_proposal: tuple[Cell, ...] | None = None
-            while not _expired(run.deadline) and run.left > 0:
-                if len(victims) > victim_cap:
-                    break
-                dependents = _endpoint_dependents()
-                rebuild_order = _route_order(victims, dependents)
-                if rebuild_order is None:
-                    break
-                staked_before = paths.snapshot()
-                saved_hints = {
-                    hurt: (source_hint.get(hurt), sink_hint.get(hurt), path_tap.get(hurt))
-                    for hurt in victims
-                }
-                run.policy_restricted = False
-                proposed_constraints = pending_proposal
-                pending_proposal = None
-                candidate_path: tuple[Cell, ...] | None = None
-
-                def admit_repair_tap(
-                    tap: Cell,
-                    *,
-                    index: int = index,
-                    victims: set[int] = victims,
-                    dependents: Mapping[int, Collection[int]] = dependents,
-                ) -> bool:
-                    # This transaction can never rebuild an over-limit guard
-                    # closure, regardless of the path selected from this tap.
-                    # Keep the original dependency graph: withdrawn providers'
-                    # endpoint promises remain obligations of the transaction.
-                    mandatory = _dependency_closure(
-                        _source_tap_guard_victims(index, tap), dependents
-                    )
-                    admitted = len((victims | mandatory) - {index}) <= victim_cap
-                    run.policy_restricted |= not admitted
-                    return admitted
-
-                discovered: set[int] = set()
-                with corridor_reservations.temporarily_released({}) as release:
-                    try:
-                        for hurt in reversed(rebuild_order):
-                            _unstake(hurt)
-                        _refresh_repair_guards()
-                        if proposed_constraints is not None:
-                            # The old proposal is only a constraint, never an
-                            # attachment or a path we may publish. Serving the
-                            # victims first can retire a replaceable corridor.
-                            feedback: dict[Cell, float] = {}
-                            for hurt in rebuild_order:
-                                if (
-                                    _rebuild_route(
-                                        hurt, feedback, constraints=proposed_constraints
-                                    ).path
-                                    is None
-                                ):
-                                    break
-                            else:
-                                # Providers moved: obtain every target offer
-                                # afresh and search the strict canonical grid.
-                                if _rebuild_route(index, feedback).path is not None:
-                                    release.commit()
-                                    repaired = True
-                        else:
-                            # Removing a provider changes both endpoint offers and
-                            # their provenance. Never reuse its old attachment.
-                            starts, goals, through_offers = _ends(
-                                index, tentative_ok=True, admit_source_tap=admit_repair_tap
-                            )
-                            starts.extend(source_access_walls.get(index, ()))
-                            goals.update(destination_access_walls.get(index, ()))
-                            if not starts:
-                                blocked_sources = set(source_access_blockers.get(index, ()))
-                                discovered.update(
-                                    sibling
-                                    for sibling in paths
-                                    if _net_id(sibling) in blocked_sources
-                                )
-                            else:
-                                query_deadline = _ordinary_query_deadline()
-                                query_allowance = min(_MAX_SEARCH_WORK, run.left)
-                                query_ports = canvas.routing_ports
-                                through = _search(
-                                    starts,
-                                    goals,
-                                    through_offers[2],
-                                    history,
-                                    1.0,
-                                    budget,
-                                    None,
-                                    open_grid,
-                                    owned_starts=owned_source_starts.get(index, ()),
-                                    released_starts=source_access_walls.get(index, ()),
-                                    forbidden=rejected_path_cells.get(index, ()),
-                                    ordinary_deadline=query_deadline,
-                                )
-                                canvas.routing_ports = frozenset()
-                                run.work += through.work
-                                round_work[index] = round_work.get(index, 0) + through.work
-                                if through.path is None:
-                                    # A policy-restricted query cannot replace the
-                                    # canonical failure used by later repair passes.
-                                    if (
-                                        not run.policy_restricted
-                                        and through.kind is RouteFailureKind.BUDGET
-                                    ):
-                                        search_failures[index] = through
-                                        search_blockers[index] = ()
-                                else:
-                                    through_path = through.path
-                                    candidate_path = through_path
-                                    discovered.update(
-                                        owner[cell] for cell in through_path if cell in owner
-                                    )
-                                    selected_tap = through_offers[2].get(through_path[0])
-                                    if selected_tap is not None:
-                                        discovered.update(
-                                            _source_tap_guard_victims(index, selected_tap)
-                                        )
-                                    discovered.discard(index)
-                                    joint = (
-                                        _dependency_closure(discovered, dependents) | victims
-                                    ) - {index}
-                                    if len(joint) > victim_cap:
-                                        alternative = _grouped_overcap_alternative(
-                                            index,
-                                            starts,
-                                            goals,
-                                            through_offers,
-                                            victims,
-                                            dependents,
-                                            query_allowance - through.work,
-                                            query_deadline,
-                                            query_ports,
-                                        )
-                                        if alternative is not None:
-                                            assert alternative.path is not None
-                                            through_path = alternative.path
-                                            candidate_path = through_path
-                                            discovered = {
-                                                owner[cell]
-                                                for cell in through_path
-                                                if cell in owner
-                                            }
-                                            selected_tap = through_offers[2].get(through_path[0])
-                                            if selected_tap is not None:
-                                                discovered.update(
-                                                    _source_tap_guard_victims(index, selected_tap)
-                                                )
-                                            discovered.discard(index)
-                                    if not discovered:
-                                        if _preserves_source_frontier(
-                                            index, through_path, through_offers
-                                        ):
-                                            _stake(
-                                                index,
-                                                through_path,
-                                                hints=_selected_hints(through_path, through_offers),
-                                            )
-                                            for hurt in rebuild_order:
-                                                again = _rebuild_route(hurt, blame)
-                                                if again.path is None:
-                                                    if again.kind is RouteFailureKind.BUDGET:
-                                                        search_failures[index] = again
-                                                        search_blockers[index] = ()
-                                                    break
-                                            else:
-                                                release.commit()
-                                                repaired = True
-                                        else:
-                                            # A future sibling's Splitter may hit an
-                                            # owner that this path never crosses.
-                                            future = _future_source_offers(
-                                                index,
-                                                through_path,
-                                                through_offers,
-                                                tentative_ok=True,
-                                            )
-                                            for tap in future.values():
-                                                tap_path: Sequence[Cell] = through_path
-                                                try:
-                                                    at = tap_path.index(tap)
-                                                except ValueError:
-                                                    tap_path = paths.get(owner.get(tap, -1), ())
-                                                    try:
-                                                        at = tap_path.index(tap)
-                                                    except ValueError:
-                                                        at = -1
-                                                future_excused = (
-                                                    ()
-                                                    if at < 0
-                                                    else tap_path[max(0, at - 2) : at + 3]
-                                                )
-                                                discovered.update(
-                                                    _tap_guard_victims(tap, future_excused)
-                                                )
-                    finally:
-                        if not release.finished:
-                            canvas.routing_ports = frozenset()
-                            for hurt in (index, *victims):
-                                if hurt in paths:
-                                    _unstake(hurt)
-                            for hurt, path, _linked_head in staked_before:
-                                if hurt in saved_hints:
-                                    _stake(hurt, path, hints=saved_hints[hurt])
-                            paths.restore(staked_before)
-                _refresh_repair_guards()
-                if repaired:
-                    search_failures.pop(index, None)
-                    search_blockers.pop(index, None)
-                    break
-                if proposed_constraints is not None:
-                    # Hypothesis failures publish no canonical negative evidence.
-                    # Its token is spent; after exact rollback and refresh, retain
-                    # the existing discovery opportunity at this same victim set.
-                    continue
-                # Close dependencies only after restoring the original hints.
-                # Only strict closure growth can arm another bounded hypothesis.
-                additional = _dependency_closure(discovered) - victims - {index}
-                if not additional:
-                    break
-                victims.update(additional)
-                pending_proposal = candidate_path
-            if not repaired:
-                still.append(index)
-        return still
+    _repair = run._repair
 
     last_mile_counts = {
         "invocations": 0,
