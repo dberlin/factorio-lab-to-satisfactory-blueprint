@@ -393,6 +393,9 @@ struct PdbIndex {
     /// Every function symbol, sorted; only read for the `disasm` mode, which
     /// needs the whole address space to resolve call targets.
     symbols: Vec<Symbol>,
+    /// Function RVA -> the byte length the PDB's procedure record states.
+    /// Read with `symbols`, and only used where `.pdata` has no entry.
+    lengths: BTreeMap<u32, u32>,
 }
 
 impl PdbIndex {
@@ -418,13 +421,20 @@ impl PdbIndex {
         }
 
         let layouts = read_layouts(&mut pdb)?;
-        let (functions, symbols) = read_functions(&mut pdb, symbols)?;
+        let want_symbols = symbols;
+        let (functions, symbols) = read_functions(&mut pdb, want_symbols)?;
+        let lengths = if want_symbols {
+            read_procedure_lengths(&mut pdb)?
+        } else {
+            BTreeMap::new()
+        };
         Ok(PdbIndex {
             guid,
             age: info.age,
             layouts,
             functions,
             symbols,
+            lengths,
         })
     }
 
@@ -689,6 +699,63 @@ fn read_functions<S: pdb::Source<'static> + 'static>(
     symbols.sort();
     symbols.dedup();
     Ok((functions, symbols))
+}
+
+/// The byte length the PDB states for every function it has a procedure
+/// record for: RVA -> `len`.
+///
+/// `.pdata` is authoritative where it has an entry, but MSVC emits none for a
+/// leaf function, and stopping at that function's first `ret` cuts off every
+/// later `return` statement --
+/// `AFGBuildableHologram::GetRotationStep` loses three of its four. The PDB
+/// still states the length: each `S_GPROC32` / `S_LPROC32` record carries
+/// `len`, which is game data of exactly the kind the member offsets are, so it
+/// bounds a leaf without guessing. Procedure records live in the per-module
+/// symbol streams (the global stream publishes mostly `S_PUB32`, which has no
+/// length), so both are walked; the first length for an address wins, and a
+/// zero length is ignored rather than passed off as an empty function.
+fn read_procedure_lengths<S: pdb::Source<'static> + 'static>(
+    pdb: &mut pdb::PDB<'static, S>,
+) -> Result<BTreeMap<u32, u32>> {
+    use pdb::FallibleIterator;
+
+    let address_map = pdb.address_map()?;
+    let mut lengths: BTreeMap<u32, u32> = BTreeMap::new();
+
+    let globals = pdb.global_symbols()?;
+    collect_procedure_lengths(&mut globals.iter(), &address_map, &mut lengths)?;
+
+    let dbi = pdb.debug_information()?;
+    let mut modules = dbi.modules()?;
+    while let Some(module) = modules.next()? {
+        let Some(info) = pdb.module_info(&module)? else {
+            continue;
+        };
+        collect_procedure_lengths(&mut info.symbols()?, &address_map, &mut lengths)?;
+    }
+    Ok(lengths)
+}
+
+/// Every `Procedure` record of one symbol iterator, into `lengths`.
+fn collect_procedure_lengths(
+    iter: &mut pdb::SymbolIter<'_>,
+    address_map: &pdb::AddressMap<'_>,
+    lengths: &mut BTreeMap<u32, u32>,
+) -> Result<()> {
+    use pdb::FallibleIterator;
+
+    while let Some(symbol) = iter.next()? {
+        let Ok(pdb::SymbolData::Procedure(procedure)) = symbol.parse() else {
+            continue;
+        };
+        if procedure.len == 0 {
+            continue;
+        }
+        if let Some(rva) = procedure.offset.to_rva(address_map) {
+            lengths.entry(rva.0).or_insert(procedure.len);
+        }
+    }
+    Ok(())
 }
 
 /// Split an MSVC member-function mangling into `(class, function, is ctor)`.
@@ -1522,8 +1589,9 @@ struct DisasmOut {
     size: u32,
     /// `pdata` when one `.pdata` entry gave the bounds, `pdata-chained` when
     /// the function is split and its chained chunks were stitched back on,
-    /// `ret` when the first `ret` gave them, `truncated` when none did --
-    /// never a silent cut.
+    /// `pdb-procedure-length` when there is no `.pdata` entry and the PDB's
+    /// procedure record stated the length, `ret` when only the first `ret`
+    /// gave them, `truncated` when none did -- never a silent cut.
     size_source: &'static str,
     /// Every chunk `instructions` covers, in RVA order. One entry unless the
     /// function was split; `size` is the sum.
@@ -1693,11 +1761,25 @@ struct CodeChunk {
 
 /// The chunks to decode and where those bounds came from.
 ///
-/// `.pdata` is authoritative, and a function MSVC split is every chunk whose
-/// unwind chain resolves to its entry, in RVA order -- not just the one the
-/// symbol is in. A function with no entry falls back to the first `ret`, and
-/// one that runs past the cap without a `ret` says so.
-fn disasm_chunks(pe: &Pe, rva: u32) -> (Vec<CodeChunk>, &'static str) {
+/// Three sources, in order of how well each is evidence:
+///
+/// 1. `.pdata` -- authoritative. A function MSVC split is every chunk whose
+///    unwind chain resolves to its entry, in RVA order, not just the one the
+///    symbol is in (`pdata` / `pdata-chained`).
+/// 2. the PDB's procedure record (`pdb-procedure-length`) -- MSVC emits no
+///    `.pdata` entry for a leaf function, and the length the PDB states for it
+///    is game data too, so a leaf is bounded rather than cut at a `ret` that
+///    may be the first of several.
+/// 3. the first `ret` (`ret`) -- only when neither of those knows the
+///    function, and the caller is told so.
+///
+/// A range the section or the 64 KiB cap cuts short says `truncated` whichever
+/// source it came from.
+fn disasm_chunks(
+    pe: &Pe,
+    lengths: &BTreeMap<u32, u32>,
+    rva: u32,
+) -> (Vec<CodeChunk>, &'static str) {
     const CAP: usize = 0x1_0000;
     if let Some((begin, end)) = pe.pdata_bounds(rva) {
         // A symbol *on* an entry gets that entry's whole function. A symbol
@@ -1727,6 +1809,21 @@ fn disasm_chunks(pe: &Pe, rva: u32) -> (Vec<CodeChunk>, &'static str) {
         };
         return (out, source);
     }
+    // No `.pdata` entry. The PDB's procedure record still states the length.
+    if let Some(len) = lengths.get(&rva).copied().filter(|len| *len > 0) {
+        let wanted = len as usize;
+        let bytes = pe
+            .rva_to_bytes(rva, wanted.min(CAP))
+            .unwrap_or_default()
+            .to_vec();
+        let source = if bytes.len() == wanted {
+            "pdb-procedure-length"
+        } else {
+            "truncated"
+        };
+        return (vec![CodeChunk { rva, bytes }], source);
+    }
+
     let Some(bytes) = pe.rva_to_bytes(rva, CAP) else {
         return (
             vec![CodeChunk {
@@ -1736,7 +1833,7 @@ fn disasm_chunks(pe: &Pe, rva: u32) -> (Vec<CodeChunk>, &'static str) {
             "truncated",
         );
     };
-    // No `.pdata` entry: decode to the first `ret` and keep it.
+    // Neither source knows this function: decode to the first `ret`.
     let mut decoder = Decoder::with_ip(64, bytes, rva as u64, DecoderOptions::NONE);
     let mut instruction = Instruction::default();
     while decoder.can_decode() {
@@ -1882,7 +1979,7 @@ fn disasm_one(
     symbols: &BTreeMap<u32, String>,
     symbol: &Symbol,
 ) -> DisasmOut {
-    let (chunks, size_source) = disasm_chunks(pe, symbol.rva);
+    let (chunks, size_source) = disasm_chunks(pe, &index.lengths, symbol.rva);
     let spans = symbol
         .class()
         .map(|class| member_spans(index, class))
@@ -2591,6 +2688,7 @@ mod tests {
             ]),
             functions: HashMap::new(),
             symbols: Vec::new(),
+            lengths: BTreeMap::new(),
         }
     }
 
@@ -2889,7 +2987,7 @@ mod tests {
         let code = [0x90, 0x90, 0xc3, 0x90];
         let mut pe = fake_module(&code, &[]);
 
-        let (chunks, source) = disasm_chunks(&pe, 0x1000);
+        let (chunks, source) = disasm_chunks(&pe, &BTreeMap::new(), 0x1000);
         assert_eq!((chunks[0].bytes.len(), source), (3, "ret"));
 
         pe.index_pdata(&[RuntimeFunction {
@@ -2897,7 +2995,7 @@ mod tests {
             end: 0x1004,
             unwind: 0x2000,
         }]);
-        let (chunks, source) = disasm_chunks(&pe, 0x1000);
+        let (chunks, source) = disasm_chunks(&pe, &BTreeMap::new(), 0x1000);
         assert_eq!(
             (chunks.len(), chunks[0].bytes.len(), source),
             (1, 4, "pdata")
@@ -2972,7 +3070,7 @@ mod tests {
         );
         assert_eq!(pe.chunks.get(&0x1040), Some(&vec![(0x1040, 0x1044)]));
 
-        let (chunks, source) = disasm_chunks(&pe, 0x1000);
+        let (chunks, source) = disasm_chunks(&pe, &BTreeMap::new(), 0x1000);
         assert_eq!(source, "pdata-chained");
         assert_eq!(
             chunks
@@ -2983,17 +3081,54 @@ mod tests {
         );
 
         // A function nothing chains to is still one chunk, and still `pdata`.
-        let (chunks, source) = disasm_chunks(&pe, 0x1040);
+        let (chunks, source) = disasm_chunks(&pe, &BTreeMap::new(), 0x1040);
         assert_eq!(source, "pdata");
         assert_eq!(chunks.len(), 1);
         assert_eq!((chunks[0].rva, chunks[0].bytes.len()), (0x1040, 4));
     }
 
     #[test]
+    fn a_leaf_without_a_pdata_entry_is_bounded_by_the_pdbs_procedure_length() {
+        // ret ; nop ; nop ; ret  -- the first `ret` is not the last one, which
+        // is exactly the shape that loses AFGBuildableHologram::GetRotationStep
+        // its 90/45/0 branches.
+        let code = [0xc3, 0x90, 0x90, 0xc3];
+        let pe = fake_module(&code, &[]);
+        let lengths = BTreeMap::from([(0x1000u32, 4u32)]);
+
+        // With no `.pdata` entry and no PDB length, the first `ret` is all
+        // there is, and the tool says so.
+        let (chunks, source) = disasm_chunks(&pe, &BTreeMap::new(), 0x1000);
+        assert_eq!((chunks[0].bytes.len(), source), (1, "ret"));
+
+        // The PDB states the length, so the whole function decodes.
+        let (chunks, source) = disasm_chunks(&pe, &lengths, 0x1000);
+        assert_eq!(
+            (chunks.len(), chunks[0].bytes.len(), source),
+            (1, 4, "pdb-procedure-length")
+        );
+        assert_eq!(decode_all(&chunks[0].bytes, 0x1000).len(), 4);
+
+        // `.pdata` still wins: a function it covers never consults the PDB.
+        let mut covered = fake_module(&code, &[]);
+        covered.index_pdata(&[RuntimeFunction {
+            begin: 0x1000,
+            end: 0x1002,
+            unwind: 0x2000,
+        }]);
+        let (chunks, source) = disasm_chunks(&covered, &lengths, 0x1000);
+        assert_eq!((chunks[0].bytes.len(), source), (2, "pdata"));
+
+        // A stated length the section cannot satisfy is not passed off as one.
+        let (_, source) = disasm_chunks(&pe, &BTreeMap::from([(0x1000u32, 0x9000u32)]), 0x1000);
+        assert_eq!(source, "truncated");
+    }
+
+    #[test]
     fn a_function_with_no_ret_in_range_says_it_was_truncated() {
         let code = [0x90, 0x90, 0x90, 0x90];
         let mut pe = fake_module(&code, &[]);
-        let (_, source) = disasm_chunks(&pe, 0x1000);
+        let (_, source) = disasm_chunks(&pe, &BTreeMap::new(), 0x1000);
         assert_eq!(source, "truncated");
 
         // A `.pdata` range that runs past the section is not the function it
@@ -3003,7 +3138,7 @@ mod tests {
             end: 0x9000,
             unwind: 0x2000,
         }]);
-        let (chunks, source) = disasm_chunks(&pe, 0x1000);
+        let (chunks, source) = disasm_chunks(&pe, &BTreeMap::new(), 0x1000);
         assert_eq!((chunks[0].bytes.len(), source), (0x1000, "truncated"));
     }
 

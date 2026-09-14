@@ -95,13 +95,27 @@ address is reported once, however many symbols the linker folded onto it —
 identical-COMDAT folding gives several functions one body, and the surviving
 name is the one reported, so the members are annotated against *that* class.
 
-**Where a function ends.** `.pdata` is authoritative: the `RUNTIME_FUNCTION`
-entry covering the RVA gives `[begin, end)` and `size_source` is `pdata`. MSVC
-emits no entry for many leaf functions, and those fall back to the first `ret`
-(`size_source: "ret"`) — `FInventoryItem::SetItemState` is 191 bytes of leaf
-with no entry, so its `ret` bound really is the first of possibly several
-exits. A function that reaches neither within 64 KiB, or whose `.pdata` range
-runs past its section, says `truncated` rather than cutting off silently; for
+**Where a function ends.** Three sources, tried in that order, and
+`size_source` always says which one answered:
+
+1. **`.pdata`** — authoritative. The `RUNTIME_FUNCTION` entry covering the RVA
+   gives `[begin, end)` and `size_source` is `pdata` (or `pdata-chained`, see
+   below).
+2. **The PDB's procedure record** (`pdb-procedure-length`). MSVC emits no
+   `.pdata` entry for a leaf function, and cutting such a function at its first
+   `ret` is wrong whenever it has more than one: `AFGBuildableHologram::
+   GetRotationStep` is 77 bytes with four `return` statements, of which the
+   first `ret` at `0xa7c07a` leaves three unread. Every `S_GPROC32` /
+   `S_LPROC32` record carries the function's byte length, which is game data of
+   exactly the kind the member offsets are, so the tool takes `[rva, rva + len)`
+   from it. Procedure records live in the per-module symbol streams (the global
+   stream publishes mostly `S_PUB32`, which has no length), so both streams are
+   walked once when the symbol list is asked for — about 1.7 s on this module,
+   and `extract` never pays it.
+3. **The first `ret`** (`ret`) — only when neither of those knows the function.
+
+A range the section or the 64 KiB cap cuts short says `truncated` whichever
+source it came from, rather than passing for the function it promised; for
 those `size` is the byte range asked for and can exceed what actually decoded.
 
 **Functions MSVC split.** The linker hands several `.pdata` entries to one
@@ -125,11 +139,12 @@ callee-saved register holding `this` in the entry chunk is the same register in
 the others; the tracker is already linear rather than flow-sensitive within a
 chunk, and this is the same approximation across one.
 
-There is one case chaining cannot help: a function with **no** `.pdata` entry
-at all has no chain to follow, so it keeps the first-`ret` bound.
-`AFGBuildableHologram::GetRotationStep` at `0xa7c050` is one — the neighbouring
-entries are `0xa7bfc0..0xa7c04a` and `0xa7c0d0..0xa7c140`, neither covers it,
-and its later `return` statements stay out of reach.
+Chaining cannot help a function with **no** `.pdata` entry at all, because
+there is no chain to follow. `AFGBuildableHologram::GetRotationStep` at
+`0xa7c050` is one — the neighbouring entries are `0xa7bfc0..0xa7c04a` and
+`0xa7c0d0..0xa7c140` and neither covers it. That is what the PDB's procedure
+length is for, and the two together mean every function this tool reports is
+bounded by game data rather than by a `ret` it guessed at.
 
 **Where `this` is.** The `this` field says which register the annotator seeded,
 and it comes from the mangling's access code:
@@ -335,7 +350,10 @@ static function annotating nothing against `rcx`, an sret function's return
 slot in `rdx` staying unannotated, a `call rel32` against a fake symbol map, a
 `.rdata` constant and the `.data` global it refuses, an indirect call named from
 a seeded import table (and the `mov` off the same slot that is not), the
-`.pdata`/`ret`/`truncated` bounds, and a synthetic three-chunk function whose
+`.pdata`/`ret`/`truncated` bounds, a leaf with two `ret`s that only the PDB's
+stated length gets right (with `.pdata` still winning where it has an entry,
+and an over-long stated length still saying `truncated`), and a synthetic
+three-chunk function whose
 chained `UNWIND_INFO` — listed out of `.pdata` order, one link deep and two,
 with an odd unwind-code count so the parent entry sits past its padding — has to
 come back as one function in RVA order.
@@ -345,7 +363,9 @@ to the evidence each value carries, and runs `disasm` against the installed
 game — skipping without one — to check that
 `AFGConveyorBeltHologram::ValidateCurvature` is found through `.pdata` and seen
 reading `mBendRadius`, that `ValidateConveyorBelt` comes back as all three of
-its chunks with the `mMaxSplineLength` comparison in the last one, and that
+its chunks with the `mMaxSplineLength` comparison in the last one, that
+`AFGBuildableHologram::GetRotationStep` comes back as all 77 bytes with all
+four of its returns while the lift's override still reports `pdata`, and that
 `ValidateCurvature`'s output is still byte-for-byte what it was before chunk
 chaining existed. That last test compares against the committed
 `tests/sfy/data/disasm_validate_curvature_pre_chunks.json` after dropping the

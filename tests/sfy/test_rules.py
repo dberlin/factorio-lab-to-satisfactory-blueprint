@@ -52,11 +52,26 @@ def test_an_indirect_call_is_named_in_the_evidence_not_left_as_an_address():
     assert "?GetSplineLength@USplineComponent@@QEBAMXZ" in r.calls
 
 
-def test_a_rule_that_stays_partial_names_what_still_blocks_it():
+def test_a_leaf_functions_rule_is_extracted_through_the_pdbs_procedure_length():
+    """GetRotationStep has no .pdata entry; the PDB's length still bounds it."""
     r = load_rules()["buildable.rotation_step"]
-    assert r.status == "partial"
-    # Not chunk chaining: this function has no .pdata entry at all.
-    assert ".pdata" in r.comparison and "ret" in r.comparison
+    assert r.status == "extracted"
+    for member in ("mSnappedBuilding", "mUseGradualFoundationRotations"):
+        assert member in r.reads, member
+    # All four returns, not just the one before the first `ret` at 0xa7c07a.
+    for value in ("0Ah", "5Ah", "2Dh", "xor eax,eax"):
+        assert any(value in line for line in r.evidence), value
+
+
+def test_a_rule_that_stays_partial_says_which_callee_hides_the_comparison():
+    for rule_id, callee in [
+        ("buildable.grid_snap", "FHologramHelpers::SnapToFloor"),
+        ("buildable.clearance", "TestClearanceOverlap"),
+        ("belt.clearance", "CreateClearanceData"),
+    ]:
+        r = load_rules()[rule_id]
+        assert r.status == "partial", rule_id
+        assert callee in r.comparison, rule_id
 
 
 def test_every_rules_evidence_is_in_address_order():

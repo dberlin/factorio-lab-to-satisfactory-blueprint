@@ -169,6 +169,26 @@ def test_a_single_chunk_function_disassembles_exactly_as_it_did_before_chaining(
     }
 
 
+def test_a_leaf_without_a_pdata_entry_is_bounded_by_the_pdbs_procedure_length(tmp_path):
+    """GetRotationStep is a leaf: MSVC emits no .pdata, the PDB states the length."""
+    data = _disasm(tmp_path, "GetRotationStep")
+    fn = next(f for f in data if f["symbol"] == "AFGBuildableHologram::GetRotationStep")
+    assert fn["rva"] == "0xa7c050"
+    assert fn["size_source"] == "pdb-procedure-length"
+    assert fn["size"] == 77
+    assert fn["chunks"] == [{"rva": "0xa7c050", "size": 77}]
+    # 20 instructions, not the 10 the first `ret` at 0xa7c07a would have given.
+    assert len(fn["instructions"]) == 20
+    returns = {
+        i["text"] for i in fn["instructions"] if i["text"].startswith(("mov eax", "xor eax"))
+    }
+    assert returns == {"mov eax,0Ah", "mov eax,2Dh", "mov eax,5Ah", "xor eax,eax"}
+
+    # And .pdata still wins wherever it has an entry.
+    lift = next(f for f in data if f["symbol"] == "AFGConveyorLiftHologram::GetRotationStep")
+    assert lift["size_source"] == "pdata"
+
+
 def test_a_split_function_comes_back_whole_through_its_chained_pdata(tmp_path):
     """MSVC cut ValidateConveyorBelt into three chunks; all three must decode."""
     data = _disasm(tmp_path, "AFGConveyorBeltHologram::ValidateConveyorBelt")

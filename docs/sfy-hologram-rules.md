@@ -156,7 +156,7 @@ off `FHologramPathingGrid::PATH_GRID_CELL_SIZE`, which is 100
 | `AFGHologram::TestClearanceOverlap` | FGHologram.h:545 | — | where the box test lives |
 | `AFGHologram::GetClearanceData` | FGHologram.h:365 | `mClearanceData` (674) | — |
 | `AFGBuildableHologram::CheckValidPlacement` | 262 | `mLegs` | base entry point |
-| `AFGBuildableHologram::GetRotationStep` | 263 | `mSnappedAttachmentPoint`, `mSnapToGuideLines`, `mSnappedBuilding` | `buildable.rotation_step` |
+| `AFGBuildableHologram::GetRotationStep` | 263 | `mDidSnapDuetoClearance`, `mSnappedAttachmentPoint`, `mSnapToGuideLines`, `mSnappedBuilding`, `mUseGradualFoundationRotations` | `buildable.rotation_step` |
 | `AFGBuildableHologram::CheckValidFloor` | 291 | `mMaxPlacementFloorAngle`, `mNeedsValidFloor` | — |
 | `AFGBuildableHologram::SnapToFloor` / `SnapToWall` / `SnapToFoundationSide` | — | `mGridSnapSize` (445) | `buildable.grid_snap` |
 
@@ -166,12 +166,27 @@ their Blueprints (both free-standing power poles and the street light);
 the same thing with it — hand it to `FHologramHelpers::SnapToFloor` and let the
 callee round — so the grid is a *snap*, not a refusal.
 
-The rotation step is not one number. `GetRotationStep` returns 10° on an
-attachment point with guide-line snapping, 90° by default, 45° under one further
-flag and 0° (free rotation) while snapped to a building.
+The rotation step is not one number, and the ladder reads the opposite way
+round from what the entry branch alone suggested. `AFGBuildableHologram::
+GetRotationStep` is a leaf with no `.pdata` entry, so it is bounded by the
+PDB's procedure record (77 bytes); all four returns then decode:
+
+| Condition | Step |
+| --- | --- |
+| `mDidSnapDuetoClearance`, or the unnamed byte at `+5D8h` | 90° |
+| on an attachment point with `mSnapToGuideLines` | 10° |
+| `mSnappedBuilding` is **null** — not snapped to a building | **0°** (free) |
+| snapped, with `mUseGradualFoundationRotations` | 45° |
+| snapped, without it | 90° |
+
+0° for the unsnapped case is the base class's own answer too:
+`AFGHologram::GetRotationStep` at `0x13b010` is `xor eax, eax; ret`. Subclasses
+override freely — `AFGConveyorLiftHologram::GetRotationStep` repeats the same 90
+(`0xa7c1a2`) and 0 (`0xa7c19a`), while others return 180, 15, 5 or 1 — so 90 is
+the *snapped buildable* default rather than a universal constant.
 `registry.json`'s `hologram_rotation_step_deg` is still tagged a project
 constant; `buildable.rotation_step` is the evidence that 90 is the game's own
-default, and re-sourcing that limit is a separate change.
+default for that case, and re-sourcing that limit is a separate change.
 
 `FGFactoryHologram.h` adds nothing (it is a two-line subclass);
 `FGFactoryBuildingHologram.h` overrides `CheckValidPlacement` and
@@ -179,35 +194,42 @@ default, and re-sourcing that limit is a separate change.
 
 ## What was extracted, and what was not
 
-`hologram_rules.json` carries seventeen rules; eleven are `extracted` and six
+`hologram_rules.json` carries seventeen rules; twelve are `extracted` and five
 `partial`. A `partial` rule is a **bound the placer must not assume it knows** —
 its `comparison` names where the comparison actually is, and its
 `interpretation` is a lead for the next extraction, not a constraint.
 
-The three reasons a rule is only `partial`:
+The two reasons a rule is only `partial`:
 
 - **the comparison is in a callee** — `belt.clearance`
   (`AFGBuildableConveyorBelt::CreateClearanceData`), `buildable.clearance`
   (`AFGHologram::TestClearanceOverlap`), `buildable.grid_snap`
   (`FHologramHelpers::SnapToFloor`), `lift.clearance`;
-- **the function has no `.pdata` entry, so the tool stops at its first `ret`** —
-  `buildable.rotation_step` alone. `AFGBuildableHologram::GetRotationStep`
-  at `0xa7c050` is a leaf and MSVC emitted no `RUNTIME_FUNCTION` for it; the
-  neighbouring entries are `0xa7bfc0..0xa7c04a` and `0xa7c0d0..0xa7c140` and
-  neither covers it, so there is no chunk chain to follow either. Its 90°, 45°
-  and 0° returns are past the `ret` at `0xa7c07a` and stay unquoted;
 - **the rule may not exist** — `lift.step`, where nothing in
   `UpdateTopTransform` quantises a height to `mStepHeight`.
 
-**What chunk chaining bought.** MSVC splits a function into several `.pdata`
-entries and chains each chunk's `UNWIND_INFO` back to the primary one.
-`sfy-native disasm` follows those chains (Task 5), so `ValidateConveyorBelt`
-comes back as all 1065 bytes across three chunks instead of the 27 of its
-entry, `ValidatePipeline` as 1147 across five and `ValidateFluidRequirements`
-as 518 across four. That moved `belt.max_length`, `pipe.max_length` and
-`pipe.fluid_requirements` from `partial` to `extracted`. The tool also resolves
-`call qword ptr [rip+K]` through the import directory now, so the evidence
-lines name `USplineComponent::GetSplineLength` and
+**Where a function ends is now game data in every case** (Task 5). Three
+sources, in that order:
+
+1. **`.pdata`**, including chained chunks. MSVC splits a function into several
+   `RUNTIME_FUNCTION` entries and chains each chunk's `UNWIND_INFO` back to the
+   primary; `sfy-native disasm` follows those chains, so `ValidateConveyorBelt`
+   comes back as all 1065 bytes across three chunks instead of the 27 of its
+   entry, `ValidatePipeline` as 1147 across five and
+   `ValidateFluidRequirements` as 518 across four. That moved
+   `belt.max_length`, `pipe.max_length` and `pipe.fluid_requirements` to
+   `extracted`.
+2. **The PDB's procedure record.** MSVC emits no `.pdata` entry for a leaf, and
+   cutting at the first `ret` loses every later `return`:
+   `AFGBuildableHologram::GetRotationStep` showed 43 of its 77 bytes and one of
+   its four answers. `S_GPROC32`'s `len` states the length, which is game data
+   of the same kind as the member offsets, so the leaf is bounded rather than
+   guessed. That moved `buildable.rotation_step` to `extracted`.
+3. **The first `ret`**, only when neither of those knows the function — and the
+   rule says so.
+
+The tool also resolves `call qword ptr [rip+K]` through the import directory
+now, so the evidence lines name `USplineComponent::GetSplineLength` and
 `GetTangentAtDistanceAlongSpline` where they used to show only an IAT address —
 the interpretations that already used those names are reproducible from the
 tool's own output.

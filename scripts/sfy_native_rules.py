@@ -26,7 +26,9 @@ status, a transcription of the comparison and what it means for a placer;
 :data:`EVIDENCE` carries the addresses those sentences were read at. Everything
 else is the tool's. The status obeys one rule:
 
-``extracted``      the comparison's operands and its branch are in the evidence
+``extracted``      the comparison's operands and its branch -- or, for a rule
+                   that answers with a number, the returned value -- are in
+                   the evidence
 ``partial``        the members are seen being read, but the comparison is in a
                    callee this did not follow, or past the end of what
                    ``sfy-native disasm`` can prove is the function -- the
@@ -240,8 +242,10 @@ EVIDENCE: dict[str, tuple[str, ...]] = {
         "0xa8f41d", "0xa8f428", "0xa8f42b",
     ),
     "buildable.rotation_step": (
-        "0xa7c050", "0xa7c057", "0xa7c059", "0xa7c062", "0xa7c06a", "0xa7c06c",
-        "0xa7c073", "0xa7c075", "0xa7c07a",
+        "0xa7c050", "0xa7c057", "0xa7c059", "0xa7c060", "0xa7c062", "0xa7c06a",
+        "0xa7c06c", "0xa7c073", "0xa7c075", "0xa7c07a", "0xa7c07b", "0xa7c083",
+        "0xa7c085", "0xa7c08c", "0xa7c08e", "0xa7c093", "0xa7c094", "0xa7c096",
+        "0xa7c097", "0xa7c09c",
     ),
     "buildable.clearance": (
         "0xab8012", "0xab8242", "0xab827a", "0xab83ea", "0xab844b",
@@ -563,27 +567,46 @@ INTERPRETATIONS: dict[str, tuple[str, str, str]] = {
         "FHologramHelpers::SnapToFloor and was not read.",
     ),
     "buildable.rotation_step": (
-        "partial",
-        "GetRotationStep returns 10 degrees when the hologram is on an "
-        "attachment point with guide-line snapping on "
-        "(0xa7c062 mSnappedAttachmentPoint, 0xa7c06c mSnapToGuideLines, "
-        "0xa7c075 `mov eax, 0Ah`). The other three returns are past the first "
-        "`ret` at 0xa7c07a, which is where `sfy-native disasm` stops for a "
-        "symbol with no .pdata entry, so they are not quoted here. Chained "
-        ".pdata chunks do not reach them either: 0xa7c050 has no "
-        "RUNTIME_FUNCTION at all -- the neighbouring entries are "
-        "0xa7bfc0..0xa7c04a and 0xa7c0d0..0xa7c140 -- so there is no chain to "
-        "follow, only the `ret` bound.",
-        "The build gun's rotation step is not one number. The reachable branch "
-        "gives 10 degrees on an attachment point; the tail of the same "
-        "function returns 90 by default, 45 under one further flag and 0 "
-        "(free rotation) while snapped to a building. "
-        "AFGConveyorLiftHologram::GetRotationStep, whose .pdata entry does "
-        "cover the whole body, shows the same 90 (0xa7c1a2 `mov eax, 5Ah`) and "
-        "the same 0 (0xa7c19a). registry.json still tags "
-        "hologram_rotation_step_deg as a project constant; this rule is the "
-        "evidence that 90 is the game's own default, and re-sourcing that "
-        "limit is a separate change.",
+        "extracted",
+        "GetRotationStep is a leaf -- 0xa7c050 has no RUNTIME_FUNCTION, the "
+        "neighbouring .pdata entries being 0xa7bfc0..0xa7c04a and "
+        "0xa7c0d0..0xa7c140 -- so its 77 bytes come from the PDB's procedure "
+        "record rather than from .pdata, and all four returns decode. The "
+        "ladder in order: `cmp byte ptr [rcx+6A0h], 0; jne 0xa7c097` on "
+        "mDidSnapDuetoClearance (0xa7c050/0xa7c057) and the same test on the "
+        "unnamed byte at [rcx+5D8h] (0xa7c059/0xa7c060) both land on "
+        "`mov eax, 5Ah; ret` at 0xa7c097/0xa7c09c -- 90. Otherwise "
+        "`cmp qword ptr [rcx+6B8h], 0; je 0xa7c07b` on mSnappedAttachmentPoint "
+        "(0xa7c062/0xa7c06a) and `cmp byte ptr [rcx+378h], 0; je 0xa7c07b` on "
+        "mSnapToGuideLines (0xa7c06c/0xa7c073); with both set, "
+        "`mov eax, 0Ah; ret` at 0xa7c075/0xa7c07a -- 10. At 0xa7c07b, "
+        "`cmp qword ptr [rcx+5E0h], 0; je 0xa7c094` on mSnappedBuilding "
+        "(0xa7c07b/0xa7c083) reaches `xor eax, eax; ret` at 0xa7c094/0xa7c096 "
+        "-- 0 -- when it is null; when it is not, "
+        "`cmp byte ptr [rcx+4E8h], 0; je 0xa7c097` on "
+        "mUseGradualFoundationRotations (0xa7c085/0xa7c08c) gives "
+        "`mov eax, 2Dh; ret` at 0xa7c08e/0xa7c093 -- 45 -- or the 90 again.",
+        "The build gun's rotation step is a four-way ladder, and every rung is "
+        "now read rather than inferred. **0** (no quantisation) is what a "
+        "hologram gets when mSnappedBuilding is null -- that is, when it is "
+        "*not* snapped to a building, which is also what the base "
+        "AFGHologram::GetRotationStep returns outright (0x13b010, `xor eax, "
+        "eax; ret`). **90** is the snapped default, and also what a hologram "
+        "that had to move for clearance gets (mDidSnapDuetoClearance). **45** "
+        "is the snapped-to-a-building case with mUseGradualFoundationRotations "
+        "set. **10** is an attachment point with guide-line snapping on. Note "
+        "that this corrects the reading Task 3 could only infer from the "
+        "reachable branch: 0 is the *un*snapped case and 45 the snapped one, "
+        "not the other way round. Subclasses override freely -- "
+        "AFGConveyorLiftHologram::GetRotationStep (0xa7c140) shows the same 90 "
+        "at 0xa7c1a2 and the same 0 at 0xa7c19a; others return 180, 15, 5 or 1 "
+        "-- so 90 is the buildable default, not a universal constant. One "
+        "operand has no name: the byte at [rcx+5D8h] tested at 0xa7c059 falls "
+        "on no member of this class chain in the PDB's type stream, so the "
+        "rule reports the offset and does not guess a field. registry.json "
+        "still tags hologram_rotation_step_deg as a project constant; this "
+        "rule is the evidence that 90 is the game's own default for a snapped "
+        "buildable, and re-sourcing that limit is a separate change.",
     ),
     "buildable.clearance": (
         "partial",
