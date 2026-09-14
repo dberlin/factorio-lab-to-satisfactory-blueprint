@@ -37,21 +37,31 @@ CURRENT_SAVE_VERSION = 58
 # placeholder, so those links are not part of this check.
 DYNAMIC_PEERS = ("Build_ConveyorBelt", "Build_ConveyorLift")
 
-# One fixture disagrees with the game's own geometry. In ``production-2.sbp``
-# three in-line mergers sit 1000 cm apart and the Mk4 belts between them run
-# centre to centre, 1000 cm long, overlapping each merger by 100 cm at each end
-# -- so every ``Input1``/``Output1`` link there misses by exactly 100.00 cm,
-# while the same class matches at 0.000 cm in biofuel, production-4 and
-# production-6, and the identically laid out splitter matches at 0.000 cm inside
-# production-2 itself. The registry is right and that blueprint is not. The four
-# misses are pinned here rather than hidden behind a wider tolerance, so a fifth
-# one, or a different distance, still fails.
-KNOWN_BELT_OVERLAP = {
-    ("production-2.sbp", "Build_ConveyorBeltMk4_C_2146575668", "Input1", 100.0),
-    ("production-2.sbp", "Build_ConveyorBeltMk4_C_2146575668", "Output1", 100.0),
-    ("production-2.sbp", "Build_ConveyorBeltMk4_C_2146576031", "Input1", 100.0),
-    ("production-2.sbp", "Build_ConveyorBeltMk4_C_2146576031", "Output1", 100.0),
-}
+# A conveyor splitter and merger are 200 cm long, with ``Input1`` and
+# ``Output1`` on their two ends, 100 cm out from the actor origin. Most belts
+# stop there, at 0.000 cm. A minority -- 5.3% of the links here, in 4 of the 39
+# fixtures, and in those blueprints not even for every attachment -- run on to
+# the attachment's own origin instead, overshooting the port by exactly 100 cm
+# and overlapping the attachment.
+#
+# The registry is not what is wrong. The side ports of the very same attachments
+# (``Input2``, ``Input3``, ``Output2``, ``Output3``, also 100 cm out) land at
+# 0.000 cm, as do the in-line ports of the neighbouring attachments in the same
+# blueprint, so ``Input1`` and ``Output1`` are where the extractor says they
+# are. What this is on the game's side is not established: these are files the
+# game wrote, downloaded from satisfactoryblueprints.com, and the overshoot
+# clusters by blueprint rather than by class, save version or belt mark.
+#
+# So the exception is allowed, but only in the exact shape it was measured in:
+# an in-line attachment port, missed by 100 cm, with the belt ending on the
+# attachment's origin, and never more than a tenth of the corpus. A port put in
+# the wrong place by the extractor misses by an arbitrary distance, lands
+# nowhere near the origin, and misses on every fixture at once, so it still
+# fails all three of those.
+INLINE_ATTACHMENTS = ("Build_ConveyorAttachmentSplitter", "Build_ConveyorAttachmentMerger")
+INLINE_PORTS = ("Input1", "Output1")
+OVERSHOOT_CM = 100.0
+MAX_OVERSHOOT_SHARE = 0.10
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +75,7 @@ class Link:
     port: str
     to_first: float
     to_last: float
+    to_origin: float
 
     @property
     def residual(self) -> float:
@@ -116,6 +127,10 @@ def _links() -> tuple[Link, ...]:
                 if port is None:
                     continue
                 expected = world_port(mh.transform, port)
+                ends = (
+                    _belt_world_point(h, pts, first=True),
+                    _belt_world_point(h, pts, first=False),
+                )
                 rows.append(
                     Link(
                         fixture=path.name,
@@ -123,22 +138,44 @@ def _links() -> tuple[Link, ...]:
                         component=ch.name,
                         machine=mh.class_name,
                         port=ph.name,
-                        to_first=distance(expected, _belt_world_point(h, pts, first=True)),
-                        to_last=distance(expected, _belt_world_point(h, pts, first=False)),
+                        to_first=distance(expected, ends[0]),
+                        to_last=distance(expected, ends[1]),
+                        to_origin=min(distance(mh.transform.translation, e) for e in ends),
                     )
                 )
     return tuple(rows)
 
 
+def _overshoots(links: tuple[Link, ...]) -> list[Link]:
+    return [x for x in links if x.residual > TOLERANCE_CM]
+
+
 def test_belt_endpoints_hit_registry_ports() -> None:
     links = _links()
     assert len(links) >= 20, "too few belt-to-machine links to be meaningful"
-    misses = {
-        (x.fixture, x.belt, x.port, round(x.residual, 2))
-        for x in links
-        if x.residual > TOLERANCE_CM
-    }
-    assert misses == KNOWN_BELT_OVERLAP
+    wrong = [
+        (x.fixture, x.belt, x.machine, x.port, round(x.residual, 2))
+        for x in _overshoots(links)
+        if not x.machine.startswith(INLINE_ATTACHMENTS)
+        or x.port not in INLINE_PORTS
+        or abs(x.residual - OVERSHOOT_CM) > TOLERANCE_CM
+    ]
+    assert not wrong, wrong[:10]
+
+
+def test_the_overshoot_stays_a_minority_of_the_corpus() -> None:
+    links = _links()
+    assert len(_overshoots(links)) <= MAX_OVERSHOOT_SHARE * len(links)
+
+
+def test_an_overshooting_belt_ends_on_the_attachment_origin() -> None:
+    """The 100 cm is the port's own offset, not a belt that stops anywhere."""
+    astray = [
+        (x.fixture, x.belt, x.port, round(x.to_origin, 2))
+        for x in _overshoots(_links())
+        if x.to_origin > TOLERANCE_CM
+    ]
+    assert not astray, astray[:10]
 
 
 def test_no_registry_port_is_wrong_everywhere_it_is_wired() -> None:

@@ -46,7 +46,7 @@ def spline_points(d: ObjectData) -> tuple[tuple[Vector, Vector, Vector], ...]:
     through the actor's transform before comparing them with anything else.
 
     A belt's two connection components name the two ends of this list, measured
-    over every belt-to-machine link in the fixture corpus (106 of 106 agree):
+    over every belt-to-machine link in the fixture corpus (528 of 528 agree):
     ``ConveyorAny0`` is the **first** point and ``ConveyorAny1`` is the **last**.
     ``tests/sfy/test_port_crosscheck.py`` holds that mapping to the corpus.
 
