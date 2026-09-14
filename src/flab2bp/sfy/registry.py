@@ -21,6 +21,7 @@ from typing import Any
 
 __all__ = [
     "BELT_MAX_SPLINE_CM",
+    "LIMIT_SOURCES",
     "PIPE_BEND_RADIUS_2D_CM",
     "PIPE_MAX_SPLINE_CM",
     "PIPE_MIN_BEND_RADIUS_CM",
@@ -40,6 +41,20 @@ BELT_MAX_SPLINE_CM = 5600.1
 PIPE_MAX_SPLINE_CM = 5600.1
 PIPE_BEND_RADIUS_2D_CM = 199.0
 PIPE_MIN_BEND_RADIUS_CM = 75.0
+
+# Where a limit's value came from. ``assets`` is the cooked game data (a
+# hologram Blueprint's own override, or Docs.json for the wire lengths),
+# ``header`` one of the four constants above, and ``measured`` the envelope
+# ``scripts/sfy_measure_limits.py`` takes from the blueprint corpus for the
+# values the install ships in neither place.
+LIMIT_SOURCES = ("assets", "header", "measured")
+
+_HEADER_DEFAULTED = (
+    "belt_max_spline_cm",
+    "pipe_max_spline_cm",
+    "pipe_bend_radius_2d_cm",
+    "pipe_min_bend_radius_cm",
+)
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
 REGISTRY_PATH = DATA_DIR / "registry.json"
@@ -125,7 +140,9 @@ class Limits:
     """Spline, lift and hologram limits the placer must respect.
 
     Only the four values the public headers state outright have defaults; every
-    other field stays ``None`` until Task 10 measures it from the install.
+    other field stays ``None`` until the merge fills it from the game assets or
+    from the measured envelope. :attr:`Registry.limits_sources` says which of
+    the three each field in a loaded registry came from.
     """
 
     belt_max_spline_cm: float = BELT_MAX_SPLINE_CM
@@ -154,13 +171,16 @@ class Registry:
     descriptors: dict[str, str]  # Desc_X_C -> Build_X_C
     build_recipes: dict[str, str]  # Build_X_C -> Recipe_X_C
     limits: Limits
+    limits_sources: dict[str, str]  # Limits field -> one of LIMIT_SOURCES
 
     @classmethod
     def from_docs_only(cls, data: Mapping[str, Any]) -> Registry:
         """Build a registry from a ``docs.json`` payload alone.
 
         Ports are empty and the limits are the header defaults, because neither
-        can be read out of Docs.json; :func:`load_registry` supplies both.
+        can be read out of Docs.json; :func:`load_registry` supplies both. Only
+        the four header defaults have a source here -- the rest are still
+        ``None``, and a ``None`` has no provenance to report.
         """
         return cls(
             provenance=dict(_require(data, "provenance")),
@@ -169,6 +189,7 @@ class Registry:
             descriptors=dict(_require(data, "descriptors")),
             build_recipes=dict(_require(data, "build_recipes")),
             limits=Limits(),
+            limits_sources=dict.fromkeys(_HEADER_DEFAULTED, "header"),
         )
 
 
@@ -271,11 +292,27 @@ def _opt_int(value: Any) -> int | None:
 
 
 def _limits(raw: Mapping[str, Any]) -> Limits:
-    known = {f.name for f in fields(Limits)}
-    unknown = sorted(set(raw) - known)
+    unknown = sorted(set(raw) - {f.name for f in fields(Limits)})
     if unknown:
         raise RegistryError(f"registry limits carries unknown keys: {unknown}")
     return Limits(**raw)
+
+
+def _limits_sources(raw: Mapping[str, Any], limits: Limits) -> dict[str, str]:
+    """Check that every limit that has a value says where the value came from."""
+    unknown = sorted(set(raw) - {f.name for f in fields(Limits)})
+    if unknown:
+        raise RegistryError(f"registry limits_sources names unknown limits: {unknown}")
+    bad = sorted(k for k, v in raw.items() if v not in LIMIT_SOURCES)
+    if bad:
+        raise RegistryError(f"registry limits_sources has an unknown source for: {bad}")
+    filled = {f.name for f in fields(Limits) if getattr(limits, f.name) not in (None, {})}
+    missing = sorted(filled - set(raw))
+    if missing:
+        raise RegistryError(
+            f"registry limits_sources does not say where these came from: {missing}"
+        )
+    return {str(k): str(v) for k, v in raw.items()}
 
 
 def load_registry(path: Path | None = None) -> Registry:
@@ -291,11 +328,13 @@ def load_registry(path: Path | None = None) -> Registry:
         raise RegistryError(f"no registry at {path}") from None
     except json.JSONDecodeError as exc:
         raise RegistryError(f"registry at {path} is not JSON: {exc}") from exc
+    limits = _limits(_require(data, "limits"))
     return Registry(
         provenance=dict(_require(data, "provenance")),
         buildables=_buildables(_require(data, "buildables")),
         recipes=_recipes(_require(data, "recipes")),
         descriptors=dict(_require(data, "descriptors")),
         build_recipes=dict(_require(data, "build_recipes")),
-        limits=_limits(_require(data, "limits")),
+        limits=limits,
+        limits_sources=_limits_sources(_require(data, "limits_sources"), limits),
     )

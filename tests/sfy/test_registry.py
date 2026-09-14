@@ -4,16 +4,22 @@ These read ``data/registry.json`` as shipped, so they are the acceptance for the
 extractor in ``tools/sfy-extract`` and the merge in ``scripts/sfy_registry.py``.
 """
 
-import pytest
+from dataclasses import fields
 
-from flab2bp.sfy.registry import load_registry
+from flab2bp.sfy.registry import LIMIT_SOURCES, Limits, load_registry
 
-# Several hologram limits are set by native C++ constructors that the install
-# ships neither as cooked asset defaults nor as header initialisers; see
-# ``UNFILLABLE`` in ``scripts/sfy_registry.py``. The tests below are strict
-# xfails so that a game build which does start shipping them fails loudly here.
-NO_NATIVE_DEFAULTS = (
-    "the value is a native C++ constructor default, in neither the assets nor the headers"
+# The seven limits that are native C++ constructor defaults the install ships
+# neither as a cooked asset nor as a header initialiser (see ``UNFILLABLE`` in
+# ``scripts/sfy_registry.py``). They come from ``measured.json``, the envelope
+# ``scripts/sfy_measure_limits.py`` takes from the blueprint corpus.
+MEASURED = (
+    "belt_bend_radius_cm",
+    "belt_max_incline_deg",
+    "hologram_grid_cm",
+    "lift_max_cm",
+    "lift_min_cm",
+    "lift_min_vertical_cm",
+    "lift_step_cm",
 )
 
 
@@ -40,22 +46,48 @@ def test_registry_limits_are_filled_from_the_assets():
     assert lim.wire_max_cm["Build_PowerLine_C"] > 0
 
 
-@pytest.mark.xfail(
-    strict=True, reason=f"AFGConveyorBeltHologram::mBendRadius -- {NO_NATIVE_DEFAULTS}"
-)
-def test_belt_bend_radius_is_in_the_game_data():
-    lim = load_registry().limits
-    assert lim.belt_bend_radius_cm is not None and lim.belt_bend_radius_cm > 0
+def test_every_limit_is_filled_and_says_where_it_came_from():
+    reg = load_registry()
+    unset = [f.name for f in fields(Limits) if getattr(reg.limits, f.name) in (None, {})]
+    assert unset == []
+    assert set(reg.limits_sources) == {f.name for f in fields(Limits)}
+    assert set(reg.limits_sources.values()) <= set(LIMIT_SOURCES)
+    assert {k for k, v in reg.limits_sources.items() if v == "measured"} == set(MEASURED)
 
 
-@pytest.mark.xfail(
-    strict=True, reason=f"AFGConveyorLiftHologram height members -- {NO_NATIVE_DEFAULTS}"
-)
-def test_conveyor_lift_heights_are_in_the_game_data():
+def test_belt_bend_radius_and_incline_are_measured_from_the_corpus():
     lim = load_registry().limits
-    assert (
-        lim.lift_step_cm is not None and lim.lift_min_cm is not None and lim.lift_max_cm is not None
-    )
+    # The tightest horizontal turn in 617 curved belts. The bulk of the corpus
+    # sits at 197-199 cm, which is the game's own bend radius; five belts in
+    # one pre-1.0 blueprint go tighter, and 111 cm is the tightest of those.
+    assert lim.belt_bend_radius_cm is not None
+    assert 100.0 < lim.belt_bend_radius_cm <= 200.0
+    # A belt climbs; it does not go vertical -- that is what a lift is for.
+    assert lim.belt_max_incline_deg is not None
+    assert 0.0 < lim.belt_max_incline_deg < 90.0
+
+
+def test_conveyor_lift_heights_are_measured_from_the_corpus():
+    lim = load_registry().limits
+    assert lim.lift_min_cm is not None and lim.lift_min_cm > 0
+    assert lim.lift_max_cm is not None and lim.lift_max_cm > lim.lift_min_cm
+    assert lim.lift_step_cm is not None and lim.lift_step_cm > 0
+    assert lim.lift_min_cm % lim.lift_step_cm == 0
+    assert lim.lift_max_cm % lim.lift_step_cm == 0
+    # A lift wired straight to a machine or splitter port cannot be shorter
+    # than one wired to a belt, which is free to meet it anywhere.
+    assert lim.lift_min_vertical_cm is not None
+    assert lim.lift_min_vertical_cm >= lim.lift_min_cm
+
+
+def test_the_hologram_grid_is_the_measured_snap_size():
+    lim = load_registry().limits
+    # 50 cm: the gcd of every axis-aligned grid building's coordinates across
+    # the corpus. 100 is what most of them are on, but foundation origins are
+    # mesh-centred at z = 50 and a handful of machines sit on a 50 cm offset
+    # horizontally too, so 50 is the coarsest grid that holds all of them.
+    assert lim.hologram_grid_cm == 50.0
+    assert lim.hologram_rotation_step_deg == 90.0
 
 
 def test_splitter_has_one_input_and_three_outputs():

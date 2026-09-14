@@ -25916,15 +25916,15 @@
   "Desc_WreathDecor_C": "Build_WreathDecor_C"
  },
  "limits": {
-  "belt_bend_radius_cm": null,
-  "belt_max_incline_deg": null,
+  "belt_bend_radius_cm": 111.0758,
+  "belt_max_incline_deg": 39.8167,
   "belt_max_spline_cm": 5600.1,
-  "hologram_grid_cm": null,
+  "hologram_grid_cm": 50.0,
   "hologram_rotation_step_deg": 90.0,
-  "lift_max_cm": null,
-  "lift_min_cm": null,
-  "lift_min_vertical_cm": null,
-  "lift_step_cm": null,
+  "lift_max_cm": 2400.0,
+  "lift_min_cm": 150.0,
+  "lift_min_vertical_cm": 150.0,
+  "lift_step_cm": 50.0,
   "pipe_bend_radius_2d_cm": 199.0,
   "pipe_bend_radius_cm": 100.0,
   "pipe_max_spline_cm": 5600.1,
@@ -25933,6 +25933,22 @@
    "Build_PowerLine_C": 10000.0,
    "Build_XmassLightsLine_C": 10000.0
   }
+ },
+ "limits_sources": {
+  "belt_bend_radius_cm": "measured",
+  "belt_max_incline_deg": "measured",
+  "belt_max_spline_cm": "header",
+  "hologram_grid_cm": "measured",
+  "hologram_rotation_step_deg": "assets",
+  "lift_max_cm": "measured",
+  "lift_min_cm": "measured",
+  "lift_min_vertical_cm": "measured",
+  "lift_step_cm": "measured",
+  "pipe_bend_radius_2d_cm": "header",
+  "pipe_bend_radius_cm": "assets",
+  "pipe_max_spline_cm": "header",
+  "pipe_min_bend_radius_cm": "header",
+  "wire_max_cm": "assets"
  },
  "provenance": {
   "assets": {
@@ -25952,7 +25968,19 @@
    "docs_sha256": "a81d250e96aa13db3c0bf8c332c199ad930b2f15323e2c1a069afa4c07f971bb",
    "extracted": "2026-09-13"
   },
-  "merged_at_commit": "e1e6eb540f8c6d5832cbd801415cbb7499ec10de"
+  "measured": {
+   "corpus": {
+    "belts_with_a_spline": 771,
+    "conveyor_lifts": 322,
+    "fixtures": 39,
+    "objects": 10343,
+    "on_grid_actors": 1627
+   },
+   "measured_at_commit": "d4c19f4399cf3518fc2b95f87d8f1652795f5c29",
+   "method": "envelope over the committed blueprint corpus; see the module docstring",
+   "samples_per_segment": 64
+  },
+  "merged_at_commit": "c959957c182c86b1fc2755d2ebba5e1b73edf636"
  },
  "recipes": {
   "Recipe_AILimiter_C": {

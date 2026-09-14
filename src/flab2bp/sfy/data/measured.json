@@ -1,0 +1,73 @@
+{
+ "corpus": {
+  "belts_with_a_spline": 771,
+  "conveyor_lifts": 322,
+  "fixtures": 39,
+  "objects": 10343,
+  "on_grid_actors": 1627
+ },
+ "limits": {
+  "belt_bend_radius_cm": {
+   "detail": "segment 1 of 4 at s=0.000",
+   "fixture": "production-8.sbp",
+   "object": "Build_ConveyorBeltMk5_C_2146135613",
+   "p05": 195.7465,
+   "p50": 198.9893,
+   "p95": 2937750278.9034,
+   "population": "617 belts",
+   "source": "measured",
+   "value": 111.0758
+  },
+  "belt_max_incline_deg": {
+   "detail": "segment 1 of 2 at s=0.500",
+   "fixture": "production-2.sbp",
+   "object": "Build_ConveyorBeltMk4_C_2146487963",
+   "p05": 0.0,
+   "p50": 0.0,
+   "p95": 0.0124,
+   "population": "771 belts",
+   "source": "measured",
+   "value": 39.8167
+  },
+  "hologram_grid_cm": {
+   "detail": "gcd of 4881 translation coordinates on 1627 on-grid actors; reduced the gcd to 50 cm",
+   "fixture": "biofuel.sbp",
+   "object": "Build_Foundation_Concrete_8x1_C_2142335921.z",
+   "source": "measured",
+   "value": 50.0
+  },
+  "lift_max_cm": {
+   "detail": "wired to Build_ConveyorBeltMk3_C",
+   "fixture": "power-generation-13.sbp",
+   "object": "Build_ConveyorLiftMk3_C_2147430181",
+   "source": "measured",
+   "value": 2400.0
+  },
+  "lift_min_cm": {
+   "detail": "wired to Build_ConveyorBeltMk4_C",
+   "fixture": "logistics-13.sbp",
+   "object": "Build_ConveyorLiftMk4_C_2145834397",
+   "source": "measured",
+   "value": 150.0
+  },
+  "lift_min_vertical_cm": {
+   "detail": "wired to Build_ConveyorAttachmentSplitter_C",
+   "fixture": "production-3.sbp",
+   "object": "Build_ConveyorLiftMk5_C_2147316868",
+   "source": "measured",
+   "value": 150.0
+  },
+  "lift_step_cm": {
+   "detail": "gcd of 322 lift heights, 26 distinct; reduced the gcd to 50 cm",
+   "fixture": "logistics-13.sbp",
+   "object": "Build_ConveyorLiftMk4_C_2145876135",
+   "source": "measured",
+   "value": 50.0
+  }
+ },
+ "provenance": {
+  "measured_at_commit": "d4c19f4399cf3518fc2b95f87d8f1652795f5c29",
+  "method": "envelope over the committed blueprint corpus; see the module docstring",
+  "samples_per_segment": 64
+ }
+}

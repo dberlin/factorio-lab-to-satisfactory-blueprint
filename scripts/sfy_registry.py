@@ -41,8 +41,12 @@ HEADER_DEFAULTS: dict[str, float] = {
 }
 
 # Limits that are in neither the cooked assets nor the headers, with the reason.
-# They are set by native constructors that the install does not ship, so the
-# registry leaves them None rather than guessing a number.
+# They are set by native constructors that the install does not ship, so there
+# is no number to read out of the game files. ``scripts/sfy_measure_limits.py``
+# measures an envelope for each of them from the blueprint corpus instead and
+# writes ``measured.json``; this script merges that in, and records the source
+# of every limit in ``registry.json``'s ``limits_sources`` so a measured value
+# is never mistaken for one the game stated.
 UNFILLABLE: dict[str, str] = {
     "belt_bend_radius_cm": (
         "AFGConveyorBeltHologram::mBendRadius is EditDefaultsOnly with no in-class "
@@ -82,23 +86,39 @@ def _first(holograms: dict[str, dict[str, Any]], prefix: str, key: str) -> Any:
     return None
 
 
-def _limits(assets: dict[str, Any]) -> dict[str, Any]:
+def _limits(
+    assets: dict[str, Any], measured: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, str]]:
+    """The merged limits, and where each of them came from.
+
+    The order is the order of authority: what the game states in a header, then
+    what a cooked asset overrides, then -- only for a limit still unset -- what
+    the blueprint corpus was measured to allow.
+    """
     holograms = assets["holograms"]
     limits: dict[str, Any] = dict.fromkeys(UNFILLABLE)
-    limits.update(HEADER_DEFAULTS)
-    limits.update(
-        {
-            "pipe_bend_radius_cm": _first(holograms, "Build_Pipeline", "mBendRadius"),
-            "hologram_rotation_step_deg": float(assets["grid"]["rotation_step"]),
-            "wire_max_cm": {cls: w["mMaxLength"] for cls, w in sorted(assets["wires"].items())},
-        }
-    )
-    return limits
+    sources: dict[str, str] = {}
+    for key, value in HEADER_DEFAULTS.items():
+        limits[key], sources[key] = value, "header"
+    from_assets = {
+        "pipe_bend_radius_cm": _first(holograms, "Build_Pipeline", "mBendRadius"),
+        "hologram_rotation_step_deg": float(assets["grid"]["rotation_step"]),
+        "wire_max_cm": {cls: w["mMaxLength"] for cls, w in sorted(assets["wires"].items())},
+    }
+    for key, value in from_assets.items():
+        limits[key], sources[key] = value, "assets"
+    for key, entry in sorted(measured["limits"].items()):
+        if key not in limits:
+            raise SystemExit(f"measured.json has a limit the registry does not know: {key!r}")
+        if limits[key] is None and entry["value"] is not None:
+            limits[key], sources[key] = entry["value"], "measured"
+    return limits, sources
 
 
 def main() -> int:
     docs = json.loads((DATA / "docs.json").read_text(encoding="utf-8"))
     assets = json.loads((DATA / "assets.json").read_text(encoding="utf-8"))
+    measured = json.loads((DATA / "measured.json").read_text(encoding="utf-8"))
 
     for class_name, buildable in docs["buildables"].items():
         buildable["ports"] = assets["ports"].get(class_name, [])
@@ -107,17 +127,20 @@ def main() -> int:
     sha = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True, check=True
     ).stdout.strip()
+    limits, sources = _limits(assets, measured)
     registry = {
         "provenance": {
             "docs": docs["provenance"],
             "assets": assets["provenance"],
+            "measured": measured["provenance"] | {"corpus": measured["corpus"]},
             "merged_at_commit": sha,
         },
         "buildables": docs["buildables"],
         "recipes": docs["recipes"],
         "descriptors": docs["descriptors"],
         "build_recipes": docs["build_recipes"],
-        "limits": _limits(assets),
+        "limits": limits,
+        "limits_sources": sources,
     }
     (DATA / "registry.json").write_text(
         json.dumps(registry, indent=1, sort_keys=True) + "\n", encoding="utf-8"
@@ -125,7 +148,9 @@ def main() -> int:
 
     if missing_ports:
         print("buildables with no entry in assets.json:", missing_ports)
-    print("limits still None:", [k for k, v in registry["limits"].items() if v is None])
+    for source in ("header", "assets", "measured"):
+        print(f"limits from {source}:", sorted(k for k, v in sources.items() if v == source))
+    print("limits still None:", [k for k, v in limits.items() if v is None])
     return 0
 
 
