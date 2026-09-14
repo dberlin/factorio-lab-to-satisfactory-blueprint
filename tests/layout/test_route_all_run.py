@@ -584,7 +584,7 @@ def test_retain_commit_failures_uses_the_rounds_snapshot_not_the_live_dict() -> 
             net_id=NetId(0, 1, "gear", NetRole.INTERNAL, 0),
         )
     ]
-    run.paths = {}  # type: ignore[assignment]
+    run.paths = {0: ((3, 4, 0), (5, 5, 0))}  # type: ignore[assignment]
     run.history = defaultdict(float)
     run.rejected_path_cells = defaultdict(set)
 

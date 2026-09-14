@@ -7987,6 +7987,372 @@ class _RouteAllRun:
                     pending.append(index)
         return closure
 
+    # -- The commit cluster --------------------------------------------------
+    #
+    # Turning a selection into a physical workspace, settling it, and turning
+    # the outcome into a `DetailedRouteResult`. Each is the closure's body with
+    # the names it captured read through `self` at call time, which is what a
+    # free-variable read did. `_commit_paths` stays a bare module global so
+    # `monkeypatch.setattr(routing_domain, "_commit_paths", ...)` still reaches
+    # it; six tests depend on that.
+    #
+    # `_commit_once`, `_terminal_attempt` and `_retain_commit_failures` were
+    # defined INSIDE the round loop and re-created every iteration. As methods
+    # they exist once; the per-round part they carried was
+    # `_retain_commit_failures`'s two default arguments, which are now the
+    # `retained_*` fields the loop assigns at the `def`'s old statement slot.
+
+    def _budget_result(
+        self,
+        current_paths: Mapping[int, tuple[Cell, ...]] | None = None,
+        current_failures: Mapping[int, NetFailure] | None = None,
+        *,
+        interrupted: bool = False,
+    ) -> DetailedRouteResult:
+        # No further search or settlement is allowed. Hierarchy still needs its
+        # selected diagnostic incumbent physically linked; standalone routing
+        # retains its existing evidence-only BUDGET contract.
+        candidates = [
+            (self.best_paths, self.best_failures),
+            (
+                {} if current_paths is None else current_paths,
+                {} if current_failures is None else current_failures,
+            ),
+        ]
+        selected_paths, selected_failures = max(
+            candidates,
+            key=lambda candidate: (
+                len(set(candidate[0]) | set(candidate[1])),
+                len(candidate[0]),
+                len(candidate[1]),
+            ),
+        )
+        failures = dict(selected_failures)
+        for index in range(len(self.nets)):
+            if index in selected_paths or index in failures:
+                continue
+            previous = self.best_failures.get(index)
+            failures[index] = NetFailure(
+                self._net_id(index),
+                RouteFailureKind.BUDGET,
+                (),
+                (),
+                self.round_work.get(
+                    index,
+                    previous.work if previous is not None else 0,
+                ),
+                budget_cause=self._pass_budget_cause(),
+            )
+        if self.settle is not None and not interrupted:
+            selected_best = selected_paths is self.best_paths
+            return self._finish(
+                selected_paths,
+                failures,
+                self.best_source_hints if selected_best else self.source_hint,
+                self.best_sink_hints if selected_best else self.sink_hint,
+                self.best_path_taps if selected_best else self.path_tap,
+                budget_exhausted=True,
+                attempt=self.best_attempt if selected_best else self.commit_attempt,
+            )
+        return DetailedRouteResult(
+            status=DetailedRouteStatus.BUDGET,
+            routed=tuple(
+                self._net_id(index)
+                for index in range(len(self.nets))
+                if index in selected_paths and index not in failures
+            ),
+            failures=tuple(failures[index] for index in range(len(self.nets)) if index in failures),
+            iterations=self.iterations,
+            work=self.work,
+            last_mile=self._last_mile_report(),
+        )
+
+    def _commit_selection(
+        self,
+        selected_paths: Mapping[int, tuple[Cell, ...]],
+        selected_source_hints: Mapping[int, Cell],
+        selected_sink_hints: Mapping[int, Cell],
+        selected_taps: Mapping[int, Cell],
+        *,
+        settle_complete: bool = True,
+    ) -> _CommittedAttempt:
+        selection = self._selection_key(
+            selected_paths, selected_source_hints, selected_sink_hints, selected_taps
+        )
+        workspace = self.canvas.clone()
+        workspace.guard.intersection_update(self.permanent_guard)
+        details: dict[int, _CommitFailure] = {}
+        ownership = RouteOwnership(len(workspace.buildings))
+        try:
+            unlinked = _commit_paths(
+                workspace,
+                self.nets,
+                selected_paths,
+                self.belt_id,
+                self.belt_model,
+                src_group=self.src_group,
+                dst_group=self.dst_group,
+                source_hints=selected_source_hints,
+                sink_hints=selected_sink_hints,
+                failure_details=details,
+                primitives=self.primitives,
+                source_taps=selected_taps,
+                deadline=self.deadline,
+                ownership=ownership,
+            )
+        except _PreparationDeadline as error:
+            error.failures.update(
+                (
+                    index,
+                    self._failure(
+                        index,
+                        _PathSearchResult(
+                            None,
+                            RouteFailureKind.COMMIT_LINK,
+                            ()
+                            if detail.side == "contextual"
+                            else (detail.cell, *detail.blocking_cells),
+                            0,
+                        ),
+                        tuple(self._net_id(blocker) for blocker in detail.blocking_indices),
+                    ),
+                )
+                for index, detail in details.items()
+            )
+            raise
+        attempt = _CommittedAttempt(
+            workspace, ownership.snapshot(), unlinked, details, selection=selection
+        )
+        if (
+            not unlinked
+            and len(selected_paths) == len(self.nets)
+            and settle_complete
+            and self.settle is not None
+        ):
+            try:
+                attempt.settlement = (
+                    RouteSettlementCancelled("routing-settlement")
+                    if _expired(self.deadline)
+                    else self.settle(workspace, attempt.ownership)
+                )
+                if not isinstance(
+                    attempt.settlement,
+                    (
+                        RouteSettlementCompleted,
+                        RouteSettlementRefused,
+                        RouteSettlementCancelled,
+                        RouteSettlementCrashed,
+                    ),
+                ):
+                    raise TypeError("settlement callback returned an unknown outcome")
+            except _PreparationDeadline:
+                attempt.settlement = RouteSettlementCancelled("routing-settlement")
+            except Exception as error:
+                attempt.settlement = RouteSettlementCrashed(error, error.__traceback__)
+            if isinstance(attempt.settlement, RouteSettlementRefused):
+                owners = attempt.settlement.owners
+                detours = {
+                    index: frozenset(
+                        cell
+                        for hint in attempt.settlement.interior_detours
+                        if self._net_id(index) in hint.owners
+                        for cell in hint.cells
+                    ).intersection(path[1:-1])
+                    for index, path in selected_paths.items()
+                    if any(
+                        self._net_id(index) in hint.owners
+                        for hint in attempt.settlement.interior_detours
+                    )
+                }
+                implicated = tuple(
+                    index
+                    for index in selected_paths
+                    if (owners is not None and self._net_id(index) in owners) or detours.get(index)
+                )
+                attempt.unlinked = implicated
+                attempt.details = {
+                    index: _CommitFailure(
+                        selected_paths[index][0],
+                        "contextual",
+                        blocking_indices=tuple(other for other in implicated if other != index),
+                        reason=attempt.settlement.reason,
+                        interior_detour=detours.get(index, frozenset()),
+                    )
+                    for index in implicated
+                }
+        return attempt
+
+    def _finish(
+        self,
+        selected_paths: Mapping[int, tuple[Cell, ...]],
+        selected_failures: dict[int, NetFailure],
+        selected_source_hints: Mapping[int, Cell],
+        selected_sink_hints: Mapping[int, Cell],
+        selected_taps: Mapping[int, Cell],
+        *,
+        budget_exhausted: bool,
+        exhaustive_claim: bool = False,
+        attempt: _CommittedAttempt | None = None,
+    ) -> DetailedRouteResult:
+        # `selected_paths` may be an incumbent from an earlier RRR round, while
+        # `canvas.guard` describes only the last round. Conditional junction
+        # guards are search state, not physical buildings; committing an older
+        # topology against newer guards creates false lattice collisions.
+        # Permanent pre-existing Splitter guards remain authoritative.
+        if self.junction_frame_bans and self.canvas.junction_projection is None:
+            selected_tap_cells = frozenset(selected_taps.values())
+            assert any(
+                all(tap not in frame_ban for tap in selected_tap_cells)
+                for frame_ban in self.junction_frame_bans
+            ), "the selected routing incumbent has no shared projection frame"
+        if attempt is None or attempt.selection != self._selection_key(
+            selected_paths, selected_source_hints, selected_sink_hints, selected_taps
+        ):
+            attempt = self._commit_selection(
+                selected_paths,
+                selected_source_hints,
+                selected_sink_hints,
+                selected_taps,
+                settle_complete=not budget_exhausted,
+            )
+        # Transfer every owned mutable index/reservation together. Refused or
+        # cancelled callbacks may have mutated their workspace; never publish it.
+        if not attempt.unlinked and (
+            attempt.settlement is None or isinstance(attempt.settlement, RouteSettlementCompleted)
+        ):
+            self.destination_canvas.__dict__.update(attempt.workspace.__dict__)
+        details, unlinked = attempt.details, attempt.unlinked
+        failures = dict(selected_failures)
+        if budget_exhausted:
+            for index in range(len(self.nets)):
+                if index not in selected_paths:
+                    previous = failures.get(index)
+                    failures[index] = NetFailure(
+                        self._net_id(index),
+                        RouteFailureKind.BUDGET,
+                        (),
+                        (),
+                        previous.work if previous is not None else 0,
+                        budget_cause=self._pass_budget_cause(),
+                    )
+        for index in unlinked:
+            detail = details.get(index)
+            source, destination = self._endpoint_cells(self.nets[index])
+            blockers = tuple(
+                self._net_id(blocker)
+                for blocker in (detail.blocking_indices if detail is not None else ())
+            )
+            failures[index] = NetFailure(
+                self._net_id(index),
+                RouteFailureKind.COMMIT_LINK,
+                ((detail.cell, *detail.blocking_cells) if detail is not None else ()),
+                blockers,
+                0,
+                source=source,
+                destination=destination,
+                blocking_endpoints=self._blocking_endpoint_cells(blockers),
+            )
+        routed = tuple(
+            self._net_id(index)
+            for index in range(len(self.nets))
+            if index in selected_paths and index not in failures
+        )
+        ordered_failures = tuple(
+            failures[index] for index in range(len(self.nets)) if index in failures
+        )
+        status = (
+            DetailedRouteStatus.BUDGET
+            if (
+                budget_exhausted
+                or any(failure.kind is RouteFailureKind.BUDGET for failure in ordered_failures)
+            )
+            else (DetailedRouteStatus.STRANDED if ordered_failures else DetailedRouteStatus.ROUTED)
+        )
+        if attempt is not None:
+            if isinstance(attempt.settlement, RouteSettlementCancelled):
+                status = DetailedRouteStatus.BUDGET
+            elif isinstance(attempt.settlement, (RouteSettlementRefused, RouteSettlementCrashed)):
+                status = DetailedRouteStatus.STRANDED
+        # A claim is only about the routing being RETURNED.  The cluster search
+        # closed its tree over one round's stranded set; if the incumbent that
+        # survives strands anything else -- or strands the same nets for a
+        # reason a budget cut off -- the proof does not describe it.
+        exhaustive = (
+            exhaustive_claim
+            and status is DetailedRouteStatus.STRANDED
+            and not self.contextual_seen
+            and set(failures) == self.proved_stranded
+            and not any(failure.kind is RouteFailureKind.BUDGET for failure in ordered_failures)
+        )
+        return DetailedRouteResult(
+            status=status,
+            routed=routed,
+            failures=ordered_failures,
+            iterations=self.iterations,
+            work=self.work,
+            exhaustive=exhaustive,
+            last_mile=self._last_mile_report(),
+            settlement=None if attempt is None else attempt.settlement,
+        )
+
+    def _commit_once(self) -> _CommittedAttempt:
+        return self._commit_selection(self.paths, self.source_hint, self.sink_hint, self.path_tap)
+
+    def _terminal_attempt(self, attempt: _CommittedAttempt) -> bool:
+        return isinstance(
+            attempt.settlement, (RouteSettlementCancelled, RouteSettlementCrashed)
+        ) or (isinstance(attempt.settlement, RouteSettlementRefused) and not attempt.unlinked)
+
+    def _retain_commit_failures(
+        self,
+        unlinked: Collection[int],
+        details: Mapping[int, _CommitFailure],
+    ) -> None:
+        for index in unlinked:
+            detail = details.get(
+                index,
+                _CommitFailure(self.paths[index][0], "path"),
+            )
+            if detail.side == "contextual":
+                self.contextual_seen = True
+                if index not in self.proposals:
+                    self.proposals[index] = _RouteProposal(
+                        (self.source_hint.get(index), self.path_tap.get(index)),
+                        self.sink_hint.get(index),
+                    )
+                if detail.interior_detour:
+                    self.proposals[index].detours.setdefault(detail.interior_detour, None)
+            if detail.side == "source":
+                self.rejected_starts[index].add(self.paths[index][0])
+                if detail.tap is not None:
+                    self.rejected_source_hints[index].add(detail.tap)
+                elif (hint := self.source_hint.get(index)) is not None:
+                    self.rejected_source_hints[index].add(hint)
+            elif detail.side == "sink":
+                self.rejected_goals[index].add(self.paths[index][-1])
+                if (hint := self.sink_hint.get(index)) is not None:
+                    self.rejected_sink_hints[index].add(hint)
+            elif detail.side == "path":
+                self.rejected_path_cells[index].add(detail.cell)
+            if detail.side != "contextual":
+                self.history[detail.cell] += _BLAME_WEIGHT
+                for blocking_cell in detail.blocking_cells:
+                    self.history[blocking_cell] += _BLAME_WEIGHT
+            endpoint_source, endpoint_destination = self._endpoint_cells(self.nets[index])
+            blockers = tuple(self._net_id(blocker) for blocker in detail.blocking_indices)
+            self.retained_failures[index] = NetFailure(
+                self._net_id(index),
+                RouteFailureKind.COMMIT_LINK,
+                () if detail.side == "contextual" else (detail.cell, *detail.blocking_cells),
+                blockers,
+                0,
+                source=endpoint_source,
+                destination=endpoint_destination,
+                blocking_endpoints=self._blocking_endpoint_cells(blockers),
+            )
+            if detail.side == "contextual":
+                self.retained_blockers[index] = blockers
+
 
 def _route_all(
     canvas: _Canvas,
@@ -8157,296 +8523,10 @@ def _route_all(
     _blocking_endpoint_cells = run._blocking_endpoint_cells
     _blocking_nets = run._blocking_nets
     _failure = run._failure
-
-    def _budget_result(
-        current_paths: Mapping[int, tuple[Cell, ...]] | None = None,
-        current_failures: Mapping[int, NetFailure] | None = None,
-        *,
-        interrupted: bool = False,
-    ) -> DetailedRouteResult:
-        # No further search or settlement is allowed. Hierarchy still needs its
-        # selected diagnostic incumbent physically linked; standalone routing
-        # retains its existing evidence-only BUDGET contract.
-        candidates = [
-            (best_paths, best_failures),
-            (
-                {} if current_paths is None else current_paths,
-                {} if current_failures is None else current_failures,
-            ),
-        ]
-        selected_paths, selected_failures = max(
-            candidates,
-            key=lambda candidate: (
-                len(set(candidate[0]) | set(candidate[1])),
-                len(candidate[0]),
-                len(candidate[1]),
-            ),
-        )
-        failures = dict(selected_failures)
-        for index in range(len(nets)):
-            if index in selected_paths or index in failures:
-                continue
-            previous = best_failures.get(index)
-            failures[index] = NetFailure(
-                _net_id(index),
-                RouteFailureKind.BUDGET,
-                (),
-                (),
-                round_work.get(
-                    index,
-                    previous.work if previous is not None else 0,
-                ),
-                budget_cause=_pass_budget_cause(),
-            )
-        if settle is not None and not interrupted:
-            selected_best = selected_paths is best_paths
-            return _finish(
-                selected_paths,
-                failures,
-                best_source_hints if selected_best else source_hint,
-                best_sink_hints if selected_best else sink_hint,
-                best_path_taps if selected_best else path_tap,
-                budget_exhausted=True,
-                attempt=best_attempt if selected_best else run.commit_attempt,
-            )
-        return DetailedRouteResult(
-            status=DetailedRouteStatus.BUDGET,
-            routed=tuple(
-                _net_id(index)
-                for index in range(len(nets))
-                if index in selected_paths and index not in failures
-            ),
-            failures=tuple(failures[index] for index in range(len(nets)) if index in failures),
-            iterations=iterations,
-            work=run.work,
-            last_mile=_last_mile_report(),
-        )
-
+    _budget_result = run._budget_result
     _selection_key = run._selection_key
-
-    def _commit_selection(
-        selected_paths: Mapping[int, tuple[Cell, ...]],
-        selected_source_hints: Mapping[int, Cell],
-        selected_sink_hints: Mapping[int, Cell],
-        selected_taps: Mapping[int, Cell],
-        *,
-        settle_complete: bool = True,
-    ) -> _CommittedAttempt:
-        selection = _selection_key(
-            selected_paths, selected_source_hints, selected_sink_hints, selected_taps
-        )
-        workspace = canvas.clone()
-        workspace.guard.intersection_update(permanent_guard)
-        details: dict[int, _CommitFailure] = {}
-        ownership = RouteOwnership(len(workspace.buildings))
-        try:
-            unlinked = _commit_paths(
-                workspace,
-                nets,
-                selected_paths,
-                belt_id,
-                belt_model,
-                src_group=src_group,
-                dst_group=dst_group,
-                source_hints=selected_source_hints,
-                sink_hints=selected_sink_hints,
-                failure_details=details,
-                primitives=primitives,
-                source_taps=selected_taps,
-                deadline=run.deadline,
-                ownership=ownership,
-            )
-        except _PreparationDeadline as error:
-            error.failures.update(
-                (
-                    index,
-                    _failure(
-                        index,
-                        _PathSearchResult(
-                            None,
-                            RouteFailureKind.COMMIT_LINK,
-                            ()
-                            if detail.side == "contextual"
-                            else (detail.cell, *detail.blocking_cells),
-                            0,
-                        ),
-                        tuple(_net_id(blocker) for blocker in detail.blocking_indices),
-                    ),
-                )
-                for index, detail in details.items()
-            )
-            raise
-        attempt = _CommittedAttempt(
-            workspace, ownership.snapshot(), unlinked, details, selection=selection
-        )
-        if (
-            not unlinked
-            and len(selected_paths) == len(nets)
-            and settle_complete
-            and settle is not None
-        ):
-            try:
-                attempt.settlement = (
-                    RouteSettlementCancelled("routing-settlement")
-                    if _expired(run.deadline)
-                    else settle(workspace, attempt.ownership)
-                )
-                if not isinstance(
-                    attempt.settlement,
-                    (
-                        RouteSettlementCompleted,
-                        RouteSettlementRefused,
-                        RouteSettlementCancelled,
-                        RouteSettlementCrashed,
-                    ),
-                ):
-                    raise TypeError("settlement callback returned an unknown outcome")
-            except _PreparationDeadline:
-                attempt.settlement = RouteSettlementCancelled("routing-settlement")
-            except Exception as error:
-                attempt.settlement = RouteSettlementCrashed(error, error.__traceback__)
-            if isinstance(attempt.settlement, RouteSettlementRefused):
-                owners = attempt.settlement.owners
-                detours = {
-                    index: frozenset(
-                        cell
-                        for hint in attempt.settlement.interior_detours
-                        if _net_id(index) in hint.owners
-                        for cell in hint.cells
-                    ).intersection(path[1:-1])
-                    for index, path in selected_paths.items()
-                    if any(
-                        _net_id(index) in hint.owners
-                        for hint in attempt.settlement.interior_detours
-                    )
-                }
-                implicated = tuple(
-                    index
-                    for index in selected_paths
-                    if (owners is not None and _net_id(index) in owners) or detours.get(index)
-                )
-                attempt.unlinked = implicated
-                attempt.details = {
-                    index: _CommitFailure(
-                        selected_paths[index][0],
-                        "contextual",
-                        blocking_indices=tuple(other for other in implicated if other != index),
-                        reason=attempt.settlement.reason,
-                        interior_detour=detours.get(index, frozenset()),
-                    )
-                    for index in implicated
-                }
-        return attempt
-
-    def _finish(
-        selected_paths: Mapping[int, tuple[Cell, ...]],
-        selected_failures: dict[int, NetFailure],
-        selected_source_hints: Mapping[int, Cell],
-        selected_sink_hints: Mapping[int, Cell],
-        selected_taps: Mapping[int, Cell],
-        *,
-        budget_exhausted: bool,
-        exhaustive_claim: bool = False,
-        attempt: _CommittedAttempt | None = None,
-    ) -> DetailedRouteResult:
-        # `selected_paths` may be an incumbent from an earlier RRR round, while
-        # `canvas.guard` describes only the last round. Conditional junction
-        # guards are search state, not physical buildings; committing an older
-        # topology against newer guards creates false lattice collisions.
-        # Permanent pre-existing Splitter guards remain authoritative.
-        if junction_frame_bans and canvas.junction_projection is None:
-            selected_tap_cells = frozenset(selected_taps.values())
-            assert any(
-                all(tap not in frame_ban for tap in selected_tap_cells)
-                for frame_ban in junction_frame_bans
-            ), "the selected routing incumbent has no shared projection frame"
-        if attempt is None or attempt.selection != _selection_key(
-            selected_paths, selected_source_hints, selected_sink_hints, selected_taps
-        ):
-            attempt = _commit_selection(
-                selected_paths,
-                selected_source_hints,
-                selected_sink_hints,
-                selected_taps,
-                settle_complete=not budget_exhausted,
-            )
-        # Transfer every owned mutable index/reservation together. Refused or
-        # cancelled callbacks may have mutated their workspace; never publish it.
-        if not attempt.unlinked and (
-            attempt.settlement is None or isinstance(attempt.settlement, RouteSettlementCompleted)
-        ):
-            destination_canvas.__dict__.update(attempt.workspace.__dict__)
-        details, unlinked = attempt.details, attempt.unlinked
-        failures = dict(selected_failures)
-        if budget_exhausted:
-            for index in range(len(nets)):
-                if index not in selected_paths:
-                    previous = failures.get(index)
-                    failures[index] = NetFailure(
-                        _net_id(index),
-                        RouteFailureKind.BUDGET,
-                        (),
-                        (),
-                        previous.work if previous is not None else 0,
-                        budget_cause=_pass_budget_cause(),
-                    )
-        for index in unlinked:
-            detail = details.get(index)
-            source, destination = _endpoint_cells(nets[index])
-            blockers = tuple(
-                _net_id(blocker)
-                for blocker in (detail.blocking_indices if detail is not None else ())
-            )
-            failures[index] = NetFailure(
-                _net_id(index),
-                RouteFailureKind.COMMIT_LINK,
-                ((detail.cell, *detail.blocking_cells) if detail is not None else ()),
-                blockers,
-                0,
-                source=source,
-                destination=destination,
-                blocking_endpoints=_blocking_endpoint_cells(blockers),
-            )
-        routed = tuple(
-            _net_id(index)
-            for index in range(len(nets))
-            if index in selected_paths and index not in failures
-        )
-        ordered_failures = tuple(failures[index] for index in range(len(nets)) if index in failures)
-        status = (
-            DetailedRouteStatus.BUDGET
-            if (
-                budget_exhausted
-                or any(failure.kind is RouteFailureKind.BUDGET for failure in ordered_failures)
-            )
-            else (DetailedRouteStatus.STRANDED if ordered_failures else DetailedRouteStatus.ROUTED)
-        )
-        if attempt is not None:
-            if isinstance(attempt.settlement, RouteSettlementCancelled):
-                status = DetailedRouteStatus.BUDGET
-            elif isinstance(attempt.settlement, (RouteSettlementRefused, RouteSettlementCrashed)):
-                status = DetailedRouteStatus.STRANDED
-        # A claim is only about the routing being RETURNED.  The cluster search
-        # closed its tree over one round's stranded set; if the incumbent that
-        # survives strands anything else -- or strands the same nets for a
-        # reason a budget cut off -- the proof does not describe it.
-        exhaustive = (
-            exhaustive_claim
-            and status is DetailedRouteStatus.STRANDED
-            and not run.contextual_seen
-            and set(failures) == proved_stranded
-            and not any(failure.kind is RouteFailureKind.BUDGET for failure in ordered_failures)
-        )
-        return DetailedRouteResult(
-            status=status,
-            routed=routed,
-            failures=ordered_failures,
-            iterations=iterations,
-            work=run.work,
-            exhaustive=exhaustive,
-            last_mile=_last_mile_report(),
-            settlement=None if attempt is None else attempt.settlement,
-        )
+    _commit_selection = run._commit_selection
+    _finish = run._finish
 
     if canvas.junction_projection is not None:
         try:
@@ -9919,76 +9999,17 @@ def _route_all(
             # every path already found on a disposable workspace even when another
             # net remains stranded: a hidden commit failure is independent new
             # evidence and belongs in the same focused repair transaction.
-            def commit_once() -> _CommittedAttempt:
-                return _commit_selection(paths, source_hint, sink_hint, path_tap)
-
-            def terminal_attempt(attempt: _CommittedAttempt) -> bool:
-                return isinstance(
-                    attempt.settlement, (RouteSettlementCancelled, RouteSettlementCrashed)
-                ) or (
-                    isinstance(attempt.settlement, RouteSettlementRefused) and not attempt.unlinked
-                )
-
-            #: The snapshot the two keyword-only defaults below take when this
-            #: `def` executes, made explicit: `round_failures` is rebuilt again
-            #: further down this round, and a live read at call time would put
-            #: the round's commit evidence in a dict nobody returns.
+            commit_once = run._commit_once
+            terminal_attempt = run._terminal_attempt
+            #: The snapshot `retain_commit_failures`'s two keyword-only default
+            #: arguments used to take, at the slot its `def` used to occupy.
+            #: A default binds the object that existed when the `def` executed;
+            #: `round_failures` is rebuilt again further down this round, so a
+            #: live read at call time would put the round's commit evidence in
+            #: a dict nobody returns.
             run.retained_failures = round_failures
             run.retained_blockers = search_blockers
-
-            def retain_commit_failures(
-                unlinked: Collection[int],
-                details: Mapping[int, _CommitFailure],
-                *,
-                retained_failures: dict[int, NetFailure] = round_failures,
-                retained_blockers: dict[int, tuple[NetId, ...]] = search_blockers,
-            ) -> None:
-                for index in unlinked:
-                    detail = details.get(
-                        index,
-                        _CommitFailure(paths[index][0], "path"),
-                    )
-                    if detail.side == "contextual":
-                        run.contextual_seen = True
-                        if index not in proposals:
-                            proposals[index] = _RouteProposal(
-                                (source_hint.get(index), path_tap.get(index)),
-                                sink_hint.get(index),
-                            )
-                        if detail.interior_detour:
-                            proposals[index].detours.setdefault(detail.interior_detour, None)
-                    if detail.side == "source":
-                        rejected_starts[index].add(paths[index][0])
-                        if detail.tap is not None:
-                            rejected_source_hints[index].add(detail.tap)
-                        elif (hint := source_hint.get(index)) is not None:
-                            rejected_source_hints[index].add(hint)
-                    elif detail.side == "sink":
-                        rejected_goals[index].add(paths[index][-1])
-                        if (hint := sink_hint.get(index)) is not None:
-                            rejected_sink_hints[index].add(hint)
-                    elif detail.side == "path":
-                        rejected_path_cells[index].add(detail.cell)
-                    if detail.side != "contextual":
-                        history[detail.cell] += _BLAME_WEIGHT
-                        for blocking_cell in detail.blocking_cells:
-                            history[blocking_cell] += _BLAME_WEIGHT
-                    endpoint_source, endpoint_destination = _endpoint_cells(nets[index])
-                    blockers = tuple(_net_id(blocker) for blocker in detail.blocking_indices)
-                    retained_failures[index] = NetFailure(
-                        _net_id(index),
-                        RouteFailureKind.COMMIT_LINK,
-                        ()
-                        if detail.side == "contextual"
-                        else (detail.cell, *detail.blocking_cells),
-                        blockers,
-                        0,
-                        source=endpoint_source,
-                        destination=endpoint_destination,
-                        blocking_endpoints=_blocking_endpoint_cells(blockers),
-                    )
-                    if detail.side == "contextual":
-                        retained_blockers[index] = blockers
+            retain_commit_failures = run._retain_commit_failures
 
             run.commit_attempt = commit_once()
             if terminal_attempt(run.commit_attempt):
