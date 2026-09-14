@@ -2028,7 +2028,10 @@ fn disasm_chunks(pe: &Pe, lengths: &BTreeMap<u32, u32>, rva: u32) -> (Vec<CodeCh
         };
         let bound = Bound {
             source,
-            entry_offset: (rva != primary).then(|| rva - primary),
+            // `.pdata` lets a cold chunk sit below its parent, so the symbol
+            // can precede the primary; a negative offset is not representable
+            // here and is reported as none rather than wrapping.
+            entry_offset: (rva != primary).then(|| rva.checked_sub(primary)).flatten(),
             reason: None,
         };
         // A range the section or the cap cuts short is not the function

@@ -42,8 +42,9 @@ __all__ = [
     "load_registry",
 ]
 
-# Defaults transcribed from the game's public hologram headers. Task 10 measures
-# the rest from the install and overrides these in ``registry.json``.
+# Defaults transcribed from the game's public hologram headers. The merge script
+# (``scripts/sfy_registry.py``) reads the rest from the install and overrides
+# these in ``registry.json``.
 BELT_MAX_SPLINE_CM = 5600.1
 PIPE_MAX_SPLINE_CM = 5600.1
 PIPE_BEND_RADIUS_2D_CM = 199.0
