@@ -89,11 +89,20 @@ def _scopes(tree: ast.AST) -> dict[int, str]:
 
 
 def _is_clock_call(node: ast.AST) -> bool:
-    return (
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr in {"monotonic", "perf_counter"}
-    )
+    """``time.monotonic()`` (an ``Attribute``) or a bare ``monotonic()``/
+    ``perf_counter()`` call (a ``Name``, from ``from time import monotonic``).
+
+    The bare form is matched on name alone, with no check that the name was
+    actually imported from ``time`` -- src/flab2bp is a small, known tree and
+    a function coincidentally named ``monotonic`` or ``perf_counter`` that
+    means something else is a risk not worth the extra import-tracking.
+    """
+    if not isinstance(node, ast.Call):
+        return False
+    func = node.func
+    if isinstance(func, ast.Attribute):
+        return func.attr in {"monotonic", "perf_counter"}
+    return isinstance(func, ast.Name) and func.id in {"monotonic", "perf_counter"}
 
 
 def _deadline_comparisons(path: Path, tree: ast.Module) -> list[tuple[str, int, str]]:
@@ -194,6 +203,30 @@ def test_only_the_budget_module_compares_a_clock_to_a_deadline() -> None:
         "call flab2bp.layout.budget.expired(deadline, time.monotonic) instead: "
         + _render(offenders)
     )
+
+
+def test_a_bare_name_clock_call_is_caught_but_elapsed_time_is_not() -> None:
+    """``_is_clock_call`` originally required an ``ast.Attribute``
+    (``time.monotonic()``), so a from-imported bare call slipped past it.
+
+    This snippet proves the fix: the deadline comparison against a bare
+    ``monotonic()`` call is caught, and an elapsed-time measurement --
+    ``monotonic() - started``, whose left operand is a ``BinOp`` rather than
+    a clock call -- is still excluded, exactly as it already is for the
+    attribute form (see the ``COMPARISON_ALLOWLIST`` docstring above).
+    """
+    snippet = """
+from time import monotonic
+
+def f(deadline, started):
+    if monotonic() >= deadline:
+        pass
+    if monotonic() - started > 5:
+        pass
+"""
+    tree = ast.parse(snippet, filename="synthetic.py")
+    found = _deadline_comparisons(ROOT / "synthetic.py", tree)
+    assert [source for _, _, source in found] == ["monotonic() >= deadline"]
 
 
 def test_no_module_carries_a_work_ledger_as_a_left_dict() -> None:
