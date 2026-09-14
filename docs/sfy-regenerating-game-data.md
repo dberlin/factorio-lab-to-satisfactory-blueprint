@@ -127,6 +127,22 @@ what each stores, with the instruction it was read at.
 of a conveyor are `FCD_ANY` rather than the input and output a header comment
 suggests.
 
+The same run writes `conveyor_flow`: **which end of a conveyor items enter by**,
+which `mDirection` cannot answer precisely because both ends are `FCD_ANY`.
+`Buildables/FGBuildableConveyorBase.h:380` states the order in a comment, and
+the binary makes it explicit — `AFGBuildableConveyorBase::Factory_Tick` grabs an
+item through one of the two connections by calling
+`UFGFactoryConnectionComponent::Factory_GrabOutput` on it, and that callee's
+grab is the branch taken when the connection's own `mDirection` is `FCD_INPUT`.
+Which member that load names is the tool's annotation, not a name typed into the
+script, and `BeginPlay` is quoted binding each member to the component of that
+name. The one thing the disassembly cannot show is the text behind the two
+`FName` globals those lookups use (a module initialiser with no `Class::Method`
+symbol fills them in at start-up), so the file's `caveat` says that the pairing
+of the first member with the component the content calls `ConveyorAny0` is not
+quoted from the binary. Step 7 attaches the order to every class that inherits
+the constructor, and refuses if such a class does not carry both ports.
+
 ## 5. Cooked assets → `assets.json`
 
 ```bash
@@ -181,7 +197,11 @@ uv run python scripts/sfy_registry.py
 
 Joins steps 1–5 into the file `flab2bp.sfy.registry.load_registry` reads. It
 prints where every limit came from, any it could not fill, how each port
-direction was resolved, and how many asset paths it kept. Every limit also gets
+direction was resolved, how many classes got a conveyor flow order, and how many
+asset paths it kept. Each belt and lift mark carries
+`flow: {"entry", "exit", "source"}` — the two port names items enter and leave
+by, from step 4 — and `provenance.conveyor_flow` carries the header line, the
+functions, their RVAs and the instructions behind it. Every limit also gets
 `provenance.limits[key].governed_by` — `{"rule": <rule id>, "effect": <effect>}`
 for the hologram rule that governs it, with the effect copied from that rule, or
 `null` and an `ungoverned` sentence saying why no rule does. **Only the effect

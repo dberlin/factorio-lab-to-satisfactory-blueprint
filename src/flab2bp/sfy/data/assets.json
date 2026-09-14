@@ -86,6 +86,69 @@
           "value": null
         }
       ],
+      "conveyor_flow": {
+        "caveat": "The two component names are what the cooked content calls the conveyor's connections. BeginPlay binds each member to the component whose FName matches one of two adjacent globals, and the constructor creates them in member order, but an FName global is built at start-up by a module initialiser with no Class::Method symbol, so the text behind each global is not readable through sfy-native disasm. The member order is the binary's; the pairing of the first member with the component named ConveyorAny0 is not quoted from it.",
+        "class": "AFGBuildableConveyorBase",
+        "entry": {
+          "component": "ConveyorAny0",
+          "member": "mConnection0"
+        },
+        "exit": {
+          "component": "ConveyorAny1",
+          "member": "mConnection1"
+        },
+        "functions": [
+          {
+            "rva": "0x4e10e0",
+            "symbol": "AFGBuildableConveyorBase::Factory_Tick"
+          },
+          {
+            "rva": "0x7c52b0",
+            "symbol": "UFGFactoryConnectionComponent::Factory_GrabOutput"
+          },
+          {
+            "rva": "0x4d1650",
+            "symbol": "AFGBuildableConveyorBase::BeginPlay"
+          },
+          {
+            "rva": "0x1b9af0",
+            "symbol": "AFGBuildableConveyorBase::AFGBuildableConveyorBase"
+          },
+          {
+            "rva": "0x4c96b0",
+            "symbol": "AFGBuildableConveyorBase::AFGBuildableConveyorBase"
+          }
+        ],
+        "header": "Buildables/FGBuildableConveyorBase.h:380",
+        "header_text": "First connection on conveyor belt, Connections are always in the same order, mConnection0 is the input, mConnection1 is the output.",
+        "instructions": [
+          "0x4e1611: mov rcx,qword ptr [rdi+6A0h]  ; AFGBuildableConveyorBase::mConnection0 @1696",
+          "0x4e1635: call 00000000007C52B0h  ; -> UFGFactoryConnectionComponent::Factory_GrabOutput",
+          "0x4e1684: mov rax,qword ptr [rdi+6A8h]  ; AFGBuildableConveyorBase::mConnection1 @1704",
+          "0x4e1743: mov rax,qword ptr [rdi+6A8h]  ; AFGBuildableConveyorBase::mConnection1 @1704",
+          "0x4e174a: mov rcx,qword ptr [rax+260h]",
+          "0x4e1761: call 00000000001B7DD0h  ; -> AFGBuildableConveyorBase::StaticClass",
+          "0x7c52d9: cmp byte ptr [rbx+258h],0  ; UFGFactoryConnectionComponent::mDirection @600",
+          "0x7c52e2: cmp byte ptr [rbx+268h],0  ; UFGFactoryConnectionComponent::mHasConnectedComponent @616",
+          "0x7c52eb: mov rbx,qword ptr [rbx+260h]  ; UFGFactoryConnectionComponent::mConnectedComponent @608",
+          "0x7c52f2: cmp byte ptr [rbx+258h],1",
+          "0x7c5328: call 00000000007C52B0h  ; -> UFGFactoryConnectionComponent::Factory_GrabOutput",
+          "0x4d17f7: mov r9,qword ptr [19EE958h]",
+          "0x4d1803: cmp qword ptr [rax+18h],r9",
+          "0x4d184c: mov qword ptr [rdi+6A0h],rbx  ; AFGBuildableConveyorBase::mConnection0 @1696",
+          "0x4d1860: mov r9,qword ptr [19EE960h]",
+          "0x4d186a: cmp qword ptr [rax+18h],r9",
+          "0x4d18a0: mov qword ptr [rdi+6A8h],rbx  ; AFGBuildableConveyorBase::mConnection1 @1704",
+          "0x4c98a7: mov rbx,qword ptr [19EE958h]",
+          "0x4c98c9: call qword ptr [0EE8600h]",
+          "0x4c98ec: mov qword ptr [rdi+6A0h],rbx  ; AFGBuildableConveyorBase::mConnection0 @1696",
+          "0x4c9958: mov rbx,qword ptr [19EE960h]",
+          "0x4c997a: call qword ptr [0EE8600h]",
+          "0x4c999d: mov qword ptr [rdi+6A8h],rbx  ; AFGBuildableConveyorBase::mConnection1 @1704"
+        ],
+        "note": "AFGBuildableConveyorBase::Factory_Tick grabs an item through mConnection0 (UFGFactoryConnectionComponent::Factory_GrabOutput, which is the FCD_INPUT branch of that callee) and follows mConnection1 to the conveyor downstream. That is the item-flow order the header states at line 380, and it is independent of mDirection, which is FCD_ANY on both ends.",
+        "source": "native"
+      },
       "enums": {
         "EFactoryConnectionDirection": [
           "input",

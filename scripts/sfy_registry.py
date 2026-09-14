@@ -46,7 +46,7 @@ from dataclasses import fields
 from pathlib import Path
 from typing import Any
 
-from flab2bp.sfy.registry import PORT_DIRECTION_SOURCES, Limits
+from flab2bp.sfy.registry import FLOW_SOURCES, PORT_DIRECTION_SOURCES, Limits
 from flab2bp.sfy.rules import load_rules
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -406,6 +406,50 @@ def _limits(
     return limits, sources, provenance
 
 
+def _attach_flow(directions: dict[str, Any], buildables: dict[str, Any]) -> dict[str, Any]:
+    """Put the conveyor item-flow order on every class it is about, and return it.
+
+    ``scripts/sfy_native_directions.py`` reads *one* order out of the binary --
+    ``AFGBuildableConveyorBase``'s, because that is where both connections are
+    created and where ``Factory_Tick`` grabs through one of them. The classes it
+    applies to are the ones that inherit that constructor, which the same file
+    already lists as the conveyor connection default's ``owner_classes``; the
+    two names are held to the ports each class actually carries, so a class
+    whose ends were renamed stops the merge rather than shipping a flow order
+    pointing at nothing.
+    """
+    flow = directions["conveyor_flow"]
+    if flow["source"] not in FLOW_SOURCES:
+        raise SystemExit(f"the conveyor flow order comes from no game source: {flow['source']!r}")
+    owner = next(
+        entry
+        for entry in directions["owner_defaults"]
+        if entry["set_in"].startswith(f"{flow['class']}::")
+    )
+    # The PDB spells a class ``AFGBuildableConveyorBelt``; Docs.json's
+    # ``native_class`` is the same name without UHT's A/U prefix.
+    native_classes = {name.removeprefix("A") for name in owner["owner_classes"]}
+    ends = (flow["entry"]["component"], flow["exit"]["component"])
+    applied = []
+    for class_name, entry in sorted(buildables.items()):
+        if entry["native_class"] not in native_classes:
+            continue
+        missing = [name for name in ends if name not in {p["name"] for p in entry["ports"]}]
+        if missing:
+            raise SystemExit(
+                f"{class_name} derives from {flow['class']} but has no port {missing}: "
+                "the conveyor flow order cannot be attached to it"
+            )
+        entry["flow"] = {"entry": ends[0], "exit": ends[1], "source": flow["source"]}
+        applied.append(class_name)
+    if not applied:
+        raise SystemExit(
+            f"no buildable derives from {sorted(native_classes)}, so the conveyor flow "
+            "order has nothing to attach to; re-run scripts/sfy_native_directions.py"
+        )
+    return {**flow, "applied_to": applied}
+
+
 def _asset_paths(class_paths: dict[str, str], wanted: set[str], what: str) -> dict[str, str]:
     """The asset path of every class in ``wanted``, or refuse naming the gaps.
 
@@ -497,6 +541,7 @@ def main(out: Path | None = None) -> int:
     docs = json.loads((DATA / "docs.json").read_text(encoding="utf-8"))
     assets = json.loads((DATA / "assets.json").read_text(encoding="utf-8"))
     native = json.loads((DATA / "native.json").read_text(encoding="utf-8"))
+    directions = json.loads((DATA / "native_directions.json").read_text(encoding="utf-8"))
     rules_provenance = json.loads(
         (DATA / "hologram_rules.json").read_text(encoding="utf-8")
     )["provenance"]
@@ -511,6 +556,7 @@ def main(out: Path | None = None) -> int:
         hologram = assets["holograms"].get(class_name) or {}
         buildable["grid_snap_cm"] = hologram.get("mGridSnapSize")
     missing_ports = sorted(set(docs["buildables"]) - set(assets["ports"]))
+    conveyor_flow = _attach_flow(directions, docs["buildables"])
     direction_counts = _shipped_direction_counts(docs["buildables"])
     item_paths = _asset_paths(assets["class_paths"], _item_classes(docs), "item descriptor")
     recipe_paths = _asset_paths(assets["class_paths"], set(docs["recipes"]), "recipe")
@@ -525,6 +571,7 @@ def main(out: Path | None = None) -> int:
             "assets": assets["provenance"],
             "native": native["provenance"],
             "hologram_rules": rules_provenance,
+            "conveyor_flow": conveyor_flow,
             "limits": limit_provenance,
             "port_directions": {
                 "sources": list(PORT_DIRECTION_SOURCES),
@@ -554,6 +601,11 @@ def main(out: Path | None = None) -> int:
     for source in sorted(set(sources.values())):
         print(f"limits from {source}:", sorted(k for k, v in sources.items() if v == source))
     print("limits still None:", [k for k, v in limits.items() if v is None])
+    print(
+        "conveyor item flow:",
+        f"{conveyor_flow['entry']['component']} -> {conveyor_flow['exit']['component']}",
+        f"({conveyor_flow['source']}) on {len(conveyor_flow['applied_to'])} classes",
+    )
     print("port directions resolved from:", direction_counts)
     print("over every extracted class:", extracted_counts)
     print(f"asset paths: {len(item_paths)} item descriptors, {len(recipe_paths)} recipes")

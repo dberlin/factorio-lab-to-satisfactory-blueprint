@@ -13,9 +13,11 @@ import pytest
 
 from flab2bp.sfy import docs
 from flab2bp.sfy.registry import (
+    FLOW_SOURCES,
     LIMIT_SOURCES,
     PORT_DIRECTION_SOURCES,
     Limits,
+    RegistryError,
     load_registry,
 )
 from flab2bp.sfy.rules import load_rules
@@ -302,6 +304,72 @@ def test_both_ends_of_a_conveyor_are_the_direction_the_constructor_sets():
         for port in ends.values():
             assert port.direction == "any", class_name
             assert port.direction_source == "native", class_name
+
+
+def test_which_end_of_a_conveyor_items_enter_by():
+    """Both ends are FCD_ANY, so the flow order is a separate fact -- and a needed one.
+
+    A router has to know which end of a belt takes items and which gives them
+    up. ``mDirection`` does not say (the constructor sets both to ``FCD_ANY``),
+    so the registry carries it per conveyor class as ``flow``, from the game:
+    ``AFGBuildableConveyorBase::Factory_Tick`` grabs through ``mConnection0``
+    and the header's line 380 says the same.
+    """
+    reg = load_registry()
+    marks = [
+        c for c in reg.buildables if c.startswith(("Build_ConveyorBelt", "Build_ConveyorLift"))
+    ]
+    assert len(marks) == 12, sorted(marks)
+    for class_name in marks:
+        buildable = reg.buildables[class_name]
+        flow = buildable.flow
+        assert flow is not None, class_name
+        assert (flow.entry, flow.exit) == ("ConveyorAny0", "ConveyorAny1"), class_name
+        assert flow.source in FLOW_SOURCES, class_name
+        # The two ends it names are ports this buildable actually has.
+        assert {flow.entry, flow.exit} <= {p.name for p in buildable.ports}, class_name
+    # Nothing else claims one: a pole or a machine has no item-flow order.
+    assert sorted(c for c, b in reg.buildables.items() if b.flow) == sorted(marks)
+
+
+def test_the_conveyor_flow_order_carries_the_game_it_was_read_from():
+    """The claim travels with its evidence: the header line and the instructions."""
+    flow = load_registry().provenance["conveyor_flow"]
+    assert flow["source"] in FLOW_SOURCES
+    assert flow["header"].endswith("FGBuildableConveyorBase.h:380")
+    assert "mConnection0 is the input" in flow["header_text"]
+    assert flow["entry"]["member"] == "mConnection0"
+    assert flow["exit"]["member"] == "mConnection1"
+    assert flow["entry"]["component"] == "ConveyorAny0"
+    if flow["source"] == "native":
+        # The grab that makes mConnection0 the entry, and the function it is in.
+        assert any(
+            "Factory_GrabOutput" in line for line in flow["instructions"]
+        ), flow["instructions"]
+        assert {f["symbol"] for f in flow["functions"]} >= {
+            "AFGBuildableConveyorBase::Factory_Tick",
+            "UFGFactoryConnectionComponent::Factory_GrabOutput",
+        }
+        assert all(f["rva"].startswith("0x") for f in flow["functions"])
+
+
+def test_a_flow_that_names_a_port_the_buildable_does_not_have_is_refused(tmp_path):
+    """``flow`` is a claim about two of this buildable's ports, checked on load."""
+    payload = json.loads((Path(docs.__file__).parent / "data" / "registry.json").read_text())
+    payload["buildables"]["Build_ConveyorBeltMk1_C"]["flow"]["entry"] = "ConveyorAny7"
+    path = tmp_path / "registry.json"
+    path.write_text(json.dumps(payload))
+    with pytest.raises(RegistryError, match="ConveyorAny7"):
+        load_registry(path)
+
+
+def test_a_flow_from_no_game_source_is_refused(tmp_path):
+    payload = json.loads((Path(docs.__file__).parent / "data" / "registry.json").read_text())
+    payload["buildables"]["Build_ConveyorBeltMk1_C"]["flow"]["source"] = "corpus"
+    path = tmp_path / "registry.json"
+    path.write_text(json.dumps(payload))
+    with pytest.raises(RegistryError, match="corpus"):
+        load_registry(path)
 
 
 def test_the_power_poles_carry_the_connection_counts_the_assets_state():

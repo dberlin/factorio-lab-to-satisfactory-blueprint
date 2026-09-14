@@ -158,6 +158,9 @@ Three things are worth stating plainly.
    belt by; it is not `mDirection`, and the registry took it for `mDirection`
    until this. A placed belt gets its two directions from whatever it snapped
    to, under the `belt.snap_directions` rule in `data/hologram_rules.json`.
+   Which end items *do* enter by is its own field now: `conveyor_flow` in the
+   same `native_directions.json`, read out of `Factory_Tick`'s grab and carried
+   into `registry.json` as each mark's `flow`.
 2. **The component class default only applies to a Blueprint's own component.**
    A subobject a native constructor made takes that constructor's value, so a
    native subobject with no matching entry above is `unknown` rather than

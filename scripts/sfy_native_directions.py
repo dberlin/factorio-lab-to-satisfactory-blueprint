@@ -35,6 +35,12 @@ Two kinds of default come out of it:
 ``.pdata`` chunks, so the store that sets its *second* connection is 600 bytes
 past the chunk the symbol is in. ``sfy-native disasm`` follows the chain, and
 both stores are quoted from its output.
+
+``conveyor_flow``
+    which end of a conveyor items *enter* by, which is a different question from
+    ``mDirection`` and one a router has to answer. Both ends being ``FCD_ANY``,
+    the direction cannot say; ``Factory_Tick`` can, and does --
+    :data:`CONVEYOR_FLOW` explains what is read and what is left unproven.
 """
 
 from __future__ import annotations
@@ -222,6 +228,97 @@ OWNERS: tuple[dict[str, Any], ...] = (
     },
 )
 
+# Which end of a conveyor items enter by. This is *not* ``mDirection``: both of
+# a conveyor's connections are ``FCD_ANY`` (see ``OWNERS`` above), so nothing in
+# the direction says which way items travel along the belt. The header states
+# the order outright --
+#
+#   Buildables/FGBuildableConveyorBase.h:380
+#   "First connection on conveyor belt, Connections are always in the same
+#    order, mConnection0 is the input, mConnection1 is the output."
+#
+# -- and the shipped binary makes it explicit, which is what this reads:
+#
+# ``grab_this``/``grab_call``
+#     ``Factory_Tick`` loads one of the two connections and calls
+#     ``UFGFactoryConnectionComponent::Factory_GrabOutput`` on it. Which member
+#     that load annotates is *the* answer, and it is the tool's annotation, not
+#     a name typed here.
+# ``grab_direction``
+#     inside that callee, the grab is the branch taken when the connection's own
+#     ``mDirection`` is the enum's ``FCD_INPUT``: it follows
+#     ``mConnectedComponent`` to an ``FCD_OUTPUT`` connection and asks *it* for
+#     the item. So the end Factory_Tick grabs through is the end items enter by.
+# ``members``
+#     the constructor's two stores, which give the pair of connection members;
+#     the exit is whichever of the two is not the entry.
+# ``binding``
+#     ``BeginPlay`` matches each component by name -- ``cmp [component+18h], r9``
+#     against ``UObject::NamePrivate`` -- and stores the match into the member.
+#     That is what ties a named component to a member.
+#
+# ``entry_component``/``exit_component`` are the names those two FNames hold.
+# They are *not* decodable from the disassembly: an FName global is filled in at
+# start-up from a string literal by a module initialiser that carries no
+# ``Class::Method`` symbol, so ``sfy-native disasm`` cannot be pointed at it.
+# What the binary does show is that the constructor creates the two subobjects
+# in member order (``members`` below quotes both stores) and that the cooked
+# content carries exactly two conveyor connection components, ``ConveyorAny0``
+# and ``ConveyorAny1``; ``caveat`` in the written file says as much, and
+# ``scripts/sfy_registry.py`` refuses to attach the flow to a buildable whose
+# ports are not those two.
+CONVEYOR_FLOW: dict[str, Any] = {
+    "class": "AFGBuildableConveyorBase",
+    "entry_component": "ConveyorAny0",
+    "exit_component": "ConveyorAny1",
+    "header": "Buildables/FGBuildableConveyorBase.h:380",
+    "header_text": (
+        "First connection on conveyor belt, Connections are always in the same order, "
+        "mConnection0 is the input, mConnection1 is the output."
+    ),
+    "grab_callee": "UFGFactoryConnectionComponent::Factory_GrabOutput",
+    "grab_this": "0x4e1611",
+    "grab_call": "0x4e1635",
+    "grab_direction": "0x7c52d9",
+    "members": ("0x4c98ec", "0x4c999d"),
+    "binding": ("0x4d17f7", "0x4d1803", "0x4d184c", "0x4d1860", "0x4d186a", "0x4d18a0"),
+    "evidence": (
+        # Factory_Tick: the grab through one end, and the other end followed to
+        # the conveyor downstream of it.
+        "0x4e1611", "0x4e1635", "0x4e1684", "0x4e1743", "0x4e174a", "0x4e1761",
+        # UFGFactoryConnectionComponent::Factory_GrabOutput: an input end grabs
+        # from the output end it is connected to.
+        "0x7c52d9", "0x7c52e2", "0x7c52eb", "0x7c52f2", "0x7c5328",
+        # BeginPlay: each member is the component whose name matches.
+        "0x4d17f7", "0x4d1803", "0x4d184c", "0x4d1860", "0x4d186a", "0x4d18a0",
+        # The constructor: the two connections, in member order.
+        "0x4c98a7", "0x4c98c9", "0x4c98ec", "0x4c9958", "0x4c997a", "0x4c999d",
+    ),
+    "functions": (
+        "AFGBuildableConveyorBase::Factory_Tick",
+        "UFGFactoryConnectionComponent::Factory_GrabOutput",
+        "AFGBuildableConveyorBase::BeginPlay",
+        "AFGBuildableConveyorBase::AFGBuildableConveyorBase",
+    ),
+    "note": (
+        "AFGBuildableConveyorBase::Factory_Tick grabs an item through mConnection0 "
+        "(UFGFactoryConnectionComponent::Factory_GrabOutput, which is the FCD_INPUT "
+        "branch of that callee) and follows mConnection1 to the conveyor downstream. "
+        "That is the item-flow order the header states at line 380, and it is "
+        "independent of mDirection, which is FCD_ANY on both ends."
+    ),
+    "caveat": (
+        "The two component names are what the cooked content calls the conveyor's "
+        "connections. BeginPlay binds each member to the component whose FName matches "
+        "one of two adjacent globals, and the constructor creates them in member order, "
+        "but an FName global is built at start-up by a module initialiser with no "
+        "Class::Method symbol, so the text behind each global is not readable through "
+        "sfy-native disasm. The member order is the binary's; the pairing of the first "
+        "member with the component named ConveyorAny0 is not quoted from it."
+    ),
+}
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -330,6 +427,7 @@ def main(out: Path | None = None) -> int:
     try:
         components, offset = _components(run)
         owners = [_owner(rule, run, offset) for rule in OWNERS]
+        conveyor_flow = _conveyor_flow(run)
     finally:
         scratch.unlink(missing_ok=True)
 
@@ -350,6 +448,7 @@ def main(out: Path | None = None) -> int:
         "enums": {name: list(values) for name, values in sorted(ENUMS.items())},
         "component_defaults": components,
         "owner_defaults": owners,
+        "conveyor_flow": conveyor_flow,
     }
     target = DATA / "native_directions.json" if out is None else Path(out)
     target.write_text(json.dumps(payload, indent=1, sort_keys=True) + "\n", encoding="utf-8")
@@ -360,6 +459,11 @@ def main(out: Path | None = None) -> int:
             f"{owner['component_class']:<30} {owner['direction']:<10} "
             f"{owner['set_in']} for {', '.join(owner['owner_classes'])}"
         )
+    flow = payload["conveyor_flow"]
+    print(
+        f"conveyor item flow: {flow['entry']['member']} ({flow['entry']['component']}) in, "
+        f"{flow['exit']['member']} ({flow['exit']['component']}) out, from {flow['source']}"
+    )
     print(f"-> {target}")
     return 0
 
@@ -420,6 +524,75 @@ def _components(run) -> tuple[list[dict[str, Any]], int]:
             }
         )
     return entries, offset
+
+
+def _conveyor_flow(run) -> dict[str, Any]:
+    """Which conveyor connection items enter by, read out of the machine code.
+
+    The entry member is derived, not typed: it is whatever the tool annotates on
+    the load that feeds ``Factory_Tick``'s call to
+    ``UFGFactoryConnectionComponent::Factory_GrabOutput``. The exit is the other
+    of the two connections the constructor creates. Every claim is held to the
+    binary, so a game update that moves any of the four functions stops the run.
+    """
+    spec = CONVEYOR_FLOW
+    functions = [f for symbol in spec["functions"] for f in run(symbol)]
+    found = _pick(functions, spec["evidence"], "conveyor flow")
+
+    grab_call = found[spec["grab_call"]]
+    if grab_call.get("call") != spec["grab_callee"]:
+        raise SystemExit(
+            f"{spec['grab_call']} is no longer a call to {spec['grab_callee']}: "
+            f"{grab_call['text']}"
+        )
+    load = found[spec["grab_this"]]
+    member = load.get("member")
+    if not member or member["class"] != spec["class"]:
+        raise SystemExit(f"{spec['grab_this']} no longer loads a {spec['class']} member")
+    entry_member = member["name"]
+
+    # The grab is the input branch of the callee: `cmp mDirection, FCD_INPUT`.
+    test = found[spec["grab_direction"]]
+    direction = test.get("member")
+    if not direction or direction["name"] != "mDirection":
+        raise SystemExit(f"{spec['grab_direction']} no longer tests mDirection: {test['text']}")
+    if ENUMS["EFactoryConnectionDirection"][_immediate(test["text"])] != "input":
+        raise SystemExit(
+            f"{spec['grab_direction']} no longer branches on FCD_INPUT: {test['text']}"
+        )
+
+    members = []
+    for rva in spec["members"]:
+        stored = found[rva].get("member")
+        if not stored or stored["class"] != spec["class"]:
+            raise SystemExit(f"{rva} no longer stores a {spec['class']} connection")
+        members.append(stored["name"])
+    others = [name for name in members if name != entry_member]
+    if len(members) != 2 or len(others) != 1:
+        raise SystemExit(f"{spec['class']} no longer has two connections to order: {members}")
+
+    bound = {found[rva]["member"]["name"] for rva in spec["binding"] if "member" in found[rva]}
+    if bound != set(members):
+        raise SystemExit(
+            f"BeginPlay no longer binds both connections by name: {sorted(bound)} vs {members}"
+        )
+
+    return {
+        "entry": {"member": entry_member, "component": spec["entry_component"]},
+        "exit": {"member": others[0], "component": spec["exit_component"]},
+        "source": "native",
+        "class": spec["class"],
+        "header": spec["header"],
+        "header_text": spec["header_text"],
+        "functions": [
+            {"symbol": f["symbol"], "rva": f["rva"]}
+            for f in functions
+            if f["symbol"] in spec["functions"]
+        ],
+        "instructions": [_line(found[rva]) for rva in spec["evidence"]],
+        "note": spec["note"],
+        "caveat": spec["caveat"],
+    }
 
 
 def _immediate(text: str) -> int:

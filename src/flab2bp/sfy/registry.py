@@ -23,6 +23,7 @@ from flab2bp.sfy.rules import RULE_EFFECTS
 
 __all__ = [
     "BELT_MAX_SPLINE_CM",
+    "FLOW_SOURCES",
     "LIMIT_SOURCES",
     "PIPE_BEND_RADIUS_2D_CM",
     "PIPE_MAX_SPLINE_CM",
@@ -30,6 +31,7 @@ __all__ = [
     "PORT_DIRECTION_SOURCES",
     "Buildable",
     "ClearanceBox",
+    "ConveyorFlow",
     "Limits",
     "Port",
     "Recipe",
@@ -93,6 +95,20 @@ LIMIT_SOURCES = (
 # something the game reads. A port whose direction is ``"unknown"`` is one no
 # caller may route to.
 PORT_DIRECTION_SOURCES = ("asset", "asset-inherited", "native", "unknown")
+
+# Where a conveyor's item-flow order was read. Both of a conveyor's connections
+# are ``FCD_ANY``, so ``mDirection`` does not say which end items enter by, and
+# that is a fact a router needs:
+#
+# ``header``  the declaration comment in ``CommunityResources/Headers.zip``
+#             (``Buildables/FGBuildableConveyorBase.h:380``) states the order
+# ``native``  the shipped DLL's machine code makes it explicit as well, and
+#             ``provenance["conveyor_flow"]`` carries the functions, their RVAs
+#             and the instructions
+#
+# There is no third source. A blueprint corpus says what somebody once wired up,
+# which is not a fact about the game.
+FLOW_SOURCES = ("header", "native")
 
 _HEADER_DEFAULTED = (
     "belt_max_spline_cm",
@@ -172,6 +188,23 @@ class Port:
 
 
 @dataclass(frozen=True, slots=True)
+class ConveyorFlow:
+    """Which end of a conveyor items enter by, and which they leave by.
+
+    ``entry`` and ``exit`` are port names on the same buildable. This is not
+    :attr:`Port.direction`: a conveyor's two connections are both ``FCD_ANY``
+    (the constructor sets them so, and the hologram assigns the pair's
+    directions from whatever the belt snapped to), so the direction says nothing
+    about which way items travel along the belt itself. ``source`` is where the
+    order was read -- see :data:`FLOW_SOURCES`.
+    """
+
+    entry: str
+    exit: str
+    source: str
+
+
+@dataclass(frozen=True, slots=True)
 class Buildable:
     """A placeable building, with whatever of its stats Docs.json carries.
 
@@ -201,6 +234,9 @@ class Buildable:
     # and street lights override it, all to 50.
     grid_snap_cm: float | None = None
     ports: tuple[Port, ...] = ()
+    # The item-flow order of the two conveyor ends, on the belt and lift marks
+    # and on nothing else. ``None`` means this class carries no such order.
+    flow: ConveyorFlow | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -354,11 +390,33 @@ def _ports(raw: Iterable[Mapping[str, Any]]) -> tuple[Port, ...]:
     return ports
 
 
+def _flow(raw: Mapping[str, Any] | None, ports: tuple[Port, ...]) -> ConveyorFlow | None:
+    """Read a conveyor's item-flow order, refusing one no game source backs.
+
+    A ``source`` outside :data:`FLOW_SOURCES` is refused rather than loaded, and
+    so is an end that names a port this buildable does not have or names the
+    same port twice: a flow order is a claim about two of *these* ports.
+    """
+    if raw is None:
+        return None
+    flow = ConveyorFlow(entry=str(raw["entry"]), exit=str(raw["exit"]), source=str(raw["source"]))
+    if flow.source not in FLOW_SOURCES:
+        raise RegistryError(f"conveyor flow comes from no game source: {flow.source!r}")
+    names = {port.name for port in ports}
+    if flow.entry == flow.exit or not {flow.entry, flow.exit} <= names:
+        raise RegistryError(
+            f"conveyor flow names ends this buildable has no port for: "
+            f"{flow.entry!r} -> {flow.exit!r}"
+        )
+    return flow
+
+
 def _buildables(raw: Mapping[str, Mapping[str, Any]]) -> dict[str, Buildable]:
     out: dict[str, Buildable] = {}
     for class_name, entry in raw.items():
         try:
             dims = entry["designer_dims"]
+            ports = _ports(entry.get("ports", ()))
             out[class_name] = Buildable(
                 class_name=class_name,
                 display_name=entry["display_name"],
@@ -376,7 +434,8 @@ def _buildables(raw: Mapping[str, Mapping[str, Any]]) -> dict[str, Buildable]:
                 potential_shard_slots=_opt_int(entry["potential_shard_slots"]),
                 production_boost_slots=_opt_int(entry["production_boost_slots"]),
                 grid_snap_cm=_opt_float(entry.get("grid_snap_cm")),
-                ports=_ports(entry.get("ports", ())),
+                ports=ports,
+                flow=_flow(entry.get("flow"), ports),
             )
         except (KeyError, IndexError, TypeError, ValueError) as exc:
             raise RegistryError(f"buildable {class_name!r} is malformed: {exc}") from exc
