@@ -153,7 +153,12 @@ def test_capacity_frontier_charges_inherited_prefix_and_suffix() -> None:
     canvas.blocked.update({cell: domain._TENTATIVE for cell in owners})
     assert sources[0] == (0, 0)
     provenance: dict[Cell, Cell] = {}
-    domain._merge_frontier(canvas, paths, (0,), provenance=provenance, path_ranges=sinks)
+    domain._merge_frontier(
+        canvas,
+        paths,
+        (0,),
+        request=domain._MergeFrontierRequest(provenance=provenance, path_ranges=sinks),
+    )
     assert provenance == {}
 
 
@@ -288,7 +293,9 @@ def test_live_splitter_withholds_downstream_but_not_upstream_merges() -> None:
         canvas,
         paths,
         (0,),
-        protected_sinks=domain._protected_merge_cells(paths, (0,), {1: (5, 0, 0)}),
+        request=domain._MergeFrontierRequest(
+            protected_sinks=domain._protected_merge_cells(paths, (0,), {1: (5, 0, 0)})
+        ),
     )
     assert (5, 1, 0) not in offers
     assert (3, 1, 0) in offers

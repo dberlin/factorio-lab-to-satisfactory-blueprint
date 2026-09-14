@@ -5617,26 +5617,49 @@ def _protected_merge_cells(
     return protected
 
 
+@dataclass(frozen=True, slots=True)
+class _MergeFrontierRequest:
+    """The 14 keyword-only inputs `_merge_frontier` reads and never rebinds.
+
+    Frozen because the callee rebinds none of them: it reads each once per
+    walk.  Freezing the object freezes the REFERENCES, not the collections --
+    ``provenance``, ``source_choices`` and ``trace`` are still the caller's own
+    mutable objects, written through exactly as they were as parameters.
+
+    ``deadline`` is the reason this object must be built inside the call
+    expression.  `_RouteAllRun.deadline` is a mutable field restored in a
+    `finally:` clause; a request hoisted above a call would hand the callee the
+    clock of whichever branch built it.
+    """
+
+    provenance: dict[Cell, Cell] | None = None
+    belt_prefab: tuple[int, int] | None = None
+    tentative_ok: bool = False
+    owned_guard: Mapping[Cell, Cell] | None = None
+    primitives: RoutePrimitives | None = None
+    source_choices: dict[Cell, set[Cell]] | None = None
+    witness: Callable[[Cell, Cell], bool] | None = None
+    admit_tap: Callable[[Cell], bool] | None = None
+    deadline: float | None = None
+    path_ranges: Mapping[int, tuple[int, int]] | None = None
+    merged_cells: Collection[Cell] = frozenset()
+    protected_sinks: Collection[Cell] = frozenset()
+    source_feeds: Mapping[int, int] | None = None
+    trace: list[tuple[Cell, Cell, tuple[Cell, ...]]] | None = None
+
+
+#: The all-defaults request, shared because it is immutable and holds no
+#: caller collection.  A module-level singleton rather than a call in the
+#: argument default, which ruff's B008 forbids.
+_DEFAULT_MERGE_REQUEST = _MergeFrontierRequest()
+
+
 def _merge_frontier(
     canvas: _Canvas,
     paths: Mapping[int, Sequence[Cell]],
     siblings: tuple[int, ...],
     junctionable: Callable[[int, int, int], bool] | None = None,
-    *,
-    provenance: dict[Cell, Cell] | None = None,
-    belt_prefab: tuple[int, int] | None = None,
-    tentative_ok: bool = False,
-    owned_guard: Mapping[Cell, Cell] | None = None,
-    primitives: RoutePrimitives | None = None,
-    source_choices: dict[Cell, set[Cell]] | None = None,
-    witness: Callable[[Cell, Cell], bool] | None = None,
-    admit_tap: Callable[[Cell], bool] | None = None,
-    deadline: float | None = None,
-    path_ranges: Mapping[int, tuple[int, int]] | None = None,
-    merged_cells: Collection[Cell] = frozenset(),
-    protected_sinks: Collection[Cell] = frozenset(),
-    source_feeds: Mapping[int, int] | None = None,
-    trace: list[tuple[Cell, Cell, tuple[Cell, ...]]] | None = None,
+    request: _MergeFrontierRequest = _DEFAULT_MERGE_REQUEST,
 ) -> set[Cell]:
     """Free cells beside a sibling net's path -- somewhere to merge into.
 
@@ -5696,12 +5719,16 @@ def _merge_frontier(
     out: set[Cell] = set()
     for sibling in siblings:
         path = paths.get(sibling, ())
-        source_feed = None if source_feeds is None else source_feeds.get(sibling)
-        first, last = (0, len(path)) if path_ranges is None else path_ranges.get(sibling, (0, 0))
+        source_feed = None if request.source_feeds is None else request.source_feeds.get(sibling)
+        first, last = (
+            (0, len(path))
+            if request.path_ranges is None
+            else request.path_ranges.get(sibling, (0, 0))
+        )
         altitudes = (
             _altitude_profile(path, ramped=canvas.ramped)
-            if primitives is None
-            else primitives.altitudes(path, ramped=canvas.ramped)
+            if request.primitives is None
+            else request.primitives.altitudes(path, ramped=canvas.ramped)
         )
         if altitudes is None:
             continue
@@ -5711,9 +5738,9 @@ def _merge_frontier(
                 break
             if at < first:
                 continue
-            if junctionable is None and (x, y, lvl) in protected_sinks:
+            if junctionable is None and (x, y, lvl) in request.protected_sinks:
                 continue
-            if witness is not None and _expired(deadline):
+            if request.witness is not None and _expired(request.deadline):
                 return out
             # A source-side junction requires an integer carry plane.  Model 40
             # serves odd planes from one level lower and exposes only its
@@ -5746,18 +5773,18 @@ def _merge_frontier(
                 and (
                     canvas.free(cell := (x + dx, y + dy, branch_level))
                     or (
-                        owned_guard is not None
-                        and owned_guard.get(cell) == (x, y, lvl)
+                        request.owned_guard is not None
+                        and request.owned_guard.get(cell) == (x, y, lvl)
                         and canvas.free_owned_guard(cell)
                     )
-                    or (tentative_ok and canvas.blocked.get(cell) == _TENTATIVE)
+                    or (request.tentative_ok and canvas.blocked.get(cell) == _TENTATIVE)
                 )
             ]
             if not free:
                 continue
-            if junctionable is not None and belt_prefab is not None:
+            if junctionable is not None and request.belt_prefab is not None:
                 directions = _source_branch_directions(
-                    belt_prefab,
+                    request.belt_prefab,
                     altitude,
                     actual_level,
                     branch_level,
@@ -5779,28 +5806,28 @@ def _merge_frontier(
                 (x, y, actual_level),
                 path,
                 at,
-                tentative_ok=tentative_ok,
+                tentative_ok=request.tentative_ok,
                 path_cells=path_cells,
-                merged_cells=merged_cells,
+                merged_cells=request.merged_cells,
                 source_feed=source_feed,
             ):
                 continue
-            if admit_tap is not None and not admit_tap((x, y, lvl)):
+            if request.admit_tap is not None and not request.admit_tap((x, y, lvl)):
                 continue
-            if witness is not None:
-                free = [cell for cell in free if witness(cell, (x, y, lvl))]
+            if request.witness is not None:
+                free = [cell for cell in free if request.witness(cell, (x, y, lvl))]
                 if not free:
                     continue
             out.update(free)
-            if provenance is not None:
+            if request.provenance is not None:
                 tap = (x, y, lvl)
                 for cell in free:
-                    provenance.setdefault(cell, tap)
-                    if source_choices is not None:
-                        source_choices.setdefault(cell, set()).add(tap)
-            if trace is not None:
-                trace.append(((x, y, actual_level), (x, y, lvl), tuple(free)))
-            if witness is not None:
+                    request.provenance.setdefault(cell, tap)
+                    if request.source_choices is not None:
+                        request.source_choices.setdefault(cell, set()).add(tap)
+            if request.trace is not None:
+                request.trace.append(((x, y, actual_level), (x, y, lvl), tuple(free)))
+            if request.witness is not None:
                 return out
     return out
 
@@ -7243,19 +7270,24 @@ class _RouteAllRun:
                 self.paths,
                 siblings,
                 frontier_junctionable,
-                provenance=source_provenance,
-                belt_prefab=(self.belt_id, self.belt_model),
-                tentative_ok=tentative_ok,
-                owned_guard=owned_guard,
-                primitives=self.primitives,
-                source_choices=source_choices,
-                witness=witness,
-                admit_tap=admit_source_tap,
-                deadline=self.deadline,
-                path_ranges=source_ranges,
-                merged_cells=existing_sink_targets,
-                source_feeds=source_feeds,
-                trace=walk_offers,
+                # Built HERE, in the call expression: `self.deadline` is
+                # rebound mid-run, so the request must read it exactly when
+                # the old keyword argument did.
+                _MergeFrontierRequest(
+                    provenance=source_provenance,
+                    belt_prefab=(self.belt_id, self.belt_model),
+                    tentative_ok=tentative_ok,
+                    owned_guard=owned_guard,
+                    primitives=self.primitives,
+                    source_choices=source_choices,
+                    witness=witness,
+                    admit_tap=admit_source_tap,
+                    deadline=self.deadline,
+                    path_ranges=source_ranges,
+                    merged_cells=existing_sink_targets,
+                    source_feeds=source_feeds,
+                    trace=walk_offers,
+                ),
             )
         else:
             walk_offers = replay.offers
@@ -7363,14 +7395,16 @@ class _RouteAllRun:
             self.canvas,
             self.paths,
             self.dst_group.get(index, ()),
-            provenance=sink_provenance,
-            primitives=self.primitives,
-            path_ranges=sink_ranges,
-            protected_sinks=_protected_merge_cells(
-                self.paths, self.dst_group.get(index, ()), self.path_tap
-            )
-            | reverse_link_guard
-            | self.rejected_sink_hints[index],
+            request=_MergeFrontierRequest(
+                provenance=sink_provenance,
+                primitives=self.primitives,
+                path_ranges=sink_ranges,
+                protected_sinks=_protected_merge_cells(
+                    self.paths, self.dst_group.get(index, ()), self.path_tap
+                )
+                | reverse_link_guard
+                | self.rejected_sink_hints[index],
+            ),
         )
         # The committer prefers a direct destination link over a sibling hint.
         # Freeze the same choice so transit reservations do not charge a

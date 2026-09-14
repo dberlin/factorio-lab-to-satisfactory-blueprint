@@ -54,7 +54,12 @@ def test_connector_witness_preserves_flat_sibling_merge_and_branch_docks() -> No
     canvas.guard.update(path)
     canvas.guard.update(primitives.guards(path))
 
-    merges = routing_domain._merge_frontier(canvas, {0: path}, (0,), primitives=primitives)
+    merges = routing_domain._merge_frontier(
+        canvas,
+        {0: path},
+        (0,),
+        request=routing_domain._MergeFrontierRequest(primitives=primitives),
+    )
     # Extend the same flat suffix beyond the approach below it: a source tap
     # at y=3 would collide with the incoming level-1 belt through its support.
     branch_path = (*path, (0, 5, 3), (0, 6, 3))
@@ -64,8 +69,10 @@ def test_connector_witness_preserves_flat_sibling_merge_and_branch_docks() -> No
         {0: branch_path},
         (0,),
         lambda x, y, _level: junction.site_is_clear(canvas.buildings, x, y),
-        belt_prefab=(2002, catalog.building(2002).model_index),
-        primitives=primitives,
+        routing_domain._MergeFrontierRequest(
+            belt_prefab=(2002, catalog.building(2002).model_index),
+            primitives=primitives,
+        ),
     )
 
     # The ramp before the physical transfer must not erase the far flat carry
@@ -954,3 +961,227 @@ def test_route_dependencies_take_precedence_over_distance_priority() -> None:
 
 def test_cyclic_route_dependencies_refuse_the_entire_reconstruction() -> None:
     assert routing_domain._dependency_order((3, 1, 2), {1: {2}, 2: {1}}) is None
+
+
+def test_the_merge_frontier_request_is_built_at_the_call_site() -> None:
+    """`deadline` is rebound mid-run, so the request cannot be hoisted.
+
+    routing_domain rebinds the routing deadline in two `finally:` clauses. A
+    request built once and reused would carry the clock from whichever branch
+    built it.
+    """
+    import ast
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[2] / "src" / "flab2bp" / "layout" / "routing_domain.py"
+    tree = ast.parse(path.read_text())
+    # `_DEFAULT_MERGE_REQUEST` is the shared all-defaults singleton the
+    # signature reads; it holds no caller collection and no clock, so it is not
+    # a construction at a call site.
+    singletons = {
+        id(node.value)
+        for node in tree.body
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)
+    }
+    constructions = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_MergeFrontierRequest"
+        and id(node) not in singletons
+    ]
+    assert len(constructions) == 2, [node.lineno for node in constructions]
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_merge_frontier"
+    ]
+    assert len(calls) == 2
+    for call in calls:
+        inline = [
+            argument
+            for argument in [*call.args, *(keyword.value for keyword in call.keywords)]
+            if isinstance(argument, ast.Call)
+            and isinstance(argument.func, ast.Name)
+            and argument.func.id == "_MergeFrontierRequest"
+        ]
+        assert inline, f"_merge_frontier at line {call.lineno} must build its request inline"
+
+
+def test_merge_frontier_takes_five_parameters() -> None:
+    import inspect
+
+    from flab2bp.layout import routing_domain
+
+    parameters = inspect.signature(routing_domain._merge_frontier).parameters
+    assert list(parameters) == ["canvas", "paths", "siblings", "junctionable", "request"]
+
+
+def test_the_merge_frontier_request_is_frozen_and_never_stored_into() -> None:
+    """The request is read-only: `frozen=True`, and no site assigns a field.
+
+    `merged_cells` and `path_ranges` are collections the callee reads through;
+    freezing the reference is what is wanted, and no parameter is rebound in
+    `_merge_frontier`'s body, so a frozen object is a faithful stand-in for the
+    keyword block it replaces.
+    """
+    import ast
+    from dataclasses import FrozenInstanceError, fields
+    from pathlib import Path
+
+    request = routing_domain._MergeFrontierRequest()
+    assert [field.name for field in fields(request)] == [
+        "provenance",
+        "belt_prefab",
+        "tentative_ok",
+        "owned_guard",
+        "primitives",
+        "source_choices",
+        "witness",
+        "admit_tap",
+        "deadline",
+        "path_ranges",
+        "merged_cells",
+        "protected_sinks",
+        "source_feeds",
+        "trace",
+    ]
+    with pytest.raises(FrozenInstanceError):
+        request.deadline = 1.0  # type: ignore[misc]
+
+    source = (
+        Path(__file__).resolve().parents[2] / "src" / "flab2bp" / "layout" / "routing_domain.py"
+    )
+    tree = ast.parse(source.read_text())
+    stores = [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute)
+        and isinstance(node.ctx, ast.Store)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "request"
+    ]
+    assert stores == []
+
+
+def test_the_merge_frontier_body_names_no_bare_former_parameter() -> None:
+    """Every one of the 14 lifted names is reached through `request.` now."""
+    import ast
+    from pathlib import Path
+
+    lifted = {
+        "provenance",
+        "belt_prefab",
+        "tentative_ok",
+        "owned_guard",
+        "primitives",
+        "source_choices",
+        "witness",
+        "admit_tap",
+        "deadline",
+        "path_ranges",
+        "merged_cells",
+        "protected_sinks",
+        "source_feeds",
+        "trace",
+    }
+    source = (
+        Path(__file__).resolve().parents[2] / "src" / "flab2bp" / "layout" / "routing_domain.py"
+    )
+    tree = ast.parse(source.read_text())
+    function = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_merge_frontier"
+    )
+    bare = sorted(
+        {node.id for node in ast.walk(function) if isinstance(node, ast.Name) and node.id in lifted}
+    )
+    assert bare == []
+
+
+def test_each_merge_frontier_request_carries_the_deadline_of_its_own_call() -> None:
+    """A deadline rebound BETWEEN two source calls must reach the second one.
+
+    `_RouteAllRun.deadline` is a mutable field restored in a `finally:` clause,
+    so the request is the one thing in the migration that cannot be hoisted or
+    cached: it must be built where the old keyword argument was evaluated. Two
+    nets give two source-side `_merge_frontier` calls; rebinding the field from
+    inside the first is the literal proof that the second reads the live value
+    rather than a frozen copy.
+    """
+    import inspect
+    from collections.abc import Callable, Mapping, Sequence
+    from typing import cast
+
+    from flab2bp.layout.base import PlacedBuilding as _PlacedBuilding
+
+    bounds = (-2, -2, 202, 161)
+    canvas = routing_domain._Canvas(
+        limit=bounds, belt_rules=replace(routing_domain._DEFAULT_BELT_RULES, max_z=Fraction(0))
+    )
+    tower = canvas.power_building
+    for x, y in ((0, 0), (200, 159)):
+        canvas.add(
+            _PlacedBuilding(
+                tower.item_id, tower.model_index, x, y, width=tower.width, height=tower.height
+            ),
+            solid=True,
+        )
+
+    def port(x: int, y: int) -> routing_domain._Port:
+        index = canvas.add(_PlacedBuilding(2003, 37, x, y, carries_item="gear"))
+        return routing_domain._Port(index, x, y, x, x)
+
+    ports = [(port(50, 80), port(150, 80)), (port(50, 40), port(150, 40))]
+    canvas.guard.update((100, y, 0) for y in range(160))
+    canvas.junction_projection = routing_domain._CompositionProjection(
+        canvas.buildings, bounds, BandPolicy("200"), belt_rules=canvas.belt_rules
+    )
+    nets = [
+        routing_domain._Net(
+            source, destination, "gear", net_id=NetId(ordinal, 1, "gear", NetRole.INTERNAL, 0)
+        )
+        for ordinal, (source, destination) in enumerate(ports)
+    ]
+    canvas.guard.remove((100, 80, 0))
+    canvas.guard.remove((100, 40, 0))
+
+    original = routing_domain._merge_frontier
+    sentinel = monotonic() + 3600.0
+    #: (deadline the run held when the call was made, deadline the request carried)
+    seen: list[tuple[float | None, float | None]] = []
+
+    def capturing(
+        merge_canvas: routing_domain._Canvas,
+        merge_paths: Mapping[int, Sequence[tuple[int, int, int]]],
+        siblings: tuple[int, ...],
+        junctionable: Callable[[int, int, int], bool] | None = None,
+        request: routing_domain._MergeFrontierRequest = routing_domain._DEFAULT_MERGE_REQUEST,
+    ) -> set[tuple[int, int, int]]:
+        if junctionable is not None:
+            run = cast(
+                routing_domain._RouteAllRun,
+                inspect.getclosurevars(junctionable).nonlocals["self"],
+            )
+            seen.append((run.deadline, request.deadline))
+            # Rebind between this call and the next one, exactly as the two
+            # `finally:` restores do mid-run.
+            run.deadline = sentinel
+        return original(merge_canvas, merge_paths, siblings, junctionable, request)
+
+    routing_domain._merge_frontier = capturing  # type: ignore[assignment]
+    try:
+        routing_domain._route_all(canvas, nets, 2003, 37, bounds, budget=WorkBudget(left=100_000))
+    finally:
+        routing_domain._merge_frontier = original
+
+    assert len(seen) >= 2, seen
+    # Every source request carried the run's live deadline, not a cached one.
+    assert all(live == carried for live, carried in seen), seen
+    # And the rebind had teeth: the value genuinely changed between calls.
+    assert seen[0][1] is None
+    assert seen[1][1] == sentinel

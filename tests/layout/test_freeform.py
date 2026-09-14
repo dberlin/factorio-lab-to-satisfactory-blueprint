@@ -14213,7 +14213,9 @@ class TestSelectedSplitterSurvivesLaterMerge:
             canvas,
             held,
             (0,),
-            protected_sinks=routing_domain._protected_merge_cells(held, (0,), {1: (0, 0, 14)}),
+            request=routing_domain._MergeFrontierRequest(
+                protected_sinks=routing_domain._protected_merge_cells(held, (0,), {1: (0, 0, 14)})
+            ),
         )
         assert (1, -1, 14) not in offers
         assert (-1, -1, 14) in offers  # Upstream merges still reach the Splitter.
@@ -14233,8 +14235,9 @@ class TestSelectedSplitterSurvivesLaterMerge:
                 held,
                 (0,),
                 canvas.junction_is_clear,
-                belt_prefab=(2003, 37),
-                merged_cells={(merge_x, 0, 14)},
+                routing_domain._MergeFrontierRequest(
+                    belt_prefab=(2003, 37), merged_cells={(merge_x, 0, 14)}
+                ),
             )
             assert ((0, 1, 14) in offers) == (merge_x < 0)
 
@@ -14644,8 +14647,7 @@ class TestABranchLeavesFromItsOwnSource:
             {0: first_path},
             (0,),
             lambda _x, _y, _level: True,
-            provenance=provenance,
-            belt_prefab=(2001, 35),
+            routing_domain._MergeFrontierRequest(provenance=provenance, belt_prefab=(2001, 35)),
         )
         for cell in first_path:
             del canvas.blocked[cell]
@@ -15190,8 +15192,7 @@ class TestDetailedRoutingDiagnostics:
             {0: path},
             (0,),
             lambda _x, _y, _level: True,
-            provenance=provenance,
-            tentative_ok=True,
+            routing_domain._MergeFrontierRequest(provenance=provenance, tentative_ok=True),
         )
         assert strict == set()
         assert (0, 1, 0) in repair
@@ -15208,9 +15209,11 @@ class TestDetailedRoutingDiagnostics:
             paths,
             (0, 1),
             lambda _x, _y, _level: True,
-            provenance=provenance,
-            source_choices=choices,
-            admit_tap=lambda tap: tap != (0, 0, 0),
+            routing_domain._MergeFrontierRequest(
+                provenance=provenance,
+                source_choices=choices,
+                admit_tap=lambda tap: tap != (0, 0, 0),
+            ),
         )
 
         assert (1, 0, 0) in frontier
@@ -15238,7 +15241,11 @@ class TestDetailedRoutingDiagnostics:
             routing_domain.RoutingFlowLimits((Fraction(60), Fraction(50), rate), Fraction(120)),
         )
         frontier = routing_domain._merge_frontier(
-            canvas, paths, (0,), lambda _x, _y, _level: True, path_ranges=source_ranges
+            canvas,
+            paths,
+            (0,),
+            lambda _x, _y, _level: True,
+            routing_domain._MergeFrontierRequest(path_ranges=source_ranges),
         )
         assert (1, 1, 0) in frontier
         assert ((5, 1, 0) in frontier) is shared_allowed
@@ -15262,7 +15269,12 @@ class TestDetailedRoutingDiagnostics:
             {},
             routing_domain.RoutingFlowLimits((Fraction(60), Fraction(50), rate), Fraction(120)),
         )
-        frontier = routing_domain._merge_frontier(canvas, paths, (0,), path_ranges=sink_ranges)
+        frontier = routing_domain._merge_frontier(
+            canvas,
+            paths,
+            (0,),
+            request=routing_domain._MergeFrontierRequest(path_ranges=sink_ranges),
+        )
         assert (5, 1, 0) in frontier
         assert ((1, 1, 0) in frontier) is shared_allowed
 
@@ -15284,7 +15296,11 @@ class TestDetailedRoutingDiagnostics:
             4, paths, owner, sources, {3: (2, 0, 0)}, limits
         )
         assert not routing_domain._merge_frontier(
-            canvas, paths, (2,), lambda _x, _y, _level: True, path_ranges=restricted
+            canvas,
+            paths,
+            (2,),
+            lambda _x, _y, _level: True,
+            routing_domain._MergeFrontierRequest(path_ranges=restricted),
         )
         # Ripping up the incoming flow restores capacity on the entire ancestry.
         del paths[3]
@@ -15292,7 +15308,11 @@ class TestDetailedRoutingDiagnostics:
             4, paths, owner, sources, {3: (2, 0, 0)}, limits
         )
         assert (6, 3, 0) in routing_domain._merge_frontier(
-            canvas, paths, (2,), lambda _x, _y, _level: True, path_ranges=restored
+            canvas,
+            paths,
+            (2,),
+            lambda _x, _y, _level: True,
+            routing_domain._MergeFrontierRequest(path_ranges=restored),
         )
 
     def test_merge_frontier_offers_an_owned_junction_guard_port(self) -> None:
@@ -15308,15 +15328,16 @@ class TestDetailedRoutingDiagnostics:
             {0: path},
             (0,),
             lambda x, y, level: (x, y, level) == (0, 0, 0),
-            belt_prefab=(2001, 35),
+            routing_domain._MergeFrontierRequest(belt_prefab=(2001, 35)),
         )
         owned = routing_domain._merge_frontier(
             canvas,
             {0: path},
             (0,),
             lambda x, y, level: (x, y, level) == (0, 0, 0),
-            belt_prefab=(2001, 35),
-            owned_guard={branch: (0, 0, 0)},
+            routing_domain._MergeFrontierRequest(
+                belt_prefab=(2001, 35), owned_guard={branch: (0, 0, 0)}
+            ),
         )
 
         assert branch not in refused
@@ -16936,7 +16957,7 @@ class TestSourceTapPreservesPhysicalSplitterPortIdentity:
             {5: path},
             (5,),
             lambda x, y, level: (x, y, level) == (0, 0, 2),
-            belt_prefab=(2001, 35),
+            routing_domain._MergeFrontierRequest(belt_prefab=(2001, 35)),
         )
 
         assert frontier == {(-1, 0, 2), (1, 0, 2)}
@@ -16954,7 +16975,7 @@ class TestSourceTapPreservesPhysicalSplitterPortIdentity:
             {5: path},
             (5,),
             lambda x, y, level: (x, y, level) == (0, 0, 1),
-            belt_prefab=(2001, 35),
+            routing_domain._MergeFrontierRequest(belt_prefab=(2001, 35)),
         )
 
         assert frontier == {(-1, 0, 0), (1, 0, 0)}
@@ -17080,8 +17101,9 @@ class TestTheMergeFrontierWithdrawsSitesAJunctionCannotHold:
                 {5: path},
                 (5,),
                 lambda x, y, level: (x, y, level) == (0, 0, 0),
-                belt_prefab=(2001, 35),
-                source_feeds={5: source},
+                routing_domain._MergeFrontierRequest(
+                    belt_prefab=(2001, 35), source_feeds={5: source}
+                ),
             )
 
         assert frontier() == {(0, -1, 0), (0, 1, 0)}
@@ -21308,7 +21330,7 @@ def _capture_can_junction(
         merge_paths: Mapping[int, Sequence[Cell]],
         siblings: tuple[int, ...],
         junctionable: Callable[[int, int, int], bool] | None = None,
-        **kwargs: object,
+        request: routing_domain._MergeFrontierRequest = routing_domain._DEFAULT_MERGE_REQUEST,
     ) -> set[Cell]:
         if junctionable is not None:
             context = inspect.getclosurevars(junctionable).nonlocals
@@ -21327,7 +21349,7 @@ def _capture_can_junction(
             merge_paths,
             siblings,
             junctionable,
-            **kwargs,  # type: ignore[arg-type]
+            request,
         )
 
     monkeypatch.setattr(routing_domain, "_merge_frontier", capturing)
