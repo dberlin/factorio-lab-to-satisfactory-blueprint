@@ -6379,6 +6379,17 @@ class _RouteAllRun:
     #: is taken at the statement slot the `def` used to occupy.
     retained_failures: dict[int, NetFailure] = field(init=False)
     retained_blockers: dict[int, tuple[NetId, ...]] = field(init=False)
+    #: The round's own working state, re-derived at every binding point the
+    #: locals had: `pressure` and `blame` once per round, the three failure
+    #: tables once before the loop and again at the top of every round, and
+    #: `round_failures` twice more as the round narrows it to the stranded set.
+    #: Declared with no default so a read before the first binding is an
+    #: `AttributeError`, as it was an `UnboundLocalError`.
+    search_failures: dict[int, _PathSearchResult] = field(init=False)
+    search_blockers: dict[int, tuple[NetId, ...]] = field(init=False)
+    round_failures: dict[int, NetFailure] = field(init=False)
+    pressure: float = field(init=False)
+    blame: dict[Cell, float] = field(init=False)
 
     @property
     def left(self) -> int:

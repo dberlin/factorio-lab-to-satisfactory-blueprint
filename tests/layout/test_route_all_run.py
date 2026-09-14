@@ -176,7 +176,7 @@ def test_the_run_object_carries_exactly_the_rebound_names() -> None:
 
     assert {
         field.name for field in fields(domain._RouteAllRun)
-    } - PROLOGUE_FIELDS - SEARCH_FIELDS - COMMIT_FIELDS == {
+    } - PROLOGUE_FIELDS - SEARCH_FIELDS - COMMIT_FIELDS - LAST_MILE_FIELDS == {
         "budget",
         "deadline",
         "work",
@@ -782,3 +782,30 @@ def test_repair_is_the_last_closure_lifted_out_of_the_route_order_cluster() -> N
         and child.value.value.id == "run"
     ]
     assert len(aliases) == 1, aliases
+
+
+#: The five names the last-mile cluster captured that were not fields yet. All
+#: five are re-derived once per round exactly where the locals were, so they
+#: carry no default: a read before the first round must stay a hard error.
+LAST_MILE_FIELDS = {
+    "pressure",
+    "blame",
+    "search_failures",
+    "search_blockers",
+    "round_failures",
+}
+
+
+def test_the_run_object_carries_the_last_mile_cluster_fields() -> None:
+    from dataclasses import fields
+
+    names = {field.name for field in fields(domain._RouteAllRun)}
+    assert names >= LAST_MILE_FIELDS, sorted(LAST_MILE_FIELDS - names)
+
+
+def test_the_late_last_mile_fields_are_unset_until_the_round_binds_them() -> None:
+    """No default: a read before the round binds one must stay a hard error."""
+    run = domain._RouteAllRun(budget=WorkBudget(left=10), deadline=None)
+    for name in sorted(LAST_MILE_FIELDS):
+        with pytest.raises(AttributeError):
+            getattr(run, name)
