@@ -11,6 +11,7 @@ from flab2bp.dsp import catalog
 from flab2bp.layout import finalize, junction, routing_domain, slots, validate
 from flab2bp.layout.band_policy import BandPolicy
 from flab2bp.layout.base import PlacedBuilding, Placement
+from flab2bp.layout.budget import WorkBudget
 from flab2bp.layout.route_feedback import (
     DetailedRouteStatus,
     NetId,
@@ -125,7 +126,7 @@ def test_accepted_settlement_hands_off_exact_linked_candidate_once() -> None:
         2001,
         35,
         canvas.limit,
-        budget={"left": 20_000},
+        budget=WorkBudget(left=20_000),
         settle=settle,
     )
     assert result.status is DetailedRouteStatus.ROUTED
@@ -173,7 +174,7 @@ def test_settlement_cancellation_and_exception_do_not_try_another_candidate(
         2001,
         35,
         canvas.limit,
-        budget={"left": 20_000},
+        budget=WorkBudget(left=20_000),
         settle=settle,
     )
     assert len(calls) == 1
@@ -219,7 +220,7 @@ def test_partial_finish_emits_surviving_route_without_settlement(
         2001,
         35,
         canvas.limit,
-        budget={"left": 20_000},
+        budget=WorkBudget(left=20_000),
         settle=settle,
     )
     assert result.routed == (net.net_id,)
@@ -263,7 +264,7 @@ def test_budget_exit_materializes_selected_partial_without_settlement(
         2001,
         35,
         canvas.limit,
-        budget={"left": 20_000},
+        budget=WorkBudget(left=20_000),
         deadline=now + 1.0,
         settle=settle,
     )
@@ -409,7 +410,7 @@ def test_settlement_interior_hint_reroutes_linked_path_with_unchanged_endpoints(
         )
 
     result = routing_domain._route_all(
-        canvas, [net], 2001, 35, canvas.limit, budget={"left": 20_000}, settle=settle
+        canvas, [net], 2001, 35, canvas.limit, budget=WorkBudget(left=20_000), settle=settle
     )
     assert result.settlement is stopped
     assert interior not in candidates[-1]
@@ -445,7 +446,7 @@ def test_failed_interior_proposal_keeps_ordinary_path_in_existing_repair_slots()
         )
 
     result = routing_domain._route_all(
-        canvas, [net], 2001, 35, canvas.limit, budget={"left": 20_000}, settle=settle
+        canvas, [net], 2001, 35, canvas.limit, budget=WorkBudget(left=20_000), settle=settle
     )
     assert result.settlement is stopped
     assert candidates[0] == candidates[-1]
@@ -494,7 +495,7 @@ def test_cluster_keeps_ordinary_paths_after_a_second_routes_detour_fails(
         )
 
     result = routing_domain._route_all(
-        canvas, nets, 2001, 35, canvas.limit, budget={"left": 20_000}, settle=settle
+        canvas, nets, 2001, 35, canvas.limit, budget=WorkBudget(left=20_000), settle=settle
     )
     assert result.settlement is stopped
     assert candidates[0] == candidates[-1]
@@ -786,7 +787,7 @@ def test_contextual_refusal_moves_existing_tap_after_upstream_restaking(
         2001,
         35,
         canvas.limit,
-        budget={"left": 20_000},
+        budget=WorkBudget(left=20_000),
         settle=settle,
     )
     assert result.settlement is stopped
@@ -821,13 +822,13 @@ def test_earlier_partial_incumbent_cannot_inherit_later_refused_workspace(
     monkeypatch.setattr(routing_domain, "_REPAIR_PASSES", 0)
     monkeypatch.setattr(routing_domain.last_mile, "B_MAX_STRANDED", 0)
     monkeypatch.setattr(routing_domain, "RRR_MAX", 2)
-    budget = {"left": 20_000}
+    budget = WorkBudget(left=20_000)
     refused = []
 
     def settle(workspace, owners):
         _assert_linked(workspace, other)
         workspace.add(PlacedBuilding(2001, 35, 8, 8, carries_item="refused-marker"))
-        budget["left"] = 0
+        budget.left = 0
         refusal = RouteSettlementRefused("later-candidate", frozenset((other.net_id,)))
         refused.append(refusal)
         return refusal
@@ -913,7 +914,9 @@ def test_large_pass_preserves_search_opportunity_for_later_easy_net(monkeypatch)
                 net_id=NetId(ordinal * 2, ordinal * 2 + 1, "iron-ore", NetRole.INTERNAL, ordinal),
             )
         )
-    result = routing_domain._route_all(canvas, nets, 2001, 35, canvas.limit, budget={"left": 80})
+    result = routing_domain._route_all(
+        canvas, nets, 2001, 35, canvas.limit, budget=WorkBudget(left=80)
+    )
     assert nets[1].net_id in result.routed
     _assert_linked(canvas, nets[1])
 
@@ -936,7 +939,7 @@ def test_refused_provider_reports_every_withdrawn_dependent_with_quota_left(monk
     monkeypatch.setattr(routing_domain, "_COMMIT_REPAIR_PASSES", 0)
     monkeypatch.setattr(routing_domain, "RRR_MAX", 1)
     monkeypatch.setattr(routing_domain.last_mile, "B_MAX_STRANDED", 0)
-    budget = {"left": 20_000}
+    budget = WorkBudget(left=20_000)
 
     def refuse_provider(workspace, owners):
         return RouteSettlementRefused("provider-context", frozenset((nets[0].net_id,)))
@@ -944,7 +947,7 @@ def test_refused_provider_reports_every_withdrawn_dependent_with_quota_left(monk
     result = routing_domain._route_all(
         canvas, nets, 2001, 35, canvas.limit, budget=budget, settle=refuse_provider
     )
-    assert budget["left"] > 0
+    assert budget.left is not None and budget.left > 0
     assert result.routed == ()
     assert set(result.stranded) == {net.net_id for net in nets}
 

@@ -37,6 +37,7 @@ from flab2bp.layout.base import (
     Placement,
     PlacementCompletion,
 )
+from flab2bp.layout.budget import WorkBudget
 from flab2bp.layout.buildings import MutableBuildings
 from flab2bp.layout.finalize import ProjectionNoGood
 from flab2bp.layout.finalize import finalize_placement as project_placement
@@ -544,7 +545,7 @@ def test_prepared_static_access_failure_spends_no_route_budget(
         failed,
         power=False,
         route=True,
-        budget={"left": 10_000},
+        budget=WorkBudget(left=10_000),
     )
 
     assert result.routing.status is DetailedRouteStatus.STRANDED
@@ -625,7 +626,7 @@ def test_prepared_budget_result_stops_before_every_emission_boundary(
         prepared,
         power=True,
         route=True,
-        budget={"left": 100},
+        budget=WorkBudget(left=100),
     )
 
     assert result.routing == evidence
@@ -1057,7 +1058,7 @@ def test_self_consuming_refined_oil_feedback_routes_and_validates(
         prepared,
         power=False,
         route=True,
-        budget={"left": 5_000_000},
+        budget=WorkBudget(left=5_000_000),
     )
     assert result.routing.status is DetailedRouteStatus.ROUTED
     placement = result.placement
@@ -1280,7 +1281,7 @@ def test_slope_limited_prepared_coater_routing_is_structured() -> None:
         prepared,
         power=False,
         route=True,
-        budget={"left": 2_000_000},
+        budget=WorkBudget(left=2_000_000),
     )
 
     assert prepared.ramped
@@ -1323,7 +1324,7 @@ def test_detailed_route_terminates_at_elevated_port() -> None:
         2001,
         35,
         (0, -2, 6, 2),
-        budget={"left": 20_000},
+        budget=WorkBudget(left=20_000),
     )
     assert result.status is DetailedRouteStatus.ROUTED
     assert result.routed == (net_id,)
@@ -1376,7 +1377,7 @@ def test_detailed_router_groups_mixed_destination_but_not_mixed_source(
         2001,
         35,
         (0, -2, 6, 2),
-        budget={"left": 50_000},
+        budget=WorkBudget(left=50_000),
     )
 
     assert observed
@@ -1457,7 +1458,7 @@ def test_commit_link_rejection_reroutes_the_same_net_before_emission(
         2001,
         35,
         (0, -2, 6, 2),
-        budget={"left": 50_000},
+        budget=WorkBudget(left=50_000),
     )
 
     assert result.status is DetailedRouteStatus.ROUTED
@@ -1561,7 +1562,7 @@ def test_commit_preflight_repairs_a_routed_net_while_another_remains_stranded(
         2001,
         35,
         (0, -2, 6, 5),
-        budget={"left": 100_000},
+        budget=WorkBudget(left=100_000),
     )
 
     assert result.status in (DetailedRouteStatus.STRANDED, DetailedRouteStatus.BUDGET)
@@ -1672,7 +1673,7 @@ def test_route_feedback_preflight_commit_link_retains_exact_endpoint_evidence(
         2001,
         35,
         (0, -2, 6, 2),
-        budget={"left": 50_000},
+        budget=WorkBudget(left=50_000),
     )
 
     assert result.status is DetailedRouteStatus.STRANDED
@@ -1717,7 +1718,7 @@ def test_unreachable_elevated_port_returns_structured_failure_without_route() ->
         2001,
         35,
         (0, -2, 6, 2),
-        budget={"left": 20_000},
+        budget=WorkBudget(left=20_000),
     )
 
     assert result.status is DetailedRouteStatus.BUDGET
@@ -1896,7 +1897,7 @@ def test_elevated_external_port_bypasses_ground_fast_path_and_routes_a_ramp(
         2001,
         35,
         (1, -1, 6, 1),
-        budget={"left": 20_000},
+        budget=WorkBudget(left=20_000),
     )
     assert routed.status is DetailedRouteStatus.ROUTED
     assert any(
@@ -1912,7 +1913,7 @@ def test_elevated_external_port_bypasses_ground_fast_path_and_routes_a_ramp(
         2001,
         35,
         (0, 0, 2, 0),
-        budget={"left": 20_000},
+        budget=WorkBudget(left=20_000),
     )
     assert blocked.status is DetailedRouteStatus.STRANDED
     assert blocked.failures
@@ -4975,7 +4976,7 @@ def test_terminal_refusal_names_completion_stage_after_every_net_wired(
         strips: list[Strip],
         _sweep_s: float,
         _deadline: float,
-        _budget: dict[str, int],
+        _budget: WorkBudget,
         rejected: list[freeform._RefusalFinding],
         attempts: list[freeform.PackAttempt],
         **_kwargs: object,
@@ -11975,14 +11976,14 @@ class TestPortAccessIsReservedForEveryRole:
         assert first == (1, ((1, 0, 0), (2, 0, 0)), True)
 
 
-def test_boundary_goal_search_reaches_exit_without_exhausting_expansion_budget() -> None:
+def test_boundary_goal_search_reaches_exit_without_exhausting_work_budget() -> None:
     bounds = (-40, -40, 40, 40)
     canvas = _Canvas(limit=bounds)
     boundary = {
         (x, y, 0) for x in range(-40, 41) for y in range(-40, 41) if abs(x) == 40 or abs(y) == 40
     }
     grid = _make_grid(canvas, bounds, (-42, -42, 42, 42), {})
-    budget = {"left": 1024}
+    budget = WorkBudget(left=1024)
 
     result = _geometric_search(canvas, [(0, 0, 0)], boundary, {}, 0.0, bounds, budget, grid=grid)
 
@@ -14890,7 +14891,7 @@ class TestDetailedRoutingDiagnostics:
                 (0, 2),
             },
         )
-        shared_budget = {"left": 1000}
+        shared_budget = WorkBudget(left=1000)
         monkeypatch.setattr("flab2bp.layout.routing_domain._MAX_SEARCH_WORK", 1)
         monkeypatch.setattr("flab2bp.layout.routing_domain.RRR_MAX", 1)
         monkeypatch.setattr("flab2bp.layout.routing_domain._REPAIR_PASSES", 1)
@@ -14905,7 +14906,7 @@ class TestDetailedRoutingDiagnostics:
         )
 
         failure = next(f for f in result.failures if f.net_id == failed_id)
-        assert shared_budget["left"] > 0
+        assert shared_budget.left is not None and shared_budget.left > 0
         assert result.status is DetailedRouteStatus.BUDGET
         assert failure.kind is RouteFailureKind.BUDGET
         assert failure.wall == ()
@@ -14924,7 +14925,7 @@ class TestDetailedRoutingDiagnostics:
             2001,
             35,
             bounds,
-            budget={"left": 0},
+            budget=WorkBudget(left=0),
         )
 
         assert result.status is DetailedRouteStatus.BUDGET
@@ -14944,7 +14945,7 @@ class TestDetailedRoutingDiagnostics:
             {},
             1.0,
             bounds,
-            budget={"left": 0},
+            budget=WorkBudget(left=0),
         )
 
         assert result.kind is RouteFailureKind.DYNAMIC_ACCESS
@@ -15495,7 +15496,7 @@ class TestDetailedRoutingDiagnostics:
             2001,
             35,
             bounds,
-            budget={"left": 500_000},
+            budget=WorkBudget(left=500_000),
         )
 
         assert result.status is DetailedRouteStatus.ROUTED
@@ -15717,7 +15718,7 @@ class TestAFailedSearchNamesTheWallThatCutIt:
             {},
             1.0,
             bounds,
-            {"left": 0},
+            WorkBudget(left=0),
             None,
             blame,
         )
@@ -18200,7 +18201,7 @@ def test_freeform_band_120_dropped_height_has_actual_clean_layout_control(
         power=False,
         route=True,
         policy=BandPolicy(selection),
-        budget={"left": 5_000_000},
+        budget=WorkBudget(left=5_000_000),
     )
     assert result.routing.status is DetailedRouteStatus.ROUTED
     assert result.placement is not None
@@ -20901,7 +20902,7 @@ def _last_mile_route(
     pinned_off: bool,
     monkeypatch: pytest.MonkeyPatch,
     deadline: float | None = None,
-    budget: dict[str, int] | None = None,
+    budget: WorkBudget | None = None,
     never_expired: bool = False,
 ) -> DetailedRouteResult:
     """One `_route_all` over a fresh stranded fixture, pass on or pinned off."""
@@ -20923,12 +20924,14 @@ def _last_mile_route(
         )
 
 
-def test_an_exhausted_expansion_budget_never_reaches_the_cluster_search(
+def test_an_exhausted_work_budget_never_reaches_the_cluster_search(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A pass with nothing left to spend cannot start a search that spends."""
-    reference = _last_mile_route(pinned_off=True, monkeypatch=monkeypatch, budget={"left": 0})
-    result = _last_mile_route(pinned_off=False, monkeypatch=monkeypatch, budget={"left": 0})
+    reference = _last_mile_route(
+        pinned_off=True, monkeypatch=monkeypatch, budget=WorkBudget(left=0)
+    )
+    result = _last_mile_route(pinned_off=False, monkeypatch=monkeypatch, budget=WorkBudget(left=0))
     # The control: the SAME fixture with a budget runs the pass, so the zero
     # above is this gate and not the fixture declining to strand anything.
     control = _last_mile_route(pinned_off=False, monkeypatch=monkeypatch)
@@ -23260,7 +23263,7 @@ def test_lay_out_names_the_skipped_seed_gate_when_every_height_was_skipped(
         _strips: list[Strip],
         _time_budget_s: float,
         _deadline: float | None = None,
-        _budget: dict[str, int] | None = None,
+        _budget: WorkBudget | None = None,
         rejected: list[freeform._RefusalFinding] | None = None,
         attempts: list[freeform.PackAttempt] | None = None,
         skipped_heights: list[int] | None = None,
@@ -23378,7 +23381,7 @@ def test_lay_out_bounds_a_routed_refusal_to_the_recurring_net(
         _strips: list[Strip],
         _time_budget_s: float,
         _deadline: float | None = None,
-        _budget: dict[str, int] | None = None,
+        _budget: WorkBudget | None = None,
         rejected: list[freeform._RefusalFinding] | None = None,
         attempts: list[freeform.PackAttempt] | None = None,
         skipped_heights: list[int] | None = None,
@@ -23855,7 +23858,7 @@ def test_shared_external_supply_routes_around_its_blocked_fixed_tap(vertical: bo
         belt_id,
         belt_model,
         bounds,
-        budget={"left": 20_000},
+        budget=WorkBudget(left=20_000),
     )
 
     assert routed.status is DetailedRouteStatus.ROUTED, routed.failures
@@ -24798,7 +24801,7 @@ def test_recorded_broke7_packs_preserve_portable_coater_certification(
         policy=BandPolicy("portable"),
         power=False,
         route=True,
-        budget={"left": 50_000_000},
+        budget=WorkBudget(left=50_000_000),
     )
     assert built.routing.status is DetailedRouteStatus.ROUTED
     assert built.placement is not None
@@ -25295,7 +25298,7 @@ class TestALargePowerBuildingClaimsItsWholeFootprint:
             prepared,
             power=True,
             route=True,
-            budget={"left": 50_000_000},
+            budget=WorkBudget(left=50_000_000),
         )
         placement = result.placement
         assert placement is not None

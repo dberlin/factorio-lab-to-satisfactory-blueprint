@@ -56,6 +56,7 @@ from flab2bp.lab.url import parse_url  # noqa: E402
 from flab2bp.layout import freeform, last_mile, routing_domain  # noqa: E402
 from flab2bp.layout.band_policy import BandPolicy  # noqa: E402
 from flab2bp.layout.base import NoValidLayout  # noqa: E402
+from flab2bp.layout.budget import WorkBudget  # noqa: E402
 from flab2bp.rates import CandidatePolicy, build_candidates  # noqa: E402
 
 
@@ -98,7 +99,7 @@ def capture(
         history: dict[tuple[int, int, int], float],
         pressure: float,
         bounds: tuple[int, int, int, int],
-        budget: dict[str, int] | None = None,
+        budget: WorkBudget | None = None,
         deadline: float | None = None,
         blame: dict[tuple[int, int, int], float] | None = None,
         grid: routing_domain._Grid | None = None,
@@ -127,7 +128,7 @@ def capture(
                 tuple(forbidden),
                 None if blocking_owners is None else dict(blocking_owners),
                 None if extra_edges is None else dict(extra_edges),
-                None if budget is None else budget["left"],
+                None if budget is None else budget.left,
                 None if deadline is None else max(0.0, deadline - time.monotonic()),
                 None if blame is None else dict(blame),
             )
@@ -154,7 +155,7 @@ def capture(
                 RouteCase(
                     query,
                     out_path,
-                    None if budget is None else budget["left"],
+                    None if budget is None else budget.left,
                     None if blame is None else dict(blame),
                 )
             )
@@ -290,7 +291,7 @@ def bench(path: Path, rounds: int, check: bool) -> int:
         t0 = time.perf_counter()
         for case, (canvas, grid) in zip(cases, restored, strict=True):
             query = case.query
-            budget = None if query.budget_left is None else {"left": query.budget_left}
+            budget = None if query.budget_left is None else WorkBudget(left=query.budget_left)
             blame = None if query.blame is None else dict(query.blame)
             deadline = (
                 None
@@ -315,7 +316,7 @@ def bench(path: Path, rounds: int, check: bool) -> int:
                 extra_edges=query.extra_edges,
             )
             got.append(result)
-            effects_same = (None if budget is None else budget["left"]) == case.budget_left and (
+            effects_same = (None if budget is None else budget.left) == case.budget_left and (
                 None if blame is None else tuple(blame.items())
             ) == (None if case.blame is None else tuple(case.blame.items()))
             side_effects_match &= effects_same

@@ -10,7 +10,7 @@ from functools import cache, partial
 from typing import Literal, cast
 
 from flab2bp.dsp import catalog, codec, colliders, planet, quaternion, rules
-from flab2bp.layout import slots
+from flab2bp.layout import budget, slots
 from flab2bp.layout.band_policy import BandPolicy
 from flab2bp.layout.base import AreaFrame, PlacedBuilding, Placement, PlacementCompletion
 from flab2bp.layout.buildings import Buildings, Kind, kind_for
@@ -4509,7 +4509,7 @@ type PlacementCompletionResult = (
 
 
 def _completion_expired(deadline: float | None) -> bool:
-    return deadline is not None and time.monotonic() >= deadline
+    return budget.expired(deadline, time.monotonic)
 
 
 def prepare_placement_completion(

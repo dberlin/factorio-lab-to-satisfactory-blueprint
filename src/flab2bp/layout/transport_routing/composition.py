@@ -12,13 +12,13 @@ from flab2bp.layout import finalize
 from flab2bp.layout import routing_domain as rd
 from flab2bp.layout.band_policy import BAND_DIMENSIONS, BandPolicy
 from flab2bp.layout.base import PlacedBuilding, Placement
+from flab2bp.layout.budget import WorkBudget
 from flab2bp.layout.slots import assign_sorter_slots
 from flab2bp.layout.strip_variants import CargoDomain
 from flab2bp.spec import BuildSpec
 
 from . import junctions
 from .allocation import external_roots, select_topology
-from .budget import WorkBudget
 from .construction import ConstructionRefusal, Constructor, Terminal
 from .flights import Flight
 from .inventory import Inventory, TransportDemand, prepare_inventory
@@ -349,7 +349,7 @@ def construct(
     inventory = replace(inventory, demands=tuple(demands))
 
     def cancelled() -> bool:
-        return budget.clock() >= budget.deadline
+        return budget.expired()
 
     source_families: dict[int, list[TransportDemand]] = defaultdict(list)
     sink_families: dict[int, list[TransportDemand]] = defaultdict(list)

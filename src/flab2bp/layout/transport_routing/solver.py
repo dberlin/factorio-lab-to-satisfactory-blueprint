@@ -10,7 +10,8 @@ from itertools import combinations
 
 from pysat.solvers import Cadical195
 
-from .budget import TransportRefusal, WorkBudget
+from flab2bp.layout.budget import TransportRefusal, WorkBudget
+
 from .cnf import FactorCNF
 from .geometry import PrimitiveIndex
 from .paths import (

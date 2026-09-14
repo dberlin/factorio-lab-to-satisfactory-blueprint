@@ -8,7 +8,8 @@ from itertools import islice
 
 from pysat.card import CardEnc, EncType
 
-from .budget import TransportRefusal, WorkBudget
+from flab2bp.layout.budget import TransportRefusal, WorkBudget
+
 from .geometry import Family
 from .paths import Domain
 

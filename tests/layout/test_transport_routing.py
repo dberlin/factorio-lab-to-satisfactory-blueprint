@@ -16,12 +16,12 @@ from flab2bp.layout import finalize, junction, validate
 from flab2bp.layout import routing_domain as rd
 from flab2bp.layout.band_policy import BandPolicy
 from flab2bp.layout.base import Placement
+from flab2bp.layout.budget import TransportRefusal, WorkBudget
 from flab2bp.layout.markers import self_loop_prime_heads
 from flab2bp.layout.routing_domain import spherical_overflight_limit
 from flab2bp.layout.slots import assign_sorter_slots
 from flab2bp.layout.transport_routing import paths, solver
 from flab2bp.layout.transport_routing.allocation import select_topology
-from flab2bp.layout.transport_routing.budget import TransportRefusal, WorkBudget
 from flab2bp.layout.transport_routing.cnf import FactorCNF
 from flab2bp.layout.transport_routing.construction import Terminal, path_through
 from flab2bp.layout.transport_routing.flights import Flight, occupied_cells

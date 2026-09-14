@@ -6,6 +6,7 @@ from dataclasses import replace
 from fractions import Fraction
 
 from flab2bp.layout import last_mile, routing_domain
+from flab2bp.layout.budget import WorkBudget
 from flab2bp.layout.route_feedback import RouteFailureKind
 from flab2bp.layout.route_primitives import RoutePrimitives
 from flab2bp.layout.routing_domain import _Canvas, _geometric_search, _PathSearchResult
@@ -401,11 +402,23 @@ def _grid_environment(
     bounds: tuple[int, int, int, int],
     ends: dict[int, tuple[list[Cell], set[Cell]]],
     *,
-    budget: dict[str, int] | None = None,
+    budget: WorkBudget | None = None,
     max_nodes: int = last_mile.B_MAX_CBS_NODES,
 ) -> last_mile.ClusterEnvironment:
     """A CBS environment whose low level is the real router's the geometric search."""
-    left = {"left": 1 << 30} if budget is None else budget
+    left = WorkBudget(left=1 << 30) if budget is None else budget
+
+    def budget_left() -> int:
+        """What the ledger has left. Both ledgers this can see are bounded.
+
+        ``WorkBudget.left`` is ``int | None`` because ``None`` means
+        "unbounded", and a plain ``or 0`` would report that as exhausted --
+        the opposite -- where the dict read this replaced could only ever
+        return the number the caller put there.
+        """
+        remaining = left.left
+        assert remaining is not None
+        return remaining
 
     def search(index: int, constraints: frozenset[Cell]) -> _PathSearchResult:
         starts, goals = ends[index]
@@ -429,7 +442,7 @@ def _grid_environment(
     return last_mile.ClusterEnvironment(
         search=search,
         offers=_offers_stub,
-        budget_left=lambda: left["left"],
+        budget_left=budget_left,
         budget_floor=0,
         expired=lambda: False,
         max_nodes=max_nodes,
@@ -561,7 +574,7 @@ def test_an_exhausted_expansion_floor_reports_bounded() -> None:
     problem = last_mile.ClusterProblem(
         nets=(0, 1), stranded=(0,), truncated=False, sibling_closed=True
     )
-    budget = {"left": 1 << 30}
+    budget = WorkBudget(left=1 << 30)
     environment = _grid_environment(canvas, bounds, _CROSSING_ENDS, budget=budget)
     planned = environment.search
     replans = 0
@@ -574,7 +587,7 @@ def test_an_exhausted_expansion_floor_reports_bounded() -> None:
             if replans == 2:
                 # The root pair and the first node's two children are paid for;
                 # the pass has nothing left for the node now on the heap.
-                budget["left"] = 0
+                budget.left = 0
         return found
 
     result = last_mile.solve_cluster(problem, replace(environment, search=draining))
@@ -593,7 +606,7 @@ def test_a_budget_already_at_the_floor_never_starts() -> None:
 
     result = last_mile.solve_cluster(
         problem,
-        _grid_environment(canvas, bounds, _CROSSING_ENDS, budget={"left": 0}),
+        _grid_environment(canvas, bounds, _CROSSING_ENDS, budget=WorkBudget(left=0)),
     )
 
     assert result.outcome is last_mile.ClusterOutcome.BOUNDED

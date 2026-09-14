@@ -31,7 +31,15 @@ from functools import partial
 from typing import NamedTuple
 
 from flab2bp.dsp import catalog
-from flab2bp.layout import finalize, junction, physical_flow, slots, validate
+from flab2bp.layout import (
+    budget,
+    finalize,
+    junction,
+    physical_flow,
+    routing_domain,
+    slots,
+    validate,
+)
 from flab2bp.layout.band_policy import BandPolicy
 from flab2bp.layout.base import PlacedBuilding, Placement
 from flab2bp.layout.buildings import Buildings
@@ -50,7 +58,6 @@ from flab2bp.layout.route_feedback import (
     RouteSettlementRefused,
 )
 from flab2bp.layout.routing_domain import (
-    _ROUTING_BUDGET,
     PortAccessDemand,
     PortAccessEvidence,
     PortAccessReservation,
@@ -245,7 +252,7 @@ class PackedCanvas:
     external_access: frozenset[Cell] = frozenset()
 
 
-class _PackingDeadline(Exception):
+class _PackingDeadline(budget.BudgetExhausted):
     """The clock ran out before any rung of the ladder returned a verdict.
 
     Carries the packing it died on, because the caller still owes its own
@@ -604,7 +611,7 @@ def _corridor_evidence(evidence: PortAccessEvidence | None) -> str:
 
 def _spent(deadline: float | None) -> bool:
     """Whether ``deadline`` has already passed; ``None`` never has."""
-    return deadline is not None and time.monotonic() >= deadline
+    return budget.expired(deadline, time.monotonic)
 
 
 def _outer_ring(bounds: tuple[int, int, int, int]) -> list[Cell]:
@@ -1784,7 +1791,7 @@ def compose(
     )
     external_nets = [net for net in nets if net.src is None]
     internal_nets = [net for net in nets if net.src is not None]
-    route_budget = {"left": _ROUTING_BUDGET}
+    route_budget = routing_domain._routing_pass_budget()
     external_result = _route_external_inputs(
         canvas, external_nets, belt_id, belt_model, bounds, deadline, route_budget
     )

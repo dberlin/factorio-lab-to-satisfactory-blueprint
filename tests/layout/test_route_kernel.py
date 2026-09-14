@@ -9,6 +9,7 @@ import pytest
 
 from flab2bp.lab.techs import belt_rules_for_url
 from flab2bp.layout import routing_domain
+from flab2bp.layout.budget import WorkBudget
 from flab2bp.layout.geometric_router import GeometricQuery, route
 from flab2bp.layout.geometric_world import GeometricWorld
 from flab2bp.layout.route_feedback import RouteFailureKind
@@ -188,7 +189,7 @@ def test_goal_pocket_reports_incoming_ramp_via_owner_within_budget() -> None:
     canvas.guard.update((x, y, 1) for x in range(101) for y in range(101) if (x, y, 1) != goal)
     canvas.guard.update({(51, 50, 0), (50, 49, 0), (50, 51, 0)})
     canvas.blocked[via] = routing_domain._TENTATIVE
-    budget = {"left": 1024}
+    budget = WorkBudget(left=1024)
 
     result = routing_domain._geometric_search(
         canvas, [start], {goal}, {}, 1.0, bounds, budget, blocking_owners={via: 7}
@@ -197,7 +198,7 @@ def test_goal_pocket_reports_incoming_ramp_via_owner_within_budget() -> None:
     assert result.kind is RouteFailureKind.SEALED_POCKET
     assert result.wall == (via,)
     assert 0 < result.work < 1024
-    assert budget["left"] == 1024 - result.work
+    assert budget.left == 1024 - result.work
 
     del canvas.blocked[via]
     opened = routing_domain._geometric_search(canvas, [start], {goal}, {}, 1.0, bounds)
@@ -227,30 +228,30 @@ def test_detailed_search_charges_shared_budget_without_exceeding_its_cap(
     canvas = routing_domain._Canvas(
         limit=bounds, belt_rules=replace(_BELT_RULES, max_z=Fraction(0))
     )
-    budget = {"left": 3}
+    budget = WorkBudget(left=3)
     exhausted = routing_domain._geometric_search(
         canvas, [(0, 0, 0)], {(7, 0, 0)}, {}, 1.0, bounds, budget
     )
     assert exhausted.path is None
     assert exhausted.kind is RouteFailureKind.BUDGET
     assert 0 < exhausted.work <= 3
-    assert budget["left"] == 3 - exhausted.work
+    assert budget.left == 3 - exhausted.work
 
     monkeypatch.setattr(routing_domain, "_MAX_SEARCH_WORK", 2)
-    shared = {"left": 1000}
+    shared = WorkBudget(left=1000)
     capped = routing_domain._geometric_search(
         canvas, [(0, 0, 0)], {(7, 0, 0)}, {}, 1.0, bounds, shared
     )
     assert capped.path is None
     assert capped.kind is RouteFailureKind.BUDGET
     assert 0 < capped.work <= 2
-    assert shared["left"] == 1000 - capped.work
+    assert shared.left == 1000 - capped.work
 
 
 def test_expired_detailed_search_does_not_spend_shared_budget() -> None:
     bounds = (0, 0, 7, 0)
     canvas = routing_domain._Canvas(limit=bounds)
-    budget = {"left": 1000}
+    budget = WorkBudget(left=1000)
 
     result = routing_domain._geometric_search(
         canvas, [(0, 0, 0)], {(7, 0, 0)}, {}, 1.0, bounds, budget, deadline=0.0
@@ -259,7 +260,7 @@ def test_expired_detailed_search_does_not_spend_shared_budget() -> None:
     assert result.path is None
     assert result.kind is RouteFailureKind.BUDGET
     assert result.work == 0
-    assert budget["left"] == 1000
+    assert budget.left == 1000
 
 
 def test_search_from_unpadded_corner_does_not_wrap_into_other_columns() -> None:

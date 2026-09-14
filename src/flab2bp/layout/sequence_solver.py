@@ -20,7 +20,7 @@ from typing import Protocol, TypedDict
 
 from flab2bp.dsp import catalog
 from flab2bp.indexed import Stages, StripPositions
-from flab2bp.layout import finalize, geometric_router, last_mile
+from flab2bp.layout import budget, finalize, geometric_router, last_mile, routing_domain
 from flab2bp.layout.band_policy import BandPolicy
 from flab2bp.layout.base import (
     ATOMIC_COMPLETION_GRACE_S as ATOMIC_COMPLETION_GRACE_S,
@@ -30,6 +30,11 @@ from flab2bp.layout.base import (
     NoValidLayout,
     Placement,
     ProjectionFailureRecord,
+)
+from flab2bp.layout.budget import (
+    StagedWorkBudget,
+    check_spend,
+    fraction_ceiling,
 )
 from flab2bp.layout.compact_seed import (
     CompactSeedConfig,
@@ -44,7 +49,6 @@ from flab2bp.layout.compact_seed import (
 )
 from flab2bp.layout.freeform import (
     _COATER_WEST_CHANNEL,
-    _ROUTING_WORK_PER_SECOND,
     C_WINDOW_DEADLINE_SAFETY_SECONDS,
     C_WINDOW_SECONDS,
     DirectAlignmentMemo,
@@ -90,7 +94,6 @@ from flab2bp.layout.route_feedback import (
 )
 from flab2bp.layout.routing_domain import (
     _ENTRY_RING,
-    _ROUTING_BUDGET,
     WEST_CHANNEL,
     DirectInsertId,
     PreparedRoutingLowerBound,
@@ -424,155 +427,6 @@ def _topology_budget_is_broad(
 ) -> bool:
     """Return whether an incomplete closure left at least half the strips unresolved."""
     return failed_count > 0 and 2 * failed_count >= strip_count
-
-
-@dataclass(slots=True)
-class ExpansionBudget:
-    """One deterministic ledger with a proxy-inaccessible closure reserve."""
-
-    total: int
-    discovery_by_height: dict[int, int] = field(default_factory=dict, init=False)
-    shared_left: int = field(init=False)
-    final_reserved: int = field(init=False)
-    final_left: int = field(init=False)
-    _spent: int = field(default=0, init=False, repr=False)
-    _unsettled_discovery: set[int] = field(default_factory=set, init=False, repr=False)
-    _discovery_spent: dict[int, int] = field(default_factory=dict, init=False, repr=False)
-    _pending_discovery_return: int = field(default=0, init=False, repr=False)
-    _configured: bool = field(default=False, init=False, repr=False)
-
-    def __post_init__(self) -> None:
-        if type(self.total) is not int or self.total < 0:
-            raise ValueError("total expansion budget must be a non-negative integer")
-        self.final_reserved = _fraction_ceiling(self.total, Fraction(1, 4))
-        self.final_left = self.final_reserved
-        self.shared_left = self.total - self.final_reserved
-
-    @property
-    def spent(self) -> int:
-        """Expansions charged exactly once across every routing role."""
-        return self._spent
-
-    @property
-    def discovery_complete(self) -> bool:
-        return self._configured and not self._unsettled_discovery
-
-    def configure(self, heights: tuple[int, ...], reserve_fraction: Fraction) -> None:
-        """Partition searchable expansions equally across first height stages."""
-        if self._configured:
-            if tuple(self.discovery_by_height) != heights:
-                raise ValueError("expansion budget is already configured for other heights")
-            return
-        if not heights or len(set(heights)) != len(heights):
-            raise ValueError("candidate heights must be a non-empty tuple of unique values")
-        if not isinstance(reserve_fraction, Fraction) or not 0 <= reserve_fraction < 1:
-            raise ValueError("reserve fraction must be a Fraction from zero to one")
-
-        self.final_reserved = _fraction_ceiling(self.total, reserve_fraction)
-        self.final_left = self.final_reserved
-        searchable = self.total - self.final_reserved
-        discovery_slice, remainder = divmod(searchable, len(heights))
-        self.discovery_by_height = {height: discovery_slice for height in heights}
-        self.shared_left = remainder
-        self._unsettled_discovery = set(heights)
-        self._discovery_spent = dict.fromkeys(heights, 0)
-        self._configured = True
-
-    def discovery_allowance(self, height: int) -> int:
-        if height not in self._unsettled_discovery:
-            raise ValueError("height has no unsettled discovery reservation")
-        return self.discovery_by_height[height] - self._discovery_spent[height]
-
-    def charge_discovery(self, height: int, spent: int) -> None:
-        """Charge part of one height reservation without closing discovery."""
-        allowance = self.discovery_allowance(height)
-        _check_spend(spent, allowance)
-        self._discovery_spent[height] += spent
-        self._spent += spent
-
-    def detailed_discovery_allowance(self, height: int) -> int:
-        """All remaining work, exposed only to one authoritative seed closure."""
-        self.discovery_allowance(height)
-        return (
-            sum(
-                self.discovery_allowance(candidate)
-                for candidate in self.discovery_by_height
-                if candidate in self._unsettled_discovery
-            )
-            + self.final_left
-            + self.shared_left
-        )
-
-    def charge_detailed_discovery(self, height: int, spent: int) -> None:
-        """Atomically charge closure without exposing borrowed work to proxies."""
-        _check_spend(spent, self.detailed_discovery_allowance(height))
-        remaining = spent
-
-        current = self.discovery_allowance(height)
-        take = min(remaining, current)
-        self._discovery_spent[height] += take
-        remaining -= take
-
-        take = min(remaining, self.final_left)
-        self.final_left -= take
-        remaining -= take
-
-        for candidate in self.discovery_by_height:
-            if remaining == 0:
-                break
-            if candidate == height or candidate not in self._unsettled_discovery:
-                continue
-            allowance = self.discovery_allowance(candidate)
-            take = min(remaining, allowance)
-            self._discovery_spent[candidate] += take
-            remaining -= take
-
-        take = min(remaining, self.shared_left)
-        self.shared_left -= take
-        remaining -= take
-        if remaining:
-            raise AssertionError("detailed closure charge exceeded decomposed budget")
-        self._spent += spent
-
-    def settle_detailed_discovery(self, height: int, spent: int) -> None:
-        """Close one discovery after its authoritative route borrowed future work."""
-        self.charge_detailed_discovery(height, spent)
-        self._pending_discovery_return += self.discovery_allowance(height)
-        self._unsettled_discovery.remove(height)
-        if not self._unsettled_discovery:
-            self.shared_left += self._pending_discovery_return
-            self._pending_discovery_return = 0
-
-    def settle_discovery(self, height: int, spent: int) -> None:
-        allowance = self.discovery_allowance(height)
-        _check_spend(spent, allowance)
-        self.charge_discovery(height, spent)
-        self._pending_discovery_return += allowance - spent
-        self._unsettled_discovery.remove(height)
-        if not self._unsettled_discovery:
-            self.shared_left += self._pending_discovery_return
-            self._pending_discovery_return = 0
-
-    def shared_allowance(self) -> int:
-        if not self.discovery_complete:
-            raise ValueError("shared expansion budget is locked until discovery completes")
-        return self.shared_left
-
-    def settle_shared(self, spent: int) -> None:
-        allowance = self.shared_allowance()
-        _check_spend(spent, allowance)
-        self.shared_left -= spent
-        self._spent += spent
-
-
-def _fraction_ceiling(total: int, fraction: Fraction) -> int:
-    numerator = total * fraction.numerator
-    return (numerator + fraction.denominator - 1) // fraction.denominator
-
-
-def _check_spend(spent: int, allowance: int) -> None:
-    if type(spent) is not int or not 0 <= spent <= allowance:
-        raise ValueError("adapter expansion spend must be within its allowance")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1004,7 +858,7 @@ class SequenceSolver[PreparedT]:
         heights: tuple[int, ...],
         problem_for_height: Callable[[int], PlacementProblem],
         adapters: StageAdapters[PreparedT],
-        expansion_budget: ExpansionBudget,
+        work_budget: StagedWorkBudget,
         protected_followup_heights: tuple[int, ...] = (),
         config: SequenceSolverConfig | None = None,
         deadline_reached: Callable[[], bool] | None = None,
@@ -1058,7 +912,7 @@ class SequenceSolver[PreparedT]:
             raise ValueError("prepared-bound pruning mode must be a bool")
         self.config = config or SequenceSolverConfig()
         self.adapters = adapters
-        self.budget = expansion_budget
+        self.budget = work_budget
         self.deadline_reached = deadline_reached or (lambda: False)
         self.routing_seed_allowance_cap = routing_seed_allowance_cap
         self.stage_admission = stage_admission
@@ -1815,7 +1669,7 @@ class SequenceSolver[PreparedT]:
         )
         self._finish_measured_completion(measured_detailed_started)
         spent = detailed.charged_work
-        _check_spend(spent, allowance)
+        check_spend(spent, allowance)
         # `_complete_routing_stage` folds this very candidate's own failures
         # into `height_state.feedback` before it returns.  Capture the feedback
         # as it stood BEFORE that fold-in, so the repair choice below is scored
@@ -1983,7 +1837,7 @@ class SequenceSolver[PreparedT]:
         )
         self._finish_measured_completion(measured_detailed_started)
         spent = detailed.charged_work
-        _check_spend(spent, allowance)
+        check_spend(spent, allowance)
         self.budget.charge_detailed_discovery(height, spent)
         self._complete_routing_stage(
             height_state,
@@ -2287,7 +2141,7 @@ class SequenceSolver[PreparedT]:
         )
         self._finish_measured_completion(measured_detailed_started)
         spent = detailed.charged_work
-        _check_spend(spent, allowance)
+        check_spend(spent, allowance)
         return self._complete_routing_stage(
             height_state,
             selected,
@@ -2329,7 +2183,7 @@ class SequenceSolver[PreparedT]:
                 allowance,
                 max(
                     1,
-                    _fraction_ceiling(
+                    fraction_ceiling(
                         allowance,
                         self.config.final_reserve_fraction,
                     ),
@@ -2389,7 +2243,7 @@ class SequenceSolver[PreparedT]:
                 proxy_allowance,
             )
             global_route_time_s += time.perf_counter() - global_started
-            _check_spend(global_result.work, proxy_allowance)
+            check_spend(global_result.work, proxy_allowance)
             spent += global_result.work
             proxy_left -= global_result.work
             global_candidates.append(
@@ -2443,7 +2297,7 @@ class SequenceSolver[PreparedT]:
             allow_proof_skip=True,
         )
         self._finish_measured_completion(measured_detailed_started)
-        _check_spend(detailed.charged_work, detailed_allowance)
+        check_spend(detailed.charged_work, detailed_allowance)
         spent += detailed.charged_work
         selected_source = selected.source
         if selected_source is None:
@@ -3443,7 +3297,7 @@ def _projection_feedback_stage_update(
     """Move an unchanged exact refusal to the nearest changed pair relation."""
     if len(geometry_signatures) != problem.size:
         raise ValueError("projection feedback requires one geometry signature per strip")
-    if deadline is not None and time.monotonic() >= deadline:
+    if budget.expired(deadline, time.monotonic):
         return None
     decoded = decode_state(problem, state)
     pack = _decoded_pack(
@@ -3494,13 +3348,13 @@ def _projection_feedback_stage_update(
         )
         return tuple(values)
 
-    if deadline is not None and time.monotonic() >= deadline:
+    if budget.expired(deadline, time.monotonic):
         return None
     positive_positions = StripPositions.of(state.pair.positive)
     negative_positions = StripPositions.of(state.pair.negative)
     for left, right in pairs:
         for axis in ("negative", "positive"):
-            if deadline is not None and time.monotonic() >= deadline:
+            if budget.expired(deadline, time.monotonic):
                 return None
             sequence_pair = (
                 replace(
@@ -4243,16 +4097,16 @@ def _retain_refinement_hint(
 
 
 def _speculative_exact_allowance(
-    expansion_total: int,
+    work_total: int,
     *,
     speculative_candidates: int,
 ) -> int:
     """Reserve at least half the routing ledger after every speculative closure."""
-    if type(expansion_total) is not int or expansion_total <= 0:
-        raise ValueError("expansion total must be a positive integer")
+    if type(work_total) is not int or work_total <= 0:
+        raise ValueError("work total must be a positive integer")
     if type(speculative_candidates) is not int or speculative_candidates <= 0:
         raise ValueError("speculative candidate count must be a positive integer")
-    return max(1, expansion_total // (2 * speculative_candidates))
+    return max(1, work_total // (2 * speculative_candidates))
 
 
 def _small_direct_seed_role(
@@ -4795,7 +4649,7 @@ def _route_detailed_candidate(
     allowance: int,
 ) -> DetailedStageResult:
     """Route one exact prepared identity and withhold every partial build."""
-    attempt_budget = {"left": allowance}
+    attempt_budget = budget.WorkBudget(left=allowance)
     try:
         built = _build_prepared(
             spec,
@@ -4808,14 +4662,20 @@ def _route_detailed_candidate(
             prioritize_source_families=True,
         )
     except _Unpowerable:
-        work = allowance - attempt_budget["left"]
-        _check_spend(work, allowance)
+        # The ledger was built with an int allowance, so `left` is never the
+        # "unbounded" `None`; narrow it rather than defaulting it.
+        unpowerable_left = attempt_budget.left
+        assert unpowerable_left is not None
+        work = allowance - unpowerable_left
+        check_spend(work, allowance)
         return _closed_detailed_result(
             DetailedRouteStatus.UNPOWERABLE,
             work=work,
         )
-    spent = allowance - attempt_budget["left"]
-    _check_spend(spent, allowance)
+    attempt_left = attempt_budget.left
+    assert attempt_left is not None
+    spent = allowance - attempt_left
+    check_spend(spent, allowance)
     routing = built.routing
     placement: Placement | None = None
     if routing.status is DetailedRouteStatus.ROUTED:
@@ -4857,7 +4717,7 @@ def _production_run(
     )
 
     def deadline_reached() -> bool:
-        return time.monotonic() >= deadline
+        return budget.expired(deadline, time.monotonic)
 
     telemetry = _ProductionTelemetry()
     relation_no_goods = _RelationNoGoodLedger()
@@ -5148,7 +5008,7 @@ def _production_run(
             try:
 
                 def compact_deadline_reached() -> bool:
-                    return time.monotonic() >= compact_deadline
+                    return budget.expired(compact_deadline, time.monotonic)
 
                 direct_eligibility = (
                     _variant_direct_eligibility(
@@ -5535,7 +5395,7 @@ def _production_run(
             return ValidationVerdict(False, (), None, status=DetailedRouteStatus.BUDGET)
 
         completion_deadline = deadline + ATOMIC_COMPLETION_GRACE_S
-        if time.monotonic() >= completion_deadline:
+        if budget.expired(completion_deadline, time.monotonic):
             return budget_verdict()
         projection = finalize.prepare_placement_completion(
             placement,
@@ -5905,12 +5765,12 @@ def _production_run(
             telemetry.alns_window_accepted += 1
             window_repair.clear()
 
-    expansion_total = max(
-        _ROUTING_BUDGET,
-        int(_ROUTING_WORK_PER_SECOND * ceiling),
-    )
+    # The same floor-or-scaled arithmetic every routing pass seeds with, taken
+    # from the one factory rather than spelled out again here.
+    work_total = routing_domain._routing_pass_budget(seconds=ceiling).left
+    assert work_total is not None, "the factory always seeds an int allowance"
     exact_candidate_allowance = _speculative_exact_allowance(
-        expansion_total,
+        work_total,
         speculative_candidates=(1 + _TOPOLOGY_BEAM_CANDIDATES + _TOPOLOGY_REFINEMENT_CANDIDATES),
     )
 
@@ -5952,14 +5812,14 @@ def _production_run(
             ),
             exact_lower_bound=exact_lower_bound,
         ),
-        expansion_budget=ExpansionBudget(expansion_total),
+        work_budget=StagedWorkBudget(work_total),
         borrow_first_discovery=(bool(initial_states) or use_topology_beam or use_shared_pack),
         protected_followup_heights=protected_followup_heights,
         config=config,
         prune_dominated_prepared=prepared_bound_pruning,
         deadline_reached=deadline_reached,
         initial_states=initial_states,
-        routing_seed_allowance_cap=max(1, expansion_total // 12),
+        routing_seed_allowance_cap=max(1, work_total // 12),
         direct_targets=direct_targets,
         direct_targets_for_state=direct_targets_for_state,
         stage_boundary_transform=transform_stage,
@@ -6028,7 +5888,7 @@ def _production_run(
                 ),
                 reason="shared-pack",
                 allowance_cap=(
-                    expansion_total // 2 if complete_initial_seed else exact_candidate_allowance
+                    work_total // 2 if complete_initial_seed else exact_candidate_allowance
                 ),
             )
             telemetry.shared_pack_candidates = 1
@@ -6172,7 +6032,7 @@ def _production_run(
                 decoded,
                 reason="topology-beam",
                 allowance_cap=(
-                    expansion_total // 2
+                    work_total // 2
                     if complete_initial_seed and telemetry.detailed_routes == 0
                     else topology_allowance
                 ),

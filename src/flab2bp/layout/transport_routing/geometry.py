@@ -5,7 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from .budget import WorkBudget
+from flab2bp.layout.budget import WorkBudget
+
 from .paths import (
     Cell,
     Domain,

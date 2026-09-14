@@ -12,6 +12,7 @@ from flab2bp.layout import last_mile
 from flab2bp.layout import routing_domain as routing
 from flab2bp.layout.band_policy import BandPolicy
 from flab2bp.layout.base import PlacedBuilding
+from flab2bp.layout.budget import WorkBudget
 from flab2bp.layout.route_feedback import (
     Cell,
     DetailedRouteResult,
@@ -46,7 +47,7 @@ def _run(
     canvas: routing._Canvas,
     nets: list[routing._Net],
     *,
-    budget: dict[str, int] | None = None,
+    budget: WorkBudget | None = None,
     settle: Callable[[routing._Canvas, tuple[frozenset[NetId], ...]], RouteSettlement]
     | None = None,
 ) -> DetailedRouteResult:
@@ -199,7 +200,7 @@ def test_candidate_projection_cancellation_returns_budget_with_search_work(
         routing, "_geometric_search", _intercept_canvas(routing._geometric_search, searched)
     )
     monkeypatch.setattr(canvas.junction_projection, "allows_buildings", interrupt)
-    result = _run(canvas, nets, budget={"left": 20_000})
+    result = _run(canvas, nets, budget=WorkBudget(left=20_000))
     assert result.status is DetailedRouteStatus.BUDGET
     assert result.work == sum(observed) > 0
     assert all(failure.kind is RouteFailureKind.BUDGET for failure in result.failures)
@@ -237,7 +238,7 @@ def test_interrupted_physical_attempt_never_publishes_partial_canvas(
 
     _observe_commit(monkeypatch, commit)
     monkeypatch.setattr(routing, "_tap_source", _intercept_canvas(routing._tap_source, tap))
-    result = _run(canvas, nets, settle=settle, budget={"left": 20_000})
+    result = _run(canvas, nets, settle=settle, budget=WorkBudget(left=20_000))
     assert result.status is DetailedRouteStatus.BUDGET
     assert not result.exhaustive
     assert all(failure.kind is not RouteFailureKind.COMMIT_LINK for failure in result.failures)
@@ -275,7 +276,7 @@ def test_exact_partial_commit_transfers_links_indexes_and_reservations_once(
         pytest.fail("a partial commit is not a complete factory")
 
     _observe_commit(monkeypatch, commit)
-    result = _run(canvas, nets, settle=settle, budget={"left": 20_000})
+    result = _run(canvas, nets, settle=settle, budget=WorkBudget(left=20_000))
     assert result.routed == (nets[0].net_id,)
     assert result.stranded == (nets[1].net_id,)
     assert result.settlement is None
@@ -342,7 +343,7 @@ def test_changed_selection_cannot_adopt_earlier_success(
         routing, "_geometric_search", _intercept_canvas(routing._geometric_search, searched)
     )
     _observe_commit(monkeypatch, commit)
-    result = _run(canvas, nets, budget={"left": 20_000})
+    result = _run(canvas, nets, budget=WorkBudget(left=20_000))
     assert commits == 2
     assert all(building.carries_item != "stale-marker" for building in canvas.buildings)
     if changed == "path":
@@ -366,7 +367,7 @@ def test_real_commit_collider_failure_keeps_attribution(monkeypatch: pytest.Monk
         return call.proceed()
 
     _observe_commit(monkeypatch, collide)
-    result = _run(canvas, nets, budget={"left": 20_000})
+    result = _run(canvas, nets, budget=WorkBudget(left=20_000))
     assert result.status is DetailedRouteStatus.STRANDED
     assert result.failures[0].kind is RouteFailureKind.COMMIT_LINK
     assert result.failures[0].wall == (failed_cell[0],)
@@ -393,7 +394,7 @@ def test_real_commit_failure_before_cancellation_retains_only_proved_blame(
 
     _observe_commit(monkeypatch, commit)
     monkeypatch.setattr(routing, "_tap_source", _intercept_canvas(routing._tap_source, tap))
-    result = _run(canvas, nets, budget={"left": 20_000})
+    result = _run(canvas, nets, budget=WorkBudget(left=20_000))
     assert result.status is DetailedRouteStatus.BUDGET
     failures = {failure.net_id: failure for failure in result.failures}
     first_id, second_id = nets[0].net_id, nets[1].net_id
@@ -424,7 +425,7 @@ def test_cancelled_fallback_commit_cannot_publish_its_prefix(
         return failed
 
     _observe_commit(monkeypatch, commit)
-    result = _run(canvas, nets, budget={"left": 20_000})
+    result = _run(canvas, nets, budget=WorkBudget(left=20_000))
     assert result.status is DetailedRouteStatus.BUDGET
     assert commits == 2
     assert all(failure.kind is not RouteFailureKind.COMMIT_LINK for failure in result.failures)
@@ -439,13 +440,19 @@ def test_cluster_projection_cancellation_debits_private_work_and_retains_prior_s
     canvas.junction_projection = routing._CompositionProjection(
         tuple(canvas.buildings), canvas.limit, BandPolicy("160")
     )
-    budget = {"left": 20_000}
+    budget = WorkBudget(left=20_000)
     cluster_started = False
     cancelled = False
     entry_budget = 0
     observed: list[int] = []
     original_solver = last_mile.solve_cluster
     original_projection = canvas.junction_projection.allows_buildings
+
+    def left_now() -> int:
+        """The ledger's remaining work; this one is bounded, never unbounded."""
+        remaining = budget.left
+        assert remaining is not None
+        return remaining
 
     def search(
         workspace: routing._Canvas, proceed: Callable[[], routing._PathSearchResult]
@@ -482,7 +489,7 @@ def test_cluster_projection_cancellation_debits_private_work_and_retains_prior_s
     ) -> last_mile.ClusterResult:
         nonlocal cluster_started, entry_budget
         cluster_started = True
-        entry_budget = budget["left"]
+        entry_budget = left_now()
         return original_solver(problem, environment)
 
     monkeypatch.setattr(
@@ -497,7 +504,7 @@ def test_cluster_projection_cancellation_debits_private_work_and_retains_prior_s
     assert cancelled and len(observed) == 2
     assert all(work > 0 for work in observed)
     assert result.status is DetailedRouteStatus.BUDGET
-    assert entry_budget - budget["left"] == sum(observed)
+    assert entry_budget - left_now() == sum(observed)
     assert result.last_mile is not None
     assert result.last_mile.work == sum(observed)
     assert result.last_mile.bounded == 1

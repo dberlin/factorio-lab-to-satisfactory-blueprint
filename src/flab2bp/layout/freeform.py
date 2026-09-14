@@ -76,6 +76,7 @@ from typing import TYPE_CHECKING, cast
 from ortools.sat.python import cp_model
 
 from flab2bp.dsp import catalog, colliders
+from flab2bp.layout import budget as budget_module
 from flab2bp.layout import finalize, last_mile, routing_domain, slots, validate
 from flab2bp.layout.band_policy import BandPolicy
 from flab2bp.layout.base import (
@@ -270,7 +271,7 @@ _PACK_SHARE = 0.35
 #: 3.32M work units in the 14.0s `_route_all` of their first pack, which is
 #: 237k/sec, so 400k was only 1.7x and the backstop had quietly become the
 #: binding constraint.  It binds through the coverage pass, which hands each net
-#: `budget["left"] // nets_remaining`: at a 20s ceiling that is 8.0M/279 = 28.7k
+#: `budget.left // nets_remaining`: at a 20s ceiling that is 8.0M/279 = 28.7k
 #: for the first net on a canvas whose hard queries measure 90k-190k, so the
 #: first pass rations the very searches it exists to complete.
 #:
@@ -3638,11 +3639,13 @@ def _build(
     policy: BandPolicy,
     belt_rules: catalog.BeltAltitudeRules = routing_domain._DEFAULT_BELT_RULES,
     deadline: float | None = None,
-    budget: dict[str, int] | None = None,
+    budget: budget_module.WorkBudget | None = None,
     staged_static_cache: routing_domain._StagedStaticCache | None = None,
 ) -> _BuildResult:
     """Prepare one pack, then emit it through the reusable detailed entry point."""
-    cancelled = None if deadline is None else lambda: time.monotonic() >= deadline
+    cancelled = (
+        None if deadline is None else lambda: budget_module.expired(deadline, time.monotonic)
+    )
     preparation_started = time.monotonic()
     try:
         prepared = routing_domain._prepare_routing_problem(
@@ -3710,7 +3713,7 @@ def _build_prepared(
     power: bool,
     route: bool,
     deadline: float | None = None,
-    budget: dict[str, int] | None = None,
+    budget: budget_module.WorkBudget | None = None,
     prioritize_source_families: bool = True,
 ) -> _BuildResult:
     """Emit, route, and power one already-prepared immutable problem."""
@@ -4572,9 +4575,7 @@ class FreeformLayout:
         # is scaled to the ceiling so that it stays a backstop rather than
         # becoming the thing that ends the sweep. See
         # `_ROUTING_WORK_PER_SECOND`.
-        budget = {
-            "left": max(routing_domain._ROUTING_BUDGET, int(_ROUTING_WORK_PER_SECOND * ceiling))
-        }
+        budget = routing_domain._routing_pass_budget(seconds=ceiling)
 
         def planning_cancelled() -> bool:
             return routing_domain._expired(deadline)
@@ -4946,7 +4947,7 @@ class FreeformLayout:
         strips: list[routing_domain.Strip],
         time_budget_s: float,
         deadline: float | None = None,
-        budget: dict[str, int] | None = None,
+        budget: budget_module.WorkBudget | None = None,
         rejected: list[_RefusalFinding] | None = None,
         attempts: list[PackAttempt] | None = None,
         skipped_heights: list[int] | None = None,
@@ -5746,7 +5747,7 @@ class FreeformLayout:
                 if (
                     not projection_retry
                     and best is not None
-                    and time.monotonic() >= improvement_soft
+                    and budget_module.expired(improvement_soft, time.monotonic)
                 ):
                     decline_to_start()
                     break

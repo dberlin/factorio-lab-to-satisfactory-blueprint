@@ -50,6 +50,7 @@ from flab2bp.dsp import (
 )
 from flab2bp.indexed import Nets, PortReservations, StakedPaths, UnionFind
 from flab2bp.indexed.staked_paths import StakedPathSnapshot
+from flab2bp.layout import budget as budget_module
 from flab2bp.layout import (
     finalize,
     geometric_router,
@@ -401,6 +402,31 @@ _MAX_SEARCH_WORK = 200_000
 #: which is what actually runs away at scale.
 _ROUTING_BUDGET = 2_000_000
 
+
+def _routing_pass_budget(
+    deadline: float | None = None, seconds: float | None = None
+) -> budget_module.WorkBudget:
+    """One routing pass's clock and ledger.
+
+    ``_ROUTING_BUDGET`` is the floor: it bounds one pass deterministically so a
+    re-run reproduces. When the caller knows how many seconds the pass may have,
+    the ledger scales with ``freeform._ROUTING_WORK_PER_SECOND`` so that it stays
+    a backstop rather than becoming the thing that ends the sweep.
+
+    Every seed goes through here so that the three callers cannot disagree. They
+    did, latently: ``freeform`` reached the floor through the module object and
+    saw it live, while ``sequence_solver`` and ``hierarchy.compose`` bound it in
+    a ``from ... import`` list at import time. The constant is read here, inside
+    the body, so all three see one value whenever they were imported.
+    """
+    from flab2bp.layout.freeform import _ROUTING_WORK_PER_SECOND
+
+    left = _ROUTING_BUDGET
+    if seconds is not None:
+        left = max(left, int(_ROUTING_WORK_PER_SECOND * seconds))
+    return budget_module.WorkBudget(deadline=deadline, left=left)
+
+
 #: Toll a path pays per tile for occupying GROUND LEVEL.
 #:
 #: A belt at z=0 leaves z=1 and z=2 open above it -- only a machine denies all
@@ -573,7 +599,7 @@ def _expired(deadline: float | None) -> bool:
     ``None`` means no deadline, which is what a caller reaching into these
     functions directly -- a test, a probe -- gets by default.
     """
-    return deadline is not None and time.monotonic() >= deadline
+    return budget_module.expired(deadline, time.monotonic)
 
 
 # --- adaptation ------------------------------------------------------------
@@ -4849,7 +4875,7 @@ def _geometric_search(
     history: dict[tuple[int, int, int], float],
     pressure: float,
     bounds: tuple[int, int, int, int],
-    budget: dict[str, int] | None = None,
+    budget: budget_module.WorkBudget | None = None,
     deadline: float | None = None,
     blame: dict[tuple[int, int, int], float] | None = None,
     grid: _Grid | None = None,
@@ -4868,7 +4894,12 @@ def _geometric_search(
     history are borrowed only for this query.
 
     Work charges newly prepared cells plus processed active intervals against
-    both the per-query cap and shared ledger. Only complete exhaustion supplies
+    both the per-query cap and the shared ledger's ``WorkBudget.left``, which
+    is read before the kernel and SET to that reading minus the charge after
+    it, never decremented. A ``left`` of ``None`` -- like no budget at all --
+    is unbounded, and the ledger is then inert: nothing here reads its
+    ``deadline`` field, because routing's clock is the explicit ``deadline``
+    parameter every caller already threads. Only complete exhaustion supplies
     wall evidence. Budget or deadline termination never proves infeasibility.
     """
     forbidden_cells = frozenset(forbidden)
@@ -4889,7 +4920,7 @@ def _geometric_search(
         for start in starts
     ):
         return _PathSearchResult(None, RouteFailureKind.DYNAMIC_ACCESS, (), 0)
-    if budget is not None and budget["left"] <= 0:
+    if budget is not None and budget.left is not None and budget.left <= 0:
         return _PathSearchResult(None, RouteFailureKind.BUDGET, (), 0, BudgetCause.ALLOWANCE)
     if _expired(deadline):
         return _PathSearchResult(None, RouteFailureKind.BUDGET, (), 0, BudgetCause.DEADLINE)
@@ -4978,7 +5009,7 @@ def _geometric_search(
         return _PathSearchResult(None, RouteFailureKind.DYNAMIC_ACCESS, (), 0)
 
     # The kernel returns its exact charge on every normal exit.
-    start_left = budget["left"] if budget is not None else 1 << 62
+    start_left = budget.left if budget is not None and budget.left is not None else 1 << 62
 
     world = GeometricWorld.from_grid(flat, flags, transitions)
     max_work = min(_MAX_SEARCH_WORK, start_left)
@@ -4995,8 +5026,8 @@ def _geometric_search(
     )
     outcome = geometric_router.summarize(result)
     work = outcome.work
-    if budget is not None:
-        budget["left"] = start_left - work
+    if budget is not None and budget.left is not None:
+        budget.left = start_left - work
     if outcome.exhausted_budget or outcome.cancelled:
         # The native search raises one limit for both bounds, so read them back
         # here: it charges exactly `max_work` and stops only when the allowance
@@ -6181,7 +6212,7 @@ def _route_all(
     belt_model: int,
     bounds: tuple[int, int, int, int],
     deadline: float | None = None,
-    budget: dict[str, int] | None = None,
+    budget: budget_module.WorkBudget | None = None,
     planned_power_sites: Sequence[tuple[int, int]] | None = None,
     junction_frame_bans: Sequence[frozenset[Cell]] = (),
     *,
@@ -6266,7 +6297,12 @@ def _route_all(
     # `_ROUTING_BUDGET` afresh. A caller reaching in directly gets a pass of its
     # own, which is what the tests and the probes want.
     if budget is None:
-        budget = {"left": _ROUTING_BUDGET}
+        budget = _routing_pass_budget()
+    # The only new runtime check this conversion adds, and it cannot fire: the
+    # default above supplies an int allowance and every caller that passes a
+    # ledger builds it with one. It states the pass invariant -- a routing pass
+    # is never unbounded -- and narrows `left` from ``int | None`` for the body.
+    assert budget.left is not None, "a routing pass needs a ledger"
     fewest_failed = len(nets) + 1
     stale = 0
     #: The round `best_paths` was captured from, or ``-1`` before any round
@@ -6309,7 +6345,12 @@ def _route_all(
         """Which bound stopped the pass, for the nets it never got to search."""
         if _expired(deadline):
             return BudgetCause.DEADLINE
-        if budget["left"] <= 0:
+        # `left` is ``int | None`` on the ledger type, where ``None`` means
+        # unbounded. A routing pass is never unbounded (see `_route_all`'s own
+        # assertion), so narrow it here rather than reading a default.
+        left = budget.left
+        assert left is not None
+        if left <= 0:
             return BudgetCause.ALLOWANCE
         return BudgetCause.BOUNDED
 
@@ -7811,7 +7852,7 @@ def _route_all(
         junction_offers: Mapping[Cell, Cell],
         search_history: dict[Cell, float],
         pressure: float,
-        search_budget: dict[str, int],
+        search_budget: budget_module.WorkBudget,
         blame: dict[Cell, float] | None,
         search_grid: _Grid,
         *,
@@ -7834,10 +7875,14 @@ def _route_all(
         rejected: set[Cell] | None = None
         rejected_edges: set[tuple[Cell, Cell]] = set()
         total_work = 0
+        # Every caller hands this closure the pass ledger or a carved child of
+        # it, and both are built with an int allowance; `None` -- "unbounded" --
+        # never reaches a routing search.
+        assert search_budget.left is not None, "a routing search needs a ledger"
         connector_reserve = (
-            0 if ordinary_only else min(_MAX_SEARCH_WORK + 1, max(0, search_budget["left"]) // 2)
+            0 if ordinary_only else min(_MAX_SEARCH_WORK + 1, max(0, search_budget.left) // 2)
         )
-        allowance = min(_MAX_SEARCH_WORK + 1, max(0, search_budget["left"] - connector_reserve))
+        allowance = min(_MAX_SEARCH_WORK + 1, max(0, search_budget.left - connector_reserve))
         if _expired(deadline):
             return _PathSearchResult(None, RouteFailureKind.BUDGET, (), 0, BudgetCause.DEADLINE)
         if ordinary_deadline is None:
@@ -7873,7 +7918,7 @@ def _route_all(
                 )
                 if proposed is not None:
                     return _PathSearchResult(proposed, None, (), 0)
-            private = {"left": ordinary_remaining}
+            private = budget_module.WorkBudget(left=ordinary_remaining)
             result = _geometric_search(
                 canvas,
                 candidates,
@@ -7891,8 +7936,11 @@ def _route_all(
                 blocking_owners=owner,
                 extra_edges=None,
             )
-            search_budget["left"] -= ordinary_remaining - private["left"]
-            ordinary_remaining = private["left"]
+            private_left = private.left
+            assert private_left is not None
+            assert search_budget.left is not None
+            search_budget.left -= ordinary_remaining - private_left
+            ordinary_remaining = private_left
             total_work += result.work
             if result.path is not None:
                 return result
@@ -7923,7 +7971,7 @@ def _route_all(
                     found = ordinary
                     ordinary = None
                 else:
-                    if _expired(deadline) or search_budget["left"] <= 0:
+                    if _expired(deadline) or search_budget.left <= 0:
                         return _PathSearchResult(
                             None,
                             RouteFailureKind.BUDGET,
@@ -7951,6 +7999,9 @@ def _route_all(
                         # Repeating its bounded prefix cannot find a new path;
                         # retain the shared quota for other nets, still refusing.
                         return replace(capped_ordinary, work=total_work)
+                    # The leaf SETS `left` on the ledger it is handed, never
+                    # decrements it, so handing it this pass's own ledger
+                    # charges exactly what the query spent.
                     found = _geometric_search(
                         canvas,
                         search_starts,
@@ -8129,13 +8180,14 @@ def _route_all(
         goals: set[Cell],
         offers: tuple[dict[Cell, Cell], dict[Cell, Cell], dict[Cell, Cell]],
         pressure: float,
-        search_budget: dict[str, int],
+        search_budget: budget_module.WorkBudget,
         blame: dict[Cell, float],
         *,
         ordinary_only: bool = False,
         constraints: Collection[Cell] = (),
     ) -> _PathSearchResult:
         """Search and admit the same source obligations in every reconstruction."""
+        assert search_budget.left is not None, "a routing search needs a ledger"
         total = 0
         admit_proposal: Callable[[tuple[Cell, ...], float | None], bool] | None = None
         admitted_path: tuple[Cell, ...] | None = None
@@ -8193,7 +8245,7 @@ def _route_all(
                     proved_future=admitted_future if found.path is admitted_path else None,
                 ):
                     return replace(found, work=total)
-                if retry == 4 or _expired(deadline) or search_budget["left"] <= 0:
+                if retry == 4 or _expired(deadline) or search_budget.left <= 0:
                     break
                 for cell in found.path:
                     history[cell] += _BLAME_WEIGHT
@@ -8398,7 +8450,8 @@ def _route_all(
             query_ports: frozenset[Cell],
         ) -> _PathSearchResult | None:
             nonlocal deadline, work
-            if remaining <= 0 or budget["left"] <= 0 or _expired(query_deadline):
+            assert budget.left is not None, "a routing pass needs a ledger"
+            if remaining <= 0 or budget.left <= 0 or _expired(query_deadline):
                 return None
             saved_deadline = deadline
             saved_ports = canvas.routing_ports
@@ -8465,16 +8518,17 @@ def _route_all(
                     (signature for signature in groups if signature in distances),
                     key=lambda signature: (len(signature), distances[signature]),
                 )
-                logical = {"left": min(remaining, budget["left"])}
+                logical = budget_module.WorkBudget(left=min(remaining, budget.left))
+                assert logical.left is not None
                 for signature in ordered:
-                    if logical["left"] <= 0 or budget["left"] <= 0 or _expired(deadline):
+                    if logical.left <= 0 or budget.left <= 0 or _expired(deadline):
                         break
                     # Only returned path cells overwrite their current owner.
                     # Compatible provider hints and excused tap guards stay open.
                     forbidden = forbidden_before | frozenset(
                         cell for cell, hurt in owner.items() if hurt in signature
                     )
-                    before = logical["left"]
+                    before = logical.left
                     try:
                         found = _search(
                             groups[signature],
@@ -8494,7 +8548,7 @@ def _route_all(
                         error.net_index = index
                         raise
                     finally:
-                        budget["left"] -= before - logical["left"]
+                        budget.left -= before - logical.left
                     work += found.work
                     round_work[index] = round_work.get(index, 0) + found.work
                     if found.path is None:
@@ -8511,12 +8565,13 @@ def _route_all(
                 deadline = saved_deadline
                 canvas.routing_ports = saved_ports
 
+        assert budget.left is not None, "a routing pass needs a ledger"
         still: list[int] = []
         for index in stranded:
             victims: set[int] = set()
             repaired = False
             pending_proposal: tuple[Cell, ...] | None = None
-            while not _expired(deadline) and budget["left"] > 0:
+            while not _expired(deadline) and budget.left > 0:
                 if len(victims) > victim_cap:
                     break
                 dependents = _endpoint_dependents()
@@ -8594,7 +8649,7 @@ def _route_all(
                                 )
                             else:
                                 query_deadline = _ordinary_query_deadline()
-                                query_allowance = min(_MAX_SEARCH_WORK, budget["left"])
+                                query_allowance = min(_MAX_SEARCH_WORK, budget.left)
                                 query_ports = canvas.routing_ports
                                 through = _search(
                                     starts,
@@ -8854,6 +8909,7 @@ def _route_all(
         containment is an invariant rather than a hope, and checking it costs
         one comparison per constraint.
         """
+        assert budget.left is not None, "a routing pass needs a ledger"
         starts, goals, _offers = _ends(index)
         span_x0, span_y0, span_x1, span_y1 = grid.span
         starts, goals, constraints = _restrict_proposal(
@@ -8867,22 +8923,33 @@ def _route_all(
         ), "a cluster constraint left the routing grid's indexed extent"
         allowance = min(
             last_mile.B_LOW_LEVEL_WORK,
-            max(0, budget["left"] - last_mile_floor),
+            max(0, budget.left - last_mile_floor),
         )
-        private = {"left": allowance}
+        private = budget_module.WorkBudget(left=allowance)
+        assert private.left is not None
         try:
             return _search_route(
                 index, starts, goals, _offers, pressure, private, {}, constraints=constraints
             )
         finally:
             canvas.routing_ports = frozenset()
-            budget["left"] -= allowance - private["left"]
+            budget.left -= allowance - private.left
+
+    def _pass_budget_left() -> int:
+        """This pass's remaining work, for the consumers typed on plain ``int``.
+
+        The pass ledger is never unbounded -- see the assertion at the top of
+        ``_route_all`` -- so this narrows rather than defaults.
+        """
+        remaining = budget.left
+        assert remaining is not None, "a routing pass needs a ledger"
+        return remaining
 
     def _cluster_environment() -> last_mile.ClusterEnvironment:
         return last_mile.ClusterEnvironment(
             search=_cluster_search,
             offers=_cluster_offers,
-            budget_left=lambda: budget["left"],
+            budget_left=_pass_budget_left,
             budget_floor=last_mile_floor,
             expired=lambda: _expired(deadline),
             extra_occupancy=primitives.guards,
@@ -8933,7 +9000,7 @@ def _route_all(
                 bounds=bounds,
                 problem=problem,
                 ends=ends,
-                budget_left=budget["left"],
+                budget_left=_pass_budget_left(),
                 budget_floor=last_mile_floor,
                 deadline_remaining=(None if deadline is None else deadline - time.monotonic()),
                 owned_starts={
@@ -9005,7 +9072,7 @@ def _route_all(
         environment: last_mile.ClusterEnvironment,
     ) -> last_mile.ClusterResult:
         nonlocal last_mile_seconds
-        entry_budget = budget["left"]
+        entry_budget = _pass_budget_left()
         started = time.perf_counter()
         try:
             return last_mile.solve_cluster(problem, environment)
@@ -9013,7 +9080,7 @@ def _route_all(
             # No ClusterResult reaches _tally on interruption. The debited
             # allowance includes earlier completed CBS searches and the stopped
             # query; retain that work without inventing a closed tree or nodes.
-            last_mile_counts["work"] += entry_budget - budget["left"]
+            last_mile_counts["work"] += entry_budget - _pass_budget_left()
             last_mile_counts["bounded"] += 1
             last_mile_seconds += time.perf_counter() - started
             raise
@@ -9066,7 +9133,8 @@ def _route_all(
         the round it was handed.
         """
         nonlocal relaxed_junctions
-        if budget["left"] <= 0 or _expired(deadline):
+        assert budget.left is not None, "a routing pass needs a ledger"
+        if budget.left <= 0 or _expired(deadline):
             return None
         rejections = (
             rejected_starts,
@@ -9171,11 +9239,12 @@ def _route_all(
     def _complete_source_dependents(stranded: list[int], providers: Collection[int]) -> list[int]:
         """Consume source taps established by a solved, thinned cluster."""
         nonlocal commit_attempt, work
+        assert budget.left is not None, "a routing pass needs a ledger"
         remaining = list(stranded)
         for index in stranded:
             if not any(sibling in providers for sibling in src_group.get(index, ())):
                 continue
-            if _expired(deadline) or budget["left"] <= 0:
+            if _expired(deadline) or budget.left <= 0:
                 break
             before = _round_state()
             staked = paths.snapshot()
@@ -9228,18 +9297,19 @@ def _route_all(
         """Search the conflict cluster once per pass; see the Phase B spec 5.6."""
         nonlocal last_mile_done, last_mile_floor, proved_round
         nonlocal commit_attempt, proposal_used
+        assert budget.left is not None, "a routing pass needs a ledger"
         if (
             last_mile_done
             or not round_stranded
             or len(round_stranded) > last_mile.B_MAX_STRANDED
-            or budget["left"] <= 0
+            or budget.left <= 0
             or _expired(deadline)
             or (deadline is not None and deadline - time.monotonic() < last_mile.B_MIN_SECONDS)
         ):
             return round_stranded
         last_mile_done = True
         last_mile_counts["invocations"] += 1
-        last_mile_floor = budget["left"] - int(last_mile.B_CBS_WORK_SHARE * budget["left"])
+        last_mile_floor = budget.left - int(last_mile.B_CBS_WORK_SHARE * budget.left)
         index_by_id = {_net_id(index): index for index in range(len(nets))}
         problem = last_mile.build_cluster(
             sorted(round_stranded),
@@ -9308,7 +9378,7 @@ def _route_all(
                     if result.outcome is not last_mile.ClusterOutcome.SOLVED:
                         if (
                             proposal_used
-                            and budget["left"] > last_mile_floor
+                            and budget.left > last_mile_floor
                             and not _expired(deadline)
                         ):
                             # A positive branch cannot exhaust ordinary routes.
@@ -9433,8 +9503,13 @@ def _route_all(
                     }
                     return _budget_result(paths, current_failures)
                 starts, goals, route_offers = _ends(i)
-                allowance = budget["left"] // (len(order) - position)
-                net_budget = {"left": allowance} if coverage_pass else budget
+                allowance = budget.left // (len(order) - position)
+                # A coverage pass rations each net a carved child ledger and
+                # reconciles it below; every other pass hands the net THIS
+                # ledger -- the caller's own object -- so the net's spend is
+                # charged directly and the reconciliation must not run. A copy
+                # here would silently drop every non-coverage net's charge.
+                net_budget = budget_module.WorkBudget(left=allowance) if coverage_pass else budget
                 try:
                     searched = _search_route(
                         i,
@@ -9448,7 +9523,12 @@ def _route_all(
                     )
                 finally:
                     if coverage_pass:
-                        budget["left"] -= allowance - net_budget["left"]
+                        # Only the coverage branch carved a child ledger, so
+                        # only it returns the child's unspent work; the other
+                        # branch charged this very object as the net spent.
+                        net_left = net_budget.left
+                        assert net_left is not None
+                        budget.left -= allowance - net_left
                 search_work = searched.work
                 if searched.path is None and not searched.wall:
                     access_wall = source_access_walls.get(i, ()) + destination_access_walls.get(
@@ -9612,7 +9692,7 @@ def _route_all(
                 pending = tuple(unlinked)
                 stalled_commit: list[int] = []
                 for _ in range(_COMMIT_REPAIR_PASSES):
-                    if _expired(deadline) or budget["left"] <= 0:
+                    if _expired(deadline) or budget.left <= 0:
                         break
                     rejected_now = set(pending)
                     participants = _dependency_closure(pending)
@@ -9631,7 +9711,7 @@ def _route_all(
                         _unstake(index)
                     stalled_now: list[int] = []
                     for index in order:
-                        if _expired(deadline) or budget["left"] <= 0:
+                        if _expired(deadline) or budget.left <= 0:
                             stalled_now.append(index)
                             break
                         starts, goals, reroute_offers = _ends(index)
@@ -9828,7 +9908,7 @@ def _route_all(
             # congestion rather than as work nobody had left to do.
             if _expired(deadline):
                 return _budget_result()
-            if stale >= _RRR_STALE_ROUNDS or it == RRR_MAX - 1 or budget["left"] <= 0:
+            if stale >= _RRR_STALE_ROUNDS or it == RRR_MAX - 1 or budget.left <= 0:
                 break
         return _finish(
             best_paths,
@@ -9836,7 +9916,7 @@ def _route_all(
             best_source_hints,
             best_sink_hints,
             best_path_taps,
-            budget_exhausted=budget["left"] <= 0,
+            budget_exhausted=budget.left <= 0,
             exhaustive_claim=proved_round >= 0 and proved_round == best_round,
             attempt=best_attempt,
         )
@@ -12229,7 +12309,7 @@ def _route_boundary_nets(
     belt_model: int,
     core: tuple[int, int, int, int],
     deadline: float | None = None,
-    budget: dict[str, int] | None = None,
+    budget: budget_module.WorkBudget | None = None,
     *,
     outward: bool,
 ) -> DetailedRouteResult:
@@ -12261,7 +12341,7 @@ def _route_boundary_nets(
     )
     history: dict[Cell, float] = defaultdict(float)
     if budget is None:
-        budget = {"left": _ROUTING_BUDGET}
+        budget = _routing_pass_budget()
     routed: list[NetId] = []
     failures: list[NetFailure] = []
     work = 0
@@ -12475,7 +12555,7 @@ def _route_external_inputs(
     belt_model: int,
     core: tuple[int, int, int, int],
     deadline: float | None = None,
-    budget: dict[str, int] | None = None,
+    budget: budget_module.WorkBudget | None = None,
 ) -> DetailedRouteResult:
     return _route_boundary_nets(
         canvas,
@@ -12496,7 +12576,7 @@ def _route_external_outputs(
     belt_model: int,
     core: tuple[int, int, int, int],
     deadline: float | None = None,
-    budget: dict[str, int] | None = None,
+    budget: budget_module.WorkBudget | None = None,
 ) -> DetailedRouteResult:
     return _route_boundary_nets(
         canvas,
@@ -12510,7 +12590,7 @@ def _route_external_outputs(
     )
 
 
-class _PreparationDeadline(Exception):
+class _PreparationDeadline(budget_module.BudgetExhausted):
     """Exact candidate preparation stopped before producing a reusable result."""
 
     def __init__(self) -> None:
