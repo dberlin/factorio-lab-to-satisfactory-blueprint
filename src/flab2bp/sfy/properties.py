@@ -53,11 +53,17 @@ FString when the tag names an enum and uint8 otherwise;
 are kept as their raw ``size`` bytes.
 
 ``StructProperty`` is binary for the fixed-layout engine structs in
-:data:`BINARY_STRUCTS` and for a modern tag flagged
-:data:`TAG_NATIVE_SERIALIZE`; everything else is a nested property list, which
-must consume exactly ``size`` bytes. A struct whose bytes do not parse, or a
-binary struct whose ``size`` matches no known layout, degrades to
-:class:`BinaryStruct`, which still writes back byte for byte.
+:data:`BINARY_STRUCTS`, member by member for the structs in
+:data:`KNOWN_CUSTOM_STRUCTS` whose own ``Serialize`` the game supplies, and
+otherwise a nested property list, which must consume exactly ``size`` bytes. A
+modern tag flagged :data:`TAG_NATIVE_SERIALIZE` says the game wrote the struct
+its own way, so it is binary unless the name is one this module knows. A struct
+whose bytes do not parse, or a binary struct whose ``size`` matches no known
+layout, degrades to :class:`BinaryStruct`, which still writes back byte for
+byte. ``docs/sfy-struct-layouts.md`` is where the two custom layouts' evidence
+is written out; ``data/struct_schemas.json`` is the game's own field list for
+every struct the corpus carries, which ``tests/sfy/test_struct_schemas.py``
+checks the tagged ones against.
 
 ``ArrayProperty`` is an ``int32`` count and then, for a ``StructProperty``
 inner type under a classic tag, an inner tag (name, type, the total size of all
@@ -83,7 +89,11 @@ __all__ = [
     "BINARY_STRUCTS",
     "DEFAULT_ENUM_STORAGE",
     "DEFAULT_TYPE_PACKAGE",
+    "INDEX_NONE",
+    "KNOWN_CUSTOM_STRUCTS",
     "MAX_TYPE_NAME_DEPTH",
+    "ONLINE_SERVICES_NULL",
+    "PLAYER_INFO_HANDLE_SIZES",
     "TAG_BOOL_TRUE",
     "TAG_HAS_ARRAY_INDEX",
     "TAG_HAS_PROPERTY_GUID",
@@ -103,11 +113,13 @@ __all__ = [
     "Int8",
     "Int64",
     "IntVector",
+    "InventoryItem",
     "LinearColor",
     "Map",
     "Name",
     "Object",
     "Opaque",
+    "PlayerInfoHandle",
     "Property",
     "PropertyList",
     "Quat",
@@ -144,6 +156,27 @@ BINARY_STRUCTS: frozenset[str] = frozenset(
         "Guid",
     }
 )
+
+KNOWN_CUSTOM_STRUCTS: frozenset[str] = frozenset({"InventoryItem", "PlayerInfoHandle"})
+"""Structs the *game* serialises itself, member by member, rather than as a tagged
+list or a fixed engine layout. Each has a value class whose docstring cites the
+code it was transcribed from -- a header for :class:`PlayerInfoHandle`, the
+disassembled DLL for :class:`InventoryItem`. They are checked before
+:data:`TAG_NATIVE_SERIALIZE`, which is the flag a modern tag sets to say exactly
+this and which would otherwise send them straight to :class:`BinaryStruct`."""
+
+INDEX_NONE = -1
+"""Unreal's ``INDEX_NONE``."""
+
+ONLINE_SERVICES_NULL = 0
+"""``UE::Online::EOnlineServices::Null``.
+
+The enum is the engine's, so it is in no header the game ships, but
+``PlayerInfoCache.h`` pins the value twice over: ``FPlayerInfoHandle``'s
+default-constructed ``ServiceProvider`` is ``0`` and is meant to be the invalid
+handle (line 281), and the legacy branch treats ``ServiceProvider == Null`` as
+exactly that (line 339). Every handle in the corpus says ``6``, which is
+``Steam`` counting from ``Null = 0``."""
 
 TAG_HAS_ARRAY_INDEX = 0x01
 TAG_HAS_PROPERTY_GUID = 0x02
@@ -483,6 +516,127 @@ class Guid(Value):
 
     def write(self, w: Writer) -> None:
         w.guid(self.raw)
+
+
+@dataclass(frozen=True, slots=True)
+class PlayerInfoHandle(Value):
+    """Who built a buildable: ``FPlayerInfoHandle``, in one of its two shapes.
+
+    Transcribed from ``FPlayerInfoHandle::operator<<``, which is inline in
+    ``Source/FactoryGame/Public/Online/PlayerInfoCache.h`` lines 313-346 (the
+    headers that ship in ``CommunityResources/Headers.zip``). The struct's two
+    members are private and carry no ``UPROPERTY``, so the usmap schema for
+    ``PlayerInfoHandle`` has no fields at all and this serializer is the only
+    description of the bytes::
+
+        uint8 ServiceProvider;
+        int32 PlayerInfoTableIndex;
+
+    and the archive writes them one of two ways, gated on the file's save custom
+    version (``ar.CustomVer( FSaveCustomVersion::GUID )``):
+
+    * at :attr:`~flab2bp.sfy.versions.SaveCustomVersion.NewPlayerInfoHandleSerializationFormat`
+      (57) or later, header line 326: ``ServiceProvider`` then the full
+      ``int32`` index -- five bytes, :attr:`wide_index` true;
+    * before it, header lines 333-336: ``ServiceProvider`` then a
+      ``uint8 LegacyPlayerInfoTableIndex`` -- two bytes.
+
+    The reader is handed the tag's ``size``, not a version, so the size selects
+    the shape; ``tests/sfy/test_properties.py`` ties the two together over the
+    corpus, where every pre-57 fixture carries the 2-byte shape and every later
+    one the 5-byte shape.
+
+    :attr:`table_index` is the index exactly as the wire carries it, which is
+    what makes the write byte-identical. The game does not always load it as
+    that: on the legacy path a handle whose provider is ``Null`` (0) is an
+    invalid handle, and its index becomes ``INDEX_NONE`` (header lines 338-342).
+    :attr:`player_info_table_index` is that loaded value.
+
+    One shape is deliberately not decoded here. Exactly at version 57 both
+    branches of ``operator<<`` run -- that is the mis-serialisation
+    :attr:`~flab2bp.sfy.versions.SaveCustomVersion.FixNewPlayerInfoHandleSerializationFormat`
+    (58) was added to fix -- and the handle is written twice, ten bytes. No
+    fixture has one; such a value keeps its bytes as a :class:`BinaryStruct`.
+    """
+
+    service_provider: int
+    table_index: int
+    wide_index: bool = True
+
+    @property
+    def player_info_table_index(self) -> int:
+        """The index the game loads, with the legacy ``Null``-provider rule applied."""
+        if not self.wide_index and self.service_provider == ONLINE_SERVICES_NULL:
+            return INDEX_NONE
+        return self.table_index
+
+    @property
+    def is_valid(self) -> bool:
+        """``FPlayerInfoHandle::IsValid``: an index other than ``INDEX_NONE``."""
+        return self.player_info_table_index != INDEX_NONE
+
+    def write(self, w: Writer) -> None:
+        w.u8(self.service_provider)
+        if self.wide_index:
+            w.i32(self.table_index)
+        else:
+            w.u8(self.table_index)
+
+
+@dataclass(frozen=True, slots=True)
+class InventoryItem(Value):
+    """One item in an inventory slot: ``FInventoryItem``, with its optional state.
+
+    ``FGInventoryComponent.h`` lines 23-74 declare the struct and give the
+    members their names; the wire layout is ``FInventoryItem::Serialize``, which
+    lives in the shipped DLL and is read with ``tools/sfy-native``'s ``disasm``
+    mode (``FactoryGameEGS-FactoryGame-Win64-Shipping``, RVA ``0x894c50``, 166
+    bytes from ``.pdata``, 44 instructions). ``docs/sfy-struct-layouts.md`` has
+    the annotated listing; the instructions that decide each field are:
+
+    * ``0x894c76 lea rdx,[0F17818h]`` / ``0x894c90 call [0EE6E38h]`` --
+      ``ar.CustomVer(FSaveCustomVersion::GUID)``. The constant at ``0xf17818``
+      is the 16 bytes ``2f3e0421 d61fe613 519d3b51 30a23636``, which is
+      :data:`~flab2bp.sfy.versions.SAVE_CUSTOM_VERSION_GUID` exactly.
+    * ``0x894c96 cmp eax,2`` / ``jl`` -- below save custom version 2 the struct
+      writes nothing at all.
+    * ``0x894c9e lea rdx,[rdi+8]`` (annotated ``FInventoryItem::ItemClass``) /
+      ``0x894ca5 call [rax+148h]`` -- the archive's ``UObject*&`` operator, which
+      in a save archive is an ``FObjectReferenceDisc``: a level ``FString`` and a
+      path ``FString``. This is :attr:`item_class`.
+    * ``0x894cbb cmp eax,2Bh`` / ``jl`` -- 0x2B is 43,
+      :attr:`~flab2bp.sfy.versions.SaveCustomVersion.RefactoredInventoryItemState`.
+      At 43 or later (``0x894cc0 lea rcx,[rdi+10h]``, annotated
+      ``FInventoryItem::ItemState``, then ``0x894cc7 call
+      FFGDynamicStruct::Serialize``) the item state is an ``FFGDynamicStruct``;
+      below it (``0x894cdc lea rdx,[rdi+20h]``) the legacy
+      ``LegacyItemStateActor`` object reference is serialised instead.
+    * ``FFGDynamicStruct::Serialize`` (RVA ``0x7e7470``) writes, on its saving
+      path at ``0x7e7709``, a four-byte flag -- ``setne`` on
+      ``ScriptStruct != nullptr``, then ``FArchive::Serialize`` with
+      ``r8d = 4`` at ``0x7e7750`` -- and only then, when the flag is set, the
+      struct's own type and bytes. That flag is :attr:`has_state` and those
+      bytes are :attr:`state`.
+
+    So the corpus's 12 zero bytes are an empty level, an empty path and a zero
+    state flag, and an item that names a descriptor is the same three fields with
+    the path filled in. The pre-43 legacy shape is not decoded: no fixture has
+    one (the oldest is save version 46), and a value that does not fit this
+    layout keeps its bytes as a :class:`BinaryStruct`.
+
+    :attr:`state` is kept as bytes rather than decoded: an ``FFGDynamicStruct``
+    body is a ``UScriptStruct`` reference followed by that struct's own
+    serialisation, and no fixture carries one to check a decoder against.
+    """
+
+    item_class: ObjectRef
+    has_state: bool = False
+    state: bytes = b""
+
+    def write(self, w: Writer) -> None:
+        w.object_ref(self.item_class)
+        w.i32(1 if self.has_state else 0)
+        w.raw(self.state)
 
 
 @dataclass(frozen=True, slots=True)
@@ -838,9 +992,55 @@ def _read_binary_struct(r: Reader, name: str, size: int) -> Value | None:
     return None
 
 
-def read_struct_value(r: Reader, struct_name: str | None, size: int) -> Value:
-    """Read a struct value of exactly ``size`` bytes, degrading to a binary blob."""
-    return _read_struct_value(r, struct_name, size, modern=False, native=False)
+PLAYER_INFO_HANDLE_SIZES = {2: False, 5: True}
+"""The two ``FPlayerInfoHandle`` wire sizes, and whether the index is a full
+``int32``. See :class:`PlayerInfoHandle` for the branches these come from."""
+
+
+def _read_player_info_handle(raw: bytes) -> Value | None:
+    wide = PLAYER_INFO_HANDLE_SIZES.get(len(raw))
+    if wide is None:
+        return None
+    r = Reader(raw)
+    return PlayerInfoHandle(r.u8(), r.i32() if wide else r.u8(), wide_index=wide)
+
+
+def _read_inventory_item(raw: bytes) -> Value | None:
+    r = Reader(raw)
+    ref = r.object_ref()
+    flag = r.i32()
+    if flag not in (0, 1):
+        return None
+    state = raw[r.pos :]
+    if state and not flag:
+        return None
+    return InventoryItem(ref, bool(flag), state)
+
+
+def _read_custom_struct(name: str, raw: bytes) -> Value | None:
+    """Decode a struct the game serialises itself, or ``None`` if the bytes do not fit."""
+    try:
+        if name == "PlayerInfoHandle":
+            return _read_player_info_handle(raw)
+        if name == "InventoryItem":
+            return _read_inventory_item(raw)
+    except ArchiveError:
+        return None
+    return None
+
+
+def read_struct_value(
+    r: Reader, struct_name: str | None, size: int, modern: bool = False, native: bool = False
+) -> Value:
+    """Read a struct value of exactly ``size`` bytes, degrading to a binary blob.
+
+    ``modern`` is the file's tag format, for the nested property list a tagged
+    struct turns out to be; ``native`` is :data:`TAG_NATIVE_SERIALIZE` off the
+    tag, which says the game wrote the struct its own way. Neither matters to
+    the fixed engine layouts or to :data:`KNOWN_CUSTOM_STRUCTS`, which are
+    decided by name and size alone.
+    """
+    return _read_struct_value(r, struct_name, size, modern, native)
 
 
 def _read_struct_value(
@@ -848,6 +1048,10 @@ def _read_struct_value(
 ) -> Value:
     name = struct_name or ""
     start = r.pos
+    if name in KNOWN_CUSTOM_STRUCTS:
+        raw = r.bytes(size)
+        value = _read_custom_struct(name, raw)
+        return value if value is not None else BinaryStruct(name, raw)
     if name in BINARY_STRUCTS:
         try:
             value = _read_binary_struct(r, name, size)

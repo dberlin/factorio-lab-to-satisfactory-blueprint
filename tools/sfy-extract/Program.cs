@@ -11,28 +11,43 @@ using Newtonsoft.Json;
 using SfyExtract;
 
 // Usage: dotnet run -- <SatisfactoryDir> <mode> [filter|out.json]
-//   list    [filter] : every Build_* package and its export names/classes (discovery)
-//   props   [filter] : the same, plus every property of every export (discovery)
-//   extract [out]    : write assets.json
+//   list    [filter]          : every Build_* package and its export names/classes (discovery)
+//   props   [filter]          : the same, plus every property of every export (discovery)
+//   extract [out]             : write assets.json
+//   structs <names> <out>     : write struct_schemas.json for the names in <names>
 //
 // `filter` is a case-insensitive substring of the package path. With a filter,
 // packages that are not named Build_* are searched too, which is how you look at
 // a Holo_* hologram class.
 if (args.Length < 2)
 {
-    Console.Error.WriteLine("usage: dotnet run -- <SatisfactoryDir> <list|props|extract> [filter|out.json]");
+    Console.Error.WriteLine("usage: dotnet run -- <SatisfactoryDir> <list|props|extract|structs> [filter|out.json|<names> <out>]");
     return 2;
 }
 
 var gameDir = args[0];
 var mode = args[1];
 var arg2 = args.Length > 2 ? args[2] : "";
-var filter = mode == "extract" ? "" : arg2;
+var arg3 = args.Length > 3 ? args[3] : "";
+var filter = mode is "extract" or "structs" ? "" : arg2;
 var paks = Path.Combine(gameDir, "FactoryGame", "Content", "Paks");
 var usmap = Path.Combine(gameDir, "CommunityResources", "FactoryGame.usmap");
 
 var mappings = UsmapCompat.Patch(usmap, out var patchedTypes);
 Console.Error.WriteLine($"usmap {usmap} -> {mappings} ({patchedTypes} OptionalProperty leaves patched)");
+
+// ---- structs ----------------------------------------------------------------
+// The mappings alone answer this one, so it neither mounts the paks nor reads a
+// package: the schemas are the usmap's own reflection data, not an asset's.
+if (mode == "structs")
+{
+    if (arg2.Length == 0 || arg3.Length == 0)
+    {
+        Console.Error.WriteLine("usage: dotnet run -- <SatisfactoryDir> structs <names-file> <out.json>");
+        return 2;
+    }
+    return StructSchemas.Write(mappings, usmap, arg2, arg3);
+}
 
 var provider = new DefaultFileProvider(
     paks, SearchOption.AllDirectories, new VersionContainer(EGame.GAME_UE5_6), StringComparer.OrdinalIgnoreCase);

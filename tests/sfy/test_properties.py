@@ -16,8 +16,10 @@ from flab2bp.sfy.properties import (
     Enum,
     Float,
     Int,
+    InventoryItem,
     Object,
     Opaque,
+    PlayerInfoHandle,
     Property,
     Struct,
     Tag,
@@ -26,9 +28,11 @@ from flab2bp.sfy.properties import (
     check_tag_format,
     modern_type_name,
     read_property_list,
+    read_struct_value,
     write_property_list,
 )
 from flab2bp.sfy.trailers import ComponentTrailer
+from flab2bp.sfy.versions import SaveCustomVersion
 from tests.sfy.conftest import fixture_paths
 
 
@@ -315,3 +319,127 @@ def test_no_opaque_values_in_the_classes_the_layout_needs():
             for p in d.properties:
                 visit(p.value, h.class_name)
     assert not opaque, dict(opaque)
+
+
+def _binary_structs_in(value):
+    """Every :class:`BinaryStruct` reachable from a property value."""
+    if isinstance(value, BinaryStruct):
+        yield value
+    elif isinstance(value, Struct):
+        for p in value.fields:
+            yield from _binary_structs_in(p.value)
+    elif isinstance(value, Array):
+        for item in value.items:
+            yield from _binary_structs_in(item)
+
+
+def test_no_binary_struct_survives_in_the_corpus():
+    """Every struct the corpus carries is decoded; nothing is left as opaque bytes."""
+    left = Counter()
+    for path in fixture_paths():
+        for h, d in read_sbp(path.read_bytes()).objects:
+            for p in d.properties:
+                for value in _binary_structs_in(p.value):
+                    left[(value.name, h.class_name)] += 1
+    assert not left, dict(left)
+
+
+def test_player_info_handle_both_layouts_round_trip():
+    for raw in (b"\x00\x05", b"\x00\x05\x00\x00\x00"):
+        v = read_struct_value(Reader(raw), "PlayerInfoHandle", len(raw), modern=True)
+        assert isinstance(v, PlayerInfoHandle)
+        w = Writer()
+        v.write(w)
+        assert w.getvalue() == raw
+
+
+def test_player_info_handle_reads_both_layouts_the_same_way():
+    """The two shapes differ only in the index's width, not in what it means."""
+    narrow = read_struct_value(Reader(b"\x06\x01"), "PlayerInfoHandle", 2, modern=False)
+    wide = read_struct_value(Reader(b"\x06\x01\x00\x00\x00"), "PlayerInfoHandle", 5, modern=True)
+    assert narrow == PlayerInfoHandle(6, 1, wide_index=False)
+    assert wide == PlayerInfoHandle(6, 1, wide_index=True)
+    assert narrow.table_index == wide.table_index
+
+
+def test_player_info_handle_null_service_provider_reads_as_invalid():
+    """``PlayerInfoCache.h`` lines 338-342: a legacy handle on the Null provider."""
+    handle = read_struct_value(Reader(b"\x00\x07"), "PlayerInfoHandle", 2, modern=False)
+    assert handle.table_index == 7  # the wire byte, so the write is byte-identical
+    assert handle.player_info_table_index == -1  # what the game loads it as
+    assert not handle.is_valid
+    assert read_struct_value(Reader(b"\x06\x07"), "PlayerInfoHandle", 2, modern=False).is_valid
+
+
+def test_player_info_handle_shape_follows_the_save_custom_version():
+    """The 2-byte shape is exactly the pre-57 fixtures, the 5-byte one the rest.
+
+    ``FPlayerInfoHandle::operator<<`` gates the wide index on
+    :attr:`SaveCustomVersion.NewPlayerInfoHandleSerializationFormat`; the reader
+    is handed a size rather than a version, so this is where the two are tied
+    together.
+    """
+    shapes = Counter()
+    for path in fixture_paths():
+        bp = read_sbp(path.read_bytes())
+        for _, d in bp.objects:
+            for p in d.properties:
+                for handle in _player_info_handles_in(p.value):
+                    shapes[(bp.header.save_version, handle.wide_index)] += 1
+    assert shapes
+    boundary = SaveCustomVersion.NewPlayerInfoHandleSerializationFormat
+    assert all(wide == (version >= boundary) for version, wide in shapes)
+
+
+def _player_info_handles_in(value):
+    if isinstance(value, PlayerInfoHandle):
+        yield value
+    elif isinstance(value, Struct):
+        for p in value.fields:
+            yield from _player_info_handles_in(p.value)
+    elif isinstance(value, Array):
+        for item in value.items:
+            yield from _player_info_handles_in(item)
+
+
+def test_inventory_item_round_trips_an_empty_and_a_filled_item():
+    empty = b"\x00" * 12
+    value = read_struct_value(Reader(empty), "InventoryItem", len(empty), modern=True)
+    assert value == InventoryItem(ObjectRef("", ""))
+    assert not value.has_state
+
+    w = Writer()
+    w.object_ref(ObjectRef("", "/Game/Desc_Fuel.Desc_Fuel_C"))
+    w.i32(0)
+    filled = w.getvalue()
+    value = read_struct_value(Reader(filled), "InventoryItem", len(filled), modern=True)
+    assert value == InventoryItem(ObjectRef("", "/Game/Desc_Fuel.Desc_Fuel_C"))
+
+    for raw in (empty, filled):
+        out = Writer()
+        read_struct_value(Reader(raw), "InventoryItem", len(raw), modern=True).write(out)
+        assert out.getvalue() == raw
+
+
+def test_inventory_item_keeps_an_item_state_it_cannot_decode():
+    """``FFGDynamicStruct``'s flag says a state follows; its bytes are kept whole."""
+    w = Writer()
+    w.object_ref(ObjectRef("", ""))
+    w.i32(1)
+    w.raw(bytes(range(9)))
+    raw = w.getvalue()
+    value = read_struct_value(Reader(raw), "InventoryItem", len(raw), modern=True)
+    assert value == InventoryItem(ObjectRef("", ""), has_state=True, state=bytes(range(9)))
+    out = Writer()
+    value.write(out)
+    assert out.getvalue() == raw
+
+
+def test_an_inventory_item_whose_bytes_do_not_parse_stays_binary():
+    """The never-drop-bytes fallback still stands behind the new decoders."""
+    raw = b"\xff\xff\xff\xff" + bytes(8)
+    value = read_struct_value(Reader(raw), "InventoryItem", len(raw), modern=True)
+    assert value == BinaryStruct("InventoryItem", raw)
+    out = Writer()
+    value.write(out)
+    assert out.getvalue() == raw

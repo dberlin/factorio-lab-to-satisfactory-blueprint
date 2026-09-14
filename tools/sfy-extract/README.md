@@ -7,6 +7,11 @@ class the game's Docs.json states one for. The first two are in no Docs.json
 entry; the third is in Docs.json but not in the half of it `flab2bp.sfy.docs`
 keeps, which is class names.
 
+A second mode, `structs`, writes `src/flab2bp/sfy/data/struct_schemas.json` —
+the game's own field list for the structs the blueprint corpus carries, taken
+from the usmap mappings rather than from any asset. See
+[the `structs` mode](#the-structs-mode-struct-schemas-from-the-usmap) below.
+
 `docs/sfy-regenerating-game-data.md` is the whole-pipeline runbook; this file is
 the tool.
 
@@ -43,6 +48,40 @@ package is searched, not just `Build_*`, which is how to look at a `Holo_*`
 hologram class. `props` over a whole subtree (say
 `FactoryGame/Content/FactoryGame/Buildable/`) is how to find out whether a value
 exists in the assets at all.
+
+## The `structs` mode: struct schemas from the usmap
+
+```bash
+uv run python scripts/sfy_struct_names.py > /tmp/struct-names.txt
+cd tools/sfy-extract
+dotnet run -- "$HOME/Satisfactory" structs /tmp/struct-names.txt \
+    ../../src/flab2bp/sfy/data/struct_schemas.json
+```
+
+`struct_schemas.json` is the game's own field list for every struct name the
+blueprint corpus carries, and `tests/sfy/test_struct_schemas.py` checks the
+codec's decoded structs against it. The names file is one struct name per line,
+`#` comments and blank lines ignored; `scripts/sfy_struct_names.py` prints the
+corpus's, and the mode adds each struct's super chain to whatever it is given.
+A name with no usmap struct is a warning on stderr, is listed in
+`provenance.missing`, and makes the exit code 1.
+
+This mode neither mounts the paks nor loads a package: the schemas come out of
+the shipped `FactoryGame.usmap` alone, which is why it takes about a second. The
+CUE4Parse members it uses, in this version (1.2.2.202609), are
+
+- `FileUsmapTypeMappingsProvider(path).MappingsForGame` → `TypeMappings`,
+- `TypeMappings.Types`: `Dictionary<string, Struct>`,
+- `Struct.SuperType` (the parent's name, or null) and `Struct.Properties`:
+  `Dictionary<int, PropertyInfo>`,
+- `PropertyInfo.Name`, `.ArraySize` and `.MappingType`,
+- `PropertyType.Type`, `.StructType`, `.EnumName`, `.InnerType`, `.ValueType`.
+
+`PropertyType.Type` is written out verbatim: CUE4Parse builds it from
+`EPropertyType.ToString()`, so it already reads `StructProperty`,
+`ArrayProperty`, `ByteProperty` and so on — the same spellings a save file's
+property tag carries. All 20 names the corpus uses resolve, and all 13,792
+struct types in the 1.2.0 mappings are searched for them.
 
 ## Versions
 
