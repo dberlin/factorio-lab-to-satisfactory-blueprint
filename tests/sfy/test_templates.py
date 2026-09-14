@@ -11,7 +11,9 @@ from flab2bp.sfy.objects import ACTOR, COMPONENT, Transform
 from flab2bp.sfy.properties import Array, Int, Object, Struct, Value, Vector
 from flab2bp.sfy.query import connected, find, object_index, spline_points
 from flab2bp.sfy.registry import load_registry
+from flab2bp.sfy.rules import load_rules
 from flab2bp.sfy.templates import (
+    ITEM_DESCRIPTOR_CLASS,
     SPLINE_POINT_FIELD_TAGS,
     TEMPLATE_MIN_SAVE_VERSION,
     TemplateLibrary,
@@ -500,35 +502,50 @@ def test_apply_recipe_refuses_a_recipe_the_machine_cannot_run() -> None:
         )
 
 
-def test_the_corpus_fills_inventory_filters_from_the_recipe() -> None:
-    """The rule ``apply_recipe`` implements, measured on every fixture manufacturer.
+def test_apply_recipe_writes_the_filters_the_game_writes() -> None:
+    """``SetUpInventoryFilters``' shape: recipe order, then the wildcard, exactly.
 
-    Ingredients fill the input inventory's leading slots in recipe order and
-    products the output inventory's; whatever slots the machine has left over
-    hold the ``FGItemDescriptor`` wildcard. 160 of 160 agree.
+    Slot i allows the recipe's i-th ingredient (i-th product, for the output
+    inventory) while there is one, and every slot past the last allows
+    ``UFGItemDescriptor``. The rule ``manufacturer.inventory_filters`` quotes
+    the loops; this holds what we author to them, over the machines the
+    templates cover.
     """
     reg = load_registry()
-    checked = 0
-    for path in fixture_paths():
-        bp = read_sbp_file(path)
-        if bp.header.save_version < TEMPLATE_MIN_SAVE_VERSION:
-            continue
-        objects = bp.objects
-        for h, d in objects:
-            if h.kind != ACTOR:
-                continue
-            value = find(d.properties, "mCurrentRecipe")
-            if not isinstance(value, Object) or value.ref.is_null:
-                continue
-            recipe = reg.recipes.get(value.ref.name)
-            if recipe is None or find(d.properties, "mInputInventory") is None:
-                continue
-            ingredients = tuple(item for item, _ in recipe.ingredients)
-            products = tuple(item for item, _ in recipe.products)
-            got_in = _filter_items(objects, d, "mInputInventory")
-            got_out = _filter_items(objects, d, "mOutputInventory")
-            assert got_in[: len(ingredients)] == ingredients, (path.stem, h.name)
-            assert got_out[: len(products)] == products, (path.stem, h.name)
-            assert set(got_out[len(products) :]) <= {"FGItemDescriptor"}, (path.stem, h.name)
-            checked += 1
-    assert checked > 100, checked
+    rules = load_rules()
+    assert rules["manufacturer.inventory_filters"].effect == "compute"
+    lib = _lib()
+    recipe = reg.recipes[IRON_PLATE.rsplit(".", 1)[-1]]
+    ingredients = [item for item, _ in recipe.ingredients]
+    products = [item for item, _ in recipe.products]
+    after = apply_recipe(lib.instantiate("Build_ConstructorMk1_C", 24, IDENTITY), IRON_PLATE, reg)
+    got_in = _filter_items(after, after[0][1], "mInputInventory")
+    got_out = _filter_items(after, after[0][1], "mOutputInventory")
+    assert list(got_in[: len(ingredients)]) == ingredients
+    assert list(got_out[: len(products)]) == products
+    assert set(got_in[len(ingredients) :]) <= {"FGItemDescriptor"}
+    assert set(got_out[len(products) :]) <= {"FGItemDescriptor"}
+    assert ITEM_DESCRIPTOR_CLASS.endswith(".FGItemDescriptor")
+
+
+def test_a_spare_slot_gets_the_wildcard_and_not_what_the_template_had() -> None:
+    """The game rewrites every slot, so a class left over from before is a bug.
+
+    ``SetUpInventoryFilters`` writes ``UFGItemDescriptor`` on every slot past
+    the last ingredient (``0x549f83``/``0x549fb0``) rather than leaving it as it
+    was, so applying a one-ingredient recipe over a two-ingredient one has to
+    clear the second slot. A refinery runs both kinds.
+    """
+    reg = load_registry()
+    lib = _lib()
+    machine = "Build_OilRefinery_C"
+    two = reg.recipe_paths["Recipe_Alternate_CoatedCable_C"]
+    one = reg.recipe_paths["Recipe_Alternate_PolymerResin_C"]
+    assert len(reg.recipes["Recipe_Alternate_CoatedCable_C"].ingredients) == 2
+    assert len(reg.recipes["Recipe_Alternate_PolymerResin_C"].ingredients) == 1
+    after_two = apply_recipe(lib.instantiate(machine, 25, IDENTITY), two, reg)
+    assert "FGItemDescriptor" not in _filter_items(after_two, after_two[0][1], "mInputInventory")[1]
+    after_one = apply_recipe(after_two, one, reg)
+    got = _filter_items(after_one, after_one[0][1], "mInputInventory")
+    assert got[0] == reg.recipes["Recipe_Alternate_PolymerResin_C"].ingredients[0][0]
+    assert set(got[1:]) == {"FGItemDescriptor"}

@@ -162,6 +162,11 @@ TARGETS: dict[str, tuple[str, str, str]] = {
         "GetCostMultiplierForLength",
         "Buildables/FGBuildable.h:475",
     ),
+    "manufacturer.inventory_filters": (
+        "AFGBuildableManufacturer",
+        "SetUpInventoryFilters",
+        "Buildables/FGBuildableManufacturer.h:220",
+    ),
 }
 
 # Rules the game spreads over more than one function. The entry above is the one
@@ -181,6 +186,10 @@ ALSO_READ: dict[str, tuple[str, ...]] = {
         "AFGBuildableConveyorBelt::GetDismantleRefundReturnsMultiplier",
         "AFGBuildableConveyorLift::GetDismantleRefundReturnsMultiplier",
         "AFGBuildableConveyorBelt::AFGBuildableConveyorBelt@0x1b9cb0",
+    ),
+    "manufacturer.inventory_filters": (
+        "AFGBuildableManufacturer::SetRecipe",
+        "AFGBuildableManufacturer::AFGBuildableManufacturer@0x1dd590",
     ),
 }
 
@@ -305,6 +314,30 @@ EVIDENCE: dict[str, tuple[str, ...]] = {
         "0x4a78ee",
         # AFGBlueprintSubsystem::CalculateBlueprintCost asks each buildable.
         "0x67394f", "0x67396a",
+    ),
+    "manufacturer.inventory_filters": (
+        # AFGBuildableManufacturer's constructor stores its primary vtable, the
+        # table the three virtual calls below index into.
+        "0x1dd59e", "0x1dd5a5",
+        # SetRecipe: the two access-index assignments it gates on, the store
+        # into mCurrentRecipe, and the call to SetUpInventoryFilters.
+        "0x548d5e", "0x548e81", "0x548eb6", "0x548edf", "0x548ee7", "0x548ef5",
+        "0x548f5b",
+        # SetUpInventoryFilters: the recipe's class default object.
+        "0x549a8b", "0x549ac9",
+        # The input loop: one pass per slot of mInputInventory, the ingredient
+        # at the same index while there is one.
+        "0x549ae4", "0x549b0f", "0x549b30", "0x549b34", "0x549b37", "0x549b80",
+        "0x549b87", "0x549b8a", "0x549bb3", "0x549bb9",
+        # Past the last ingredient: UFGItemDescriptor itself on every spare slot.
+        "0x549f83", "0x549faa", "0x549fb0",
+        # The two indices step together, and the loop runs to the slot count.
+        "0x54a1cf", "0x54a1d2", "0x54a1dc", "0x54a1e3",
+        # The output loop over mOutputInventory and mProduct, the same shape.
+        "0x54a1e9", "0x54a1fc", "0x54a212", "0x54a216", "0x54a219", "0x54a25f",
+        "0x54a263", "0x54a269", "0x54a28c", "0x54a292",
+        "0x54a6a1", "0x54a6c8", "0x54a6ce",
+        "0x54a8e8", "0x54a8eb", "0x54a8f5", "0x54a8fc",
     ),
 }
 
@@ -767,6 +800,60 @@ INTERPRETATIONS: dict[str, tuple[str, str, str, str]] = {
         "inventories, and lightweight buildables are costed through "
         "GetDismantleRefundReturnsMultiplierForLightweight instead. Neither "
         "matters for a blueprint of machines and belts we authored empty.",
+    ),
+    "manufacturer.inventory_filters": (
+        "extracted",
+        "compute",
+        "AFGBuildableManufacturer::SetRecipe (0x548d10) assigns the recipe's "
+        "ingredients and products to its factory connections through two "
+        "virtual calls -- the primary vtable 0xFAB4A8 (0x1dd59e lea, 0x1dd5a5 "
+        "mov [rbx],rax) at +A88h (0x548e81) and +A90h (0x548eb6), which are "
+        "AssignInputAccessIndices and AssignOutputAccessIndices -- and only if "
+        "both answered true (0x548edf/0x548ee7) stores the recipe into "
+        "mCurrentRecipe (0x548d5e, 0x548ef5) and calls the slot at +A80h "
+        "(0x548f5b), which is SetUpInventoryFilters @ 0x549a70. "
+        "That function takes the recipe's class default object (0x549a8b "
+        "mCurrentRecipe, 0x549ac9 UClass::GetDefaultObject<UFGRecipe>) and "
+        "walks mInputInventory (0x549ae4) once per *slot* -- the loop counter "
+        "r12d runs to mInventoryStacks.Num at [inventory+1C8h] (0x549b0f, "
+        "0x54a1dc/0x54a1e3). For slot i, if i is below mIngredients.Num "
+        "([recipe+48h], 0x549b30/0x549b34/0x549b37) it reads "
+        "mIngredients[i].ItemClass -- the array data at [recipe+40h] "
+        "(0x549b80) indexed with a 16-byte stride (0x549b87 add r15,r15, "
+        "0x549b8a mov rcx,[rax+r15*8]), FItemAmount's first field -- and calls "
+        "UFGInventoryComponent::SetAllowedItemOnIndex(i, that) (0x549bb3 edx = "
+        "i, 0x549bb9); otherwise it calls the same with UFGItemDescriptor "
+        "itself (0x549f83 Z_Construct_UClass_UFGItemDescriptor_NoRegister, "
+        "0x549faa, 0x549fb0). Slot index and ingredient index step together "
+        "(0x54a1cf inc rbx, 0x54a1d2 inc r12d). mOutputInventory (0x54a1e9) "
+        "gets the identical loop against mProduct -- Num at [recipe+58h] "
+        "(0x54a212/0x54a216/0x54a219), data at [recipe+50h] (0x54a25f), same "
+        "stride (0x54a263/0x54a269), SetAllowedItemOnIndex at 0x54a292, the "
+        "UFGItemDescriptor fallback at 0x54a6a1/0x54a6c8/0x54a6ce, the two "
+        "indices stepping at 0x54a8e8/0x54a8eb and the slot-count bound at "
+        "0x54a8f5/0x54a8fc. The member offsets [recipe+40h]/[recipe+48h], "
+        "[recipe+50h]/[recipe+58h] and [inventory+1C0h]/[inventory+1C8h] are "
+        "UFGRecipe::mIngredients, UFGRecipe::mProduct and "
+        "UFGInventoryComponent::mInventoryStacks in the PDB's type stream "
+        "(sfy-native --class UFGRecipe:mIngredients,mProduct --class "
+        "UFGInventoryComponent:mInventoryStacks), a TArray being data then Num.",
+        "A manufacturer's inventory filters are positional and exhaustive. The "
+        "input inventory's slot i allows the recipe's i-th ingredient while "
+        "there is one, and every slot past the last ingredient allows "
+        "UFGItemDescriptor -- the base class, which is the wildcard, written "
+        "explicitly rather than left as it was. The output inventory is the "
+        "same against the recipe's products. The number of slots belongs to the "
+        "machine and is never changed here: the loop is bounded by "
+        "mInventoryStacks.Num, so an oil refinery keeps the slot a solid recipe "
+        "does not fill, filled with the wildcard. mArbitrarySlotSizes is not "
+        "touched at all. A blueprint we author reproduces exactly this: the "
+        "ingredients in recipe order, then the products in recipe order, and "
+        "UFGItemDescriptor in whatever is left over. What this does not settle "
+        "is the *save* shape -- SetAllowedItemOnIndex writes "
+        "mAllowedItemDescriptors, which is a SaveGame UPROPERTY "
+        "(FGInventoryComponent.h:660), so what a blueprint carries is whatever "
+        "the array held when it was saved, and a machine whose recipe was never "
+        "set carries whatever its Blueprint default was.",
     ),
 }
 

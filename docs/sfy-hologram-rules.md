@@ -16,7 +16,7 @@ comes from. Line numbers are into `CommunityResources/Headers.zip`, under
 Most of what is here is a *validation*: code that turns a placement away, or
 moves it. A few rules are the other kind — code that **works out** a value the
 game then writes, which this project has to reproduce rather than enforce when
-it authors a blueprint. Those carry the effect `compute`; `belt.cost` is one.
+it authors a blueprint. Those carry the effect `compute`; `belt.cost` and `manufacturer.inventory_filters` are the two.
 
 ## How a placement is refused
 
@@ -233,6 +233,33 @@ default for that case, and re-sourcing that limit is a separate change.
 `FGFactoryBuildingHologram.h` overrides `CheckValidPlacement` and
 `CheckValidFloor` for foundations and walls, which the placer does not use yet.
 
+## What a machine's inventory filters hold — `manufacturer.inventory_filters`
+
+The other `compute` rule, and the other thing this project has to reproduce
+rather than enforce. `AFGBuildableManufacturer::SetRecipe`
+(`Buildables/FGBuildableManufacturer.h:173`, `0x548d10`) assigns the recipe's
+ingredients and products to the machine's factory connections through
+`AssignInputAccessIndices` and `AssignOutputAccessIndices` — the primary vtable
+`0xFAB4A8` at `+A88h` and `+A90h` — and only if both answer true does it store
+`mCurrentRecipe` and call the slot at `+A80h`, which is `SetUpInventoryFilters`
+(`:220`, `0x549a70`).
+
+That function walks each inventory **once per slot**, not once per ingredient:
+
+| Slot `i` of | gets | when |
+| --- | --- | --- |
+| `mInputInventory` | `mIngredients[i].ItemClass` | `i < mIngredients.Num()` |
+| `mInputInventory` | `UFGItemDescriptor` | otherwise |
+| `mOutputInventory` | `mProduct[i].ItemClass` | `i < mProduct.Num()` |
+| `mOutputInventory` | `UFGItemDescriptor` | otherwise |
+
+each through `UFGInventoryComponent::SetAllowedItemOnIndex(i, class)`. The loop
+bound is the inventory's own `mInventoryStacks.Num()` (`[inventory+1C8h]`), so
+the slot count belongs to the machine and never changes, and
+`mArbitrarySlotSizes` is not touched at all. Two consequences worth stating: a
+spare slot is written with the wildcard rather than left as it was, and an oil
+refinery keeps the slot a solid recipe does not fill.
+
 ## What each rule does with the number: `effect`
 
 A rule's `status` says how well it was read; its `effect` says what the hologram
@@ -251,7 +278,7 @@ anything. Five values:
 `flab2bp.sfy.rules.load_rules` refuses it on an `extracted` rule, because a
 branch that was read says what it does. `compute` is the opposite case and is
 allowed beside `extracted`: the code was read in full, and it does nothing to a
-placement because it is not a validator. The shipped eighteen:
+placement because it is not a validator. The shipped nineteen:
 
 | `effect` | rules |
 | --- | --- |
@@ -259,7 +286,7 @@ placement because it is not a validator. The shipped eighteen:
 | `clamp` | `lift.height_range` |
 | `snap` | `belt.snap_directions`, `buildable.grid_snap`, `buildable.rotation_step` |
 | `none` | `belt.clearance`, `lift.step`, `lift.clearance` |
-| `compute` | `belt.cost` |
+| `compute` | `belt.cost`, `manufacturer.inventory_filters` |
 
 Two of those deserve their own sentence. `buildable.clearance` is `partial` —
 the box-against-box test is in `AFGHologram::TestClearanceOverlap`, which was
@@ -286,7 +313,7 @@ multiple of it.
 
 ## What was extracted, and what was not
 
-`hologram_rules.json` carries eighteen rules; thirteen are `extracted` and five
+`hologram_rules.json` carries nineteen rules; fourteen are `extracted` and five
 `partial`. A `partial` rule is a **bound the placer must not assume it knows** —
 its `comparison` names where the comparison actually is, and its
 `interpretation` is a lead for the next extraction, not a constraint.

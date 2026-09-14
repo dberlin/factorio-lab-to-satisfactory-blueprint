@@ -53,6 +53,7 @@ from flab2bp.sfy.versions import BLUEPRINT_HEADER_VERSION
 __all__ = [
     "BLUEPRINT_HEADER_VERSION",
     "DEFAULT_SAVE_VERSION",
+    "ITEM_DESCRIPTOR_CLASS",
     "LEVEL",
     "SPLINE_POINT_FIELD_TAGS",
     "TEMPLATE_MIN_SAVE_VERSION",
@@ -86,6 +87,17 @@ SPLINE_POINT_FIELD_TAGS: tuple[Tag, ...] = tuple(
 ``Vector`` is natively serialised, hence the flag, and it lives in
 ``/Script/CoreUObject``, which :data:`~flab2bp.sfy.properties.TYPE_PACKAGES`
 knows. A test compares these against a fixture belt's own tags."""
+
+ITEM_DESCRIPTOR_CLASS = "/Script/FactoryGame.FGItemDescriptor"
+"""The item-descriptor base class, which an inventory slot allows when it allows
+anything.
+
+``AFGBuildableManufacturer::SetUpInventoryFilters`` puts this class on every
+slot past the last ingredient or product -- ``0x549f83`` and ``0x54a6a1`` call
+``Z_Construct_UClass_UFGItemDescriptor_NoRegister`` and hand the result to
+``SetAllowedItemOnIndex``; see the ``manufacturer.inventory_filters`` rule. The
+spelling is Unreal's own path for a native class, ``/Script/<module>.<class>``,
+which is how the codec reads one out of a blueprint and how it writes one back."""
 
 CONNECTED_COMPONENT = "mConnectedComponent"
 SPLINE_DATA = "mSplineData"
@@ -233,9 +245,13 @@ def set_spline(belt: ObjectData, points: Sequence[tuple[Vector, Vector, Vector]]
 def set_recipe(machine: ObjectData, recipe_class_path: str) -> ObjectData:
     """Point a manufacturer's ``mCurrentRecipe`` at a recipe asset.
 
-    This is half of changing a machine's recipe: the inventory filters live on
-    the machine's inventory *components*, so use :func:`apply_recipe` over a
-    whole instantiated actor unless you are certain the filters already agree.
+    This is half of changing a machine's recipe, and it is the half
+    ``AFGBuildableManufacturer::SetRecipe`` (``0x548d10``) does last: the
+    inventory filters live on the machine's inventory *components*, and the
+    game rewrites them from the new recipe immediately afterwards
+    (``0x548f5b``, the call to ``SetUpInventoryFilters``). So use
+    :func:`apply_recipe` over a whole instantiated actor unless you are certain
+    the filters already agree.
     """
     return _set_property(machine, CURRENT_RECIPE, Object(ObjectRef("", recipe_class_path)))
 
@@ -253,18 +269,23 @@ def apply_recipe(
     first leaves a constructor that says it makes iron plates while its
     inventories still only accept what the template made.
 
-    What the filters have to hold is taken from the template blueprints this
-    module clones from -- over 160 manufacturers at save version 58 and up all
-    hold the same shape: **the input filter is the recipe's ingredients, in
-    recipe order**, and **the output filter is its products**, in recipe order,
-    padded out with the ``FGItemDescriptor`` wildcard that sits in the
-    machine's spare output slots. That is the shape of the files we copy, not a
-    rule read out of the game; what
-    ``UFGInventoryComponent::SetAllowedItemDescriptors`` is called with when a
-    recipe is set has not been read. How many slots there are belongs to the machine, not to
-    the recipe -- an oil refinery keeps a slot a solid recipe does not fill --
-    so the slots and their parallel ``mArbitrarySlotSizes`` are left exactly as
-    the template has them and only the entries the recipe names are rewritten.
+    What the filters have to hold is what the game writes into them.
+    ``AFGBuildableManufacturer::SetRecipe`` (``0x548d10``) calls
+    ``SetUpInventoryFilters`` (``0x549a70``), which walks each inventory once
+    per *slot* and calls
+    ``UFGInventoryComponent::SetAllowedItemOnIndex(i, class)`` with the
+    recipe's i-th ingredient -- or its i-th product, for the output inventory --
+    while there is one, and with ``UFGItemDescriptor`` itself, the wildcard, on
+    every slot past the last. See the ``manufacturer.inventory_filters`` rule in
+    ``data/hologram_rules.json`` for the instructions.
+
+    So the input filter is the recipe's ingredients in recipe order and the
+    output filter is its products in recipe order, each padded to the machine's
+    own slot count with the wildcard. How many slots there are belongs to the
+    machine, not to the recipe -- an oil refinery keeps a slot a solid recipe
+    does not fill -- so the slots and their parallel ``mArbitrarySlotSizes`` are
+    left exactly as the template has them, and the game does not touch those
+    either.
     """
     if not objects:
         raise TemplateError("apply_recipe needs the actor and its components")
@@ -303,7 +324,12 @@ def _inventory_path(header: ObjectHeader, data: ObjectData, name: str) -> str:
 def _set_filter(
     header: ObjectHeader, data: ObjectData, items: Sequence[str], registry: Registry
 ) -> ObjectData:
-    """Rewrite the leading ``mAllowedItemDescriptors`` entries, keeping the slots."""
+    """Rewrite every ``mAllowedItemDescriptors`` entry, keeping the slot count.
+
+    Slot i allows ``items[i]`` while there is one, and every slot past the last
+    allows :data:`ITEM_DESCRIPTOR_CLASS` -- which is what the game writes there,
+    not what the template happened to be carrying (see :func:`apply_recipe`).
+    """
     current = find(data.properties, ALLOWED_ITEMS)
     if not isinstance(current, Array):
         raise TemplateError(f"{header.path} has no {ALLOWED_ITEMS} array")
@@ -311,10 +337,10 @@ def _set_filter(
         raise TemplateError(
             f"{header.path} has {len(current.items)} inventory slots, the recipe needs {len(items)}"
         )
+    wildcard = Object(ObjectRef("", ITEM_DESCRIPTOR_CLASS))
     filled: tuple[Value, ...] = tuple(Object(_item_ref(registry, item)) for item in items)
-    return _set_property(
-        data, ALLOWED_ITEMS, replace(current, items=filled + current.items[len(items) :])
-    )
+    spare = (wildcard,) * (len(current.items) - len(items))
+    return _set_property(data, ALLOWED_ITEMS, replace(current, items=filled + spare))
 
 
 def assemble(

@@ -106,6 +106,7 @@ def test_the_effects_the_shipped_rules_state():
         "buildable.rotation_step": "snap",
         "buildable.clearance": "refuse",
         "belt.cost": "compute",
+        "manufacturer.inventory_filters": "compute",
     }
 
 
@@ -147,8 +148,9 @@ def test_the_cost_rule_names_every_function_it_was_read_across():
     assert "AFGBuildableConveyorBelt::GetDismantleRefundReturnsMultiplier @ 0x4edf70" in (
         rule.also_read
     )
-    # Every other rule was read from one function and says so.
-    assert all(not r.also_read for r in load_rules().values() if r.id != "belt.cost")
+    # Every rule that was read from one function says so.
+    spread = {r.id for r in load_rules().values() if r.also_read}
+    assert spread == {"belt.cost", "manufacturer.inventory_filters"}
 
 
 def test_the_cost_rules_evidence_carries_the_rounding_and_the_multiply():
@@ -164,6 +166,35 @@ def test_the_cost_rules_evidence_carries_the_rounding_and_the_multiply():
     assert "mBuiltWithRecipe" in at["0x4a774c"]
     assert "mMeshLength" in at["0x4edf70"]
     assert "mMeshHeight" in at["0x4edfa5"]
+
+
+def test_the_inventory_filter_rule_states_the_slot_to_ingredient_assignment():
+    """What a manufacturer's filters hold, read out of the game rather than a file."""
+    rule = load_rules()["manufacturer.inventory_filters"]
+    assert (rule.status, rule.effect) == ("extracted", "compute")
+    assert rule.cls == "AFGBuildableManufacturer"
+    assert rule.function == "SetUpInventoryFilters"
+    assert rule.rva == "0x549a70"
+    assert rule.header == "Buildables/FGBuildableManufacturer.h:220"
+    assert "UFGInventoryComponent::SetAllowedItemOnIndex" in rule.calls
+    assert {"mInputInventory", "mOutputInventory", "mCurrentRecipe"} <= set(rule.reads)
+    assert {line.split(" @ ")[0] for line in rule.also_read} == {
+        "AFGBuildableManufacturer::SetRecipe",
+        "AFGBuildableManufacturer::AFGBuildableManufacturer",
+    }
+    at = {line.split(":")[0]: line for line in rule.evidence}
+    # Slot i takes the i-th ingredient...
+    assert "SetAllowedItemOnIndex" in at["0x549bb9"]
+    assert "mInputInventory" in at["0x549ae4"]
+    # ...and a slot past the last one takes UFGItemDescriptor, the wildcard.
+    assert "UFGItemDescriptor" in at["0x549f83"]
+    assert "SetAllowedItemOnIndex" in at["0x549fb0"]
+    # The output inventory gets the identical loop against the products.
+    assert "SetAllowedItemOnIndex" in at["0x54a292"]
+    assert "UFGItemDescriptor" in at["0x54a6a1"]
+    # SetRecipe is what calls it, after storing the recipe.
+    assert "mCurrentRecipe" in at["0x548d5e"]
+    assert "0A80h" in at["0x548f5b"]
 
 
 def test_belt_curvature_rule_reads_the_bend_radius():
