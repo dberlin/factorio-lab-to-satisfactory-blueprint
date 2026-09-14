@@ -111,10 +111,62 @@ PROLOGUE_FIELDS = {
 }
 
 
+#: What the search cluster used to capture. Like `PROLOGUE_FIELDS` these are
+#: bound once and only read -- except `bounds`, narrowed once before any closure
+#: runs, and `priority`, re-derived once per round exactly as the local was --
+#: so they are excluded from the rebound-name pin below too.
+SEARCH_FIELDS = {
+    "belt_id",
+    "belt_model",
+    "bounds",
+    "junction_frame_bans",
+    "prioritize_source_families",
+    "flow_limits",
+    "junction_obstacle_span",
+    "history",
+    "paths",
+    "grid",
+    "corridor_reservations",
+    "dst_group",
+    "src_group",
+    "src_group_set",
+    "own_source_nets",
+    "hinted_to",
+    "junction_ok",
+    "admission_memo",
+    "junction_reservation_blockers",
+    "owned_source_starts",
+    "source_hint",
+    "sink_hint",
+    "rejected_starts",
+    "rejected_goals",
+    "rejected_path_cells",
+    "rejected_source_hints",
+    "rejected_sink_hints",
+    "guard_claims",
+    "path_guards",
+    "planned_taps",
+    "source_access_walls",
+    "destination_access_walls",
+    "source_access_blockers",
+    "permanent_guard",
+    "path_tap",
+    "_junction_stacks_collide",
+    "_prebuilt_path_port",
+    "_prebuilt_branch_port",
+    "route_distance",
+    "source_family",
+    "source_family_distance",
+    "priority",
+}
+
+
 def test_the_run_object_carries_exactly_the_rebound_names() -> None:
     from dataclasses import fields
 
-    assert {field.name for field in fields(domain._RouteAllRun)} - PROLOGUE_FIELDS == {
+    assert {
+        field.name for field in fields(domain._RouteAllRun)
+    } - PROLOGUE_FIELDS - SEARCH_FIELDS == {
         "budget",
         "deadline",
         "work",
@@ -318,3 +370,40 @@ def test_role_rows_is_still_a_generator_consumed_once() -> None:
     assert inspect.isgeneratorfunction(domain._RouteAllRun._role_rows)
     source = SRC.read_text()
     assert source.count("Nets.of(role_rows())") == 1
+
+
+def test_the_run_object_carries_the_search_cluster_fields() -> None:
+    """The 42 names the lifted search methods used to capture."""
+    from dataclasses import fields
+
+    assert {field.name for field in fields(domain._RouteAllRun)} >= SEARCH_FIELDS
+
+
+def test_the_late_search_fields_are_unset_until_the_loop_binds_them() -> None:
+    run = domain._RouteAllRun(budget=WorkBudget(left=10), deadline=None)
+    for name in ("route_distance", "source_family", "source_family_distance", "priority"):
+        with pytest.raises(AttributeError):
+            getattr(run, name)
+
+
+def test_the_three_per_run_caches_do_not_outlive_the_run() -> None:
+    """Two `_route_all` calls must not share a shape cache.
+
+    `_junction_stacks_collide` reaches `_building_collider_hits`, which three
+    tests monkeypatch; a process-lifetime cache would serve pre-patch verdicts.
+    """
+    canvas, nets, bounds = _corridor()
+    domain._route_all(canvas, nets, 2003, 37, bounds, budget=WorkBudget(left=100_000))
+    for name in ("_junction_stacks_collide", "_prebuilt_branch_port", "_prebuilt_path_port"):
+        attribute = vars(domain._RouteAllRun).get(name)
+        assert attribute is None or not hasattr(attribute, "cache_info"), (
+            f"{name} must be built per run in the prologue, not cached on the class"
+        )
+
+
+def test_the_proposal_deadline_narrowing_is_still_conditional_and_nested() -> None:
+    """`admit_source_family` is created only when a sibling is unrouted."""
+    source = SRC.read_text()
+    assert "def admit_source_family(" in source
+    assert "admit_proposal = admit_source_family" in source
+    assert "raise _GeometricDeadline from error" in source

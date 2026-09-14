@@ -6281,6 +6281,76 @@ class _RouteAllRun:
     power_discs: tuple[tuple[int, int, int], ...] | None = field(init=False)
     primitives: RoutePrimitives = field(init=False)
     last_mile_counts: dict[str, int] = field(init=False)
+    # -- What the search cluster used to capture ----------------------------
+    #
+    # Bound once in `_route_all`'s prologue -- except the last four, which the
+    # routing loop derives about a thousand lines below the closures that read
+    # them -- and only read afterwards. They are fields because a method cannot
+    # capture; they are not run state. None of them carries a default, for the
+    # same reason the fields above do not: an unset read must be an
+    # `AttributeError` exactly where the closure's free-variable read was a
+    # `NameError`, never a silently empty stand-in.
+    #: `_route_all`'s own parameters.
+    belt_id: int = field(init=False)
+    belt_model: int = field(init=False)
+    bounds: tuple[int, int, int, int] = field(init=False)
+    junction_frame_bans: Sequence[frozenset[Cell]] = field(init=False)
+    prioritize_source_families: bool = field(init=False)
+    flow_limits: RoutingFlowLimits | None = field(init=False)
+    #: Derived at the top of the pass, before the run object exists.
+    junction_obstacle_span: float = field(init=False)
+    history: dict[tuple[int, int, int], float] = field(init=False)
+    paths: StakedPaths = field(init=False)
+    #: The one flattening of the canvas for the whole pass, and the corridor
+    #: reservations staked on it.
+    grid: _Grid = field(init=False)
+    corridor_reservations: _CorridorReservations = field(init=False)
+    #: Net grouping: who shares a destination lane, who shares a source.
+    dst_group: dict[int, tuple[int, ...]] = field(init=False)
+    src_group: dict[int, tuple[int, ...]] = field(init=False)
+    src_group_set: dict[int, frozenset[int]] = field(init=False)
+    own_source_nets: dict[Cell, frozenset[int]] = field(init=False)
+    hinted_to: dict[Cell, set[int]] = field(init=False)
+    #: Junction admission, all three alive for this pass only.
+    junction_ok: dict[Cell, bool] = field(init=False)
+    admission_memo: JunctionAdmissionMemo = field(init=False)
+    junction_reservation_blockers: set[int] = field(init=False)
+    #: The staking tables `_stake` and `_unstake` keep in step.
+    owned_source_starts: dict[int, frozenset[Cell]] = field(init=False)
+    source_hint: dict[int, Cell] = field(init=False)
+    sink_hint: dict[int, Cell] = field(init=False)
+    rejected_starts: dict[int, set[Cell]] = field(init=False)
+    rejected_goals: dict[int, set[Cell]] = field(init=False)
+    rejected_path_cells: dict[int, set[Cell]] = field(init=False)
+    rejected_source_hints: dict[int, set[Cell]] = field(init=False)
+    rejected_sink_hints: dict[int, set[Cell]] = field(init=False)
+    guard_claims: dict[Cell, set[int]] = field(init=False)
+    path_guards: dict[int, set[Cell]] = field(init=False)
+    planned_taps: dict[Cell, set[int]] = field(init=False)
+    source_access_walls: dict[int, tuple[Cell, ...]] = field(init=False)
+    destination_access_walls: dict[int, tuple[Cell, ...]] = field(init=False)
+    source_access_blockers: dict[int, tuple[NetId, ...]] = field(init=False)
+    permanent_guard: frozenset[Cell] = field(init=False)
+    path_tap: dict[int, Cell] = field(init=False)
+    #: Built per run in `_route_all`'s prologue, never `@cache` on the class: a
+    #: class-level cache is keyed on `self` and lives for the process, so it
+    #: would outlive the pass, keep the canvas alive through the run object,
+    #: and -- worse -- serve `_junction_stacks_collide` verdicts computed
+    #: before a test patched `_building_collider_hits`.
+    _junction_stacks_collide: Callable[[Cell, Cell], bool] = field(init=False)
+    _prebuilt_path_port: Callable[..., int | None] = field(init=False)
+    _prebuilt_branch_port: Callable[[PlacedBuilding, PlacedBuilding, Cell], int | None] = field(
+        init=False
+    )
+    #: Bound by the routing loop, ~1,000 lines BELOW every closure that reads
+    #: them, from `paths`, `src_group` and `same_src` -- which the prologue has
+    #: not finished building. A read before that point raised `NameError` as a
+    #: closure and raises `AttributeError` here, which is the same bug at the
+    #: same line. `priority` is re-derived once per round, like the local was.
+    route_distance: tuple[int, ...] = field(init=False)
+    source_family: dict[int, tuple[int, ...]] = field(init=False)
+    source_family_distance: dict[int, int] = field(init=False)
+    priority: set[int] = field(init=False)
 
     @property
     def left(self) -> int:
@@ -6531,6 +6601,15 @@ def _route_all(
     run.owner = owner
     run.power_discs = power_discs
     run.primitives = primitives
+    #: What the search cluster used to capture. Bound above, read from here on.
+    run.belt_id = belt_id
+    run.belt_model = belt_model
+    run.junction_frame_bans = junction_frame_bans
+    run.prioritize_source_families = prioritize_source_families
+    run.flow_limits = flow_limits
+    run.junction_obstacle_span = junction_obstacle_span
+    run.history = history
+    run.paths = paths
     #: The vocabulary, now bound methods. Each alias keeps its call sites
     #: byte-identical -- and `connector_is_powered` is passed as a VALUE, not
     #: called, so the bound method has to reach that argument the same way.
@@ -6897,6 +6976,10 @@ def _route_all(
         canvas.limit = frame_bounds
         bounds = _route_box(canvas, bounds)
 
+    #: `bounds` is narrowed just above when a junction projection applies, so
+    #: the field takes the value the closures would have read, not the argument.
+    run.bounds = bounds
+
     if not canvas.port_corridors:
         _reserve_port_access(canvas, _port_access_inventory(nets).demands)
 
@@ -6919,6 +7002,8 @@ def _route_all(
     grid_box = _route_box(canvas, bounds)
     grid = _make_grid(canvas, grid_box, _canvas_span(canvas, grid_box), history)
     corridor_reservations = _CorridorReservations(canvas, grid, owner)
+    run.grid = grid
+    run.corridor_reservations = corridor_reservations
 
     # Nets that end at the same physical lane share destination topology even
     # when they carry different items.  Entry lanes are deliberately mixed:
@@ -6958,6 +7043,11 @@ def _route_all(
     own_source_nets = {cell: frozenset(members) for cell, members in declared_sources.items()}
     hinted_to: dict[Cell, set[int]] = defaultdict(set)
     src_group_set = {i: frozenset(group) for i, group in src_group.items()}
+    run.dst_group = dst_group
+    run.src_group = src_group
+    run.own_source_nets = own_source_nets
+    run.hinted_to = hinted_to
+    run.src_group_set = src_group_set
     # Chained nets -- one net leaving the belt another delivers to, which is what
     # `_proliferator_nets` builds -- used to be allowed to merge into each
     # other's paths in both directions. Neither direction survives inspection.
@@ -6992,6 +7082,9 @@ def _route_all(
     #: `junction_ok`; see `junction_admission.JunctionAdmissionMemo`.
     admission_memo = JunctionAdmissionMemo()
     junction_reservation_blockers: set[int] = set()
+    run.junction_ok = junction_ok
+    run.admission_memo = admission_memo
+    run.junction_reservation_blockers = junction_reservation_blockers
 
     @cache
     def _junction_stacks_collide(existing: Cell, candidate: Cell) -> bool:
@@ -7217,6 +7310,22 @@ def _route_all(
     # cell and exact certification refuses the finished placement.
     permanent_guard = frozenset(canvas.guard)
     path_tap: dict[int, Cell] = {}
+    run.owned_source_starts = owned_source_starts
+    run.source_hint = source_hint
+    run.sink_hint = sink_hint
+    run.rejected_starts = rejected_starts
+    run.rejected_goals = rejected_goals
+    run.rejected_path_cells = rejected_path_cells
+    run.rejected_source_hints = rejected_source_hints
+    run.rejected_sink_hints = rejected_sink_hints
+    run.guard_claims = guard_claims
+    run.path_guards = path_guards
+    run.planned_taps = planned_taps
+    run.source_access_walls = source_access_walls
+    run.destination_access_walls = destination_access_walls
+    run.source_access_blockers = source_access_blockers
+    run.permanent_guard = permanent_guard
+    run.path_tap = path_tap
 
     def _inside_grid(cell: Cell) -> bool:
         x, y, level = cell
@@ -9552,15 +9661,19 @@ def _route_all(
     route_distance = tuple(
         abs(net.source.x - net.dst.x) + abs(net.source.y - net.dst.y) for net in nets
     )
+    run.route_distance = route_distance
     source_family = {
         index: tuple(sorted((index, *src_group.get(index, ())))) for index in range(len(nets))
     }
+    run.source_family = source_family
     source_family_distance = {
         index: max(route_distance[member] for member in source_family[index])
         for index in range(len(nets))
     }
+    run.source_family_distance = source_family_distance
 
     priority: set[int] = set()
+    run.priority = priority
     coverage_first = len(nets) >= _SINGLE_ROUND_NETS
     round_limit = 1 if coverage_first and settle is None else RRR_MAX
     search_failures: dict[int, _PathSearchResult] = {}
@@ -9972,6 +10085,7 @@ def _route_all(
             for cell, n in blame.items():
                 history[cell] += _BLAME_WEIGHT * n
             priority = set(stranded)
+            run.priority = priority
             # Give up once raising the pressure has stopped buying anything.
             #
             # Rip-up-and-reroute converges by making contested cells progressively
