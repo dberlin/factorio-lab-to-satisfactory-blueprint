@@ -29,7 +29,11 @@ Two rules hold everything together:
 * the clock is resolved at the moment it is read, never captured, so a test
   that patches ``time.monotonic`` is seen by a budget built before the patch.
 
-``tests/test_one_deadline_rule.py`` fails if any of it spreads back out.
+``tests/test_one_deadline_rule.py`` walks ``src/flab2bp`` and fails if the
+concept spreads back out there. It does not reach headroom comparisons of
+the form ``deadline - time.monotonic() < X`` -- "is there enough time left
+to start something" is not an expiry check, and freeform, routing_domain
+and compact_seed each still have one.
 """
 
 from __future__ import annotations
@@ -153,7 +157,7 @@ class StagedWorkBudget:
 
     @property
     def spent(self) -> int:
-        """Expansions charged exactly once across every routing role."""
+        """Work charged exactly once across every routing role."""
         return self._spent
 
     @property
@@ -161,7 +165,7 @@ class StagedWorkBudget:
         return self._configured and not self._unsettled_discovery
 
     def configure(self, heights: tuple[int, ...], reserve_fraction: Fraction) -> None:
-        """Partition searchable expansions equally across first height stages."""
+        """Partition searchable work equally across first height stages."""
         if self._configured:
             if tuple(self.discovery_by_height) != heights:
                 raise ValueError("work budget is already configured for other heights")
