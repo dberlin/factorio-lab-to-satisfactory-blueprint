@@ -283,7 +283,9 @@ def test_the_factory_scales_with_seconds_but_never_below_the_floor() -> None:
     assert stingy.left == routing_domain._ROUTING_BUDGET
 
 
-def test_the_factory_reads_the_floor_at_call_time_not_at_import() -> None:
+def test_the_factory_reads_the_floor_at_call_time_not_at_import(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Every seed must see the same floor, whenever its module was imported.
 
     `freeform` reached the constant through the module object and got the value
@@ -293,12 +295,10 @@ def test_the_factory_reads_the_floor_at_call_time_not_at_import() -> None:
     by reading the global inside its own body, which this pins.
     """
     floor = routing_domain._ROUTING_BUDGET
-    try:
-        routing_domain._ROUTING_BUDGET = 3
-        assert routing_domain._routing_pass_budget().left == 3
-        assert routing_domain._routing_pass_budget(seconds=0.0).left == 3
-    finally:
-        routing_domain._ROUTING_BUDGET = floor
+    monkeypatch.setattr(routing_domain, "_ROUTING_BUDGET", 3)
+    assert routing_domain._routing_pass_budget().left == 3
+    assert routing_domain._routing_pass_budget(seconds=0.0).left == 3
+    monkeypatch.undo()
     assert routing_domain._routing_pass_budget().left == floor
 
 
