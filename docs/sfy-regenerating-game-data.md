@@ -29,10 +29,6 @@ export FLAB2BP_SATISFACTORY_DIR="$HOME/Satisfactory"   # the default, if unset
 | 6 | `tools/sfy-extract structs` | .NET 10 and the usmap | `data/struct_schemas.json` |
 | 7 | `uv run python scripts/sfy_registry.py` | steps 1–5 | `data/registry.json` |
 
-`scripts/sfy_measure_limits.py` is *not* in this sequence. It describes the
-fixture corpus and writes `data/measured.json`, which nothing reads; the note
-below step 7 says why.
-
 Then re-run the tests, which read the committed files and are the acceptance for
 all seven steps:
 
@@ -198,14 +194,6 @@ shipped as `unknown` so that **the validator refuses to route to it** rather
 than inventing one from the port's name. A refusal means the extraction is
 wrong, not that the registry needs an edit — `registry.json` is generated, never
 hand-edited.
-
-### Not a step: `measured.json`
-
-`uv run python scripts/sfy_measure_limits.py` measures the fixture corpus and
-writes `data/measured.json`. **Nothing reads it.** It is not in the merge, not in
-`registry.json` and not in any validator, because what a blueprint contains is
-not a fact about the game. Re-run it when fixtures are added if you want the
-corpus described; skip it otherwise.
 
 ## After a game update
 
