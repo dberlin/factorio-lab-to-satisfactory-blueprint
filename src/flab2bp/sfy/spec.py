@@ -12,6 +12,14 @@ end rather than overproducing, which is what a Satisfactory player does by
 hand.  So ``clock`` is every machine's potential but the last's, and
 ``last_clock`` is the last machine's.  Where they are equal the group is
 uniform and ``row_outputs`` is simply ``count`` times the machine rate.
+Power shards and megawatts follow the same split, because an underclocked last
+machine needs no shards and draws less.
+
+Every RATE here is an exact ``Fraction``.  The ``*_power_mw`` fields are the one
+deliberate exception and are ``float``: the game raises a machine's clock to a
+fractional exponent, so its draw is irrational.  They are report figures --
+they size generators and fill in a summary -- and nothing in the rates or in
+geometry reads them.
 """
 
 from __future__ import annotations
@@ -24,10 +32,6 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from flab2bp.sfy.registry import Registry
 from flab2bp.spec import BeltTier
 
-#: One Satisfactory foundation, in centimetres.  Blueprint Designer dimensions
-#: are stated in foundations, and everything downstream measures centimetres.
-FOUNDATION_CM = 800.0
-
 #: The game's designer buildables, by the mark a URL or CLI names.  The casing
 #: is the game's own and is deliberately inconsistent between Mk2 and Mk3.
 DESIGNER_CLASSES: dict[str, str] = {
@@ -36,8 +40,10 @@ DESIGNER_CLASSES: dict[str, str] = {
     "mk3": "Build_BlueprintDesigner_Mk3_C",
 }
 
-#: The game caps a machine's requested potential at 250 %.
-MAX_CLOCK = Fraction(5, 2)
+#: The buildable whose footprint one Blueprint Designer cell is.  Designer
+#: dimensions are stated in foundations, so the centimetres come from the
+#: foundation the game ships rather than from a number written here.
+FOUNDATION_CLASS = "Build_Foundation_8x1_01_C"
 
 
 class _Frozen(BaseModel):
@@ -48,24 +54,30 @@ class Designer(_Frozen):
     """The Blueprint Designer this build must fit inside."""
 
     mark: Literal["mk1", "mk2", "mk3"]
-    #: Foundations of 800 cm, as the game's own buildable declares them.
+    #: Foundations, as the game's own designer buildable declares them.
     dims: tuple[int, int, int]
+    #: One foundation's side in centimetres, read from
+    #: :data:`FOUNDATION_CLASS`'s clearance box by :func:`designer`.
+    foundation_cm: float = Field(gt=0)
 
     @property
     def half_cm(self) -> float:
         """Half the designer's width: the box is centred on its own origin."""
-        return self.dims[0] * FOUNDATION_CM / 2
+        return self.dims[0] * self.foundation_cm / 2
 
     @property
     def height_cm(self) -> float:
-        return self.dims[2] * FOUNDATION_CM
+        return self.dims[2] * self.foundation_cm
 
 
 def designer(mark: str, registry: Registry) -> Designer:
-    """The designer named by ``mark``, sized from the game's own buildable.
+    """The designer named by ``mark``, sized from the game's own buildables.
 
-    An unknown mark is refused rather than guessed: a wrong box size silently
-    truncates a build.
+    Both numbers are the game's: the cell count from the designer buildable's
+    ``designer_dims`` and the centimetres per cell from the foundation's own
+    footprint.  An unknown mark is refused rather than guessed, and so is a
+    foundation that is not square -- a wrong box size silently truncates a
+    build.
     """
     try:
         class_name = DESIGNER_CLASSES[mark]
@@ -83,7 +95,24 @@ def designer(mark: str, registry: Registry) -> Designer:
         # `mark` is a key of DESIGNER_CLASSES, so it is one of the three marks.
         mark=cast(Literal["mk1", "mk2", "mk3"], mark),
         dims=(int(dims[0]), int(dims[1]), int(dims[2])),
+        foundation_cm=foundation_cm(registry),
     )
+
+
+def foundation_cm(registry: Registry) -> float:
+    """One foundation's side in centimetres, from the game's own buildable."""
+    foundation = registry.buildables[FOUNDATION_CLASS]
+    width, depth = foundation.width_cm, foundation.depth_cm
+    if width is None or depth is None:
+        raise ValueError(
+            f"{FOUNDATION_CLASS} declares no footprint, so a designer cell has no size"
+        )
+    if width != depth:
+        raise ValueError(
+            f"{FOUNDATION_CLASS} is {width} x {depth} cm, not square; a Blueprint "
+            "Designer's cell count cannot be turned into centimetres by one number"
+        )
+    return width
 
 
 class SfyMachineGroup(_Frozen):
@@ -102,25 +131,44 @@ class SfyMachineGroup(_Frozen):
     count: int = Field(gt=0)
     #: Every machine's requested potential but the last's, as a fraction of
     #: 100 %.  FactorioLab states this as a percentage in the URL (``moc=250``).
-    #: Capped at :data:`MAX_CLOCK` by ``_clock_is_buildable`` rather than by a
+    #: Capped at :attr:`max_clock` by ``_clock_is_buildable`` rather than by a
     #: ``Field(le=...)``, which pydantic cannot put a ``Fraction`` inside.
     clock: Fraction = Field(gt=0)
     last_clock: Fraction = Field(gt=0)
+    #: The highest potential THIS machine can be driven to, computed by
+    #: :func:`flab2bp.sfy.rates.max_clock` from the game's own
+    #: ``max_potential``, ``potential_shard_slots_default`` and
+    #: ``potential_per_shard``.  It is a per-class figure, not a constant: a
+    #: buildable that takes no shards cannot be overclocked at all.
+    max_clock: Fraction = Field(gt=0)
     #: Somersloops in each machine's production-boost slots.
     somersloops: int = Field(ge=0)
+    #: Power shards in each machine but the last, to hold it at ``clock``.
     power_shards_per_machine: int = Field(ge=0)
+    #: Power shards in the last machine, to hold it at ``last_clock``.  An
+    #: underclocked last machine needs none, so this is usually 0 where
+    #: ``power_shards_per_machine`` is not, and a row that ignored the
+    #: difference would over-order shards.
+    last_power_shards: int = Field(ge=0)
     #: Items/second one machine consumes at ``clock``.
     inputs_per_machine: dict[str, Fraction] = Field(default_factory=dict)
     #: Items/second one machine produces at ``clock``.
     outputs_per_machine: dict[str, Fraction] = Field(default_factory=dict)
-    power_mw_per_machine: Fraction = Field(ge=0)
+    #: Megawatts one machine but the last draws at ``clock``.  A ``float``, not
+    #: a ``Fraction``: the game raises the clock to a fractional exponent, so
+    #: this figure is irrational and is a REPORT number -- it sizes generators
+    #: and fills in a summary, and nothing in geometry or in the rates reads it.
+    power_mw_per_machine: float = Field(ge=0)
+    #: Megawatts the last machine draws at ``last_clock``.  A report figure for
+    #: the same reason as :attr:`power_mw_per_machine`.
+    last_power_mw: float = Field(ge=0)
 
     @model_validator(mode="after")
     def _clock_is_buildable(self) -> SfyMachineGroup:
-        if self.clock > MAX_CLOCK:
+        if self.clock > self.max_clock:
             raise ValueError(
-                f"{self.recipe_id}: clock {self.clock} is above the game's {MAX_CLOCK} "
-                "ceiling; no number of power shards reaches it"
+                f"{self.recipe_id}: clock {self.clock} is above {self.machine_class}'s "
+                f"{self.max_clock} ceiling; no number of power shards reaches it"
             )
         return self
 
@@ -166,6 +214,16 @@ class SfyMachineGroup(_Frozen):
     def row_outputs(self) -> dict[str, Fraction]:
         """Items/second the whole row produces."""
         return self._row(self.outputs_per_machine)
+
+    @property
+    def row_power_shards(self) -> int:
+        """Power shards the whole row needs: the last machine counted apart."""
+        return (self.count - 1) * self.power_shards_per_machine + self.last_power_shards
+
+    @property
+    def row_power_mw(self) -> float:
+        """Megawatts the whole row draws, the last machine at its own clock."""
+        return (self.count - 1) * self.power_mw_per_machine + self.last_power_mw
 
 
 class SfyBuildSpec(_Frozen):
@@ -239,25 +297,27 @@ class SfyBuildSpec(_Frozen):
         return (floor, *self.belt_upgrades)
 
     @property
-    def power_mw(self) -> Fraction:
-        """Nameplate draw of every machine placed, at its group's clock.
+    def power_mw(self) -> float:
+        """Megawatts every machine placed draws, each row at its own clocks.
 
-        The odd underclocked machine at the end of a row draws less than this,
-        so the figure is an upper bound -- which is the side to be wrong on when
-        it is used to size power.
+        A report figure, like the group's own power: the game's clock exponent
+        is fractional, so this cannot be exact and nothing downstream of the
+        rates reads it.
         """
-        return sum(
-            (g.power_mw_per_machine * g.count for g in self.groups),
-            start=Fraction(0),
-        )
+        return sum(g.row_power_mw for g in self.groups)
+
+    @property
+    def power_shards(self) -> int:
+        """Power shards the whole build needs."""
+        return sum(g.row_power_shards for g in self.groups)
 
 
 __all__ = (
     "DESIGNER_CLASSES",
-    "FOUNDATION_CM",
-    "MAX_CLOCK",
+    "FOUNDATION_CLASS",
     "Designer",
     "SfyBuildSpec",
     "SfyMachineGroup",
     "designer",
+    "foundation_cm",
 )

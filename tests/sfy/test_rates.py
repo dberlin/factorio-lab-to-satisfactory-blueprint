@@ -7,6 +7,11 @@ disagree, these tests state what the export says.
 
 from __future__ import annotations
 
+import csv
+import hashlib
+import json
+import subprocess
+import sys
 from fractions import Fraction
 from pathlib import Path
 
@@ -16,19 +21,25 @@ from flab2bp.lab.data import load_vendored
 from flab2bp.lab.flow import load_flow
 from flab2bp.lab.url import Game, parse_url
 from flab2bp.sfy.labmap import load_lab_map
-from flab2bp.sfy.rates import RatesRefusal, spec_from_flow
+from flab2bp.sfy.rates import RatesRefusal, max_clock, spec_from_flow
 from flab2bp.sfy.registry import load_registry
 from flab2bp.sfy.spec import SfyBuildSpec, SfyMachineGroup
 
-FLOWS = Path(__file__).resolve().parent.parent / "fixtures" / "sfy_flows"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+FLOWS = REPO_ROOT / "tests" / "fixtures" / "sfy_flows"
 
 #: Every fixture is exported at FactorioLab's per-minute display rate.
 PER_MINUTE = Fraction(1, 60)
 
 
+def _url(name: str) -> str:
+    """The URL FactorioLab wrote into line 1 of the export."""
+    return (FLOWS / f"{name}.csv").read_text(encoding="utf-8").splitlines()[0].strip().strip('"')
+
+
 def _spec(name: str) -> SfyBuildSpec:
     path = FLOWS / f"{name}.csv"
-    url = path.read_text(encoding="utf-8").splitlines()[0].strip().strip('"')
+    url = _url(name)
     return spec_from_flow(
         load_vendored(Game.SFY),
         parse_url(url),
@@ -36,6 +47,19 @@ def _spec(name: str) -> SfyBuildSpec:
         load_registry(),
         load_lab_map(),
     )
+
+
+def _power_column(name: str) -> dict[str, Fraction]:
+    """The export's ``Power`` cell per recipe, in kW, exactly as written.
+
+    ``FlowRow`` does not carry ``Power`` -- nothing in the pipeline consumes it
+    -- so this reads the committed CSV directly.  FactorioLab writes an exact
+    rational behind a leading ``=``.
+    """
+    rows = list(
+        csv.DictReader((FLOWS / f"{name}.csv").read_text(encoding="utf-8").splitlines()[1:])
+    )
+    return {row["Recipe"]: Fraction(row["Power"].lstrip("=")) for row in rows if row.get("Recipe")}
 
 
 def _group(spec: SfyBuildSpec, recipe_id: str) -> SfyMachineGroup:
@@ -141,16 +165,34 @@ def test_overclock_above_one_is_carried_and_shards_are_counted() -> None:
     spec = _spec("iron-plate-60-overclock-250")
     plate = _group(spec, "iron-plate")
     assert plate.clock == Fraction(5, 2)  # the URL says moc=250, a percentage
+    assert plate.max_clock == Fraction(5, 2)  # max_potential 1 + 3 shards at 0.5
     assert plate.count == 2  # FactorioLab asks for 1.2 constructors
     assert plate.last_clock == Fraction(1, 2)
-    # Three shards take a machine from 100% to 250% at half a shard each.
+    # Three shards take a machine from 100% to 250% at half a shard each, but
+    # the last constructor runs at 50% and needs none: the row buys 3, not 6.
     assert plate.power_shards_per_machine == 3
+    assert plate.last_power_shards == 0
+    assert plate.row_power_shards == 3
     assert plate.row_outputs["iron-plate"] == Fraction(1)
 
 
 def test_a_group_at_the_default_clock_needs_no_power_shards() -> None:
     spec = _spec("iron-plate-60")
     assert all(g.power_shards_per_machine == 0 for g in spec.groups)
+    assert all(g.last_power_shards == 0 for g in spec.groups)
+    assert spec.power_shards == 0
+
+
+def test_the_clock_ceiling_is_the_games_own_potential_plus_its_shard_slots() -> None:
+    registry = load_registry()
+    limits = registry.limits
+    assert limits.potential_shard_slots_default == 3
+    assert limits.potential_per_shard == 0.5
+    for machine_cls in ("Build_ConstructorMk1_C", "Build_AssemblerMk1_C", "Build_OilRefinery_C"):
+        assert registry.buildables[machine_cls].max_potential == 1.0
+        assert max_clock(registry, machine_cls) == Fraction(5, 2)
+    # And every group carries the ceiling its own machine has.
+    assert all(g.max_clock == Fraction(5, 2) for g in _spec("iron-plate-60").groups)
 
 
 def test_somersloops_double_output_the_way_factoriolab_computes_it() -> None:
@@ -173,11 +215,106 @@ def test_somersloops_double_output_the_way_factoriolab_computes_it() -> None:
     assert ingot.power_mw_per_machine == Fraction(4)
 
 
-def test_power_per_machine_is_the_games_draw_scaled_by_the_clock() -> None:
+def test_power_per_machine_is_the_games_draw_raised_to_the_games_exponent() -> None:
     plain = _group(_spec("iron-plate-60"), "iron-plate")
-    assert plain.power_mw_per_machine == Fraction(4)  # registry Build_ConstructorMk1_C
+    assert plain.power_mw_per_machine == 4.0  # registry Build_ConstructorMk1_C, clock 1
+    assert plain.last_power_mw == 4.0
+    assert plain.row_power_mw == 12.0  # three constructors, all at clock 1
+
     fast = _group(_spec("iron-plate-60-overclock-250"), "iron-plate")
-    assert fast.power_mw_per_machine == Fraction(10)  # 4 MW linear in the clock
+    exponent = load_registry().buildables["Build_ConstructorMk1_C"].power_exponent
+    assert exponent == 1.321929
+    assert fast.power_mw_per_machine == pytest.approx(4.0 * 2.5**1.321929)
+    # The last constructor runs at 50%, so it draws LESS than its rating.
+    assert fast.last_power_mw == pytest.approx(4.0 * 0.5**1.321929)
+    assert fast.last_power_mw < 4.0
+
+
+def test_per_machine_power_agrees_with_factoriolabs_power_column() -> None:
+    """FactorioLab bills `ceil(machines)` at the full clock; ours is per machine.
+
+    FactorioLab's Power cell is one number for the whole row, and it charges
+    every machine -- including the odd underclocked one -- at the group's clock.
+    Dividing it by `ceil(machines)` therefore recovers exactly the figure
+    `power_mw_per_machine` states, and the two may differ only by FactorioLab's
+    hard-coded 1.321928 against the game's own 1.321929.
+    """
+    name = "iron-plate-60-overclock-250"
+    powers = _power_column(name)
+    spec = _spec(name)
+    for group in spec.groups:
+        theirs_kw = powers[group.recipe_id] / group.count
+        ours_kw = group.power_mw_per_machine * 1000
+        assert ours_kw == pytest.approx(float(theirs_kw), rel=1e-6), group.recipe_id
+        # Tight enough to be the same model, loose enough for that last digit.
+        assert ours_kw != float(theirs_kw)
+
+
+def test_importing_the_satisfactory_rates_never_loads_the_dsp_catalog() -> None:
+    """The sfy path must not drag DSP's catalog in behind it.
+
+    `flab2bp.rates.adjust` and `flab2bp.rates.machine_choice` both import
+    `flab2bp.dsp.catalog` at module scope, which is why `rates.py` copies
+    `select_machine` and the ceiling rather than importing them.  A fresh
+    interpreter is the only honest check: inside this one the DSP modules are
+    long since imported by other tests.
+    """
+    assert _dsp_modules_after("import flab2bp.sfy.rates") == []
+
+    # One door is still open and this names it rather than pretending otherwise:
+    # `flab2bp.lab.flow` imports the catalog at flow.py:103 to canonicalize DSP
+    # aliases, so the moment a caller parses a CSV the DSP modules load.  Design
+    # section 6 severs that; until it does, this asserts the door is still the
+    # ONLY one, so a new import would fail here rather than pass unnoticed.
+    through_flow = _dsp_modules_after("import flab2bp.lab.flow")
+    assert through_flow, "flow.py's catalog import is gone -- sever the rest and drop this half"
+    assert _dsp_modules_after("import flab2bp.sfy.spec, flab2bp.sfy.labmap") == []
+
+
+def _dsp_modules_after(statement: str) -> list[str]:
+    """DSP modules a fresh interpreter has loaded after running ``statement``."""
+    probe = (
+        f"import sys; {statement}; "
+        "print(sorted(m for m in sys.modules if m.startswith('flab2bp.dsp')))"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=REPO_ROOT,
+    )
+    parsed = json.loads(result.stdout.strip().replace("'", '"'))
+    assert isinstance(parsed, list)
+    return parsed
+
+
+def test_every_fixture_flow_is_the_file_its_manifest_describes() -> None:
+    """The manifest is the fixtures' provenance, so it must still be true.
+
+    A CSV edited by hand -- to make a test pass, or by a stray formatter --
+    would break the one rule these fixtures exist to hold: that they are what
+    FactorioLab wrote.  The hash catches that, and comparing line 1 to
+    `requested_url` catches a manifest row wired to the wrong file.
+    """
+    manifest = json.loads((FLOWS / "MANIFEST.json").read_text(encoding="utf-8"))
+    listed = {entry["file"] for entry in manifest["flows"]}
+    on_disk = {path.name for path in FLOWS.glob("*.csv")}
+    assert listed == on_disk, "every committed CSV must have a manifest entry and vice versa"
+
+    for entry in manifest["flows"]:
+        raw = (FLOWS / entry["file"]).read_bytes()
+        assert hashlib.sha256(raw).hexdigest() == entry["sha256"], entry["file"]
+        assert len(raw) == entry["bytes"], entry["file"]
+        exported = raw.decode("utf-8").splitlines()[0].strip().strip('"')
+        assert exported == entry["exported_url"], entry["file"]
+        # FactorioLab reorders the query and appends v=11, so the requested and
+        # exported URLs are the same state seen twice, not the same string.
+        assert _query(exported) == _query(entry["requested_url"]), entry["file"]
+
+
+def _query(url: str) -> set[str]:
+    return set(url.partition("?")[2].split("&"))
 
 
 def test_a_flow_whose_rates_contradict_the_model_is_refused_with_the_row_named(

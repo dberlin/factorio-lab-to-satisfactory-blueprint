@@ -1,5 +1,5 @@
 {
- "note": "FactorioLab Satisfactory flow exports, committed byte for byte as FactorioLab wrote them.  Captured through a headless browser with flab2bp.lab.capture.capture_flow_csv; never hand-written.  'exported_url' is line 1 of the CSV, which is the URL flab2bp.lab.flow.verify_provenance compares against.",
+ "note": "FactorioLab Satisfactory flow exports, committed byte for byte as FactorioLab wrote them.  Captured through a headless browser with flab2bp.lab.capture.capture_flow_csv; never hand-written.  'requested_url' is the URL the browser was driven to -- FactorioLab silently drops moc/e/m unless it carries v=11 -- and 'exported_url' is line 1 of the CSV, which is the URL flab2bp.lab.flow.verify_provenance compares against.  'sha256' and 'bytes' are of the committed file; tests/sfy/test_rates.py checks every one.",
  "generated": "2026-09-14",
  "flows": [
   {
@@ -7,49 +7,63 @@
    "requested_url": "https://factoriolab.github.io/sfy/list?v=11&o=iron-plate*60",
    "exported_url": "https://factoriolab.github.io/sfy/list?o=iron-plate*60&v=11",
    "captured": "2026-09-14",
-   "note": "whole machine counts at clock 1"
+   "note": "whole machine counts at clock 1",
+   "sha256": "22e9159d7f1e9bc1ef37ae7501c16b862002742b3a8711daab08a031cc8b4b69",
+   "bytes": 552
   },
   {
    "file": "reinforced-iron-plate-10.csv",
    "requested_url": "https://factoriolab.github.io/sfy/list?v=11&o=reinforced-iron-plate*10",
    "exported_url": "https://factoriolab.github.io/sfy/list?o=reinforced-iron-plate*10&v=11",
    "captured": "2026-09-14",
-   "note": "a five-row chain, all counts whole"
+   "note": "a five-row chain, all counts whole",
+   "sha256": "b006a962f57bf7f04e82cf544e6ef03e2054388d7304c4c46e69c156c591e660",
+   "bytes": 1040
   },
   {
    "file": "iron-plate-50.csv",
    "requested_url": "https://factoriolab.github.io/sfy/list?v=11&o=iron-plate*50",
    "exported_url": "https://factoriolab.github.io/sfy/list?o=iron-plate*50&v=11",
    "captured": "2026-09-14",
-   "note": "fractional machine counts (2.5, 2.5, 1.25)"
+   "note": "fractional machine counts (2.5, 2.5, 1.25)",
+   "sha256": "80b2df906e180a9832a6ef3f2d66153589654a514bb6396af2438a36d6054624",
+   "bytes": 561
   },
   {
    "file": "plastic-10.csv",
    "requested_url": "https://factoriolab.github.io/sfy/list?v=11&o=plastic*10",
    "exported_url": "https://factoriolab.github.io/sfy/list?o=plastic*10&v=11",
    "captured": "2026-09-14",
-   "note": "a fluid input and a fluid surplus"
+   "note": "a fluid input and a fluid surplus",
+   "sha256": "1bba3ca2409009c06083d842161e0a1fb4633142f4d4c3e48ced33cfc4ce07e9",
+   "bytes": 505
   },
   {
    "file": "iron-plate-60-overclock-250.csv",
    "requested_url": "https://factoriolab.github.io/sfy/list?v=11&o=iron-plate*60&moc=250",
    "exported_url": "https://factoriolab.github.io/sfy/list?o=iron-plate*60&moc=250&v=11",
    "captured": "2026-09-14",
-   "note": "build-wide overclock 250%"
+   "note": "build-wide overclock 250%",
+   "sha256": "2062176bc5b747a22f06d927d3ca5d4947b5c01290b4794dd20ef734d6da888a",
+   "bytes": 609
   },
   {
    "file": "iron-plate-60-somersloop.csv",
    "requested_url": "https://factoriolab.github.io/sfy/list?v=11&o=iron-plate*60&e=1*somersloop&m=constructor-id*0",
    "exported_url": "https://factoriolab.github.io/sfy/list?o=iron-plate*60&e=1*somersloop&m=constructor-id*0&v=11",
    "captured": "2026-09-14",
-   "note": "one somersloop in every constructor"
+   "note": "one somersloop in every constructor",
+   "sha256": "c0687dc7564c9c109f03f5b3969ba52d917bb78f875e8d04807c7b51aa9fae61",
+   "bytes": 601
   },
   {
    "file": "iron-plate-60-belt-mk3.csv",
    "requested_url": "https://factoriolab.github.io/sfy/list?v=11&o=iron-plate*60&ibe=conveyor-belt-mk3",
    "exported_url": "https://factoriolab.github.io/sfy/list?o=iron-plate*60&ibe=conveyor-belt-mk3&v=11",
    "captured": "2026-09-14",
-   "note": "an explicit belt floor above the dataset default"
+   "note": "an explicit belt floor above the dataset default",
+   "sha256": "fe759115c49be549db3c70965cca994610499b9e3544cc30f3947fc60c199d22",
+   "bytes": 576
   }
  ]
 }

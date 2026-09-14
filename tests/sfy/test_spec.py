@@ -8,7 +8,14 @@ import pytest
 from pydantic import ValidationError
 
 from flab2bp.sfy.registry import load_registry
-from flab2bp.sfy.spec import Designer, SfyBuildSpec, SfyMachineGroup, designer
+from flab2bp.sfy.spec import (
+    FOUNDATION_CLASS,
+    Designer,
+    SfyBuildSpec,
+    SfyMachineGroup,
+    designer,
+    foundation_cm,
+)
 
 
 def _group(**overrides: object) -> SfyMachineGroup:
@@ -20,11 +27,14 @@ def _group(**overrides: object) -> SfyMachineGroup:
         "count": 3,
         "clock": Fraction(1),
         "last_clock": Fraction(1),
+        "max_clock": Fraction(5, 2),
         "somersloops": 0,
         "power_shards_per_machine": 0,
+        "last_power_shards": 0,
         "inputs_per_machine": {"iron-ingot": Fraction(1, 2)},
         "outputs_per_machine": {"iron-plate": Fraction(1, 3)},
-        "power_mw_per_machine": Fraction(4),
+        "power_mw_per_machine": 4.0,
+        "last_power_mw": 4.0,
     }
     base.update(overrides)
     return SfyMachineGroup(**base)  # type: ignore[arg-type]
@@ -37,8 +47,16 @@ def test_each_designer_mark_takes_its_dimensions_from_the_games_own_buildable() 
     assert designer("mk3", registry).dims == (6, 6, 6)
 
 
+def test_a_designer_cell_is_one_of_the_games_own_foundations() -> None:
+    registry = load_registry()
+    foundation = registry.buildables[FOUNDATION_CLASS]
+    assert foundation.width_cm == foundation.depth_cm  # square, or the size is one number short
+    assert foundation_cm(registry) == foundation.width_cm
+    assert designer("mk2", registry).foundation_cm == foundation.width_cm
+
+
 def test_a_designer_states_its_half_width_and_height_in_centimetres() -> None:
-    mk2 = Designer(mark="mk2", dims=(5, 5, 5))
+    mk2 = Designer(mark="mk2", dims=(5, 5, 5), foundation_cm=foundation_cm(load_registry()))
     assert mk2.half_cm == 2000.0
     assert mk2.height_cm == 4000.0
 
@@ -67,9 +85,27 @@ def test_a_last_machine_faster_than_its_group_is_refused() -> None:
         _group(clock=Fraction(1), last_clock=Fraction(3, 2))
 
 
-def test_a_clock_above_two_and_a_half_is_refused_because_the_game_caps_it_there() -> None:
-    with pytest.raises(ValidationError):
+def test_a_clock_above_the_machines_own_ceiling_is_refused() -> None:
+    with pytest.raises(ValidationError, match="ceiling"):
         _group(clock=Fraction(3))
+    # The ceiling is per machine, not a constant: a group whose buildable takes
+    # no power shards at all refuses any overclock.
+    with pytest.raises(ValidationError, match="ceiling"):
+        _group(clock=Fraction(3, 2), max_clock=Fraction(1))
+
+
+def test_a_row_buys_shards_and_power_for_its_underclocked_last_machine_apart() -> None:
+    group = _group(
+        count=3,
+        clock=Fraction(5, 2),
+        last_clock=Fraction(1, 2),
+        power_shards_per_machine=3,
+        last_power_shards=0,
+        power_mw_per_machine=13.4,
+        last_power_mw=1.6,
+    )
+    assert group.row_power_shards == 6  # two full machines, none for the last
+    assert group.row_power_mw == pytest.approx(2 * 13.4 + 1.6)
 
 
 def test_a_spec_whose_groups_consume_something_nobody_supplies_is_refused() -> None:
@@ -110,4 +146,5 @@ def test_a_spec_totals_its_machines_belt_tiers_and_power() -> None:
     )
     assert spec.machine_count == 5
     assert [t.item_id for t in spec.belt_tiers] == ["conveyor-belt-mk1", "conveyor-belt-mk2"]
-    assert spec.power_mw == Fraction(20)
+    assert spec.power_mw == pytest.approx(20.0)
+    assert spec.power_shards == 0
