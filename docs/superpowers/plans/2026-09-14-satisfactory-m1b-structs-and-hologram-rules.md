@@ -344,7 +344,34 @@ both sources.
 git commit -m "Take every port direction from the game and ship unknown where the game does not say"
 ```
 
-**Review batch C: Task 4.**
+Also in Task 4 (user ruling 2026-09-14: the corpus has no role): delete `scripts/sfy_measure_limits.py`, `src/flab2bp/sfy/data/measured.json`, their tests and their runbook step; nothing in the repository may describe corpus geometry as a statistic the project keeps.
+
+---
+
+### Task 5: Follow chained `.pdata` entries so split functions disassemble whole
+
+Added 2026-09-14: Task 3 found that MSVC splits several hologram functions into
+chunks, and `disasm` reaches only the entry chunk (`ValidateConveyorBelt` is
+1065 bytes but 27 come back), leaving `belt.max_length`, `pipe.max_length`,
+`pipe.fluid_requirements` and `buildable.rotation_step` at `partial`.
+
+**Files:**
+- Modify: `tools/sfy-native/src/main.rs`, `tools/sfy-native/README.md`, `scripts/sfy_native_rules.py`, `src/flab2bp/sfy/data/hologram_rules.json`, `docs/sfy-hologram-rules.md`
+- Test: `cargo test`; `tests/sfy/test_rules.py`
+
+**Interfaces:**
+- `disasm` output gains `"chunks": [{"rva": "0x..", "size": n}, ...]` and `instructions` covers every chunk (sorted by RVA); `size` is the sum; `size_source: "pdata-chained"` when more than one chunk. A chunk belongs to the function when its `UNWIND_INFO` has `UNW_FLAG_CHAININFO` and the chained `RUNTIME_FUNCTION` resolves (transitively) to the function's primary entry; also include chunks whose primary entry is the function even when reached from a different order in `.pdata`.
+- `scripts/sfy_native_rules.py` re-run; the four rules above re-interpreted from the complete disassembly; any rule that stays `partial` states the new reason.
+
+- [ ] **Step 1: Failing Rust test** — a synthetic `.pdata` with a primary entry and one chained chunk; assert both are returned and the chunk order.
+- [ ] **Step 2: Implement** — parse `UNWIND_INFO` flags (byte 0 bits 3-7: `UNW_FLAG_CHAININFO = 0x4`), the `RUNTIME_FUNCTION` that follows the unwind codes (aligned), and build a primary→chunks map once per PE.
+- [ ] **Step 3: Re-run the rules script**, regenerate `hologram_rules.json`, update the header survey doc and `test_rules.py` expectations (the four rules should reach `extracted`; if not, the reason must name what still blocks).
+- [ ] **Step 4: Suite and commit** — `cargo test`, `cargo clippy -- -D warnings`, `uv run pytest tests/sfy -q`.
+```bash
+git commit -m "Follow chained .pdata chunks so split hologram functions disassemble whole"
+```
+
+**Review batch C: Tasks 4 and 5.**
 
 ---
 
