@@ -52,7 +52,8 @@ if (mode == "structs")
 
 var provider = new DefaultFileProvider(
     paks, SearchOption.AllDirectories, new VersionContainer(EGame.GAME_UE5_6), StringComparer.OrdinalIgnoreCase);
-provider.MappingsContainer = new FileUsmapTypeMappingsProvider(mappings);
+var usmapMappings = new FileUsmapTypeMappingsProvider(mappings);
+provider.MappingsContainer = usmapMappings;
 provider.Initialize();
 provider.Mount();
 var archives = provider.MountedVfs.Select(v => $"{v.Name}:{v.FileCount}").OrderBy(s => s, StringComparer.Ordinal).ToList();
@@ -139,6 +140,7 @@ foreach (var pkg in buildPackages)
 // UTF-16 LE, not the UTF-8 the extension suggests.
 var docsText = File.ReadAllText(DocsPath(gameDir));
 var (classPaths, ambiguousClasses) = ClassPaths(docsText);
+var (descriptorPaths, ambiguousDescriptors) = DescriptorPaths();
 
 var output = new
 {
@@ -167,6 +169,11 @@ var output = new
     wires = WireLengths(docsText),
     class_paths = classPaths,
     class_paths_ambiguous = ambiguousClasses,
+    // The same question as `class_paths`, asked of the cooked assets instead of
+    // Docs.json: every Blueprint whose class chain reaches `FGItemDescriptor`,
+    // at the path its own package states. See `DescriptorPaths`.
+    descriptor_paths = descriptorPaths,
+    descriptor_paths_ambiguous = ambiguousDescriptors,
     grid = new Dictionary<string, object?>
     {
         // No cooked asset carries AFGBuildableHologram::mGridSnapSize's default;
@@ -188,8 +195,89 @@ var outPath = arg2.Length > 0 ? arg2 : "assets.json";
 File.WriteAllText(outPath, JsonConvert.SerializeObject(output, Formatting.Indented) + "\n");
 Console.Error.WriteLine($"wrote {outPath}: {ports.Count} classes with ports, {holograms.Count} with a hologram class");
 Console.Error.WriteLine($"{classPaths.Count} class asset paths, {ambiguousClasses.Count} class names left out as ambiguous");
+Console.Error.WriteLine($"{descriptorPaths.Count} cooked item-descriptor classes, {ambiguousDescriptors.Count} left out as ambiguous");
 Console.Error.WriteLine($"connection classes left out on purpose: {string.Join(", ", unmodelled)}");
 return 0;
+
+/// Every cooked Blueprint that *is* an item descriptor, by class name, with the
+/// whole asset path a blueprint names it by.
+///
+/// This is the second, independent reading of a fact `class_paths` already
+/// carries. `class_paths` are the paths Docs.json spells out inline; these are
+/// read off the cooked packages themselves -- a `BlueprintGeneratedClass`
+/// export's name is the class and its own outer is the package, so
+/// `/Game/FactoryGame/Resource/Parts/IronPlate/Desc_IronPlate` plus
+/// `Desc_IronPlate_C` is the path, straight out of the asset. Neither leg is a
+/// blueprint corpus, and `tests/sfy/test_templates.py` holds the registry's
+/// `item_paths` to both.
+///
+/// **"Is a descriptor" is the game's class hierarchy, never a name.** Two
+/// thirds of them are called `Desc_*`, but fifteen of the ones the registry
+/// needs are not (`BP_EquipmentDescriptorGasmask_C`,
+/// `Foundation_ConcretePolished_8x2_C` and their kin), so the filter is the
+/// super chain: the Blueprint supers by name, then the shipped usmap's native
+/// `SuperType` chain, until it reaches `FGItemDescriptor` --
+/// `FGBuildingDescriptor -> FGBuildDescriptor -> FGItemDescriptor`,
+/// `FGEquipmentDescriptor -> FGItemDescriptor`, and so on.
+///
+/// Every cooked package is loaded for this (about 23000 of them, 40 s), because
+/// nothing narrower than "every Blueprint in the content" can answer which
+/// classes derive from a native one. A class name two packages both define
+/// cannot be resolved by name and is listed as ambiguous instead of guessed at.
+(SortedDictionary<string, string>, SortedSet<string>) DescriptorPaths()
+{
+    const string Root = "FGItemDescriptor";
+    var types = usmapMappings.MappingsForGame?.Types
+        ?? throw new InvalidDataException($"{mappings} parsed to no mappings at all");
+    var paths = new SortedDictionary<string, SortedSet<string>>(StringComparer.Ordinal);
+    var supers = new Dictionary<string, string?>(StringComparer.Ordinal);
+    var packages = provider.Files.Keys
+        .Where(k => k.EndsWith(".uasset", StringComparison.OrdinalIgnoreCase))
+        .OrderBy(k => k, StringComparer.Ordinal)
+        .ToList();
+    Console.Error.WriteLine($"{packages.Count} packages to scan for item descriptors");
+    foreach (var pkg in packages)
+    {
+        foreach (var export in Exports(pkg))
+        {
+            if (export.Class?.Name.Text != "BlueprintGeneratedClass") continue;
+            var outer = export.Outer?.Name.Text;
+            if (string.IsNullOrEmpty(outer)) continue;
+            var name = export.Name;
+            if (!paths.TryGetValue(name, out var found))
+                paths[name] = found = new SortedSet<string>(StringComparer.Ordinal);
+            found.Add($"{outer}.{name}");
+            supers[name] = NativeSuperName(export);
+        }
+    }
+
+    // The chain, Blueprint links first and native ones after, with a seen-set so
+    // a cycle in either stops rather than spins.
+    bool IsDescriptor(string name)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        for (var current = name; seen.Add(current);)
+        {
+            if (current == Root) return true;
+            var next = supers.TryGetValue(current, out var blueprint)
+                ? blueprint
+                : types.TryGetValue(current, out var native) ? native.SuperType : null;
+            if (string.IsNullOrEmpty(next)) return false;
+            current = next;
+        }
+        return false;
+    }
+
+    var resolved = new SortedDictionary<string, string>(StringComparer.Ordinal);
+    var ambiguous = new SortedSet<string>(StringComparer.Ordinal);
+    foreach (var (name, found) in paths)
+    {
+        if (!IsDescriptor(name)) continue;
+        if (found.Count == 1) resolved[name] = found.First();
+        else ambiguous.Add(name);
+    }
+    return (resolved, ambiguous);
+}
 
 IEnumerable<UObject> Exports(string pkg)
 {

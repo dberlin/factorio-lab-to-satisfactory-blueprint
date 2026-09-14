@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from functools import cache
 
 import pytest
@@ -10,7 +11,7 @@ from flab2bp.sfy.codec import read_sbp, read_sbp_file, write_sbp
 from flab2bp.sfy.objects import ACTOR, COMPONENT, Transform
 from flab2bp.sfy.properties import Array, Int, Object, Struct, Value, Vector
 from flab2bp.sfy.query import connected, find, object_index, spline_points
-from flab2bp.sfy.registry import load_registry
+from flab2bp.sfy.registry import DATA_DIR, load_registry
 from flab2bp.sfy.rules import load_rules
 from flab2bp.sfy.templates import (
     ITEM_DESCRIPTOR_CLASS,
@@ -32,53 +33,6 @@ from tests.sfy.conftest import fixture_paths
 IDENTITY = Transform((0.0, 0.0, 0.0, 1.0), (0.0, 0.0, 0.0), (1.0, 1.0, 1.0))
 
 IRON_PLATE = "/Game/FactoryGame/Recipes/Constructor/Recipe_IronPlate.Recipe_IronPlate_C"
-
-_PARTS = "/Game/FactoryGame/Resource/Parts"
-
-# The asset path of every item descriptor the fixture corpus's own header costs
-# name, transcribed by hand from the corpus when ``templates.py`` carried this
-# table itself. It is an oracle now, and only an oracle: the registry's
-# ``item_paths`` are extracted from the game's Docs.json, and this says the
-# extraction agrees with what the game wrote into 49 blueprints.
-_ITEM_FOLDERS: dict[str, str] = {
-    "Desc_AluminumCasing_C": f"{_PARTS}/AluminumCasing",
-    "Desc_AluminumPlate_C": f"{_PARTS}/AluminumPlate",
-    "Desc_Cable_C": f"{_PARTS}/Cable",
-    "Desc_Cement_C": f"{_PARTS}/Cement",
-    "Desc_CircuitBoardHighSpeed_C": f"{_PARTS}/CircuitBoardHighSpeed",
-    "Desc_Computer_C": f"{_PARTS}/Computer",
-    "Desc_CopperIngot_C": f"{_PARTS}/CopperIngot",
-    "Desc_CopperSheet_C": f"{_PARTS}/CopperSheet",
-    "Desc_CrystalOscillator_C": f"{_PARTS}/CrystalOscillator",
-    "Desc_CrystalShard_C": "/Game/FactoryGame/Resource/Environment/Crystal",
-    "Desc_FicsiteMesh_C": f"{_PARTS}/FicsiteMesh",
-    "Desc_Fuel_C": f"{_PARTS}/Fuel",
-    "Desc_HighSpeedWire_C": f"{_PARTS}/HighSpeedWire",
-    "Desc_IronIngot_C": f"{_PARTS}/IronIngot",
-    "Desc_IronPlateReinforced_C": f"{_PARTS}/IronPlateReinforced",
-    "Desc_IronPlate_C": f"{_PARTS}/IronPlate",
-    "Desc_IronRod_C": f"{_PARTS}/IronRod",
-    "Desc_Leaves_C": f"{_PARTS}/GenericBiomass",
-    "Desc_ModularFrameHeavy_C": f"{_PARTS}/ModularFrameHeavy",
-    "Desc_ModularFrame_C": f"{_PARTS}/ModularFrame",
-    "Desc_Motor_C": f"{_PARTS}/Motor",
-    "Desc_Plastic_C": f"{_PARTS}/Plastic",
-    "Desc_QuartzCrystal_C": f"{_PARTS}/QuartzCrystal",
-    "Desc_Rotor_C": f"{_PARTS}/Rotor",
-    "Desc_Rubber_C": f"{_PARTS}/Rubber",
-    "Desc_SAMFluctuator_C": f"{_PARTS}/SAMFluctuator",
-    "Desc_Silica_C": f"{_PARTS}/Silica",
-    "Desc_SteelPipe_C": f"{_PARTS}/SteelPipe",
-    "Desc_SteelPlateReinforced_C": f"{_PARTS}/SteelPlateReinforced",
-    "Desc_SteelPlate_C": f"{_PARTS}/SteelPlate",
-    "Desc_TimeCrystal_C": f"{_PARTS}/TimeCrystal",
-    "Desc_WAT2_C": "/Game/FactoryGame/Prototype/WAT",
-    "Desc_Wire_C": f"{_PARTS}/Wire",
-}
-
-ITEM_CLASS_PATHS: dict[str, str] = {
-    item: f"{folder}/{item.removesuffix('_C')}.{item}" for item, folder in _ITEM_FOLDERS.items()
-}
 
 
 def _reference_names(value: Value) -> list[str]:
@@ -254,31 +208,30 @@ def test_authored_spline_point_tags_match_the_tags_a_fixture_belt_carries() -> N
     pytest.fail("no current-family belt with a spline in the corpus")
 
 
-def test_item_paths_agree_with_every_fixture_cost_entry() -> None:
-    """The registry's descriptor asset paths are what the game wrote in the corpus."""
-    reg = load_registry()
-    seen = 0
-    for path in fixture_paths():
-        for entry in read_sbp_file(path).header.cost:
-            assert reg.item_paths.get(entry.item.name) == entry.item.path, entry.item.name
-            seen += 1
-    assert seen > 100
+def test_item_paths_are_the_paths_the_cooked_descriptor_assets_carry() -> None:
+    """The registry's item paths, held to a reading of the game they did not come from.
 
-
-def test_the_extracted_item_paths_match_the_hand_transcribed_oracle() -> None:
-    """What the extractor read out of Docs.json equals what was typed by hand.
-
-    The 33 entries in :data:`ITEM_CLASS_PATHS` were transcribed from the fixture
-    corpus before ``tools/sfy-extract`` collected any of them; they are here to
-    hold the extraction to a source it did not come from.
+    ``item_paths`` come from Docs.json: ``tools/sfy-extract`` matches the whole
+    paths the dump spells out wherever one entry refers to another, and the
+    merge keeps the ones the registry needs (``assets.json``'s ``class_paths``).
+    ``assets.json``'s ``descriptor_paths`` is the *other* reading of the same
+    game -- every cooked Blueprint whose class chain reaches ``FGItemDescriptor``
+    in the shipped usmap, keyed by the class name its
+    ``BlueprintGeneratedClass`` export carries and valued at the package path
+    that export's own outer states. Nothing in either leg is a blueprint, and
+    the two have to agree entry for entry.
     """
     reg = load_registry()
-    assert {item: reg.item_paths.get(item) for item in ITEM_CLASS_PATHS} == ITEM_CLASS_PATHS
-    assert len(reg.item_paths) > 700
+    assets = json.loads((DATA_DIR / "assets.json").read_text(encoding="utf-8"))
+    cooked: dict[str, str] = assets["descriptor_paths"]
+    assert len(cooked) > 700
+    assert {item: cooked.get(item) for item in reg.item_paths} == reg.item_paths
+    # The other direction: every item descriptor Docs.json lists is authorable.
+    assert set(reg.descriptors) <= set(reg.item_paths)
 
 
 def test_authoring_reaches_every_item_a_recipe_names() -> None:
-    """The hand table covered 33 descriptors; every recipe in the registry needs one."""
+    """Every ingredient and product in the registry needs a path to author with."""
     reg = load_registry()
     wanted = {
         item

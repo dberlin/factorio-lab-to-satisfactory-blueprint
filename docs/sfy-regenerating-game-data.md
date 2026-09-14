@@ -169,6 +169,14 @@ conveyor class's `mConnection0`/`mConnection1` points at, read off its class
 default object. That last one is what turns step 4's member order into two port
 names without anyone reading a name that ends in 0 as evidence.
 
+It also writes `descriptor_paths`: the same item-descriptor asset paths as
+`class_paths`, read the other way round — every cooked package is loaded, and
+every `BlueprintGeneratedClass` whose super chain reaches `FGItemDescriptor`
+contributes its own class name and its own outer. Docs.json and the cooked
+assets are then two independent statements of one fact, and
+`tests/sfy/test_templates.py` holds `registry.json`'s `item_paths` to both. That
+scan is why this step takes about 30 s rather than 5.
+
 Step 4's file is the second argument and is required: it is what resolves the
 177 ports whose own asset says nothing about their direction. Each port carries
 a `direction_source` saying which link of the archetype chain answered —

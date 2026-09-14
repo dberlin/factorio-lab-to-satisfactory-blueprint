@@ -2,10 +2,12 @@
 
 Reads the installed Satisfactory game data and writes
 `src/flab2bp/sfy/data/assets.json`: the connection ports of every buildable,
-whatever placement limits the game's assets carry, and the asset path of every
-class the game's Docs.json states one for. The first two are in no Docs.json
-entry; the third is in Docs.json but not in the half of it `flab2bp.sfy.docs`
-keeps, which is class names.
+whatever placement limits the game's assets carry, the asset path of every
+class the game's Docs.json states one for, and the asset path of every cooked
+item descriptor read off the packages themselves. The first two are in no
+Docs.json entry; the third is in Docs.json but not in the half of it
+`flab2bp.sfy.docs` keeps, which is class names; the fourth is the same fact as
+the third, read a second, independent way.
 
 A second mode, `structs`, writes `src/flab2bp/sfy/data/struct_schemas.json` —
 the game's own field list for the structs the blueprint corpus carries, taken
@@ -177,6 +179,31 @@ Three things are worth stating plainly.
    from its output; a game update that stops the chain from resolving fails the
    script by address rather than shipping half the answer.
 
+## The descriptor paths: a second reading
+
+`class_paths` above is what Docs.json says. `descriptor_paths` is what the
+cooked assets say, and the two are independent: a `BlueprintGeneratedClass`
+export's name is the class (`Desc_IronPlate_C`) and its own outer is the package
+(`/Game/FactoryGame/Resource/Parts/IronPlate/Desc_IronPlate`), so the whole path
+comes straight out of the asset with no Docs.json text matched and no folder
+reconstructed. `tests/sfy/test_templates.py` holds every one of the registry's
+750 `item_paths` to it.
+
+**What counts as a descriptor is the game's class hierarchy, not a name.** Two
+thirds of them are called `Desc_*`, but fifteen of the ones the registry needs
+are not — `BP_EquipmentDescriptorGasmask_C`, `BP_ItemDescriptorPortableMiner_C`,
+`Foundation_ConcretePolished_8x2_C` and their kin — so the filter walks the
+super chain instead: the Blueprint supers by name, and then the shipped usmap's
+native `SuperType` chain, until it reaches `FGItemDescriptor`
+(`FGBuildingDescriptor → FGBuildDescriptor → FGItemDescriptor`,
+`FGConsumableDescriptor → FGEquipmentDescriptor → FGItemDescriptor`,
+`FGAmmoTypeProjectile → FGAmmoTypeHomingBase → FGAmmoType → FGItemDescriptor`).
+That costs a load of every cooked package, because nothing narrower can answer
+which classes derive from a native one.
+
+A class name two packages both define cannot be resolved by name; it is listed
+in `descriptor_paths_ambiguous` rather than guessed at. There are none in 1.2.0.
+
 ## The usmap compatibility patch
 
 `UsmapCompat.cs` rewrites the mappings in memory before handing them to
@@ -206,6 +233,7 @@ Discovery findings, so nobody has to repeat the search:
 | Belt/pipe port direction | `mDirection` (`EFactoryConnectionDirection`) and `mPipeConnectionType` (`EPipeConnectionType`) on the template — but only when it differs from the component **archetype**'s value, which is not the enum zero and is not in the pak. 111 of the 288 ports spell theirs out; the other 177 are resolved up the archetype chain. See [port directions](#port-directions-and-the-archetype-chain). |
 | Power connection counts | `mMaxNumConnectionLinks` on the power connection template, the `FGCircuitConnectionComponent` UPROPERTY for how many wires may end there. Serialised only where the Blueprint overrides the native default, which every pole does: the three marks say **4, 7 and 10** and their wall variants repeat those, the power tower and its platform say 3, and the four lights and the battery say 2. The other 53 power ports in the content — machine power inputs, all of them — say nothing, and are emitted as `null` rather than as a number this tool made up. No pole carries a wire length of its own; `mMaxLength` is on the wire (`wire_max_cm`, one number for all of them). |
 | Item and recipe asset paths | Docs.json, in the references one entry makes to another (`mIngredients`, `mProduct`, `mProducedIn`, a schematic's unlocked recipes). A blueprint names an item descriptor and a recipe by whole asset path — `/Game/FactoryGame/Resource/Parts/IronPlate/Desc_IronPlate.Desc_IronPlate_C` — and the folder is not derivable from the class name, which is all `docs.json` keeps. Every `/Game/….<Name>_C` the dump mentions is collected into `class_paths` (2581 of them in 1.2.0); a name found under two packages cannot be resolved by name and is listed in `class_paths_ambiguous` instead (none in 1.2.0). `scripts/sfy_registry.py` keeps the ones the registry needs — 750 item descriptors and 872 recipes — and refuses if one is missing. |
+| The same item paths, read a second way | `descriptor_paths`: the cooked assets themselves. Every `.uasset` in the content (23688 packages, about 30 s) is loaded, and each `BlueprintGeneratedClass` export whose class chain reaches `FGItemDescriptor` contributes its own name and its own outer — 1031 of them in 1.2.0, 0 ambiguous. See [the descriptor paths](#the-descriptor-paths-a-second-reading) below. |
 | `mHologramClass` | The buildable's class default object. 454 of 595 buildables name one. |
 | `pipe_bend_radius_cm` | A hologram Blueprint CDO: `Holo_Pipeline_C.mBendRadius = 100`. The only spline limit any asset overrides, along with `Holo_PipeHyper_C` (300 / 10000) and `Holo_RailroadTrack_C.mMinBendRadius` (1500). |
 | `belt_max_spline_cm`, `pipe_max_spline_cm`, `pipe_bend_radius_2d_cm`, `pipe_min_bend_radius_cm` | C++ only, but with in-class initialisers, so the headers state them outright. Transcribed into `HEADER_DEFAULTS` in `scripts/sfy_registry.py` with file and line. |
