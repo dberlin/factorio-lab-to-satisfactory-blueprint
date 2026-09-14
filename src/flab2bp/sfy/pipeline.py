@@ -65,6 +65,7 @@ from flab2bp.sfy.templates import TemplateLibrary
 
 __all__ = [
     "CORPUS_DIR",
+    "DEFAULT_DESIGNER_MARK",
     "DESIGNER_MARKS",
     "SfyBuild",
     "build",
@@ -87,6 +88,13 @@ CORPUS_DIR: Final = Path(__file__).resolve().parents[3] / "tests" / "fixtures" /
 #: a CLI that offered a mark the spec cannot size would be offering a choice
 #: nothing can honour.
 DESIGNER_MARKS: Final = tuple(sorted(DESIGNER_CLASSES))
+
+#: The designer a build is laid out in when the caller names none.  The
+#: smallest one, because it is the one every save has: a default of mk3 would
+#: build something most players cannot paste.  Every caller that offers the
+#: choice -- the CLI's ``--designer``, the web ``Options`` -- defaults to this
+#: rather than restating it.
+DEFAULT_DESIGNER_MARK: Final = "mk1"
 
 #: How the strategy is named in a report and on :attr:`SfyBuild.strategy`.
 STRATEGY: Final = ManifoldRows.name
@@ -175,7 +183,7 @@ class SfyBuild:
 def build(
     url: str,
     *,
-    designer: str = "mk1",
+    designer: str = DEFAULT_DESIGNER_MARK,
     time_budget_s: float = 15.0,
     flow: Path | None = None,
     flow_text: str | None = None,
