@@ -9655,23 +9655,8 @@ def _route_all(
     run.proposals = proposals
     run.best_attempt = best_attempt
 
-    #: The vocabulary and the search cluster, now bound methods. Each alias
-    #: keeps its call sites byte-identical; Task 7 deletes the aliases.
-    #: `connector_is_powered` needed none: its one use was a VALUE passed into
-    #: `RoutePrimitives.edges`, which only calls it, and that use is inside
-    #: `_search`, a method now, so it reaches `self._connector_is_powered`.
-    _net_id = run._net_id
-    _pass_budget_cause = run._pass_budget_cause
-    _endpoint_cells = run._endpoint_cells
-    role_rows = run._role_rows
-    run.net_index = Nets.of(role_rows())
-    _blocking_endpoint_cells = run._blocking_endpoint_cells
-    _blocking_nets = run._blocking_nets
-    _failure = run._failure
-    _budget_result = run._budget_result
-    _selection_key = run._selection_key
-    _commit_selection = run._commit_selection
-    _finish = run._finish
+    #: `_role_rows` yields; `Nets.of` is the only consumer and consumes it once.
+    run.net_index = Nets.of(run._role_rows())
 
     if canvas.junction_projection is not None:
         try:
@@ -9688,7 +9673,7 @@ def _route_all(
             return DetailedRouteResult(
                 status=DetailedRouteStatus.BUDGET,
                 routed=(),
-                failures=tuple(_failure(index, missing, ()) for index in range(len(nets))),
+                failures=tuple(run._failure(index, missing, ()) for index in range(len(nets))),
                 iterations=0,
                 work=0,
                 settlement=(
@@ -9817,7 +9802,6 @@ def _route_all(
 
     #: Per RUN, never `@cache` on the class -- see `_RouteAllRun`.
     run._junction_stacks_collide = cache(run._junction_stacks_collide_uncached)
-    _can_junction = run._can_junction
 
     owned_source_starts: dict[int, frozenset[Cell]] = {}
     source_hint: dict[int, Cell] = {}
@@ -9857,25 +9841,9 @@ def _route_all(
     run.permanent_guard = permanent_guard
     run.path_tap = path_tap
 
-    #: The rest of the search cluster, each alias standing where its `def` did.
-    #: The eight the cluster alone calls need none; Task 7 deletes these.
-    _inside_grid = run._inside_grid
-    _selected_hints = run._selected_hints
-    _stake = run._stake
-    _unstake = run._unstake
+    #: Per RUN, never `@cache` on the class -- see `_RouteAllRun`.
     run._prebuilt_path_port = lru_cache(maxsize=None)(splitter_ports.expected_path_port)
     run._prebuilt_branch_port = cache(run._prebuilt_branch_port_uncached)
-    _ends = run._ends
-    _future_source_offers = run._future_source_offers
-    _ordinary_query_deadline = run._ordinary_query_deadline
-    _search = run._search
-    _preserves_source_frontier = run._preserves_source_frontier
-    _search_route = run._search_route
-    _route_order = run._route_order
-    _endpoint_dependents = run._endpoint_dependents
-    _dependency_closure = run._dependency_closure
-
-    _repair = run._repair
 
     last_mile_counts = {
         "invocations": 0,
@@ -9892,24 +9860,6 @@ def _route_all(
     run.last_mile_counts = last_mile_counts
     proved_stranded: set[int] = set()
     run.proved_stranded = proved_stranded
-    _last_mile_report = run._last_mile_report
-
-    _restrict_proposal = run._restrict_proposal
-    _cluster_offers = run._cluster_offers
-    _cluster_search = run._cluster_search
-    _pass_budget_left = run._pass_budget_left
-    _cluster_environment = run._cluster_environment
-    _source_is_junctionable = run._source_is_junctionable
-    _capture = run._capture
-    _round_state = run._round_state
-    _restore_staked = run._restore_staked
-    _tally = run._tally
-    _solve_cluster = run._solve_cluster
-    _cluster_is_sibling_free = run._cluster_is_sibling_free
-    _relaxed_cluster_result = run._relaxed_cluster_result
-    _record_cluster_relation = run._record_cluster_relation
-    _complete_source_dependents = run._complete_source_dependents
-    _last_mile = run._last_mile
 
     route_distance = tuple(
         abs(net.source.x - net.dst.x) + abs(net.source.y - net.dst.y) for net in nets
@@ -9942,7 +9892,7 @@ def _route_all(
             run.iterations = iterations
             round_work.clear()
             for index in list(paths):
-                _unstake(index)
+                run._unstake(index)
             # `history` gained a round's worth of use and blame at the end of the
             # last iteration, and the search reads it flattened.
             grid.refresh_history(history)
@@ -9956,21 +9906,21 @@ def _route_all(
             #: Fresh every round, because a wall only exists while the path that
             #: built it does; `history` is where the charge accumulates.
             run.blame = {}
-            order = _route_order(range(len(nets)), {})
+            order = run._route_order(range(len(nets)), {})
             assert order is not None
             stranded: list[int] = []
             for position, i in enumerate(order):
                 if _expired(run.deadline):
                     current_failures = {
-                        index: _failure(
+                        index: run._failure(
                             index,
                             run.search_failures[index],
                             run.search_blockers[index],
                         )
                         for index in stranded
                     }
-                    return _budget_result(paths, current_failures)
-                starts, goals, route_offers = _ends(i)
+                    return run._budget_result(paths, current_failures)
+                starts, goals, route_offers = run._ends(i)
                 allowance = budget.left // (len(order) - position)
                 # A coverage pass rations each net a carved child ledger and
                 # reconciles it below; every other pass hands the net THIS
@@ -9979,7 +9929,7 @@ def _route_all(
                 # here would silently drop every non-coverage net's charge.
                 net_budget = budget_module.WorkBudget(left=allowance) if coverage_pass else budget
                 try:
-                    searched = _search_route(
+                    searched = run._search_route(
                         i,
                         starts,
                         goals,
@@ -10016,16 +9966,16 @@ def _route_all(
                 round_work[i] = round_work.get(i, 0) + search_work
                 if searched.path is None:
                     run.search_failures[i] = searched
-                    run.search_blockers[i] = _blocking_nets(
+                    run.search_blockers[i] = run._blocking_nets(
                         searched.wall,
                         source_access_blockers.get(i, ()),
                     )
                     stranded.append(i)
                     continue
-                _stake(
+                run._stake(
                     i,
                     searched.path,
-                    hints=_selected_hints(searched.path, route_offers),
+                    hints=run._selected_hints(searched.path, route_offers),
                 )
             # AND THE REPAIR, before conceding the round.
             #
@@ -10036,7 +9986,7 @@ def _route_all(
             for _ in range(_REPAIR_PASSES):
                 if not stranded or _expired(run.deadline):
                     break
-                after = _repair(
+                after = run._repair(
                     stranded,
                     run.pressure,
                     run.blame,
@@ -10049,7 +9999,7 @@ def _route_all(
                 stranded = after
             failed = len(stranded)
             run.round_failures = {
-                index: _failure(
+                index: run._failure(
                     index,
                     run.search_failures[index],
                     run.search_blockers[index],
@@ -10057,15 +10007,9 @@ def _route_all(
                 for index in stranded
             }
             if _expired(run.deadline):
-                return _budget_result(paths, run.round_failures)
+                return run._budget_result(paths, run.round_failures)
 
-            # Linking is part of routing feasibility, not terminal emission. Prove
-            # every path already found on a disposable workspace even when another
-            # net remains stranded: a hidden commit failure is independent new
-            # evidence and belongs in the same focused repair transaction.
-            commit_once = run._commit_once
-            terminal_attempt = run._terminal_attempt
-            #: The snapshot `retain_commit_failures`'s two keyword-only default
+            #: The snapshot `_retain_commit_failures`'s two keyword-only default
             #: arguments used to take, at the slot its `def` used to occupy.
             #: A default binds the object that existed when the `def` executed;
             #: `round_failures` is rebuilt again further down this round, so a
@@ -10073,11 +10017,14 @@ def _route_all(
             #: a dict nobody returns.
             run.retained_failures = run.round_failures
             run.retained_blockers = run.search_blockers
-            retain_commit_failures = run._retain_commit_failures
 
-            run.commit_attempt = commit_once()
-            if terminal_attempt(run.commit_attempt):
-                return _finish(
+            # Linking is part of routing feasibility, not terminal emission. Prove
+            # every path already found on a disposable workspace even when another
+            # net remains stranded: a hidden commit failure is independent new
+            # evidence and belongs in the same focused repair transaction.
+            run.commit_attempt = run._commit_once()
+            if run._terminal_attempt(run.commit_attempt):
+                return run._finish(
                     paths,
                     run.round_failures,
                     source_hint,
@@ -10089,7 +10036,7 @@ def _route_all(
             unlinked, details = run.commit_attempt.unlinked, run.commit_attempt.details
             if not unlinked:
                 if failed == 0:
-                    return _finish(
+                    return run._finish(
                         paths,
                         {},
                         source_hint,
@@ -10099,7 +10046,7 @@ def _route_all(
                         attempt=run.commit_attempt,
                     )
             else:
-                retain_commit_failures(unlinked, details)
+                run._retain_commit_failures(unlinked, details)
 
                 # Move only rejected paths and the exact endpoint promises that
                 # depend on them. A failed transaction must not withdraw valid
@@ -10110,8 +10057,8 @@ def _route_all(
                     if _expired(run.deadline) or budget.left <= 0:
                         break
                     rejected_now = set(pending)
-                    participants = _dependency_closure(pending)
-                    order = _route_order(participants, _endpoint_dependents())
+                    participants = run._dependency_closure(pending)
+                    order = run._route_order(participants, run._endpoint_dependents())
                     if order is None:
                         break
                     run.proposal_used = False
@@ -10120,20 +10067,20 @@ def _route_all(
                         index: (source_hint.get(index), sink_hint.get(index), path_tap.get(index))
                         for index in paths
                     }
-                    state_before = _round_state()
+                    state_before = run._round_state()
                     release_before = corridor_reservations.snapshot()
                     for index in reversed(order):
-                        _unstake(index)
+                        run._unstake(index)
                     stalled_now: list[int] = []
                     for index in order:
                         if _expired(run.deadline) or budget.left <= 0:
                             stalled_now.append(index)
                             break
-                        starts, goals, reroute_offers = _ends(index)
-                        starts, goals, constraints = _restrict_proposal(
+                        starts, goals, reroute_offers = run._ends(index)
+                        starts, goals, constraints = run._restrict_proposal(
                             index, starts, goals, reroute_offers
                         )
-                        searched = _search_route(
+                        searched = run._search_route(
                             index,
                             starts,
                             goals,
@@ -10149,25 +10096,25 @@ def _route_all(
                         if searched.path is None:
                             stalled_now.append(index)
                             break
-                        _stake(
+                        run._stake(
                             index,
                             searched.path,
-                            hints=_selected_hints(searched.path, reroute_offers),
+                            hints=run._selected_hints(searched.path, reroute_offers),
                         )
 
-                    candidate_attempt = None if stalled_now else commit_once()
+                    candidate_attempt = None if stalled_now else run._commit_once()
                     if candidate_attempt is None or (
-                        not terminal_attempt(candidate_attempt)
+                        not run._terminal_attempt(candidate_attempt)
                         and not set(candidate_attempt.unlinked) <= rejected_now
                     ):
                         canvas.routing_ports = frozenset()
                         for index in order:
                             if index in paths:
-                                _unstake(index)
-                        if not _restore_staked(
+                                run._unstake(index)
+                        if not run._restore_staked(
                             staked_before, held_before, state_before, release_before
                         ):
-                            return _budget_result(paths, run.round_failures)
+                            return run._budget_result(paths, run.round_failures)
                         if candidate_attempt is None and run.proposal_used:
                             # A spent positive branch cannot rule out ordinary
                             # routing or the remaining endpoint alternatives.
@@ -10175,8 +10122,8 @@ def _route_all(
                             continue
                         break
                     run.commit_attempt = candidate_attempt
-                    if terminal_attempt(run.commit_attempt):
-                        return _finish(
+                    if run._terminal_attempt(run.commit_attempt):
+                        return run._finish(
                             paths,
                             run.round_failures,
                             source_hint,
@@ -10187,7 +10134,7 @@ def _route_all(
                         )
                     pending, details = run.commit_attempt.unlinked, run.commit_attempt.details
                     if pending:
-                        retain_commit_failures(pending, details)
+                        run._retain_commit_failures(pending, details)
                     failed_now = set(stalled_now) | set(pending)
                     for resolved in rejected_now - failed_now:
                         run.round_failures.pop(resolved, None)
@@ -10198,7 +10145,7 @@ def _route_all(
                 # prove the retained subset again. Removal can change physical
                 # attachment choices, so an earlier workspace is not its proof.
                 while pending:
-                    withdrawn = _dependency_closure(pending)
+                    withdrawn = run._dependency_closure(pending)
                     # Preserve feedback for dependents too, while their selected
                     # provider coordinates still resolve in the live ownership map.
                     for index in withdrawn - run.round_failures.keys():
@@ -10211,25 +10158,25 @@ def _route_all(
                             )
                             if hint is not None and hint in owner and owner[hint] in withdrawn
                         }
-                        run.round_failures[index] = _failure(
+                        run.round_failures[index] = run._failure(
                             index,
                             _PathSearchResult(None, RouteFailureKind.COMMIT_LINK, (), 0),
-                            tuple(_net_id(provider) for provider in sorted(providers)),
+                            tuple(run._net_id(provider) for provider in sorted(providers)),
                         )
                     for index in withdrawn:
                         if index in paths:
-                            _unstake(index)
+                            run._unstake(index)
                     stalled_commit.extend(withdrawn)
                     if _expired(run.deadline):
-                        return _budget_result(paths, run.round_failures)
-                    run.commit_attempt = commit_once()
+                        return run._budget_result(paths, run.round_failures)
+                    run.commit_attempt = run._commit_once()
                     pending, details = run.commit_attempt.unlinked, run.commit_attempt.details
                     if pending:
-                        retain_commit_failures(pending, details)
+                        run._retain_commit_failures(pending, details)
                 stranded = list(dict.fromkeys((*stranded, *stalled_commit)))
                 failed = len(stranded)
                 if failed == 0:
-                    return _finish(
+                    return run._finish(
                         paths,
                         {},
                         source_hint,
@@ -10239,7 +10186,7 @@ def _route_all(
                         attempt=run.commit_attempt,
                     )
             if failed:
-                stranded = _last_mile(stranded, it)
+                stranded = run._last_mile(stranded, it)
                 failed = len(stranded)
                 run.round_failures = {
                     index: run.round_failures[index]
@@ -10247,7 +10194,7 @@ def _route_all(
                     if index in run.round_failures
                 }
                 if failed == 0:
-                    return _finish(
+                    return run._finish(
                         paths,
                         {},
                         source_hint,
@@ -10331,10 +10278,10 @@ def _route_all(
             # budget of zero and fail all of them, and the counters would read as
             # congestion rather than as work nobody had left to do.
             if _expired(run.deadline):
-                return _budget_result()
+                return run._budget_result()
             if stale >= _RRR_STALE_ROUNDS or it == RRR_MAX - 1 or budget.left <= 0:
                 break
-        return _finish(
+        return run._finish(
             best_paths,
             best_failures,
             best_source_hints,
@@ -10351,13 +10298,13 @@ def _route_all(
         if error.net_index is not None:
             round_work[error.net_index] = round_work.get(error.net_index, 0) + error.work
         current_failures = {
-            index: _failure(index, failed_search, run.search_blockers.get(index, ()))
+            index: run._failure(index, failed_search, run.search_blockers.get(index, ()))
             for index, failed_search in run.search_failures.items()
             if index not in paths
         }
         current_failures.update(run.round_failures)
         current_failures.update(error.failures)
-        return _budget_result(paths, current_failures, interrupted=True)
+        return run._budget_result(paths, current_failures, interrupted=True)
 
 
 class PortAccessKind(Enum):

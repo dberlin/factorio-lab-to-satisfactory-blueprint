@@ -386,7 +386,7 @@ def test_role_rows_is_still_a_generator_consumed_once() -> None:
 
     assert inspect.isgeneratorfunction(domain._RouteAllRun._role_rows)
     source = SRC.read_text()
-    assert source.count("Nets.of(role_rows())") == 1
+    assert source.count("Nets.of(run._role_rows())") == 1
 
 
 SEARCH_METHODS = (
@@ -628,14 +628,16 @@ def test_the_snapshot_is_taken_where_the_def_stood() -> None:
                 continue
             if (
                 isinstance(child, ast.Call)
-                and isinstance(child.func, ast.Name)
-                and child.func.id == "retain_commit_failures"
+                and isinstance(child.func, ast.Attribute)
+                and isinstance(child.func.value, ast.Name)
+                and child.func.value.id == "run"
+                and child.func.attr == "_retain_commit_failures"
             ):
                 calls.append(child.lineno)
             own_scope(child)
 
     own_scope(node)
-    assert calls, "the round loop no longer calls the alias -- rewrite this pin"
+    assert calls, "the round loop no longer calls the method -- rewrite this pin"
     snapshot = max(lines.values())
     assert snapshot < min(calls), (snapshot, sorted(calls))
 
@@ -771,7 +773,12 @@ def test_the_run_object_already_carried_every_repair_capture() -> None:
 
 
 def test_repair_is_the_last_closure_lifted_out_of_the_route_order_cluster() -> None:
-    """`_route_all` keeps an alias in the slot the `def` held, and nothing else."""
+    """`_route_all` reaches `_repair` through the run object, and nowhere else.
+
+    Task 5 lifted the closure and left `_repair = run._repair` in the slot the
+    `def` held; Task 7 deleted that alias, so the pin is now the single call
+    site `run._repair(...)` inside the round loop.
+    """
     node = _route_all_node()
     defs = [
         child.name
@@ -779,19 +786,22 @@ def test_repair_is_the_last_closure_lifted_out_of_the_route_order_cluster() -> N
         if isinstance(child, ast.FunctionDef) and child.name == "_repair"
     ]
     assert defs == [], defs
-    aliases = [
+    calls = [
         child.lineno
-        for child in ast.iter_child_nodes(node)
-        if isinstance(child, ast.Assign)
-        and len(child.targets) == 1
-        and isinstance(child.targets[0], ast.Name)
-        and child.targets[0].id == "_repair"
-        and isinstance(child.value, ast.Attribute)
-        and child.value.attr == "_repair"
-        and isinstance(child.value.value, ast.Name)
-        and child.value.value.id == "run"
+        for child in ast.walk(node)
+        if isinstance(child, ast.Call)
+        and isinstance(child.func, ast.Attribute)
+        and child.func.attr == "_repair"
+        and isinstance(child.func.value, ast.Name)
+        and child.func.value.id == "run"
     ]
-    assert len(aliases) == 1, aliases
+    assert len(calls) == 1, calls
+    bare = [
+        child.lineno
+        for child in ast.walk(node)
+        if isinstance(child, ast.Name) and child.id == "_repair"
+    ]
+    assert bare == [], bare
 
 
 #: The five names the last-mile cluster captured that were not fields yet. All
@@ -958,3 +968,74 @@ def test_both_budget_floors_are_the_same_field_read() -> None:
                             method,
                             ast.unparse(keyword.value),
                         )
+
+
+def test_no_alias_survives_and_no_bound_method_is_compared_by_identity() -> None:
+    """`_route_all` is a driver: it calls `run._x(...)`, it does not alias them.
+
+    An alias was Tasks 2-6's scaffolding, one line per lifted closure, so the
+    call sites could stay byte-identical while the bodies moved. Task 7 removes
+    the scaffolding. The second half is the hazard the removal creates: a bound
+    method is a **fresh object on every attribute access**, so `run._ends is
+    run._ends` is `False` and any `is`/`is not` against one is a latent bug that
+    could only appear once the single aliased object was gone.
+    """
+    node = _route_all_node()
+    aliases = [
+        f"{stmt.lineno}: {ast.unparse(stmt)}"
+        for stmt in ast.walk(node)
+        if isinstance(stmt, ast.Assign)
+        and isinstance(stmt.value, ast.Attribute)
+        and isinstance(stmt.value.value, ast.Name)
+        and stmt.value.value.id == "run"
+        and stmt.value.attr.startswith("_")
+        and len(stmt.targets) == 1
+        and isinstance(stmt.targets[0], ast.Name)
+    ]
+    assert aliases == [], "call run._x(...) directly: " + "; ".join(aliases)
+
+    identity = [
+        f"{cmp.lineno}: {ast.unparse(cmp)}"
+        for cmp in ast.walk(node)
+        if isinstance(cmp, ast.Compare)
+        and any(isinstance(op, (ast.Is, ast.IsNot)) for op in cmp.ops)
+        and any(
+            isinstance(side, ast.Attribute)
+            and isinstance(side.value, ast.Name)
+            and side.value.id == "run"
+            and callable(getattr(domain._RouteAllRun, side.attr, None))
+            for side in [cmp.left, *cmp.comparators]
+        )
+    ]
+    assert identity == [], "a bound method is a fresh object each access: " + "; ".join(identity)
+
+
+def test_route_all_declares_no_nested_def_and_calls_only_bound_methods() -> None:
+    """The other half of the driver claim, and the one a mechanical rewrite can miss.
+
+    Every bare `name(...)` left in `_route_all` must resolve to a module global
+    or a local built in the prologue -- never to a name the deleted aliases used
+    to supply. A missed rewrite would either raise `NameError` or, worse,
+    silently bind a module-level function of the same name.
+    """
+    node = _route_all_node()
+    nested = [
+        child.name
+        for child in ast.walk(node)
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) and child is not node
+    ]
+    assert nested == [], f"_route_all still declares closures: {nested}"
+
+    method_names = {
+        name for name in vars(domain._RouteAllRun) if callable(getattr(domain._RouteAllRun, name))
+    }
+    leaked = sorted(
+        {
+            call.func.id
+            for call in ast.walk(node)
+            if isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Name)
+            and call.func.id in method_names
+        }
+    )
+    assert leaked == [], f"these call a bare name that names a run method: {leaked}"
