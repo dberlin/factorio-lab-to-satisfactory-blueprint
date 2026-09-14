@@ -12,13 +12,14 @@ import hashlib
 import json
 import subprocess
 import sys
+from dataclasses import replace
 from fractions import Fraction
 from pathlib import Path
 
 import pytest
 
 from flab2bp.lab.data import load_vendored
-from flab2bp.lab.flow import load_flow
+from flab2bp.lab.flow import FlowRow, FlowSelection, load_flow
 from flab2bp.lab.url import Game, parse_url
 from flab2bp.sfy.labmap import load_lab_map
 from flab2bp.sfy.rates import RatesRefusal, max_clock, spec_from_flow
@@ -140,6 +141,63 @@ def test_a_fluid_in_the_flow_refuses_with_the_cause_named() -> None:
     assert "crude-oil" in str(caught.value)
 
 
+def _spec_from_rows(name: str, rows: tuple[FlowRow, ...]) -> SfyBuildSpec:
+    """Build a spec from a fixture flow with its rows edited.
+
+    Every committed fixture is a flow FactorioLab really produced, and none of
+    them happens to exercise the two paths below.  Rather than hand-write a CSV
+    -- which would make it a fixture that is not an export -- this takes a real
+    flow and states the one difference in Python, where it is visible.
+    """
+    flow = load_flow(FLOWS / f"{name}.csv", url=_url(name))
+    edited = FlowSelection(source_url=flow.source_url, rows=rows, columns=flow.columns)
+    return spec_from_flow(
+        load_vendored(Game.SFY),
+        parse_url(_url(name)),
+        edited,
+        load_registry(),
+        load_lab_map(),
+    )
+
+
+def test_a_miners_spare_ore_is_not_something_the_build_has_to_belt_out() -> None:
+    """An extraction row's surplus is a rounding artefact, not a product.
+
+    Rounding a node's miner count up leaves spare ore at the node, outside the
+    Blueprint Designer.  Listing it in `surplus_outputs` would ask the layout
+    stage to belt ore OUT of a block that never mined it.
+    """
+    flow = load_flow(FLOWS / "iron-plate-60.csv", url=_url("iron-plate-60"))
+    rows = tuple(
+        replace(row, surplus=Fraction(30)) if row.recipe_id == "iron-ore" else row
+        for row in flow.rows
+    )
+    assert any(r.recipe_id == "iron-ore" and r.surplus == 30 for r in rows)
+
+    spec = _spec_from_rows("iron-plate-60", rows)
+    assert spec.surplus_outputs == {}
+
+    # A byproduct row inside the build IS carried out, so the cut above is
+    # about extraction and not about surpluses in general.  This is the shape
+    # `heavy-oil-residue` really has in the plastic-10 fixture: an item nothing
+    # draws on, with no recipe of its own.
+    byproduct = (*flow.rows, FlowRow(item_id="screw", items=Fraction(0), surplus=Fraction(30)))
+    assert _spec_from_rows("iron-plate-60", byproduct).surplus_outputs == {"screw": Fraction(1, 2)}
+
+
+def test_an_item_the_dataset_does_not_carry_is_refused_by_name() -> None:
+    """An unknown id must not slip past the fluid gate and be belted as a solid."""
+    flow = load_flow(FLOWS / "iron-plate-60.csv", url=_url("iron-plate-60"))
+    rows = (
+        *flow.rows,
+        FlowRow(item_id="unobtanium", items=Fraction(0), surplus=Fraction(5)),
+    )
+    with pytest.raises(RatesRefusal) as caught:
+        _spec_from_rows("iron-plate-60", rows)
+    assert caught.value.cause == "unknown item"
+    assert "unobtanium" in str(caught.value)
+
+
 def test_the_belt_floor_and_ceiling_come_from_the_url_or_the_defaults() -> None:
     default = _spec("iron-plate-60")
     assert default.belt_item_id == "conveyor-belt-mk1"
@@ -208,11 +266,11 @@ def test_somersloops_double_output_the_way_factoriolab_computes_it() -> None:
     assert plate.row_outputs["iron-plate"] == Fraction(1)
     assert plate.row_inputs["iron-ingot"] == Fraction(3, 4)
     # Power is (1 + filled/total) squared, so a full Constructor draws 4x.
-    assert plate.power_mw_per_machine == Fraction(16)
+    assert plate.power_mw_per_machine == pytest.approx(16.0)
     # The smelters were left alone by the URL's machine setting.
     ingot = _group(spec, "iron-ingot")
     assert ingot.somersloops == 0
-    assert ingot.power_mw_per_machine == Fraction(4)
+    assert ingot.power_mw_per_machine == pytest.approx(4.0)
 
 
 def test_power_per_machine_is_the_games_draw_raised_to_the_games_exponent() -> None:
@@ -247,36 +305,57 @@ def test_per_machine_power_agrees_with_factoriolabs_power_column() -> None:
         ours_kw = group.power_mw_per_machine * 1000
         assert ours_kw == pytest.approx(float(theirs_kw), rel=1e-6), group.recipe_id
         # Tight enough to be the same model, loose enough for that last digit.
+        # This inequality needs an OVERCLOCKED row: at clock 1 both exponents
+        # raise 1 to a power and the two figures agree exactly, so a fixture at
+        # the default clock would assert nothing here.
         assert ours_kw != float(theirs_kw)
 
 
-def test_importing_the_satisfactory_rates_never_loads_the_dsp_catalog() -> None:
-    """The sfy path must not drag DSP's catalog in behind it.
+def test_no_satisfactory_module_loads_the_dsp_catalog() -> None:
+    """No module under `flab2bp.sfy` may drag DSP's catalog in behind it.
 
-    `flab2bp.rates.adjust` and `flab2bp.rates.machine_choice` both import
-    `flab2bp.dsp.catalog` at module scope, which is why `rates.py` copies
-    `select_machine` and the ceiling rather than importing them.  A fresh
-    interpreter is the only honest check: inside this one the DSP modules are
-    long since imported by other tests.
+    `flab2bp.rates.adjust`, `flab2bp.rates.machine_choice` and
+    `flab2bp.lab.flow` all import `flab2bp.dsp.catalog` at module scope, which
+    is why `rates.py` copies `select_machine` and the ceiling and takes the flow
+    types under TYPE_CHECKING.  Guarding `rates.py` alone would leave every
+    other sfy module free to open the door unnoticed, so this imports the WHOLE
+    package -- every submodule `pkgutil.walk_packages` finds, 22 of them today,
+    including `layout.emit` and `templates` -- and then asks what is loaded.
+
+    A fresh interpreter is the only honest check: inside this one the DSP
+    modules are long since imported by other tests.  A failure names the
+    submodule that pulled them in; the fix is to sever that import, never to
+    allowlist it here.
     """
-    assert _dsp_modules_after("import flab2bp.sfy.rates") == []
-
-    # One door is still open and this names it rather than pretending otherwise:
-    # `flab2bp.lab.flow` imports the catalog at flow.py:103 to canonicalize DSP
-    # aliases, so the moment a caller parses a CSV the DSP modules load.  Design
-    # section 6 severs that; until it does, this asserts the door is still the
-    # ONLY one, so a new import would fail here rather than pass unnoticed.
-    through_flow = _dsp_modules_after("import flab2bp.lab.flow")
-    assert through_flow, "flow.py's catalog import is gone -- sever the rest and drop this half"
-    assert _dsp_modules_after("import flab2bp.sfy.spec, flab2bp.sfy.labmap") == []
-
-
-def _dsp_modules_after(statement: str) -> list[str]:
-    """DSP modules a fresh interpreter has loaded after running ``statement``."""
-    probe = (
-        f"import sys; {statement}; "
-        "print(sorted(m for m in sys.modules if m.startswith('flab2bp.dsp')))"
+    loaded, failed = _dsp_modules_after_importing_all_of_sfy()
+    assert failed == {}, f"these sfy modules would not import at all: {failed}"
+    assert loaded == [], (
+        "importing flab2bp.sfy loaded DSP modules; find the sfy module that "
+        f"imports flab2bp.dsp (or flab2bp.lab.flow, or flab2bp.rates) and sever it: {loaded}"
     )
+
+
+def _dsp_modules_after_importing_all_of_sfy() -> tuple[list[str], dict[str, str]]:
+    """Import every `flab2bp.sfy` submodule in a fresh interpreter.
+
+    Returns the DSP modules that ended up in `sys.modules` and, separately, any
+    submodule that raised on import -- an sfy module that cannot be imported
+    would otherwise make this test pass by never running.
+    """
+    probe = """
+import importlib, json, pkgutil, sys
+import flab2bp.sfy
+failed = {}
+for info in pkgutil.walk_packages(flab2bp.sfy.__path__, "flab2bp.sfy."):
+    try:
+        importlib.import_module(info.name)
+    except Exception as exc:
+        failed[info.name] = f"{type(exc).__name__}: {exc}"
+print(json.dumps({
+    "dsp": sorted(m for m in sys.modules if m.startswith("flab2bp.dsp")),
+    "failed": failed,
+}))
+"""
     result = subprocess.run(
         [sys.executable, "-c", probe],
         capture_output=True,
@@ -284,9 +363,8 @@ def _dsp_modules_after(statement: str) -> list[str]:
         check=True,
         cwd=REPO_ROOT,
     )
-    parsed = json.loads(result.stdout.strip().replace("'", '"'))
-    assert isinstance(parsed, list)
-    return parsed
+    parsed = json.loads(result.stdout.strip().splitlines()[-1])
+    return parsed["dsp"], parsed["failed"]
 
 
 def test_every_fixture_flow_is_the_file_its_manifest_describes() -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from fractions import Fraction
 
 import pytest
@@ -53,6 +54,32 @@ def test_a_designer_cell_is_one_of_the_games_own_foundations() -> None:
     assert foundation.width_cm == foundation.depth_cm  # square, or the size is one number short
     assert foundation_cm(registry) == foundation.width_cm
     assert designer("mk2", registry).foundation_cm == foundation.width_cm
+
+
+def test_a_foundation_that_is_not_square_is_refused_rather_than_halved(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A designer's size is cells times ONE number, so the cell must be square.
+
+    Today's foundation is 800 x 800, so nothing in the shipped data exercises
+    this.  Skewing the registry entry is the only way to show the guard is real
+    rather than a comment.
+    """
+    registry = load_registry()
+    skewed = replace(registry.buildables[FOUNDATION_CLASS], depth_cm=1200.0)
+    monkeypatch.setitem(registry.buildables, FOUNDATION_CLASS, skewed)
+    with pytest.raises(ValueError, match="not square"):
+        foundation_cm(registry)
+    with pytest.raises(ValueError, match="not square"):
+        designer("mk1", registry)
+
+
+def test_a_foundation_with_no_footprint_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    registry = load_registry()
+    sizeless = replace(registry.buildables[FOUNDATION_CLASS], width_cm=None, depth_cm=None)
+    monkeypatch.setitem(registry.buildables, FOUNDATION_CLASS, sizeless)
+    with pytest.raises(ValueError, match="declares no footprint"):
+        foundation_cm(registry)
 
 
 def test_a_designer_states_its_half_width_and_height_in_centimetres() -> None:

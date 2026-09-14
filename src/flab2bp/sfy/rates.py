@@ -220,6 +220,12 @@ def max_clock(registry: Registry, machine_cls: str) -> Fraction:
             "the game states no power-shard ceiling",
             "potential_shard_slots_default or potential_per_shard is missing",
         )
+    # `Fraction(float)` is exact for these two ONLY because the registry holds
+    # them as binary-exact values today -- max_potential 1.0 and
+    # potential_per_shard 0.5, both whole multiples of a power of two.  A future
+    # game value like 0.1 would arrive as the nearest double and this would
+    # silently carry that error into an exact-looking ceiling; the fix then is
+    # for the merge to carry these as decimal strings, not to round here.
     slots = Fraction(limits.potential_shard_slots_default)
     return Fraction(buildable.max_potential) + slots * Fraction(limits.potential_per_shard)
 
