@@ -25,6 +25,8 @@ __all__ = [
     "PIPE_BEND_RADIUS_2D_CM",
     "PIPE_MAX_SPLINE_CM",
     "PIPE_MIN_BEND_RADIUS_CM",
+    "PORT_DIRECTION_SOURCES",
+    "SPREAD_KEYS",
     "Buildable",
     "ClearanceBox",
     "Limits",
@@ -42,14 +44,48 @@ PIPE_MAX_SPLINE_CM = 5600.1
 PIPE_BEND_RADIUS_2D_CM = 199.0
 PIPE_MIN_BEND_RADIUS_CM = 75.0
 
-# Where a limit's value came from, in order of authority. ``assets`` is the
-# cooked game data (a hologram Blueprint's own override, or Docs.json for the
-# wire lengths); ``binary`` is a constructor immediate ``tools/sfy-native``
-# read out of the shipped DLL through its PDB; ``header`` is one of the four
-# constants above; and ``measured`` is the envelope
-# ``scripts/sfy_measure_limits.py`` takes from the blueprint corpus, which is
-# only ever reached by a limit the game works out at run time.
-LIMIT_SOURCES = ("assets", "binary", "header", "measured")
+# Where a limit's value came from:
+#
+# ``assets``          a cooked asset states it (a hologram Blueprint's override)
+# ``binary``          a constructor immediate ``tools/sfy-native`` read out of the
+#                     shipped DLL through its PDB
+# ``binary-derived``  a formula the DLL's machine code applies, evaluated here
+#                     against a game-data input; ``provenance`` carries both
+# ``docs``            the game's own Docs.json class-default dump
+# ``header``          an in-class initialiser in ``CommunityResources/Headers.zip``
+# ``constant``        not a game value at all, but a constant this project chose;
+#                     ``provenance`` carries the reason
+# ``measured``        the envelope ``scripts/sfy_measure_limits.py`` takes from the
+#                     blueprint corpus, for a value no game data states anywhere
+#
+# ``measured`` is the only one of these that is not a fact about the game, and
+# :attr:`Registry.limits_measured` carries the spread behind every such value so
+# that it reads as the envelope it is rather than as a constraint.
+LIMIT_SOURCES = (
+    "assets",
+    "binary",
+    "binary-derived",
+    "constant",
+    "docs",
+    "header",
+    "measured",
+)
+
+# Where a port's direction came from. A cooked asset omits ``mDirection``
+# whenever it equals the component archetype's value, and the archetype is a
+# native constructor the pak does not carry, so ``tools/sfy-extract`` reports
+# those as ``"unknown"`` and ``scripts/sfy_registry.py`` resolves them:
+#
+# ``asset``   the asset spells the direction out
+# ``header``  a conveyor end, from ``Buildables/FGBuildableConveyorBase.h:380``
+# ``corpus``  the fixtures wire it to a belt end whose direction the header gives
+# ``name``    the component's own name, a convention that agrees with every port
+#             in the content that does spell its direction
+PORT_DIRECTION_SOURCES = ("asset", "header", "corpus", "name")
+
+# What a ``limits_measured`` entry has to carry: the whole spread of the corpus
+# behind the value, not just the extreme that became the limit.
+SPREAD_KEYS = frozenset({"min", "p05", "p50", "p95", "max", "n", "fixture", "object"})
 
 _HEADER_DEFAULTED = (
     "belt_max_spline_cm",
@@ -63,6 +99,9 @@ REGISTRY_PATH = DATA_DIR / "registry.json"
 
 Vector = tuple[float, float, float]
 
+_ZERO: Vector = (0.0, 0.0, 0.0)
+_ONE: Vector = (1.0, 1.0, 1.0)
+
 
 class RegistryError(ValueError):
     """A registry payload was missing a section or carried an unknown key."""
@@ -72,24 +111,45 @@ class RegistryError(ValueError):
 class ClearanceBox:
     """One entry of a buildable's ``mClearanceData``.
 
-    ``min``/``max`` are the box corners in the buildable's local frame and
-    ``translation`` offsets the box from the buildable's origin. ``soft`` marks
-    ``CT_Soft`` boxes, which block placement but let belts and pipes pass.
+    ``min``/``max`` are the box corners in the box's own frame, which the
+    ``RelativeTransform`` places on the buildable: ``translation`` offsets it,
+    ``rotation`` turns it and ``scale`` stretches it. Reading ``min``/``max`` as
+    if they were axis-aligned on the buildable is wrong for the 37 boxes that
+    carry a rotation -- a barrier's box is a quarter turn round, and a beam's
+    two quarter turns -- so a collision test has to apply all three.
+
+    ``rotation`` is an Unreal rotator in degrees, ``(pitch, yaw, roll)``, which
+    is how :attr:`Port.rotation` is spelled as well; Docs.json exports it as a
+    quaternion and :func:`flab2bp.sfy.docs.parse_clearance` converts it.
+
+    ``soft`` marks ``CT_Soft`` boxes, which block placement but let belts and
+    pipes pass. ``exclude_for_snapping`` marks boxes the game ignores when it
+    snaps a hologram to a neighbour, so a snap may legitimately overlap one.
     """
 
     min: Vector
     max: Vector
     soft: bool
     translation: Vector
+    rotation: Vector = _ZERO
+    scale: Vector = _ONE
+    exclude_for_snapping: bool = False
 
 
 @dataclass(frozen=True, slots=True)
 class Port:
-    """A belt, pipe or power connection on a buildable, in its local frame."""
+    """A belt, pipe or power connection on a buildable, in its local frame.
+
+    ``direction_source`` says how ``direction`` was established, because the
+    cooked asset only answers for the ports that spell ``mDirection`` out; see
+    :data:`PORT_DIRECTION_SOURCES`. ``direction`` is ``"unknown"`` only if
+    nothing resolved it, which no port in the shipped registry is.
+    """
 
     name: str
     kind: str  # "belt" | "pipe" | "power"
-    direction: str  # "input" | "output" | "any" | "snap_only"
+    direction: str  # "input" | "output" | "any" | "snap_only" | "unknown"
+    direction_source: str  # one of PORT_DIRECTION_SOURCES
     translation: Vector
     rotation: Vector
     clearance: float | None
@@ -120,6 +180,10 @@ class Buildable:
     max_potential: float | None
     potential_shard_slots: int | None
     production_boost_slots: int | None
+    # This class's hologram overrides ``mGridSnapSize``; ``None`` means it uses
+    # the global :attr:`Limits.hologram_grid_cm`. Only power poles, power towers
+    # and street lights override it, all to 50.
+    grid_snap_cm: float | None = None
     ports: tuple[Port, ...] = ()
 
 
@@ -174,6 +238,11 @@ class Registry:
     build_recipes: dict[str, str]  # Build_X_C -> Recipe_X_C
     limits: Limits
     limits_sources: dict[str, str]  # Limits field -> one of LIMIT_SOURCES
+    # For every limit sourced ``"measured"``, the spread of the corpus behind it:
+    # ``min``, ``p05``, ``p50``, ``p95``, ``max``, ``n`` and the witness fixture
+    # and object. A measured value is an envelope -- the game accepted every
+    # number in that spread -- never a constraint the game enforces.
+    limits_measured: dict[str, Any]
 
     @classmethod
     def from_docs_only(cls, data: Mapping[str, Any]) -> Registry:
@@ -192,6 +261,7 @@ class Registry:
             build_recipes=dict(_require(data, "build_recipes")),
             limits=Limits(),
             limits_sources=dict.fromkeys(_HEADER_DEFAULTED, "header"),
+            limits_measured={},
         )
 
 
@@ -215,6 +285,9 @@ def _clearance(raw: Iterable[Mapping[str, Any]]) -> tuple[ClearanceBox, ...]:
             max=_vector(box["max"]),
             soft=bool(box["soft"]),
             translation=_vector(box["translation"]),
+            rotation=_vector(box["rotation"]),
+            scale=_vector(box["scale"]),
+            exclude_for_snapping=bool(box["exclude_for_snapping"]),
         )
         for box in raw
     )
@@ -226,6 +299,7 @@ def _ports(raw: Iterable[Mapping[str, Any]]) -> tuple[Port, ...]:
             name=str(port["name"]),
             kind=str(port["kind"]),
             direction=str(port["direction"]),
+            direction_source=str(port["direction_source"]),
             translation=_vector(port["translation"]),
             rotation=_vector(port["rotation"]),
             clearance=None if port.get("clearance") is None else float(port["clearance"]),
@@ -255,6 +329,7 @@ def _buildables(raw: Mapping[str, Mapping[str, Any]]) -> dict[str, Buildable]:
                 max_potential=_opt_float(entry["max_potential"]),
                 potential_shard_slots=_opt_int(entry["potential_shard_slots"]),
                 production_boost_slots=_opt_int(entry["production_boost_slots"]),
+                grid_snap_cm=_opt_float(entry.get("grid_snap_cm")),
                 ports=_ports(entry.get("ports", ())),
             )
         except (KeyError, IndexError, TypeError, ValueError) as exc:
@@ -317,6 +392,26 @@ def _limits_sources(raw: Mapping[str, Any], limits: Limits) -> dict[str, str]:
     return {str(k): str(v) for k, v in raw.items()}
 
 
+def _limits_measured(raw: Mapping[str, Any], sources: Mapping[str, str]) -> dict[str, Any]:
+    """Check the corpus spreads: every one names a limit, every measured limit has one.
+
+    A key here is corroboration, not a source: most of these sit beside a value
+    the game states, so that the two can be compared. A limit whose *value* came
+    from the corpus must have one, or nothing says how wide the envelope behind
+    it was.
+    """
+    unknown = sorted(set(raw) - {f.name for f in fields(Limits)})
+    if unknown:
+        raise RegistryError(f"registry limits_measured names unknown limits: {unknown}")
+    missing = sorted({k for k, v in sources.items() if v == "measured"} - set(raw))
+    if missing:
+        raise RegistryError(f"registry limits_measured has no spread for: {missing}")
+    incomplete = sorted(k for k, v in raw.items() if not set(v) >= SPREAD_KEYS)
+    if incomplete:
+        raise RegistryError(f"registry limits_measured entries are missing a spread: {incomplete}")
+    return {str(k): dict(v) for k, v in raw.items()}
+
+
 def load_registry(path: Path | None = None) -> Registry:
     """Read the full registry from ``data/registry.json`` (written by Task 10).
 
@@ -331,6 +426,7 @@ def load_registry(path: Path | None = None) -> Registry:
     except json.JSONDecodeError as exc:
         raise RegistryError(f"registry at {path} is not JSON: {exc}") from exc
     limits = _limits(_require(data, "limits"))
+    sources = _limits_sources(_require(data, "limits_sources"), limits)
     return Registry(
         provenance=dict(_require(data, "provenance")),
         buildables=_buildables(_require(data, "buildables")),
@@ -338,5 +434,6 @@ def load_registry(path: Path | None = None) -> Registry:
         descriptors=dict(_require(data, "descriptors")),
         build_recipes=dict(_require(data, "build_recipes")),
         limits=limits,
-        limits_sources=_limits_sources(_require(data, "limits_sources"), limits),
+        limits_sources=sources,
+        limits_measured=_limits_measured(_require(data, "limits_measured"), sources),
     )

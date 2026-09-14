@@ -1,73 +1,746 @@
 {
  "corpus": {
-  "belts_with_a_spline": 771,
-  "conveyor_lifts": 322,
-  "fixtures": 39,
-  "objects": 10343,
-  "on_grid_actors": 1627
+  "belts_with_a_spline": 880,
+  "conveyor_lifts": 348,
+  "conveyor_lifts_on_a_non_belt_port": 248,
+  "fixtures_available": 49,
+  "fixtures_used": 36,
+  "objects": 11424
  },
  "limits": {
   "belt_bend_radius_cm": {
-   "detail": "segment 1 of 4 at s=0.000",
-   "fixture": "production-8.sbp",
-   "object": "Build_ConveyorBeltMk5_C_2146135613",
-   "p05": 195.7465,
-   "p50": 198.9893,
-   "p95": 2937750278.9034,
-   "population": "617 belts",
+   "detail": "segment 2 of 3 at s=0.016",
+   "fixture": "logistics-24.sbp",
+   "max": 2386.0764,
+   "min": 129.8362,
+   "n": 370,
+   "object": "Build_ConveyorBeltMk1_C_2142959879",
+   "p05": 176.5426,
+   "p50": 197.4262,
+   "p95": 198.9167,
    "source": "measured",
-   "value": 111.0758
+   "value": 129.8362
   },
   "belt_max_incline_deg": {
-   "detail": "segment 1 of 2 at s=0.500",
+   "detail": "chord of segment 1 of 2",
    "fixture": "production-2.sbp",
+   "max": 33.6903,
+   "min": 0.0,
+   "n": 880,
    "object": "Build_ConveyorBeltMk4_C_2146487963",
    "p05": 0.0,
    "p50": 0.0,
-   "p95": 0.0124,
-   "population": "771 belts",
+   "p95": 5.3689,
    "source": "measured",
-   "value": 39.8167
-  },
-  "hologram_grid_cm": {
-   "detail": "gcd of 4881 translation coordinates on 1627 on-grid actors; reduced the gcd to 50 cm",
-   "fixture": "biofuel.sbp",
-   "object": "Build_Foundation_Concrete_8x1_C_2142335921.z",
-   "source": "measured",
-   "value": 50.0
+   "value": 33.6903
   },
   "lift_max_cm": {
-   "detail": "wired to Build_ConveyorBeltMk3_C",
-   "fixture": "power-generation-13.sbp",
-   "object": "Build_ConveyorLiftMk3_C_2147430181",
+   "detail": "wired to Build_ConveyorAttachmentMerger_C, Build_ConveyorLiftMk3_C",
+   "fixture": "production-17.sbp",
+   "max": 1500.0,
+   "min": 149.9921,
+   "n": 348,
+   "object": "Build_ConveyorLiftMk3_C_2146631809",
+   "p05": 150.0049,
+   "p50": 400.0,
+   "p95": 1150.0001,
    "source": "measured",
-   "value": 2400.0
+   "value": 1500.0
   },
   "lift_min_cm": {
-   "detail": "wired to Build_ConveyorBeltMk4_C",
-   "fixture": "logistics-13.sbp",
-   "object": "Build_ConveyorLiftMk4_C_2145834397",
+   "detail": "wired to Build_ConveyorAttachmentSplitter_C, Build_ConveyorLiftMk1_C",
+   "fixture": "production-17.sbp",
+   "max": 1500.0,
+   "min": 149.9921,
+   "n": 348,
+   "object": "Build_ConveyorLiftMk1_C_2147296606",
+   "p05": 150.0049,
+   "p50": 400.0,
+   "p95": 1150.0001,
    "source": "measured",
-   "value": 150.0
+   "value": 149.9921
+  }
+ },
+ "port_directions": {
+  "Build_AssemblerMk1_C.Input0": {
+   "conflict": false,
+   "direction": "input",
+   "fixtures": [
+    "production-17.sbp",
+    "production-18.sbp",
+    "production-19.sbp",
+    "production-20.sbp",
+    "production-21.sbp",
+    "production-23.sbp"
+   ],
+   "links": 21
   },
-  "lift_min_vertical_cm": {
-   "detail": "wired to Build_ConveyorAttachmentSplitter_C",
-   "fixture": "production-3.sbp",
-   "object": "Build_ConveyorLiftMk5_C_2147316868",
-   "source": "measured",
-   "value": 150.0
+  "Build_AssemblerMk1_C.Input1": {
+   "conflict": false,
+   "direction": "input",
+   "fixtures": [
+    "production-17.sbp",
+    "production-18.sbp",
+    "production-19.sbp",
+    "production-20.sbp",
+    "production-21.sbp",
+    "production-23.sbp"
+   ],
+   "links": 21
   },
-  "lift_step_cm": {
-   "detail": "gcd of 322 lift heights, 26 distinct; reduced the gcd to 50 cm",
-   "fixture": "logistics-13.sbp",
-   "object": "Build_ConveyorLiftMk4_C_2145876135",
-   "source": "measured",
-   "value": 50.0
+  "Build_AssemblerMk1_C.Output0": {
+   "conflict": false,
+   "direction": "output",
+   "fixtures": [
+    "production-17.sbp",
+    "production-18.sbp",
+    "production-19.sbp",
+    "production-20.sbp",
+    "production-21.sbp"
+   ],
+   "links": 20
+  },
+  "Build_CentralStorage_C.Input0": {
+   "conflict": false,
+   "direction": "input",
+   "fixtures": [
+    "production-22.sbp"
+   ],
+   "links": 1
+  },
+  "Build_ConstructorMk1_C.Input0": {
+   "conflict": false,
+   "direction": "input",
+   "fixtures": [
+    "biofuel.sbp",
+    "logistics-25.sbp",
+    "production-17.sbp",
+    "production-18.sbp",
+    "production-19.sbp",
+    "production-20.sbp",
+    "production-21.sbp",
+    "production-22.sbp",
+    "production-23.sbp",
+    "production-4.sbp"
+   ],
+   "links": 67
+  },
+  "Build_ConstructorMk1_C.Output0": {
+   "conflict": false,
+   "direction": "output",
+   "fixtures": [
+    "biofuel.sbp",
+    "logistics-25.sbp",
+    "production-17.sbp",
+    "production-18.sbp",
+    "production-19.sbp",
+    "production-20.sbp",
+    "production-21.sbp",
+    "production-22.sbp",
+    "production-23.sbp",
+    "production-4.sbp"
+   ],
+   "links": 65
+  },
+  "Build_ConveyorAttachmentMergerLift_C.BottomConnection": {
+   "conflict": false,
+   "direction": "input",
+   "fixtures": [
+    "production-10.sbp",
+    "production-15.sbp"
+   ],
+   "links": 4
+  },
+  "Build_ConveyorAttachmentMergerLift_C.Input1": {
+   "conflict": false,
+   "direction": "input",
+   "fixtures": [
+    "production-10.sbp",
+    "production-15.sbp"
+   ],
+   "links": 4
+  },
+  "Build_ConveyorAttachmentMergerLift_C.Input2": {
+   "conflict": false,
+   "direction": "input",
+   "fixtures": [
+    "production-10.sbp",
+    "production-15.sbp"
+   ],
+   "links": 4
+  },
+  "Build_ConveyorAttachmentMergerLift_C.TopConnection": {
+   "conflict": false,
+   "direction": "output",
+   "fixtures": [
+    "production-10.sbp",
+    "production-15.sbp"
+   ],
+   "links": 4
+  },
+  "Build_ConveyorAttachmentMergerPriority_C.Input1": {
+   "conflict": false,
+   "direction": "input",
+   "fixtures": [
+    "logistics-22.sbp"
+   ],
+   "links": 3
+  },
+  "Build_ConveyorAttachmentMergerPriority_C.Input2": {
+   "conflict": false,
+   "direction": "input",
+   "fixtures": [
+    "logistics-22.sbp"
+   ],
+   "links": 1
+  },
+  "Build_ConveyorAttachmentMergerPriority_C.Input3": {
+   "conflict": false,
+   "direction": "input",
+   "fixtures": [
+    "logistics-22.sbp"
+   ],
+   "links": 3
+  },
+  "Build_ConveyorAttachmentMergerPriority_C.Output1": {
+   "conflict": false,
+   "direction": "output",
+   "fixtures": [
+    "logistics-22.sbp"
+   ],
+   "links": 3
+  },
+  "Build_ConveyorAttachmentMerger_C.Input1": {
+   "conflict": false,
+   "direction": "input",
+   "fixtures": [
+    "biofuel.sbp",
+    "logistics-17.sbp",
+    "logistics-20.sbp",
+    "logistics-24.sbp",
+    "logistics-25.sbp",
+    "production-10.sbp",
+    "production-11.sbp",
+    "production-12.sbp",
+    "production-13.sbp",
+    "production-14.sbp",
+    "production-15.sbp",
+    "production-16.sbp",
+    "production-17.sbp",
+    "production-18.sbp",
+    "production-19.sbp",
+    "production-2.sbp",
+    "production-20.sbp",
+    "production-21.sbp",
+    "production-22.sbp",
+    "production-23.sbp",
+    "production-4.sbp",
+    "production-6.sbp",
+    "production-9.sbp"
+   ],
+   "links": 80
+  },
+  "Build_ConveyorAttachmentMerger_C.Input2": {
+   "conflict": false,
+   "direction": "input",
+   "fixtures": [
+    "biofuel.sbp",
+    "logistics-17.sbp",
+    "logistics-18.sbp",
+    "logistics-20.sbp",
+    "logistics-21.sbp",
+    "logistics-24.sbp",
+    "logistics-25.sbp",
+    "production-10.sbp",
+    "production-11.sbp",
+    "production-12.sbp",
+    "production-13.sbp",
+    "production-14.sbp",
+    "production-15.sbp",
+    "production-17.sbp",
+    "production-18.sbp",
+    "production-19.sbp",
+    "production-2.sbp",
+    "production-20.sbp",
+    "production-21.sbp",
+    "production-23.sbp",
+    "production-9.sbp"
+   ],
+   "links": 80
+  },
+  "Build_ConveyorAttachmentMerger_C.Input3": {
+   "conflict": false,
+   "direction": "input",
+   "fixtures": [
+    "biofuel.sbp",
+    "logistics-17.sbp",
+    "logistics-18.sbp",
+    "logistics-20.sbp",
+    "logistics-21.sbp",
+    "logistics-24.sbp",
+    "logistics-25.sbp",
+    "production-10.sbp",
+    "production-11.sbp",
+    "production-12.sbp",
+    "production-13.sbp",
+    "production-14.sbp",
+    "production-15.sbp",
+    "production-16.sbp",
+    "production-17.sbp",
+    "production-18.sbp",
+    "production-19.sbp",
+    "production-20.sbp",
+    "production-22.sbp",
+    "production-23.sbp",
+    "production-4.sbp",
+    "production-6.sbp",
+    "production-9.sbp"
+   ],
+   "links": 80
+  },
+  "Build_ConveyorAttachmentMerger_C.Output1": {
+   "conflict": false,
+   "direction": "output",
+   "fixtures": [
+    "biofuel.sbp",
+    "logistics-17.sbp",
+    "logistics-18.sbp",
+    "logistics-20.sbp",
+    "logistics-21.sbp",
+    "logistics-24.sbp",
+    "logistics-25.sbp",
+    "production-10.sbp",
+    "production-11.sbp",
+    "production-12.sbp",
+    "production-13.sbp",
+    "production-14.sbp",
+    "production-15.sbp",
+    "production-16.sbp",
+    "production-17.sbp",
+    "production-18.sbp",
+    "production-19.sbp",
+    "production-2.sbp",
+    "production-20.sbp",
+    "production-21.sbp",
+    "production-22.sbp",
+    "production-23.sbp",
+    "production-4.sbp",
+    "production-6.sbp",
+    "production-9.sbp"
+   ],
+   "links": 115
+  },
+  "Build_ConveyorAttachmentSplitterLift_C.BottomConnection": {
+   "conflict": false,
+   "direction": "output",
+   "fixtures": [
+    "production-10.sbp"
+   ],
+   "links": 11
+  },
+  "Build_ConveyorAttachmentSplitterLift_C.Output1": {
+   "conflict": false,
+   "direction": "output",
+   "fixtures": [
+    "production-10.sbp"
+   ],
+   "links": 16
+  },
+  "Build_ConveyorAttachmentSplitterLift_C.Output2": {
+   "conflict": false,
+   "direction": "output",
+   "fixtures": [
+    "production-10.sbp"
+   ],
+   "links": 16
+  },
+  "Build_ConveyorAttachmentSplitterLift_C.TopConnection": {
+   "conflict": false,
+   "direction": "input",
+   "fixtures": [
+    "production-10.sbp"
+   ],
+   "links": 16
+  },
+  "Build_ConveyorAttachmentSplitterSmart_C.Input1": {
+   "conflict": false,
+   "direction": "input",
+   "fixtures": [
+    "biofuel.sbp",
+    "logistics-22.sbp",
+    "logistics-24.sbp",
+    "logistics-25.sbp",
+    "production-22.sbp"
+   ],
+   "links": 15
+  },
+  "Build_ConveyorAttachmentSplitterSmart_C.Output1": {
+   "conflict": false,
+   "direction": "output",
+   "fixtures": [
+    "biofuel.sbp",
+    "logistics-22.sbp",
+    "logistics-24.sbp",
+    "logistics-25.sbp",
+    "production-22.sbp"
+   ],
+   "links": 13
+  },
+  "Build_ConveyorAttachmentSplitterSmart_C.Output2": {
+   "conflict": false,
+   "direction": "output",
+   "fixtures": [
+    "biofuel.sbp",
+    "logistics-22.sbp",
+    "logistics-24.sbp",
+    "logistics-25.sbp",
+    "production-22.sbp"
+   ],
+   "links": 9
+  },
+  "Build_ConveyorAttachmentSplitterSmart_C.Output3": {
+   "conflict": false,
+   "direction": "output",
+   "fixtures": [
+    "biofuel.sbp",
+    "logistics-22.sbp",
+    "logistics-24.sbp",
+    "logistics-25.sbp",
+    "production-22.sbp"
+   ],
+   "links": 10
+  },
+  "Build_ConveyorAttachmentSplitter_C.Input1": {
+   "conflict": false,
+   "direction": "input",
+   "fixtures": [
+    "logistics-17.sbp",
+    "logistics-18.sbp",
+    "logistics-20.sbp",
+    "logistics-21.sbp",
+    "logistics-24.sbp",
+    "logistics-25.sbp",
+    "logistics-9.sbp",
+    "production-10.sbp",
+    "production-11.sbp",
+    "production-12.sbp",
+    "production-13.sbp",
+    "production-14.sbp",
+    "production-16.sbp",
+    "production-17.sbp",
+    "production-18.sbp",
+    "production-19.sbp",
+    "production-2.sbp",
+    "production-20.sbp",
+    "production-21.sbp",
+    "production-23.sbp",
+    "production-4.sbp",
+    "production-5.sbp",
+    "production-9.sbp"
+   ],
+   "links": 153
+  },
+  "Build_ConveyorAttachmentSplitter_C.Output1": {
+   "conflict": false,
+   "direction": "output",
+   "fixtures": [
+    "logistics-17.sbp",
+    "logistics-18.sbp",
+    "logistics-20.sbp",
+    "logistics-24.sbp",
+    "logistics-25.sbp",
+    "logistics-9.sbp",
+    "production-10.sbp",
+    "production-11.sbp",
+    "production-12.sbp",
+    "production-13.sbp",
+    "production-14.sbp",
+    "production-16.sbp",
+    "production-17.sbp",
+    "production-18.sbp",
+    "production-19.sbp",
+    "production-2.sbp",
+    "production-20.sbp",
+    "production-21.sbp",
+    "production-23.sbp",
+    "production-4.sbp",
+    "production-5.sbp",
+    "production-9.sbp"
+   ],
+   "links": 106
+  },
+  "Build_ConveyorAttachmentSplitter_C.Output2": {
+   "conflict": false,
+   "direction": "output",
+   "fixtures": [
+    "logistics-17.sbp",
+    "logistics-18.sbp",
+    "logistics-20.sbp",
+    "logistics-21.sbp",
+    "logistics-24.sbp",
+    "logistics-9.sbp",
+    "production-10.sbp",
+    "production-11.sbp",
+    "production-12.sbp",
+    "production-13.sbp",
+    "production-14.sbp",
+    "production-16.sbp",
+    "production-17.sbp",
+    "production-18.sbp",
+    "production-19.sbp",
+    "production-2.sbp",
+    "production-20.sbp",
+    "production-21.sbp",
+    "production-23.sbp",
+    "production-4.sbp",
+    "production-9.sbp"
+   ],
+   "links": 115
+  },
+  "Build_ConveyorAttachmentSplitter_C.Output3": {
+   "conflict": false,
+   "direction": "output",
+   "fixtures": [
+    "logistics-17.sbp",
+    "logistics-18.sbp",
+    "logistics-20.sbp",
+    "logistics-21.sbp",
+    "logistics-24.sbp",
+    "logistics-9.sbp",
+    "production-10.sbp",
+    "production-11.sbp",
+    "production-12.sbp",
+    "production-13.sbp",
+    "production-14.sbp",
+    "production-17.sbp",
+    "production-18.sbp",
+    "production-19.sbp",
+    "production-20.sbp",
+    "production-21.sbp",
+    "production-23.sbp",
+    "production-5.sbp",
+    "production-9.sbp"
+   ],
+   "links": 116
+  },
+  "Build_FoundryMk1_C.Input0": {
+   "conflict": false,
+   "direction": "input",
+   "fixtures": [
+    "production-11.sbp",
+    "production-17.sbp",
+    "production-2.sbp"
+   ],
+   "links": 6
+  },
+  "Build_FoundryMk1_C.Input1": {
+   "conflict": false,
+   "direction": "input",
+   "fixtures": [
+    "production-11.sbp",
+    "production-17.sbp",
+    "production-2.sbp"
+   ],
+   "links": 6
+  },
+  "Build_FoundryMk1_C.Output2": {
+   "conflict": false,
+   "direction": "output",
+   "fixtures": [
+    "production-11.sbp",
+    "production-17.sbp",
+    "production-2.sbp"
+   ],
+   "links": 6
+  },
+  "Build_ManufacturerMk1_C.Input0": {
+   "conflict": false,
+   "direction": "input",
+   "fixtures": [
+    "production-10.sbp",
+    "production-15.sbp",
+    "production-16.sbp",
+    "production-18.sbp",
+    "production-9.sbp"
+   ],
+   "links": 18
+  },
+  "Build_ManufacturerMk1_C.Input1": {
+   "conflict": false,
+   "direction": "input",
+   "fixtures": [
+    "production-10.sbp",
+    "production-15.sbp",
+    "production-16.sbp",
+    "production-18.sbp",
+    "production-9.sbp"
+   ],
+   "links": 18
+  },
+  "Build_ManufacturerMk1_C.Input2": {
+   "conflict": false,
+   "direction": "input",
+   "fixtures": [
+    "production-10.sbp",
+    "production-15.sbp",
+    "production-16.sbp",
+    "production-18.sbp",
+    "production-9.sbp"
+   ],
+   "links": 18
+  },
+  "Build_ManufacturerMk1_C.Input3": {
+   "conflict": false,
+   "direction": "input",
+   "fixtures": [
+    "production-10.sbp",
+    "production-15.sbp",
+    "production-16.sbp",
+    "production-18.sbp",
+    "production-9.sbp"
+   ],
+   "links": 18
+  },
+  "Build_ManufacturerMk1_C.Output0": {
+   "conflict": false,
+   "direction": "output",
+   "fixtures": [
+    "production-10.sbp",
+    "production-15.sbp",
+    "production-16.sbp",
+    "production-18.sbp",
+    "production-9.sbp"
+   ],
+   "links": 18
+  },
+  "Build_OilRefinery_C.Input0": {
+   "conflict": false,
+   "direction": "input",
+   "fixtures": [
+    "production-5.sbp"
+   ],
+   "links": 2
+  },
+  "Build_OilRefinery_C.Output1": {
+   "conflict": false,
+   "direction": "output",
+   "fixtures": [
+    "production-5.sbp",
+    "production-6.sbp"
+   ],
+   "links": 6
+  },
+  "Build_Packager_C.Input0": {
+   "conflict": false,
+   "direction": "input",
+   "fixtures": [
+    "production-13.sbp"
+   ],
+   "links": 16
+  },
+  "Build_Packager_C.Output1": {
+   "conflict": false,
+   "direction": "output",
+   "fixtures": [
+    "production-13.sbp"
+   ],
+   "links": 16
+  },
+  "Build_ResourceSink_C.Input0": {
+   "conflict": false,
+   "direction": "input",
+   "fixtures": [
+    "production-22.sbp"
+   ],
+   "links": 1
+  },
+  "Build_SmelterMk1_C.Input0": {
+   "conflict": false,
+   "direction": "input",
+   "fixtures": [
+    "logistics-24.sbp",
+    "production-12.sbp",
+    "production-14.sbp",
+    "production-18.sbp",
+    "production-19.sbp",
+    "production-20.sbp",
+    "production-21.sbp",
+    "production-23.sbp"
+   ],
+   "links": 59
+  },
+  "Build_SmelterMk1_C.Output2": {
+   "conflict": false,
+   "direction": "output",
+   "fixtures": [
+    "logistics-24.sbp",
+    "production-12.sbp",
+    "production-14.sbp",
+    "production-18.sbp",
+    "production-19.sbp",
+    "production-20.sbp",
+    "production-21.sbp",
+    "production-23.sbp"
+   ],
+   "links": 59
+  },
+  "Build_StorageContainerMk1_C.Input0": {
+   "conflict": false,
+   "direction": "input",
+   "fixtures": [
+    "biofuel.sbp",
+    "logistics-22.sbp",
+    "production-22.sbp"
+   ],
+   "links": 5
+  },
+  "Build_StorageContainerMk1_C.Output1": {
+   "conflict": false,
+   "direction": "output",
+   "fixtures": [
+    "biofuel.sbp",
+    "logistics-22.sbp",
+    "production-22.sbp"
+   ],
+   "links": 5
+  },
+  "Build_StorageContainerMk2_C.Input0": {
+   "conflict": false,
+   "direction": "input",
+   "fixtures": [
+    "production-22.sbp"
+   ],
+   "links": 1
+  },
+  "Build_StorageContainerMk2_C.Input1": {
+   "conflict": false,
+   "direction": "input",
+   "fixtures": [
+    "production-22.sbp"
+   ],
+   "links": 1
+  },
+  "Build_StorageContainerMk2_C.Output1": {
+   "conflict": false,
+   "direction": "output",
+   "fixtures": [
+    "production-22.sbp"
+   ],
+   "links": 1
+  },
+  "Build_StorageContainerMk2_C.Output2": {
+   "conflict": false,
+   "direction": "output",
+   "fixtures": [
+    "production-22.sbp"
+   ],
+   "links": 1
   }
  },
  "provenance": {
-  "measured_at_commit": "d4c19f4399cf3518fc2b95f87d8f1652795f5c29",
-  "method": "envelope over the committed blueprint corpus; see the module docstring",
+  "measured_at_commit": "45475ac1efc8684c5822e4c56f37ec00bb6bafc7",
+  "method": "envelope over the current-family blueprint corpus; every value is what the game was observed to accept, never a limit it enforces",
+  "min_save_version": 58,
   "samples_per_segment": 64
  }
 }

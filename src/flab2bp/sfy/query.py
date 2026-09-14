@@ -46,9 +46,11 @@ def spline_points(d: ObjectData) -> tuple[tuple[Vector, Vector, Vector], ...]:
     through the actor's transform before comparing them with anything else.
 
     A belt's two connection components name the two ends of this list, measured
-    over every belt-to-machine link in the fixture corpus (528 of 528 agree):
+    over every belt-to-machine link in the fixture corpus (1119 of 1119 agree):
     ``ConveyorAny0`` is the **first** point and ``ConveyorAny1`` is the **last**.
-    ``tests/sfy/test_port_crosscheck.py`` holds that mapping to the corpus.
+    ``tests/sfy/test_port_crosscheck.py`` holds that mapping to the corpus, and
+    ``Buildables/FGBuildableConveyorBase.h:380`` states which end is which:
+    ``mConnection0`` is the conveyor's input and ``mConnection1`` its output.
 
     Empty for an object that has no spline, which is every object but a
     conveyor belt, a conveyor lift and a pipe, and empty as well for a spline

@@ -111,10 +111,15 @@ var output = new
     wires = WireLengths(gameDir),
     grid = new Dictionary<string, object?>
     {
-        // No cooked asset carries AFGBuildableHologram::mGridSnapSize; the two
-        // overrides that exist (Holo_PowerPole, Holo_StreetLight, both 50) are
-        // per-hologram, so there is no global snap size to report here.
+        // No cooked asset carries AFGBuildableHologram::mGridSnapSize's default;
+        // tools/sfy-native reads it out of the shipped DLL (100). The
+        // per-hologram overrides that do exist (Holo_PowerPole, Holo_StreetLight,
+        // both 50) are in `holograms`, and the merge puts them on the buildable.
         ["mGridSnapSize"] = null,
+        // Not a game value: 90 degrees is the step the build gun rotates by, and
+        // it is in no asset, no header and no constructor immediate. Recorded
+        // here so the merge has one place to find it, and tagged "constant" in
+        // registry.json's limits_sources so it is never read as game data.
         ["rotation_step"] = 90,
     },
 };
@@ -207,12 +212,24 @@ static string? KindOf(UObject template) => template.Class?.Name.Text switch
 /// A connection's direction.
 ///
 /// Belts and pipes each have their own enum and neither is serialised when it
-/// equals the class default. For belts the default is `FCD_INPUT`, the zero of
-/// EFactoryConnectionDirection: inputs such as Build_ConstructorMk1_C's `Input0`
-/// carry no `mDirection` at all, every output carries `FCD_OUTPUT`, and the ten
-/// connections that really are bidirectional spell `FCD_ANY` out. For pipes the
-/// default is `PCT_ANY`, likewise the zero of EPipeConnectionType. Power
-/// connections are circuit connections and have no direction at all.
+/// equals the value the component's archetype carries. Every output spells
+/// `FCD_OUTPUT` out, and the ten connections that really are bidirectional
+/// spell `FCD_ANY` out; an *absent* `mDirection` is the one case the cooked
+/// asset does not answer.
+///
+/// It is tempting to read an absent `mDirection` as the enum's zero, `FCD_INPUT`
+/// -- and for a machine port it does come out that way -- but the default is the
+/// archetype's value, not the enum's, and the archetype is a native constructor
+/// the pak does not carry. `AFGBuildableConveyorBase`'s constructor sets its two
+/// ends apart (`mConnection0` input, `mConnection1` output), so reading the zero
+/// there labels every belt and lift end an input, which is what the registry
+/// said before this. So an absent `mDirection` is reported as `"unknown"` and
+/// `scripts/sfy_registry.py` resolves it, recording a `direction_source` per
+/// port for how.
+///
+/// Pipes are not affected: `mPipeConnectionType`'s default really is the class
+/// default `PCT_ANY` on every pipe archetype in the content. Power connections
+/// are circuit connections and have no direction at all.
 static string DirectionOf(UObject template, string kind)
 {
     if (kind == "power") return "any";
@@ -224,7 +241,8 @@ static string DirectionOf(UObject template, string kind)
         if (pipe.EndsWith("PCT_SNAP_ONLY", StringComparison.Ordinal)) return "snap_only";
         return "any";
     }
-    var direction = Text(template, "mDirection") ?? "EFactoryConnectionDirection::FCD_INPUT";
+    var direction = Text(template, "mDirection");
+    if (direction is null) return "unknown";
     if (direction.EndsWith("FCD_OUTPUT", StringComparison.Ordinal)) return "output";
     if (direction.EndsWith("FCD_ANY", StringComparison.Ordinal)) return "any";
     if (direction.EndsWith("FCD_SNAP_ONLY", StringComparison.Ordinal)) return "snap_only";

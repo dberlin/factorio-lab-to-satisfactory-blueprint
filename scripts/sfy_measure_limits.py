@@ -1,27 +1,33 @@
-"""Measure the hologram limits the game assets do not carry, from the fixtures.
+"""Measure what the blueprint corpus shows, as corroboration for the registry.
 
-Seven of :class:`flab2bp.sfy.registry.Limits`' fields are native C++ constructor
-values: ``AFGConveyorBeltHologram::mBendRadius`` and ``mMaxIncline``, the four
-``AFGConveyorLiftHologram`` heights, and ``AFGBuildableHologram::mGridSnapSize``.
-Task 10 established that none of them is in a cooked asset, a shipped header or
-Docs.json (see ``UNFILLABLE`` in ``scripts/sfy_registry.py``), so the only
-honest source left is the corpus: blueprints the game itself wrote, from
-geometry the game itself accepted.
+Every hologram limit the registry carries now has a game-data source: a cooked
+asset, the shipped DLL's machine code (``tools/sfy-native``), or a formula the
+DLL applies to a Docs.json input. Nothing here fills a limit any more.
 
-What this measures is therefore an *envelope*, not the limit. A tightest bend of
-111 cm across the corpus says the game allows at least 111 cm, not that it
-forbids 110; a placer that stays inside the envelope is building things players
-have already built. Every value is written with the fixture and object that set
-it, and the two spline limits with the percentiles of their population as well,
-so a number that is really one blueprint's outlier reads as one.
+**What this measures is an envelope, never a constraint.** A tightest observed
+bend of 197 cm says the game accepted 197 cm in some blueprint somebody built;
+it says nothing about what the game refuses, and it is not a number a placer may
+use as its own limit. The registry's ``limits`` are the constraints; these
+numbers sit beside them in ``registry.json``'s ``limits_measured`` so that the
+game's constants can be checked against what players actually built --
+``tests/sfy/test_registry.py::test_measured_envelope_lies_inside_binary_limits``
+is that check, and it is the reason this file still exists.
+
+The corpus is restricted to save version 58 and up, the class family the
+registry describes. Older blueprints were built under older limits: measuring
+them mixes two games' rules together, and it was what put a 111 cm bend radius
+and a 39.8-degree incline in front of the earlier version of this script.
+
+It also records, per belt-connected port, which direction the corpus wires it
+in. ``tools/sfy-extract`` cannot read a direction the cooked asset leaves to the
+component archetype, so ``scripts/sfy_registry.py`` resolves those, and this is
+one of the two things it resolves them from.
 
 Run it after adding fixtures::
 
     uv run python scripts/sfy_measure_limits.py
 
-It writes ``src/flab2bp/sfy/data/measured.json`` and prints what it found;
-``scripts/sfy_registry.py`` then merges it for any limit the assets and the
-headers leave unset.
+It writes ``src/flab2bp/sfy/data/measured.json`` and prints what it found.
 """
 
 from __future__ import annotations
@@ -36,14 +42,17 @@ from typing import Any
 
 from flab2bp.sfy.codec import read_sbp
 from flab2bp.sfy.geometry import quat_rotate
-from flab2bp.sfy.objects import ObjectHeader
+from flab2bp.sfy.objects import ObjectData, ObjectHeader
 from flab2bp.sfy.properties import Struct, Vector
 from flab2bp.sfy.query import connected, find, object_index, spline_points
-from flab2bp.sfy.registry import Registry, load_registry
 
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURES = ROOT / "tests" / "fixtures" / "sfy"
 OUT = ROOT / "src" / "flab2bp" / "sfy" / "data" / "measured.json"
+
+# Only save version 58 and up: the class family the registry describes, and the
+# only one whose geometry was laid down under the limits the registry carries.
+CURRENT_SAVE_VERSION = 58
 
 # Samples per spline segment. The curvature of a cubic Hermite segment varies
 # along it, so the extreme is found by sampling rather than at the ends; 64 puts
@@ -55,48 +64,22 @@ SAMPLES = 64
 # straight line have collinear tangents and a cross product at rounding noise.
 STRAIGHT_EPSILON = 1e-6
 
-# Segments shorter than this carry no geometry. 179 of the corpus' spline
+# Segments shorter than this carry no geometry. Many of the corpus' spline
 # segments have two coincident points, which the game writes where a belt was
 # split or joined; on such a segment the Hermite curve is a cusp that doubles
-# back on itself, and its "radius" is a fraction of a centimetre. Measuring
-# those would put belt_bend_radius_cm at 0.01 cm and mean nothing.
+# back on itself, and its "radius" is a fraction of a centimetre.
 MIN_SEGMENT_CM = 1.0
 
 # Likewise within a segment: where the parametric speed collapses relative to
 # the segment's own scale the curve is at a cusp, not a bend.
 MIN_SPEED_FRACTION = 0.05
 
-# The buildable families whose actor origin is on the build grid, named by the
-# native class Docs.json gives them. Everything else snaps to something the
-# player already placed rather than to the world, and so says nothing about the
-# hologram grid: a belt, lift or pipe is dragged between two connections; a
-# splitter or merger snaps onto a belt (four of them in power-generation-13 sit
-# at x=1529.579, 1740.113, 1931.890 and 1992.433); a pole snaps under a belt, a
-# wire between two poles, a sign or a ladder onto a wall. The brief for this
-# task named splitters and mergers as grid buildings; the corpus says otherwise
-# and the corpus wins.
-GRID_NATIVE_CLASSES = frozenset(
-    {
-        "FGBuildableBeam",
-        "FGBuildableFactoryBuilding",
-        "FGBuildableFoundationLightweight",
-        "FGBuildableGeneratorFuel",
-        "FGBuildableManufacturer",
-        "FGBuildablePassthrough",
-        "FGBuildablePillarLightweight",
-        "FGBuildablePowerStorage",
-        "FGBuildableRampLightweight",
-        "FGBuildableStorage",
-        "FGBuildableWallLightweight",
-    }
-)
-
-# Only a building whose yaw is a whole multiple of the hologram rotation step is
-# on the grid at all; the corpus has 502 actors at a free angle (rotated
-# foundations at 848.527 = 1200/sqrt(2), diagonal walls at 1131.37 = 800*sqrt(2))
-# whose coordinates would drag the divisor to 1 cm.
-QUARTER_TURNS = ((0.0, 1.0), (0.5**0.5, 0.5**0.5), (1.0, 0.0), (0.5**0.5, -(0.5**0.5)))
-ALIGNMENT_EPSILON = 1e-3
+# A belt whose tightest radius is wider than the longest belt the game will
+# build is not turning at all, it is a straight run with float noise in its
+# tangents. The threshold is the game's own AFGConveyorBeltHologram
+# mMaxSplineLength, so that "bends" means belts that actually bend and the
+# percentiles of the population mean something.
+BEND_CEILING_CM = 5600.1
 
 BELT = "Build_ConveyorBelt"
 LIFT = "Build_ConveyorLift"
@@ -110,15 +93,6 @@ class Extreme:
     fixture: str
     obj: str
     detail: str
-
-    def payload(self) -> dict[str, Any]:
-        return {
-            "value": round(self.value, 4),
-            "source": "measured",
-            "fixture": self.fixture,
-            "object": self.obj,
-            "detail": self.detail,
-        }
 
 
 def _hermite(
@@ -134,12 +108,7 @@ def _hermite(
     first point and ``t1`` the arrive tangent of the second, which is how
     ``FInterpCurve`` -- and therefore ``mSplineData`` -- stores a spline.
     """
-    d = (
-        6 * s * s - 6 * s,
-        3 * s * s - 4 * s + 1,
-        -6 * s * s + 6 * s,
-        3 * s * s - 2 * s,
-    )
+    d = (6 * s * s - 6 * s, 3 * s * s - 4 * s + 1, -6 * s * s + 6 * s, 3 * s * s - 2 * s)
     dd = (12 * s - 6, 6 * s - 4, -12 * s + 6, 6 * s - 2)
     first = tuple(d[0] * p0[i] + d[1] * t0[i] + d[2] * p1[i] + d[3] * t1[i] for i in range(3))
     second = tuple(dd[0] * p0[i] + dd[1] * t0[i] + dd[2] * p1[i] + dd[3] * t1[i] for i in range(3))
@@ -150,20 +119,16 @@ def _xyz(v: Vector) -> tuple[float, float, float]:
     return (v.x, v.y, v.z)
 
 
-def _belt_samples(
+def _bend_samples(
     header: ObjectHeader, pts: tuple[tuple[Vector, Vector, Vector], ...]
-) -> Iterator[tuple[int, float, float | None, float]]:
-    """``(segment, s, radius_cm, incline_deg)`` along one belt's spline.
+) -> Iterator[tuple[int, float, float]]:
+    """``(segment, s, radius_cm)`` wherever one belt's spline actually turns.
 
-    Both numbers are taken in world space, and the radius is the curvature of
-    the curve's **horizontal** projection. The game keeps the two constraints
-    apart -- ``mBendRadius`` governs how tightly a belt may turn and
-    ``mMaxIncline`` how steeply it may climb -- and a full 3D curvature
-    conflates them: on the two steepest belts in the corpus the vertical S-bend
-    reads as a 27 cm radius, well under the 177 cm the tightest real turn shows,
-    which would put a nonsense number in the registry.
-
-    ``radius_cm`` is ``None`` on a straight stretch.
+    The radius is the curvature of the curve's **horizontal** projection,
+    because the game keeps the two constraints apart: ``mBendRadius`` governs
+    how tightly a belt may turn and ``mMaxIncline`` how steeply it may climb. A
+    full 3D curvature conflates them and reads a steep belt's vertical S-bend as
+    a radius far tighter than any turn in the corpus.
     """
     rotation = header.transform.rotation if header.transform else (0.0, 0.0, 0.0, 1.0)
     for segment in range(len(pts) - 1):
@@ -172,18 +137,45 @@ def _belt_samples(
         if math.dist(p0, p1) < MIN_SEGMENT_CM:
             continue
         floor = MIN_SPEED_FRACTION * max(math.dist(p0, p1), math.hypot(*t0), math.hypot(*t1))
-        for step in range(SAMPLES + 1):
+        # The open interval only. At s=0 and s=1 the spline is at a joint, where
+        # the previous point's leave tangent and the next one's arrive tangent
+        # need not agree: the second derivative jumps there, and the one-sided
+        # curvature is a property of the kink rather than of either arc. Every
+        # belt in the corpus that read under 170 cm read it at a joint.
+        for step in range(1, SAMPLES):
             s = step / SAMPLES
             first, second = _hermite(p0, t0, p1, t1, s)
             fx, fy, fz = quat_rotate(rotation, first)
             sx, sy, _sz = quat_rotate(rotation, second)
             if math.hypot(fx, fy, fz) <= floor:
                 continue
-            incline = math.degrees(math.atan2(abs(fz), math.hypot(fx, fy)))
             flat = math.hypot(fx, fy)
             twist = abs(fx * sy - fy * sx)
-            radius = None if flat <= floor or twist <= STRAIGHT_EPSILON else flat**3 / twist
-            yield segment, s, radius, incline
+            if flat <= floor or twist <= STRAIGHT_EPSILON:
+                continue
+            yield segment, s, flat**3 / twist
+
+
+def _incline_samples(
+    header: ObjectHeader, pts: tuple[tuple[Vector, Vector, Vector], ...]
+) -> Iterator[tuple[int, float]]:
+    """``(segment, degrees)`` for each of one belt's spline segments.
+
+    The slope of the **chord** between two consecutive spline points -- rise
+    over run, in world space -- which is what the game's own incline check is
+    about: how steeply the belt climbs from one guide point to the next. The
+    tangent of a Hermite segment swings above and below that, so sampling it
+    reports a steeper belt than the player was ever allowed to build (39.8
+    degrees against a 35-degree limit, on this corpus).
+    """
+    rotation = header.transform.rotation if header.transform else (0.0, 0.0, 0.0, 1.0)
+    for segment in range(len(pts) - 1):
+        p0, p1 = _xyz(pts[segment][0]), _xyz(pts[segment + 1][0])
+        chord = quat_rotate(rotation, tuple(p1[i] - p0[i] for i in range(3)))  # type: ignore[arg-type]
+        run = math.hypot(chord[0], chord[1])
+        if math.hypot(*chord) < MIN_SEGMENT_CM:
+            continue
+        yield segment, math.degrees(math.atan2(abs(chord[2]), run))
 
 
 def _belt_extremes(
@@ -192,11 +184,14 @@ def _belt_extremes(
     """This belt's tightest horizontal bend and its steepest climb."""
     bend: Extreme | None = None
     incline: Extreme | None = None
-    for segment, s, radius, slope in _belt_samples(header, pts):
-        where = f"segment {segment} of {len(pts) - 1} at s={s:.3f}"
-        if radius is not None and (bend is None or radius < bend.value):
+    segments = len(pts) - 1
+    for segment, s, radius in _bend_samples(header, pts):
+        if bend is None or radius < bend.value:
+            where = f"segment {segment} of {segments} at s={s:.3f}"
             bend = Extreme(radius, fixture, header.name, where)
+    for segment, slope in _incline_samples(header, pts):
         if incline is None or slope > incline.value:
+            where = f"chord of segment {segment} of {segments}"
             incline = Extreme(slope, fixture, header.name, where)
     return bend, incline
 
@@ -206,7 +201,7 @@ def _lift_height(properties: Any) -> float | None:
 
     The lift stores its top as an offset from its own actor transform, negative
     when it runs downwards, so the height is that Z's magnitude. There is no
-    fallback path in this corpus: all 87 lifts carry ``mTopTransform``.
+    fallback path in this corpus: every lift carries ``mTopTransform``.
     """
     top = find(properties, "mTopTransform")
     if not isinstance(top, Struct):
@@ -215,112 +210,154 @@ def _lift_height(properties: Any) -> float | None:
     return None if not isinstance(translation, Vector) else abs(translation.z)
 
 
-def _gcd_cm(samples: list[tuple[float, str, str]]) -> tuple[int, Extreme | None]:
-    """The gcd of ``samples`` in whole centimetres, and the sample that set it.
+def _port_direction_evidence(
+    index: dict[str, tuple[ObjectHeader, ObjectData]],
+    fixture: str,
+    data: ObjectData,
+    into: dict[tuple[str, str], dict[str, Any]],
+) -> None:
+    """What one conveyor's wiring says about the directions of the ports it meets.
 
-    ``samples`` are ``(value, fixture, label)``. The witness is the last sample
-    that pushed the running gcd down, which is the one to look at when the
-    answer is not the number you expected.
+    ``Buildables/FGBuildableConveyorBase.h:380`` states that a conveyor's
+    ``mConnection0`` is its input and ``mConnection1`` its output, and both a
+    belt and a lift name those components ``ConveyorAny0``/``ConveyorAny1`` in
+    that order. So a port feeding ``ConveyorAny0`` is an output, and one fed by
+    ``ConveyorAny1`` is an input -- the direction of a machine port, read off
+    the conveyor attached to it.
     """
-    out = 0
-    witness: Extreme | None = None
-    for value, fixture, label in samples:
-        step = math.gcd(out, abs(round(value)))
-        if step != out:
-            out = step
-            witness = Extreme(float(step), fixture, label, f"reduced the gcd to {step} cm")
-    return out, witness
+    for ref in data.components or ():
+        component, component_data = index[ref.path]
+        peer = connected(component_data)
+        if peer is None or peer.path not in index:
+            continue
+        port, _ = index[peer.path]
+        if port.parent is None or port.parent not in index:
+            continue
+        owner, _ = index[port.parent]
+        if owner.class_name.startswith((BELT, LIFT)):
+            continue  # the peer's own ends are dynamic; it says nothing
+        if component.name.endswith("0"):
+            direction = "output"
+        elif component.name.endswith("1"):
+            direction = "input"
+        else:
+            continue
+        entry = into.setdefault(
+            (owner.class_name, port.name),
+            {"direction": direction, "links": 0, "fixtures": set(), "conflict": False},
+        )
+        entry["links"] += 1
+        entry["fixtures"].add(fixture)
+        if entry["direction"] != direction:
+            entry["conflict"] = True
+
+
+def _spread(population: list[Extreme], low: bool) -> dict[str, Any]:
+    """The whole distribution behind an extreme, not just the extreme.
+
+    ``low`` picks which end is the measurement: a bend radius is a minimum and
+    an incline a maximum. Both ends are reported either way -- an envelope that
+    only ever shows its extreme is how an outlier becomes a limit.
+    """
+    ordered = sorted(x.value for x in population)
+    pick = min(population, key=lambda x: x.value) if low else max(population, key=lambda x: x.value)
+
+    def at(q: float) -> float:
+        return round(ordered[int(q * (len(ordered) - 1))], 4)
+
+    return {
+        "value": round(pick.value, 4),
+        "source": "measured",
+        "fixture": pick.fixture,
+        "object": pick.obj,
+        "detail": pick.detail,
+        "min": round(ordered[0], 4),
+        "p05": at(0.05),
+        "p50": at(0.5),
+        "p95": at(0.95),
+        "max": round(ordered[-1], 4),
+        "n": len(ordered),
+    }
 
 
 def measure() -> dict[str, Any]:
-    """Walk every fixture and return the ``measured.json`` payload."""
+    """Walk the current-family fixtures and return the ``measured.json`` payload."""
     paths = sorted(FIXTURES.glob("*.sbp"))
-    reg = load_registry()
-    objects = belts = 0
+    used: list[str] = []
+    objects = 0
     bends: list[Extreme] = []
     inclines: list[Extreme] = []
     heights: list[Extreme] = []
     vertical: list[Extreme] = []
-    grid: list[tuple[float, str, str]] = []
-    grid_actors = 0
+    directions: dict[tuple[str, str], dict[str, Any]] = {}
 
     for path in paths:
         bp = read_sbp(path.read_bytes())
+        if bp.header.save_version < CURRENT_SAVE_VERSION:
+            continue
+        used.append(path.name)
         index = object_index(bp)
         objects += len(bp.objects)
         for h, d in bp.objects:
+            if not h.class_name.startswith((BELT, LIFT)):
+                continue
+            _port_direction_evidence(index, path.name, d, directions)
             if h.class_name.startswith(BELT):
                 pts = spline_points(d)
-                if len(pts) >= 2:
-                    belts += 1
-                    bend, incline = _belt_extremes(path.name, h, pts)
-                    if bend is not None:
-                        bends.append(bend)
-                    if incline is not None:
-                        inclines.append(incline)
-            elif h.class_name.startswith(LIFT):
+                if len(pts) < 2:
+                    continue
+                bend, incline = _belt_extremes(path.name, h, pts)
+                if bend is not None and bend.value < BEND_CEILING_CM:
+                    bends.append(bend)
+                if incline is not None:
+                    inclines.append(incline)
+            else:
                 height = _lift_height(d.properties)
-                if height is not None and height > 0:
-                    peers = sorted(_peer_classes(index, d))
-                    where = f"wired to {', '.join(peers)}"
-                    heights.append(Extreme(height, path.name, h.name, where))
-                    if any(not p.startswith((BELT, LIFT)) for p in peers):
-                        vertical.append(heights[-1])
-            elif _is_grid_actor(reg, h):
-                grid_actors += 1
-                assert h.transform is not None
-                for axis, v in zip("xyz", h.transform.translation, strict=True):
-                    grid.append((v, path.name, f"{h.name}.{axis}"))
+                if height is None or height <= 0:
+                    continue
+                peers = sorted(_peer_classes(index, d))
+                where = f"wired to {', '.join(peers) or 'nothing'}"
+                heights.append(Extreme(height, path.name, h.name, where))
+                if any(not p.startswith((BELT, LIFT)) for p in peers):
+                    vertical.append(heights[-1])
 
-    limits: dict[str, Any] = {}
-    limits["belt_bend_radius_cm"] = _spread_payload(
-        _pick(bends, min), bends, "belts", "no belt in the corpus has a curved segment"
-    )
-    limits["belt_max_incline_deg"] = _spread_payload(
-        _pick(inclines, max), inclines, "belts", "no belt in the corpus has a spline"
-    )
-    limits["lift_min_cm"] = _extreme_payload(
-        _pick(heights, min), "the corpus has no conveyor lifts"
-    )
-    limits["lift_max_cm"] = _extreme_payload(
-        _pick(heights, max), "the corpus has no conveyor lifts"
-    )
-    limits["lift_min_vertical_cm"] = _extreme_payload(
-        _pick(vertical, min),
-        "no conveyor lift in the corpus has an end wired straight to a non-belt port",
-    )
-    step, step_at = _gcd_cm([(x.value, x.fixture, x.obj) for x in heights])
-    limits["lift_step_cm"] = _gcd_payload(
-        step,
-        step_at,
-        f"gcd of {len(heights)} lift heights, {len({round(x.value) for x in heights})} distinct",
-        "the corpus has no conveyor lifts",
-    )
-    snap, snap_at = _gcd_cm(grid)
-    limits["hologram_grid_cm"] = _gcd_payload(
-        snap,
-        snap_at,
-        f"gcd of {len(grid)} translation coordinates on {grid_actors} on-grid actors",
-        "no on-grid actor in the corpus",
-    )
-
+    limits = {
+        "belt_bend_radius_cm": _spread(bends, low=True),
+        "belt_max_incline_deg": _spread(inclines, low=False),
+        "lift_min_cm": _spread(heights, low=True),
+        "lift_max_cm": _spread(heights, low=False),
+    }
     sha = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True, check=True
     ).stdout.strip()
     return {
         "provenance": {
             "measured_at_commit": sha,
-            "method": "envelope over the committed blueprint corpus; see the module docstring",
+            "method": (
+                "envelope over the current-family blueprint corpus; every value is what "
+                "the game was observed to accept, never a limit it enforces"
+            ),
+            "min_save_version": CURRENT_SAVE_VERSION,
             "samples_per_segment": SAMPLES,
         },
         "corpus": {
-            "fixtures": len(paths),
+            "fixtures_available": len(paths),
+            "fixtures_used": len(used),
             "objects": objects,
-            "belts_with_a_spline": belts,
+            "belts_with_a_spline": len(inclines),
             "conveyor_lifts": len(heights),
-            "on_grid_actors": grid_actors,
+            "conveyor_lifts_on_a_non_belt_port": len(vertical),
         },
         "limits": limits,
+        "port_directions": {
+            f"{cls}.{port}": {
+                "direction": entry["direction"],
+                "links": entry["links"],
+                "fixtures": sorted(entry["fixtures"]),
+                "conflict": entry["conflict"],
+            }
+            for (cls, port), entry in sorted(directions.items())
+        },
     }
 
 
@@ -340,84 +377,26 @@ def _peer_classes(index: dict[str, tuple[ObjectHeader, Any]], data: Any) -> set[
     return out
 
 
-def _is_grid_actor(reg: Registry, header: ObjectHeader) -> bool:
-    """Whether this actor was placed on the world grid rather than snapped to something."""
-    if header.transform is None:
-        return False
-    buildable = reg.buildables.get(header.class_name)
-    if buildable is None:
-        return False
-    if buildable.native_class.rsplit(".", 1)[-1] not in GRID_NATIVE_CLASSES:
-        return False
-    x, y, z, w = header.transform.rotation
-    if abs(x) > ALIGNMENT_EPSILON or abs(y) > ALIGNMENT_EPSILON:
-        return False  # tilted out of the horizontal plane
-    return any(
-        abs(abs(z) - a) < ALIGNMENT_EPSILON and abs(abs(w) - b) < ALIGNMENT_EPSILON
-        for a, b in QUARTER_TURNS
-    )
-
-
-def _pick(candidates: list[Extreme], which: Any) -> Extreme | None:
-    """``min``/``max`` of ``candidates`` by value, or ``None`` when there are none."""
-    return which(candidates, key=lambda x: x.value, default=None)
-
-
-def _extreme_payload(extreme: Extreme | None, reason: str) -> dict[str, Any]:
-    if extreme is None:
-        return {"value": None, "source": "measured", "reason": reason}
-    return extreme.payload()
-
-
-def _spread_payload(
-    extreme: Extreme | None, population: list[Extreme], unit: str, reason: str
-) -> dict[str, Any]:
-    """An extreme, plus where the rest of the population sits.
-
-    The belt limits have a long thin tail -- the tightest bend in the corpus is
-    111 cm and the fifth percentile is 196 -- so the extreme on its own reads as
-    a much looser limit than the corpus actually supports. The percentiles say
-    so in the file instead of only in a commit message.
-    """
-    if extreme is None:
-        return {"value": None, "source": "measured", "reason": reason}
-    ordered = sorted(x.value for x in population)
-
-    def at(q: float) -> float:
-        return round(ordered[int(q * (len(ordered) - 1))], 4)
-
-    return extreme.payload() | {
-        "population": f"{len(ordered)} {unit}",
-        "p05": at(0.05),
-        "p50": at(0.5),
-        "p95": at(0.95),
-    }
-
-
-def _gcd_payload(step: int, at: Extreme | None, detail: str, reason: str) -> dict[str, Any]:
-    if not step or at is None:
-        return {"value": None, "source": "measured", "reason": reason}
-    return {
-        "value": float(step),
-        "source": "measured",
-        "fixture": at.fixture,
-        "object": at.obj,
-        "detail": f"{detail}; {at.detail}",
-    }
-
-
 def main() -> int:
     payload = measure()
     OUT.write_text(json.dumps(payload, indent=1, sort_keys=True) + "\n", encoding="utf-8")
     corpus = payload["corpus"]
     print(
-        f"corpus: {corpus['fixtures']} fixtures, {corpus['objects']} objects, "
-        f"{corpus['belts_with_a_spline']} belts, {corpus['conveyor_lifts']} lifts, "
-        f"{corpus['on_grid_actors']} on-grid actors"
+        f"corpus: {corpus['fixtures_used']} of {corpus['fixtures_available']} fixtures at "
+        f"save version {CURRENT_SAVE_VERSION}+, {corpus['objects']} objects, "
+        f"{corpus['belts_with_a_spline']} belts, {corpus['conveyor_lifts']} lifts"
     )
     for key, entry in sorted(payload["limits"].items()):
-        tail = entry.get("reason") or f"{entry['fixture']} {entry['object']} -- {entry['detail']}"
-        print(f"  {key:<24} {str(entry['value']):>10}  {tail}")
+        print(
+            f"  {key:<22} {entry['value']:>10}  "
+            f"[min {entry['min']}, p05 {entry['p05']}, p50 {entry['p50']}, "
+            f"p95 {entry['p95']}, max {entry['max']}, n={entry['n']}]  "
+            f"{entry['fixture']} {entry['object']}"
+        )
+    conflicts = [k for k, v in payload["port_directions"].items() if v["conflict"]]
+    print(f"port directions from the corpus: {len(payload['port_directions'])}")
+    if conflicts:
+        print("  CONFLICTING (a port wired to both belt ends):", conflicts)
     print(f"wrote {OUT.relative_to(ROOT)}")
     return 0
 

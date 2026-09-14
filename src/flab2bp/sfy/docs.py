@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 from collections.abc import Iterable, Mapping
@@ -35,10 +36,11 @@ __all__ = [
     "docs_path",
     "extract",
     "load_docs",
-    "parse_clearance",
     "parse_class_list",
+    "parse_clearance",
     "parse_item_amounts",
     "parse_vector",
+    "quaternion_to_rotator",
     "satisfactory_dir",
     "write_docs_json",
 ]
@@ -50,11 +52,19 @@ _VECTOR_RE = re.compile(r"X=(-?[0-9.]+),Y=(-?[0-9.]+),Z=(-?[0-9.]+)")
 _MIN_RE = re.compile(r"Min=\(([^)]*)\)")
 _MAX_RE = re.compile(r"Max=\(([^)]*)\)")
 _TRANSLATION_RE = re.compile(r"Translation=\(([^)]*)\)")
+_SCALE_RE = re.compile(r"Scale3D=\(([^)]*)\)")
+# The clearance transform's rotation is exported as a quaternion, unlike a
+# component's ``RelativeRotation``, which is a rotator.
+_QUAT_RE = re.compile(r"Rotation=\(X=(-?[0-9.]+),Y=(-?[0-9.]+),Z=(-?[0-9.]+),W=(-?[0-9.]+)\)")
 # Every item entry names a blueprint class path; the class is the last dotted
 # segment of the path, inside the quoted asset reference.
 _ITEM_AMOUNT_RE = re.compile(r"ItemClass=\"[^\"]*\.([A-Za-z0-9_]+_C)'\",Amount=(\d+)")
 _CLASS_PATH_RE = re.compile(r"\.([A-Za-z0-9_]+_C)\"")
 _ZERO = (0.0, 0.0, 0.0)
+_ONE = (1.0, 1.0, 1.0)
+# ``FQuat::Rotator``'s own threshold: past it the pitch is at a pole and the yaw
+# and roll stop being separable.
+_SINGULARITY_THRESHOLD = 0.4999995
 
 
 class DocsParseError(ValueError):
@@ -100,14 +110,47 @@ def parse_vector(text: str) -> tuple[float, float, float]:
     return (float(match[1]), float(match[2]), float(match[3]))
 
 
+def quaternion_to_rotator(x: float, y: float, z: float, w: float) -> tuple[float, float, float]:
+    """An Unreal quaternion as its ``(pitch, yaw, roll)`` rotator, in degrees.
+
+    This is ``FQuat::Rotator()``, including its singularity handling at the
+    poles, so that a clearance box's rotation is spelled the same way as a
+    port's ``RelativeRotation``, which the game exports as a rotator already.
+    """
+    singularity = z * x - w * y
+    yaw = math.degrees(math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z)))
+    if abs(singularity) > _SINGULARITY_THRESHOLD:
+        sign = 1.0 if singularity > 0.0 else -1.0
+        roll = _normalize_axis(sign * yaw - 2.0 * math.degrees(math.atan2(x, w)))
+        return (90.0 * sign, yaw, roll)
+    pitch = math.degrees(math.asin(2.0 * singularity))
+    roll = math.degrees(math.atan2(-2.0 * (w * x + y * z), 1.0 - 2.0 * (x * x + y * y)))
+    return (pitch, yaw, roll)
+
+
+def _normalize_axis(degrees: float) -> float:
+    """Fold an angle into (-180, 180], as ``FRotator::NormalizeAxis`` does."""
+    folded = math.fmod(degrees, 360.0)
+    if folded > 180.0:
+        folded -= 360.0
+    elif folded <= -180.0:
+        folded += 360.0
+    return folded
+
+
 def parse_clearance(text: str) -> tuple[ClearanceBox, ...]:
     """Read an ``mClearanceData`` text export into clearance boxes.
 
     Each element of the outer list is one ``FFGClearanceData``: a mandatory
-    ``ClearanceBox`` with ``Min``/``Max``, an optional ``Type=CT_Soft`` marker
-    and an optional ``RelativeTransform`` whose ``Translation`` offsets the box.
-    Rotation, scale and ``ExcludeForSnapping`` are present in the dump but are
-    not part of the box model, so they are ignored.
+    ``ClearanceBox`` with ``Min``/``Max``, an optional ``Type=CT_Soft`` marker,
+    an optional ``ExcludeForSnapping`` flag and an optional ``RelativeTransform``
+    that places the box on the buildable. Unreal's text export omits any member
+    equal to its default, so an absent ``Translation`` is the origin, an absent
+    ``Rotation`` is the identity and an absent ``Scale3D`` is ``(1, 1, 1)``.
+
+    All three parts of the transform are read: 37 boxes in the shipped dump
+    carry a rotation, and reading only ``Min``/``Max`` puts a barrier's box a
+    quarter turn away from where the game has it.
     """
     text = text.strip()
     if not text or text == "()":
@@ -120,11 +163,18 @@ def _parse_clearance_box(element: str) -> ClearanceBox:
     if low is None or high is None:
         raise DocsParseError(f"clearance entry has no Min/Max box: {element!r}")
     translation = _TRANSLATION_RE.search(element)
+    rotation = _QUAT_RE.search(element)
+    scale = _SCALE_RE.search(element)
     return ClearanceBox(
         min=parse_vector(low[1]),
         max=parse_vector(high[1]),
         soft="Type=CT_Soft" in element,
         translation=_ZERO if translation is None else parse_vector(translation[1]),
+        rotation=_ZERO
+        if rotation is None
+        else quaternion_to_rotator(*(float(v) for v in rotation.groups())),
+        scale=_ONE if scale is None else parse_vector(scale[1]),
+        exclude_for_snapping="ExcludeForSnapping=True" in element,
     )
 
 
@@ -212,6 +262,9 @@ def _clearance(entry: Mapping[str, Any]) -> list[dict[str, Any]]:
             "max": list(box.max),
             "soft": box.soft,
             "translation": list(box.translation),
+            "rotation": list(box.rotation),
+            "scale": list(box.scale),
+            "exclude_for_snapping": box.exclude_for_snapping,
         }
         for box in boxes
     ]

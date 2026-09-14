@@ -108,15 +108,19 @@ lift buildable's own mesh height, so there is no constant to read:
 ```
 
 `H` is a per-lift-mark property the tool has no way to evaluate, so the three
-stay `"value": null` with that reason and the registry falls through to
-`measured.json` for them. `lift_step_cm` is the one constant in the block.
+stay `"value": null` with that reason. The *formula* is game data all the same,
+so `scripts/sfy_registry.py` applies it to Docs.json's `mMeshHeight` — 200 cm on
+all six lift marks — and tags the results `"binary-derived"`: `lift_min_cm` 400,
+`lift_max_cm` 4800, `lift_min_vertical_cm` 150. `lift_step_cm` is the one
+constant in the block.
 
 ### The grid snap size
 
 `AFGBuildableHologram::mGridSnapSize` is a `UPROPERTY( EditDefaultsOnly )`
 (`Hologram/FGBuildableHologram.h:445`), so a hologram Blueprint can override it,
-and two do: Task 10's `assets.json` has `Holo_PowerPole_C` and
-`Holo_StreetLight_C` at 50. The native constructor default — the value every
+and three do: `assets.json` has `Holo_PowerPole_C`, `Holo_PowerTower_C` and
+`Holo_StreetLight_C` at 50, which the merge puts on each buildable as
+`grid_snap_cm`. The native constructor default — the value every
 other hologram uses — is **100**, which is what the registry carries. Task 11's
 corpus gcd of 50 was mesh offsets, exactly as its concern 4 suspected.
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import pytest
@@ -34,6 +35,82 @@ def test_parse_clearance_reads_hard_and_soft_boxes():
     assert not boxes[0].soft
     assert boxes[0].translation == (0.0, 0.0, 0.0)
     assert boxes[1].soft and boxes[1].translation == (-165.0, -460.0, 0.0)
+
+
+def test_parse_clearance_defaults_the_transform_members_the_export_omits():
+    """Unreal drops any member equal to its default, and ``Scale3D``'s is ones."""
+    boxes = docs.parse_clearance(CLEARANCE)
+    for box in boxes:
+        assert box.rotation == (0.0, 0.0, 0.0)
+        assert box.scale == (1.0, 1.0, 1.0)
+        assert not box.exclude_for_snapping
+
+
+def test_parse_clearance_reads_the_whole_relative_transform():
+    """A quarter turn about Z, a non-default scale and the snapping flag."""
+    (box,) = docs.parse_clearance(
+        "((Type=CT_Soft,ExcludeForSnapping=True,"
+        "ClearanceBox=(Min=(X=-200.000000,Y=-30.000000,Z=0.000000),"
+        "Max=(X=200.000000,Y=30.000000,Z=96.000000),IsValid=True),"
+        "RelativeTransform=(Rotation=(X=0.000000,Y=-0.000000,Z=0.707107,W=0.707107),"
+        "Translation=(X=1.000000,Y=2.000000,Z=3.000000),"
+        "Scale3D=(X=1.000000,Y=1.000000,Z=0.000000))))"
+    )
+    assert box.exclude_for_snapping
+    assert box.translation == (1.0, 2.0, 3.0)
+    assert box.scale == (1.0, 1.0, 0.0)
+    assert box.rotation == pytest.approx((0.0, 90.0, 0.0), abs=1e-4)
+
+
+@pytest.mark.parametrize(
+    ("quaternion", "rotator"),
+    [
+        ((0.0, 0.0, 0.0, 1.0), (0.0, 0.0, 0.0)),
+        ((0.0, 0.0, 0.707107, 0.707107), (0.0, 90.0, 0.0)),
+        ((0.0, 0.0, 1.0, 0.0), (0.0, 180.0, 0.0)),
+        ((0.5, 0.5, 0.5, 0.5), (0.0, 90.0, -90.0)),
+        ((-0.707107, 0.0, 0.0, 0.707107), (0.0, 0.0, 90.0)),
+    ],
+)
+def test_quaternion_to_rotator_matches_unreal(quaternion, rotator):
+    assert docs.quaternion_to_rotator(*quaternion) == pytest.approx(rotator, abs=1e-3)
+
+
+def _rotator_to_quaternion(pitch: float, yaw: float, roll: float) -> tuple[float, ...]:
+    """``FRotator::Quaternion()``, for checking the other direction."""
+    half = math.pi / 360.0
+    sp, cp = math.sin(pitch * half), math.cos(pitch * half)
+    sy, cy = math.sin(yaw * half), math.cos(yaw * half)
+    sr, cr = math.sin(roll * half), math.cos(roll * half)
+    return (
+        cr * sp * sy - sr * cp * cy,
+        -cr * sp * cy - sr * cp * sy,
+        cr * cp * sy - sr * sp * cy,
+        cr * cp * cy + sr * sp * sy,
+    )
+
+
+@pytest.mark.parametrize(
+    "rotator",
+    [
+        (0.0, 0.0, 0.0),
+        (0.0, 90.0, 0.0),
+        (0.0, 180.0, 0.0),
+        (30.0, 45.0, 60.0),
+        (-70.0, 120.0, -15.0),
+        # The two poles, where the branch that folds yaw and roll together runs.
+        # A rotator there is not unique, so only the rotation can be compared.
+        (90.0, 0.0, 0.0),
+        (-90.0, 37.0, 0.0),
+    ],
+)
+def test_a_rotation_survives_the_trip_through_a_rotator(rotator):
+    quaternion = _rotator_to_quaternion(*rotator)
+    back = _rotator_to_quaternion(*docs.quaternion_to_rotator(*quaternion))
+    # q and -q are the same rotation, so the two agree when |q . q'| is 1.
+    assert abs(sum(a * b for a, b in zip(quaternion, back, strict=True))) == pytest.approx(
+        1.0, abs=1e-6
+    )
 
 
 def test_parse_clearance_of_an_empty_export_is_empty():

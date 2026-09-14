@@ -2,7 +2,7 @@
   "provenance": {
     "build_version": 502094,
     "cue4parse": "1.2.2.0",
-    "extracted": "2026-09-13",
+    "extracted": "2026-09-14",
     "game_enum": "GAME_UE5_6",
     "archives": [
       "FactoryGame-Windows.pak:13576",
@@ -16,7 +16,7 @@
       {
         "name": "Input0",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           0.0,
           910.0,
@@ -50,7 +50,7 @@
       {
         "name": "Input0",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           200.0,
           -600.0,
@@ -66,7 +66,7 @@
       {
         "name": "Input1",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           -200.0,
           -600.0,
@@ -135,7 +135,7 @@
       {
         "name": "Input0",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           200.0,
           -700.0,
@@ -151,7 +151,7 @@
       {
         "name": "Input1",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           600.0,
           -700.0,
@@ -278,7 +278,7 @@
       {
         "name": "Input0",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           -4.1723255E-05,
           390.0,
@@ -385,7 +385,7 @@
       {
         "name": "Input0",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           0.0,
           -300.0,
@@ -451,7 +451,7 @@
       {
         "name": "Input0",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           -200.0,
           -680.0,
@@ -467,7 +467,7 @@
       {
         "name": "Input1",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           200.0,
           -680.0,
@@ -533,7 +533,7 @@
       {
         "name": "Input1",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           0.0,
           -100.0,
@@ -549,7 +549,7 @@
       {
         "name": "Input2",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           0.0,
           100.0,
@@ -599,7 +599,7 @@
       {
         "name": "Input1",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           0.0,
           -100.0,
@@ -615,7 +615,7 @@
       {
         "name": "Input2",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           0.0,
           100.0,
@@ -649,7 +649,7 @@
       {
         "name": "Input1",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           -100.0,
           0.0,
@@ -665,7 +665,7 @@
       {
         "name": "Input2",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           0.0,
           100.0,
@@ -681,7 +681,7 @@
       {
         "name": "Input3",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           0.0,
           -100.0,
@@ -715,7 +715,7 @@
       {
         "name": "Input1",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           -100.0,
           0.0,
@@ -731,7 +731,7 @@
       {
         "name": "Input2",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           0.0,
           100.0,
@@ -747,7 +747,7 @@
       {
         "name": "Input3",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           0.0,
           -100.0,
@@ -913,7 +913,7 @@
       {
         "name": "Input1",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           -100.0,
           0.0,
@@ -1045,7 +1045,7 @@
       {
         "name": "Input1",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           -100.0,
           0.0,
@@ -1111,7 +1111,7 @@
       {
         "name": "Input1",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           -100.0,
           1.6237143E-05,
@@ -1177,7 +1177,7 @@
       {
         "name": "ConveyorAny0",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           0.0,
           0.0,
@@ -1193,7 +1193,7 @@
       {
         "name": "ConveyorAny1",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           0.0,
           0.0,
@@ -1211,7 +1211,7 @@
       {
         "name": "ConveyorAny0",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           0.0,
           0.0,
@@ -1227,7 +1227,7 @@
       {
         "name": "ConveyorAny1",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           0.0,
           0.0,
@@ -1245,7 +1245,7 @@
       {
         "name": "ConveyorAny0",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           0.0,
           0.0,
@@ -1261,7 +1261,7 @@
       {
         "name": "ConveyorAny1",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           0.0,
           0.0,
@@ -1279,7 +1279,7 @@
       {
         "name": "ConveyorAny0",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           0.0,
           0.0,
@@ -1295,7 +1295,7 @@
       {
         "name": "ConveyorAny1",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           0.0,
           0.0,
@@ -1313,7 +1313,7 @@
       {
         "name": "ConveyorAny0",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           0.0,
           0.0,
@@ -1329,7 +1329,7 @@
       {
         "name": "ConveyorAny1",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           0.0,
           0.0,
@@ -1347,7 +1347,7 @@
       {
         "name": "ConveyorAny0",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           0.0,
           0.0,
@@ -1363,7 +1363,7 @@
       {
         "name": "ConveyorAny1",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           0.0,
           0.0,
@@ -1399,7 +1399,7 @@
       {
         "name": "ConveyorAny0",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           0.0,
           0.0,
@@ -1415,7 +1415,7 @@
       {
         "name": "ConveyorAny1",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           0.0,
           0.0,
@@ -1433,7 +1433,7 @@
       {
         "name": "ConveyorAny0",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           0.0,
           0.0,
@@ -1449,7 +1449,7 @@
       {
         "name": "ConveyorAny1",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           0.0,
           0.0,
@@ -1467,7 +1467,7 @@
       {
         "name": "ConveyorAny0",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           0.0,
           0.0,
@@ -1483,7 +1483,7 @@
       {
         "name": "ConveyorAny1",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           0.0,
           0.0,
@@ -1501,7 +1501,7 @@
       {
         "name": "ConveyorAny0",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           0.0,
           0.0,
@@ -1517,7 +1517,7 @@
       {
         "name": "ConveyorAny1",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           0.0,
           0.0,
@@ -1535,7 +1535,7 @@
       {
         "name": "ConveyorAny0",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           0.0,
           0.0,
@@ -1551,7 +1551,7 @@
       {
         "name": "ConveyorAny1",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           0.0,
           0.0,
@@ -1569,7 +1569,7 @@
       {
         "name": "ConveyorAny0",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           0.0,
           0.0,
@@ -1585,7 +1585,7 @@
       {
         "name": "ConveyorAny1",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           0.0,
           0.0,
@@ -1640,7 +1640,7 @@
       {
         "name": "SnapOnly0",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           0.0,
           0.0,
@@ -1689,7 +1689,7 @@
       {
         "name": "Input0",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           1200.0,
           700.0,
@@ -1705,7 +1705,7 @@
       {
         "name": "Input1",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           1200.0,
           -500.0,
@@ -1835,7 +1835,7 @@
       {
         "name": "FuelInput0",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           700.0,
           -1005.2503,
@@ -1954,7 +1954,7 @@
       {
         "name": "Input0",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           200.0,
           -300.0,
@@ -1970,7 +1970,7 @@
       {
         "name": "Input1",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           -200.0,
           -300.0,
@@ -2057,7 +2057,7 @@
       {
         "name": "Input0",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           -6.661338E-14,
           300.0,
@@ -2125,7 +2125,7 @@
       {
         "name": "Input0",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           200.0,
           1100.0,
@@ -2245,7 +2245,7 @@
       {
         "name": "Input0",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           -200.0,
           1987.7977,
@@ -2311,7 +2311,7 @@
       {
         "name": "Input0",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           -600.0005,
           900.0,
@@ -2327,7 +2327,7 @@
       {
         "name": "Input1",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           -200.0,
           900.0,
@@ -2566,7 +2566,7 @@
       {
         "name": "Input0",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           600.0,
           -875.0,
@@ -2582,7 +2582,7 @@
       {
         "name": "Input1",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           200.0,
           -875.0,
@@ -2598,7 +2598,7 @@
       {
         "name": "Input2",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           -200.0,
           -875.0,
@@ -2614,7 +2614,7 @@
       {
         "name": "Input3",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           -600.0,
           -875.0,
@@ -2732,7 +2732,7 @@
       {
         "name": "Output0",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           0.0,
           0.0,
@@ -2800,7 +2800,7 @@
       {
         "name": "Input0",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           200.0,
           900.0,
@@ -2882,7 +2882,7 @@
       {
         "name": "Input0",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           0.00044817769,
           -299.99988,
@@ -3471,7 +3471,7 @@
       {
         "name": "ConveyorInput0_0",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           -300.0,
           3.6503898E-06,
@@ -3870,7 +3870,7 @@
       {
         "name": "Input1",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           200.0,
           -2460.0,
@@ -3886,7 +3886,7 @@
       {
         "name": "Input2",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           -200.0,
           -2460.0,
@@ -3902,7 +3902,7 @@
       {
         "name": "Input3",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           -600.0,
           -2100.0,
@@ -4160,7 +4160,7 @@
       {
         "name": "Input0",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           0.0,
           500.0,
@@ -4227,7 +4227,7 @@
       {
         "name": "Input0",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           0.0001516293,
           -300.0,
@@ -4280,7 +4280,7 @@
       {
         "name": "InPut3",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           1200.0,
           -2000.0,
@@ -4296,7 +4296,7 @@
       {
         "name": "Input1",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           1800.0,
           -2000.0,
@@ -4312,7 +4312,7 @@
       {
         "name": "Input2",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           1500.0,
           -2000.0,
@@ -4328,7 +4328,7 @@
       {
         "name": "Input4",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           1200.0,
           2000.0,
@@ -4344,7 +4344,7 @@
       {
         "name": "Input5",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           1500.0,
           2000.0,
@@ -4360,7 +4360,7 @@
       {
         "name": "Input6",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           1800.0,
           2000.0,
@@ -4424,7 +4424,7 @@
       {
         "name": "Input0",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           0.0,
           -400.0,
@@ -4458,7 +4458,7 @@
       {
         "name": "Input0",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           0.0,
           -400.0,
@@ -4474,7 +4474,7 @@
       {
         "name": "Input1",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           0.0,
           -400.0,
@@ -4647,7 +4647,7 @@
       {
         "name": "Input0",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           -300.0,
           1600.0,
@@ -4663,7 +4663,7 @@
       {
         "name": "Input1",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           -300.0,
           1600.0,
@@ -4751,7 +4751,7 @@
       {
         "name": "Input0",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           700.0,
           -1005.2503,
@@ -4767,7 +4767,7 @@
       {
         "name": "Input1",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           300.0,
           -1004.63416,
@@ -4783,7 +4783,7 @@
       {
         "name": "Input2",
         "kind": "belt",
-        "direction": "input",
+        "direction": "unknown",
         "translation": [
           300.0,
           -1004.63416,
