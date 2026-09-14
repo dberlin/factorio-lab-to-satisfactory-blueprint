@@ -8,11 +8,18 @@ every unknown value must carry with it.
 """
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
 
 from flab2bp.sfy import docs
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+
+import sfy_disasm  # noqa: E402
+import sfy_native_directions  # noqa: E402
+import sfy_native_rules  # noqa: E402
 
 NATIVE = Path(docs.__file__).parent / "data" / "native.json"
 
@@ -121,6 +128,93 @@ def test_the_lift_heights_name_both_functions_that_overwrite_them():
         reason = members[member]["reason"]
         assert "AFGConveyorLiftHologram::BeginPlay" in reason, reason
         assert "AFGConveyorLiftHologram::UpdateTopTransform" in reason, reason
+
+
+def _function(size_source: str, rvas=(), symbol: str = "UFGThing::UFGThing") -> dict:
+    """A synthetic ``sfy-native disasm`` record, bounded however the caller says."""
+    return {
+        "symbol": symbol,
+        "rva": "0x1000",
+        "size": 4,
+        "size_source": size_source,
+        "instructions": [{"rva": rva, "bytes": "90", "text": "nop"} for rva in rvas],
+    }
+
+
+def test_a_truncated_function_is_the_only_kind_no_absence_may_be_claimed_from():
+    whole = [_function(source) for source in sfy_disasm.BOUNDED_SIZE_SOURCES]
+    assert sfy_disasm.unbounded(whole) == []
+    sfy_disasm.require_bounded(whole, "nothing writes offset 600")
+
+    for source in ("ret", "truncated"):
+        short = [*whole, _function(source)]
+        assert sfy_disasm.unbounded(short) == [f"UFGThing::UFGThing @ 0x1000: size_source {source}"]
+        with pytest.raises(SystemExit) as caught:
+            sfy_disasm.require_bounded(short, "nothing writes offset 600")
+        assert "nothing writes offset 600" in str(caught.value)
+        assert source in str(caught.value)
+    # A record from a tool too old to say is unbounded, not assumed whole.
+    assert sfy_disasm.unbounded([{"symbol": "X::Y", "rva": "0x20"}]) == [
+        "X::Y @ 0x20: size_source absent"
+    ]
+
+
+def test_the_directions_script_will_not_call_a_truncated_constructor_a_proven_absence():
+    """``_components`` claims no constructor in the pipe chain writes the member."""
+    spec = sfy_native_directions.COMPONENTS["FGPipeConnectionFactory"]
+    factory = sfy_native_directions.COMPONENTS["FGFactoryConnectionComponent"]
+    store = {
+        "rva": factory["evidence"][0],
+        "bytes": "c6",
+        "text": "mov byte ptr [rbx+258h],0",
+        "member": {"class": factory["class"], "name": "mDirection", "offset": 600},
+    }
+    seed = _function("pdata", symbol=f"{factory['class']}::{factory['class']}")
+    seed["instructions"] = [store]
+
+    def run(symbol: str) -> list[dict]:
+        if symbol == f"{factory['class']}::{factory['class']}":
+            return [seed]
+        # Every constructor of every other chain comes back cut short.
+        return [_function("truncated", symbol=symbol)]
+
+    with pytest.raises(SystemExit) as caught:
+        sfy_native_directions._components(run)
+    message = str(caught.value)
+    assert "no constructor in the chain writes at offset 600" in message
+    assert spec["member"] in message
+    assert "truncated" in message
+
+
+def test_a_rule_read_from_a_function_that_was_cut_short_cannot_stay_extracted():
+    """``belt.max_length`` is ``extracted``/``refuse`` -- until its bound goes."""
+    rule_id = "belt.max_length"
+    evidence = sfy_native_rules.EVIDENCE[rule_id]
+    assert sfy_native_rules.INTERPRETATIONS[rule_id][:2] == ("extracted", "refuse")
+
+    whole = sfy_native_rules._rule(rule_id, _function("pdata-chained", evidence))
+    assert whole["status"] == "extracted"
+    assert "NOT READ IN FULL" not in whole["comparison"]
+
+    cut = sfy_native_rules._rule(rule_id, _function("ret", evidence))
+    assert cut["status"] == "partial"
+    assert "NOT READ IN FULL" in cut["comparison"]
+    assert "size_source ret" in cut["comparison"]
+    # Everything the rule does quote is still there; only the claim shrank.
+    assert cut["evidence"] == whole["evidence"]
+
+
+def test_an_effect_of_none_is_an_absence_and_fails_on_a_truncated_function():
+    """``lift.step`` says nothing in the read instructions quantises a height."""
+    rule_id = "lift.step"
+    evidence = sfy_native_rules.EVIDENCE[rule_id]
+    assert sfy_native_rules.INTERPRETATIONS[rule_id][:2] == ("partial", "none")
+
+    assert sfy_native_rules._rule(rule_id, _function("pdata", evidence))["effect"] == "none"
+    with pytest.raises(SystemExit) as caught:
+        sfy_native_rules._rule(rule_id, _function("truncated", evidence))
+    assert "an effect of 'none'" in str(caught.value)
+    assert "truncated" in str(caught.value)
 
 
 def test_provenance_names_the_matching_pdb():

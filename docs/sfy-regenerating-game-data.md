@@ -108,6 +108,12 @@ The script fails rather than quoting stale instructions: if a function moved, th
 addresses in its `EVIDENCE` table no longer decode and the run stops, which is
 the signal to re-read that validator and rewrite its interpretation.
 
+It also refuses to over-claim when `sfy-native` could not read a function to an
+end the game states (a `size_source` of `ret` or `truncated`): the rule is
+downgraded to `partial` with that reason written into its `comparison`, and an
+effect of `none` — which says the read instructions enforce nothing, an absence
+— stops the run outright.
+
 ## 4. The connection directions → `native_directions.json`
 
 ```bash
@@ -124,6 +130,12 @@ content say nothing about their direction for that reason. This disassembles the
 constructors that do say — each connection component class's own, and the four
 buildables whose constructors create their connections and set them — and writes
 what each stores, with the instruction it was read at.
+
+Two of those defaults are an *absence* of a store (nothing in the pipe-connection
+chain writes `mPipeConnectionType`, so it keeps the zero `UObject` construction
+leaves). An absence read out of half a function is worth nothing, so the script
+stops unless every constructor in the chain came back bounded by `.pdata`, its
+chain, or the PDB's procedure length.
 
 `tools/sfy-extract` reads the result and resolves every port with it;
 `tools/sfy-extract/README.md` has the table of what was found and why both ends

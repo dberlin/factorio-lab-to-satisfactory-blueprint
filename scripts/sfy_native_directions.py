@@ -17,6 +17,13 @@ Every value is a store (or a proven absence of one) in a constructor the tool
 disassembles, quoted by address, so a game update that moves a constructor stops
 the run rather than shipping a stale answer.
 
+*Proven* absence is meant literally. Before this file may say that no
+constructor in a chain writes a member, every constructor in that chain has to
+have been read to an end the game states -- ``.pdata``, its chain, or the PDB's
+procedure length. :func:`sfy_disasm.require_bounded` stops the run otherwise,
+because a store in the part of a function the decoder never reached would look
+exactly like no store at all.
+
 Two kinds of default come out of it:
 
 ``component_defaults``
@@ -48,17 +55,17 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from sfy_disasm import disasm, require_bounded
+
 from flab2bp.sfy import docs
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "src" / "flab2bp" / "sfy" / "data"
-NATIVE_TOOL = ROOT / "tools" / "sfy-native"
 
 WIN64 = "FactoryGame/Binaries/Win64"
 MODULE = "FactoryGameEGS-FactoryGame-Win64-Shipping"
@@ -317,17 +324,8 @@ def _sha256(path: Path) -> str:
 
 
 def _disasm(dll: Path, pdb: Path, symbol: str, out: Path) -> list[dict[str, Any]]:
-    """Run ``sfy-native disasm`` for one symbol and return its function records."""
-    subprocess.run(
-        [
-            "cargo", "run", "--release", "--quiet", "--",
-            str(dll), str(pdb), "disasm", symbol, "--out", str(out),
-        ],
-        cwd=NATIVE_TOOL,
-        check=True,
-        stdout=subprocess.DEVNULL,
-    )
-    return [f for f in json.loads(out.read_text(encoding="utf-8")) if f["symbol"] == symbol]
+    """The function records ``sfy-native disasm`` reports for exactly ``symbol``."""
+    return [f for f in disasm(dll, pdb, symbol, out) if f["symbol"] == symbol]
 
 
 def _line(instruction: dict[str, Any]) -> str:
@@ -490,6 +488,16 @@ def _components(run) -> tuple[list[dict[str, Any]], int]:
         if name == "FGFactoryConnectionComponent":
             continue
         functions = [f for symbol in spec["constructors"] for f in run(symbol)]
+        # "No constructor in the chain writes it" is an absence, and an absence
+        # read out of half a function is worth nothing: the store may be in the
+        # part the decoder never reached. Every one of these constructors has to
+        # be bounded by the game -- `.pdata`, its chain, or the PDB's stated
+        # procedure length -- before the claim may be written.
+        require_bounded(
+            functions,
+            f"{name}: no constructor in the chain writes at offset {offset}"
+            + (f" ({spec['member']})" if spec["member"] else ""),
+        )
         wrote = _stores_at(functions, offset)
         if wrote:
             raise SystemExit(

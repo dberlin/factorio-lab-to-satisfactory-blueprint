@@ -40,28 +40,36 @@ not evidence. If a comparison cannot be read, the rule says ``partial`` and the
 placer treats the bound as unknown.
 
 The effect obeys a second rule: it is what the read instructions *do* --
-``refuse``, ``clamp``, ``snap`` -- and ``none`` when they do none of the three.
-``none`` cannot sit beside ``extracted``, and a rule is never downgraded to make
-an effect fit.
+``refuse``, ``clamp``, ``snap``, ``compute`` -- and ``none`` when they do none
+of those. ``none`` cannot sit beside ``extracted``, and a rule is never
+downgraded to make an effect fit.
+
+Both an ``extracted`` status and an effect of ``none`` say something about what
+the function does *not* do, so neither survives a function ``sfy-native`` could
+not read to an end the game states. Whatever ``size_source`` the tool reports,
+:func:`sfy_disasm.unbounded` is what decides: a ``ret`` or a ``truncated``
+downgrades the rule to ``partial`` and says so in its ``comparison``, and it
+fails the run outright for an effect of ``none``, which is an absence claim and
+nothing else.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-import subprocess
 import sys
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from sfy_disasm import disasm, unbounded
+
 from flab2bp.sfy import docs
 from flab2bp.sfy.rules import RULE_EFFECTS
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "src" / "flab2bp" / "sfy" / "data"
-NATIVE_TOOL = ROOT / "tools" / "sfy-native"
 
 WIN64 = "FactoryGame/Binaries/Win64"
 MODULE = "FactoryGameEGS-FactoryGame-Win64-Shipping"
@@ -955,20 +963,6 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _disasm(dll: Path, pdb: Path, symbol: str, out: Path) -> list[dict[str, Any]]:
-    """Run ``sfy-native disasm`` for one symbol and return its function records."""
-    subprocess.run(
-        [
-            "cargo", "run", "--release", "--quiet", "--",
-            str(dll), str(pdb), "disasm", symbol, "--out", str(out),
-        ],
-        cwd=NATIVE_TOOL,
-        check=True,
-        stdout=subprocess.DEVNULL,
-    )
-    return json.loads(out.read_text(encoding="utf-8"))
-
-
 def _rva(text: str) -> int:
     """``"0xaa5280"`` as a number, so evidence sorts by address and not by text."""
     return int(text, 16)
@@ -1014,6 +1008,25 @@ def _rule(
         raise SystemExit(
             f"{rule_id}: an extracted rule cannot have the effect 'none' -- either the "
             "branch that was read does something, or the status is not 'extracted'"
+        )
+    # A rule is a claim about what a function does, and an `extracted` status or
+    # an effect of `none` is also a claim about what it does *not* do. Neither
+    # survives a function `sfy-native` could not read to an end the game states:
+    # the comparison, the clamp or the quantisation may be in the part that was
+    # never decoded. See :data:`sfy_disasm.BOUNDED_SIZE_SOURCES`.
+    short = unbounded([function, *(other for _symbol, other in also)])
+    if short:
+        if effect == "none":
+            raise SystemExit(
+                f"{rule_id}: an effect of 'none' says the instructions that were read "
+                "enforce nothing, which is an absence, and it cannot be claimed from a "
+                f"function that was not read to its end: {'; '.join(short)}"
+            )
+        status = "partial" if status == "extracted" else status
+        comparison = (
+            f"{comparison} NOT READ IN FULL: {'; '.join(short)}. Whatever the "
+            "function does past that point is unknown, so this rule is partial "
+            "however much of the comparison is quoted above."
         )
     instructions = list(function["instructions"])
     for _symbol, other in also:
@@ -1094,11 +1107,11 @@ def main(out: Path | None = None) -> int:
     try:
         for rule_id, (cls, name, _header) in TARGETS.items():
             symbol = f"{cls}::{name}"
-            primary = _one(_disasm(dll, pdb, symbol, scratch), symbol)
+            primary = _one(disasm(dll, pdb, symbol, scratch), symbol)
             also = []
             for spec in ALSO_READ.get(rule_id, ()):
                 other = spec.partition("@")[0]
-                also.append((other, _one(_disasm(dll, pdb, other, scratch), spec)))
+                also.append((other, _one(disasm(dll, pdb, other, scratch), spec)))
             rule = _rule(rule_id, primary, also)
             rules.append(rule)
             across = f" (+{len(also)} functions)" if also else ""
