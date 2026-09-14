@@ -55,7 +55,8 @@ def test_the_three_lift_heights_are_computed_and_say_so():
     stores ``2 x`` it as the minimum, ``24 x`` it as the maximum and ``it - 50``
     as the minimum with a vertical connection. The tool refuses to report the
     constructor's zero as the value and names the store that overwrites it; the
-    registry falls through to the measured envelope for these three.
+    merge then applies those three formulas to Docs.json's ``mMeshHeight``, so
+    the registry sources these three ``binary-derived``.
     """
     members = _native()["classes"]["AFGConveyorLiftHologram"]["members"]
     for member in ("mMinimumHeight", "mMaximumHeight", "mMinimumHeightWithVerticalConnection"):

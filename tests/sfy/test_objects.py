@@ -108,6 +108,18 @@ def test_a_body_missing_its_control_byte_is_rejected_by_the_writer():
         write_object_data(d, h, MODERN)
 
 
+def test_a_body_carrying_a_control_byte_the_format_has_no_room_for_is_rejected():
+    """The mirror: a classic-format file would drop the byte, so it refuses instead.
+
+    Writing it would silently lose a byte the caller put there, and the file
+    that came back would no longer be what was handed in.
+    """
+    h = _actor_header("Build_ConstructorMk1")
+    d = ObjectData(ObjectRef.NULL, (), 0, (), BuildableTrailer())
+    with pytest.raises(ArchiveError, match="no room"):
+        write_object_data(d, h, CLASSIC)
+
+
 def test_unknown_object_kind_is_rejected():
     w = Writer()
     w.i32(7)

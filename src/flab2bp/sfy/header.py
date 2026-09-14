@@ -6,9 +6,14 @@ SaveVersion >= SerializeDataPackageVersionAndCustomVersions; fixtures with
 SaveVersion 46 and 52 go straight from the recipe list to the chunk stream.
 
 The .sbpcfg record does not store the blueprint name (the game fills it from
-the file name). Its last five bytes (int32 6, uint8 0) are the serialized
-FPlayerInfoHandle for LastEditedBy in the NewPlayerInfoHandleSerializationFormat
-family; they are carried as an opaque ``tail`` and written back verbatim.
+the file name). Whatever follows the icon library is carried as an opaque
+``tail`` and written back verbatim, because what is in it depends on the config
+version, and on the file: the corpus's five version-3 records end there with
+nothing, its seven version-4 records carry 45 to 50 bytes, and 36 of its 37
+version-6 records carry the five bytes (int32 6, uint8 0) of the serialized
+FPlayerInfoHandle for LastEditedBy in the
+NewPlayerInfoHandleSerializationFormat family -- logistics-23 carries two. This
+project writes the five-byte version-6 shape (:meth:`BlueprintRecord.new`).
 """
 
 from __future__ import annotations
@@ -16,7 +21,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from flab2bp.sfy.archive import ArchiveError, ObjectRef, Reader, Writer
-from flab2bp.sfy.versions import BLUEPRINT_CONFIG_VERSION, SaveCustomVersion
+from flab2bp.sfy.versions import (
+    BLUEPRINT_CONFIG_VERSION,
+    BLUEPRINT_HEADER_VERSION,
+    SaveCustomVersion,
+)
 
 __all__ = [
     "BlueprintHeader",
@@ -99,7 +108,7 @@ def _write_version_data(w: Writer, v: SaveObjectVersionData) -> None:
 
 def read_header(r: Reader) -> BlueprintHeader:
     header_version = r.i32()
-    if header_version != 2:
+    if header_version != BLUEPRINT_HEADER_VERSION:
         raise ArchiveError(f"unsupported blueprint header version {header_version}")
     save_version, build_version = r.i32(), r.i32()
     dims = (r.i32(), r.i32(), r.i32())

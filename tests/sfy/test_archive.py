@@ -29,6 +29,31 @@ def test_fstring_wide_uses_negative_utf16_length() -> None:
     assert is_wide("Ärger") and not is_wide("plain")
 
 
+def test_a_high_byte_in_an_ansi_string_is_refused() -> None:
+    """Unreal writes ANSI only for code points <= 0x7F.
+
+    Decoding such a byte as latin-1 would hand back a code point above 0x7F,
+    :func:`is_wide` would flip, and the writer would put the same string back as
+    UTF-16 with a different length word -- byte identity lost, silently. No
+    fixture carries one, so the reader has to say so itself.
+    """
+    with pytest.raises(ArchiveError, match="non-ASCII byte in an ANSI string at 4"):
+        Reader(b"\x02\x00\x00\x00\xe9\x00").fstring()
+
+
+def test_a_string_the_writer_cannot_encode_is_refused() -> None:
+    """The write-side mirror: whatever goes out is ASCII or UTF-16, or it raises."""
+    with pytest.raises(ArchiveError, match="cannot go into an archive"):
+        Writer().fstring("\ud800")
+
+
+def test_a_non_ascii_string_goes_out_wide() -> None:
+    w = Writer()
+    w.fstring("café")
+    assert w.getvalue()[:4] == (-5).to_bytes(4, "little", signed=True)
+    assert Reader(w.getvalue()).fstring() == "café"
+
+
 def test_scalars_round_trip() -> None:
     w = Writer()
     w.i32(-5)

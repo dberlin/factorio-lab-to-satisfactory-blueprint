@@ -3,7 +3,10 @@
 Byte identity is the contract: whatever ``Reader`` consumes, ``Writer`` must
 reproduce. The one encoding choice the game makes, ANSI versus UTF-16 for
 strings, follows Unreal's rule (wide iff any code point is above 0x7F), so it
-is derived from the value rather than stored.
+is derived from the value rather than stored. The other half of that rule is
+that an ANSI string is pure ASCII: a byte above 0x7F inside one would come back
+as a code point the writer then has to widen, which is a silent byte-identity
+break, so both sides refuse it.
 """
 
 from __future__ import annotations
@@ -103,10 +106,14 @@ class Reader:
             if raw[-2:] != b"\x00\x00":
                 raise ArchiveError(f"wide string at {self.pos} lacks NUL")
             return raw[:-2].decode("utf-16-le")
+        start = self.pos
         raw = self.bytes(n)
         if raw[-1:] != b"\x00":
             raise ArchiveError(f"ansi string at {self.pos} lacks NUL")
-        return raw[:-1].decode("latin-1")
+        try:
+            return raw[:-1].decode("ascii")
+        except UnicodeDecodeError:
+            raise ArchiveError(f"non-ASCII byte in an ANSI string at {start}") from None
 
     def object_ref(self) -> ObjectRef:
         return ObjectRef(self.fstring(), self.fstring())
@@ -162,14 +169,14 @@ class Writer:
     def fstring(self, s: str) -> None:
         if s == "":
             self.i32(0)
-        elif is_wide(s):
-            encoded = s.encode("utf-16-le") + b"\x00\x00"
-            self.i32(-(len(encoded) // 2))
-            self.raw(encoded)
-        else:
-            encoded = s.encode("latin-1") + b"\x00"
-            self.i32(len(encoded))
-            self.raw(encoded)
+            return
+        wide = is_wide(s)
+        try:
+            encoded = s.encode("utf-16-le") + b"\x00\x00" if wide else s.encode("ascii") + b"\x00"
+        except UnicodeEncodeError:
+            raise ArchiveError(f"this string cannot go into an archive: {s!r}") from None
+        self.i32(-(len(encoded) // 2) if wide else len(encoded))
+        self.raw(encoded)
 
     def object_ref(self, ref: ObjectRef) -> None:
         self.fstring(ref.level)

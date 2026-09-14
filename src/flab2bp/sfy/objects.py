@@ -198,6 +198,11 @@ def write_object_data(d: ObjectData, header: ObjectHeader, fmt: TagFormat) -> by
         if d.control is None:
             raise ArchiveError(f"{header.path} has no control byte and the file format wants one")
         w.u8(d.control)
+    elif d.control is not None:
+        raise ArchiveError(
+            f"{header.path} carries control byte {d.control} and the file format has no room "
+            "for one"
+        )
     check_tag_format(d.properties, fmt.modern, f"{header.path}.")
     write_property_list(w, d.properties)
     write_trailer(w, d.trailer)
