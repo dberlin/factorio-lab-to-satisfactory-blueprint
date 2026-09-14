@@ -69,6 +69,8 @@ const DEFAULT_MEMBERS: &[(&str, &[&str])] = &[
 /// One PE section, enough of it to map an RVA back to file bytes.
 #[derive(Debug)]
 struct Section {
+    /// `.text`, `.rdata`, ...; the constant annotation only trusts `.rdata`.
+    name: String,
     rva: u32,
     virtual_size: u32,
     raw_offset: u32,
@@ -98,6 +100,7 @@ impl Pe {
             .sections
             .iter()
             .map(|s| Section {
+                name: s.name().unwrap_or_default().to_string(),
                 rva: s.virtual_address,
                 virtual_size: s.virtual_size,
                 raw_offset: s.pointer_to_raw_data,
@@ -138,12 +141,16 @@ impl Pe {
         Ok(pe)
     }
 
+    /// The section `rva` falls in, if any.
+    fn section_of(&self, rva: u32) -> Option<&Section> {
+        self.sections
+            .iter()
+            .find(|s| rva >= s.rva && rva < s.rva + s.virtual_size.max(s.raw_size))
+    }
+
     /// The bytes at `rva`, at most `n` of them and never past the section.
     fn rva_to_bytes(&self, rva: u32, n: usize) -> Option<&[u8]> {
-        let section = self
-            .sections
-            .iter()
-            .find(|s| rva >= s.rva && rva < s.rva + s.virtual_size.max(s.raw_size))?;
+        let section = self.section_of(rva)?;
         let within = (rva - section.rva) as usize;
         if within >= section.raw_size as usize {
             return None; // uninitialised tail of the section (.bss-like)
@@ -178,6 +185,21 @@ impl Pe {
             Some(end) => (rva, *end),
             None => (rva, rva.saturating_add(0x1_0000)),
         }
+    }
+
+    /// The `.pdata` `RUNTIME_FUNCTION` entry covering `rva`, as `[begin, end)`.
+    ///
+    /// A function's entry usually begins at its own RVA, but MSVC splits a
+    /// function into chunks and gives each its own entry, so a symbol can land
+    /// inside an entry rather than on it. Both cases are authoritative bounds;
+    /// only a function with no entry at all (leaf functions may have none)
+    /// falls back to the first `ret`.
+    fn pdata_bounds(&self, rva: u32) -> Option<(u32, u32)> {
+        if let Some(end) = self.functions.get(&rva) {
+            return Some((rva, *end));
+        }
+        let (begin, end) = self.functions.range(..=rva).next_back()?;
+        (rva < *end).then_some((*begin, *end))
     }
 }
 
@@ -230,11 +252,17 @@ struct PdbIndex {
     layouts: HashMap<String, Layout>,
     /// Class name -> every member function the PDB publishes for it.
     functions: HashMap<String, Vec<Function>>,
+    /// Every function symbol, sorted; only read for the `disasm` mode, which
+    /// needs the whole address space to resolve call targets.
+    symbols: Vec<Symbol>,
 }
 
 impl PdbIndex {
     /// Open `path`, refusing a PDB that does not match `pe`'s debug record.
-    fn open(path: &Path, pe: &Pe) -> Result<PdbIndex> {
+    ///
+    /// `symbols` asks for the full function-symbol list as well: the `extract`
+    /// mode never needs it and the module's is large, so it is opt-in.
+    fn open(path: &Path, pe: &Pe, symbols: bool) -> Result<PdbIndex> {
         let file = fs::File::open(path).with_context(|| format!("reading {}", path.display()))?;
         let mut pdb = pdb::PDB::open(file).with_context(|| format!("{}", path.display()))?;
 
@@ -252,12 +280,13 @@ impl PdbIndex {
         }
 
         let layouts = read_layouts(&mut pdb)?;
-        let functions = read_functions(&mut pdb)?;
+        let (functions, symbols) = read_functions(&mut pdb, symbols)?;
         Ok(PdbIndex {
             guid,
             age: info.age,
             layouts,
             functions,
+            symbols,
         })
     }
 
@@ -426,41 +455,93 @@ struct Function {
     is_constructor: bool,
 }
 
-/// Every member function the PDB publishes, grouped by the class it is on.
+/// One function symbol of the module, as the PDB publishes it.
+///
+/// No demangler is in this tool's crate graph, so `name` is the
+/// `Class::Method` form derived from the mangling by [`member_function`] --
+/// `None` for anything that is not a plain, non-templated member function
+/// (free functions, operators, destructors, nested and templated scopes).
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct Symbol {
+    rva: u32,
+    name: Option<String>,
+    mangled: String,
+}
+
+impl Symbol {
+    /// What to print for this symbol: its `Class::Method` form if it has one.
+    fn display(&self) -> &str {
+        self.name.as_deref().unwrap_or(&self.mangled)
+    }
+
+    /// The class half of `Class::Method`.
+    fn class(&self) -> Option<&str> {
+        self.name
+            .as_deref()
+            .and_then(|n| n.split_once("::"))
+            .map(|(class, _)| class)
+    }
+}
+
+/// Every member function the PDB publishes, by the class it is a member of.
+type ClassFunctions = HashMap<String, Vec<Function>>;
+
+/// Every member function the PDB publishes, grouped by the class it is on,
+/// and -- when `want_symbols` -- every function symbol of the module.
 fn read_functions<S: pdb::Source<'static> + 'static>(
     pdb: &mut pdb::PDB<'static, S>,
-) -> Result<HashMap<String, Vec<Function>>> {
+    want_symbols: bool,
+) -> Result<(ClassFunctions, Vec<Symbol>)> {
     use pdb::FallibleIterator;
 
     let address_map = pdb.address_map()?;
-    let symbols = pdb.global_symbols()?;
+    let globals = pdb.global_symbols()?;
     let mut functions: HashMap<String, Vec<Function>> = HashMap::new();
-    let mut iter = symbols.iter();
+    let mut symbols: Vec<Symbol> = Vec::new();
+    let mut iter = globals.iter();
     while let Some(symbol) = iter.next()? {
-        let Ok(pdb::SymbolData::Public(public)) = symbol.parse() else {
-            continue;
+        // The global stream publishes functions as `Public`; `Procedure`
+        // records are accepted as well for the PDBs that carry them there,
+        // but only into the symbol list: what `extract` traces is exactly the
+        // set of `Public` function symbols it has always traced.
+        let (mangled, rva, public) = match symbol.parse() {
+            Ok(pdb::SymbolData::Public(public)) if public.function => {
+                let Some(rva) = public.offset.to_rva(&address_map) else {
+                    continue;
+                };
+                (public.name.to_string().into_owned(), rva.0, true)
+            }
+            Ok(pdb::SymbolData::Procedure(procedure)) if want_symbols => {
+                let Some(rva) = procedure.offset.to_rva(&address_map) else {
+                    continue;
+                };
+                (procedure.name.to_string().into_owned(), rva.0, false)
+            }
+            _ => continue,
         };
-        if !public.function {
-            continue;
+        let parsed = member_function(&mangled);
+        if let (true, Some((class, function, is_constructor))) = (public, &parsed) {
+            functions.entry(class.clone()).or_default().push(Function {
+                name: format!("{class}::{function}"),
+                rva,
+                is_constructor: *is_constructor,
+            });
         }
-        let mangled = public.name.to_string();
-        let Some((class, function, is_constructor)) = member_function(&mangled) else {
-            continue;
-        };
-        let Some(rva) = public.offset.to_rva(&address_map) else {
-            continue;
-        };
-        functions.entry(class.clone()).or_default().push(Function {
-            name: format!("{class}::{function}"),
-            rva: rva.0,
-            is_constructor,
-        });
+        if want_symbols {
+            symbols.push(Symbol {
+                rva,
+                name: parsed.map(|(class, function, _)| format!("{class}::{function}")),
+                mangled,
+            });
+        }
     }
     for list in functions.values_mut() {
         list.sort();
         list.dedup();
     }
-    Ok(functions)
+    symbols.sort();
+    symbols.dedup();
+    Ok((functions, symbols))
 }
 
 /// Split an MSVC member-function mangling into `(class, function, is ctor)`.
@@ -628,6 +709,90 @@ const VOLATILE: &[Register] = &[
     Register::XMM5,
 ];
 
+/// What the registers hold: which of them alias `this`, which constant each
+/// last took, and which member offset each was last reloaded from.
+///
+/// The constructor store tracer and the `disasm` mode both step this over an
+/// instruction stream -- `disasm` reads only `aliases` -- so the rules that
+/// keep an alias honest (it dies the moment the register is written to
+/// otherwise, or a call clobbers it) are written once, here.
+struct Regs {
+    aliases: HashSet<Register>,
+    loaded: HashMap<Register, Loaded>,
+    reloaded: HashMap<Register, (u32, usize)>,
+    info_factory: InstructionInfoFactory,
+}
+
+impl Regs {
+    /// At the entry of a member function `this` is in `rcx` and nothing else
+    /// is known.
+    fn new() -> Regs {
+        Regs {
+            aliases: HashSet::from([Register::RCX]),
+            loaded: HashMap::new(),
+            reloaded: HashMap::new(),
+            info_factory: InstructionInfoFactory::new(),
+        }
+    }
+
+    /// Carry the register state across one instruction.
+    fn step(&mut self, instr: &Instr, pe: &Pe) {
+        let i = &instr.instruction;
+
+        // A new alias, a new constant, a reload -- or none of the three.
+        let kept = match register_effect(instr, pe, &self.aliases) {
+            Some(Effect::Alias(register)) => {
+                self.aliases.insert(register);
+                self.loaded.remove(&register);
+                self.reloaded.remove(&register);
+                Some(register)
+            }
+            Some(Effect::Constant(register, value)) => {
+                self.aliases.remove(&register);
+                self.reloaded.remove(&register);
+                self.loaded.insert(register, value);
+                Some(register)
+            }
+            Some(Effect::Reload(register, offset, size)) => {
+                self.aliases.remove(&register);
+                self.loaded.remove(&register);
+                self.reloaded.insert(register, (offset, size));
+                Some(register)
+            }
+            None => None,
+        };
+
+        if i.flow_control() == FlowControl::Call || i.flow_control() == FlowControl::IndirectCall {
+            for register in VOLATILE {
+                self.aliases.remove(register);
+                self.loaded.remove(register);
+                self.reloaded.remove(register);
+            }
+            return;
+        }
+
+        let info = self.info_factory.info(i);
+        for used in info.used_registers() {
+            if !matches!(
+                used.access(),
+                OpAccess::Write
+                    | OpAccess::ReadWrite
+                    | OpAccess::CondWrite
+                    | OpAccess::ReadCondWrite
+            ) {
+                continue;
+            }
+            let register = full_register(used.register());
+            if Some(register) == kept {
+                continue;
+            }
+            self.aliases.remove(&register);
+            self.loaded.remove(&register);
+            self.reloaded.remove(&register);
+        }
+    }
+}
+
 /// Follow `this` and the constants loaded for it through one constructor.
 ///
 /// `this` arrives in `rcx`; MSVC usually copies it into a callee-saved register
@@ -636,27 +801,24 @@ const VOLATILE: &[Register] = &[
 /// store through any alias is recorded at its displacement.
 fn trace_stores(instrs: &[Instr], pe: &Pe) -> Stores {
     let mut stores = Stores::default();
-    let mut aliases: HashSet<Register> = HashSet::from([Register::RCX]);
-    let mut loaded: HashMap<Register, Loaded> = HashMap::new();
-    let mut reloaded: HashMap<Register, (u32, usize)> = HashMap::new();
-    let mut info_factory = InstructionInfoFactory::new();
+    let mut regs = Regs::new();
 
     for instr in instrs {
         let i = &instr.instruction;
 
         // A store through `this` is the only thing worth recording.
-        if let Some((offset, size)) = store_target(i, &aliases) {
+        if let Some((offset, size)) = store_target(i, &regs.aliases) {
             // A value put straight back where it was read from changes
             // nothing. MSVC emits this around a callee-saved spill, and
             // counting it as a write would veto a member that is never
             // actually overwritten.
             if i.op1_kind() == OpKind::Register
-                && reloaded.get(&full_register(i.op1_register())) == Some(&(offset, size))
+                && regs.reloaded.get(&full_register(i.op1_register())) == Some(&(offset, size))
             {
                 continue;
             }
             let here = format!("{} @ {:#x}", instr.text, instr.rva);
-            match store_value(i, size, &loaded) {
+            match store_value(i, size, &regs.loaded) {
                 Some((bytes, source)) => {
                     let text = match source {
                         Some(load) if !load.is_empty() => format!("{load} ; {here}"),
@@ -687,57 +849,8 @@ fn trace_stores(instrs: &[Instr], pe: &Pe) -> Stores {
             }
         }
 
-        // Then the register effects: a new alias, a new constant, or neither.
-        let kept = match register_effect(instr, pe, &aliases) {
-            Some(Effect::Alias(register)) => {
-                aliases.insert(register);
-                loaded.remove(&register);
-                reloaded.remove(&register);
-                Some(register)
-            }
-            Some(Effect::Constant(register, value)) => {
-                aliases.remove(&register);
-                reloaded.remove(&register);
-                loaded.insert(register, value);
-                Some(register)
-            }
-            Some(Effect::Reload(register, offset, size)) => {
-                aliases.remove(&register);
-                loaded.remove(&register);
-                reloaded.insert(register, (offset, size));
-                Some(register)
-            }
-            None => None,
-        };
-
-        if i.flow_control() == FlowControl::Call || i.flow_control() == FlowControl::IndirectCall {
-            for register in VOLATILE {
-                aliases.remove(register);
-                loaded.remove(register);
-                reloaded.remove(register);
-            }
-            continue;
-        }
-
-        let info = info_factory.info(i);
-        for used in info.used_registers() {
-            if !matches!(
-                used.access(),
-                OpAccess::Write
-                    | OpAccess::ReadWrite
-                    | OpAccess::CondWrite
-                    | OpAccess::ReadCondWrite
-            ) {
-                continue;
-            }
-            let register = full_register(used.register());
-            if Some(register) == kept {
-                continue;
-            }
-            aliases.remove(&register);
-            loaded.remove(&register);
-            reloaded.remove(&register);
-        }
+        // Then the register effects.
+        regs.step(instr, pe);
     }
     stores
 }
@@ -1185,7 +1298,341 @@ fn resolve(class: &str, wanted: &[String], index: &PdbIndex, traced: &Traced) ->
 }
 
 // ---------------------------------------------------------------------------
-// 6. main
+// 6. disasm: one named function, printed with what each instruction touches
+// ---------------------------------------------------------------------------
+
+/// One matched function and every instruction in it.
+#[derive(Serialize)]
+struct DisasmOut {
+    /// `Class::Method`, derived from the mangling.
+    symbol: String,
+    mangled: String,
+    rva: String,
+    size: u32,
+    /// `pdata` when `.pdata` gave the bounds, `ret` when the first `ret` did,
+    /// `truncated` when neither did -- never a silent cut.
+    size_source: &'static str,
+    instructions: Vec<InstrOut>,
+}
+
+/// One instruction, with whatever the annotator could say about it.
+#[derive(Serialize)]
+struct InstrOut {
+    rva: String,
+    bytes: String,
+    text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    member: Option<MemberRef>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    constant: Option<ConstantOut>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    call: Option<String>,
+}
+
+/// The member an instruction's `[this + disp]` operand lands on.
+#[derive(Clone, Debug, Serialize)]
+struct MemberRef {
+    class: String,
+    name: String,
+    offset: u32,
+}
+
+/// The `.rdata` bytes a `[rip+K]` operand points at, read every way that
+/// could be meant. The caller knows the type; the tool does not.
+#[derive(Debug, PartialEq, Serialize)]
+struct ConstantOut {
+    at: String,
+    #[serde(rename = "f32")]
+    as_f32: Option<f64>,
+    #[serde(rename = "f64")]
+    as_f64: Option<f64>,
+    #[serde(rename = "i32")]
+    as_i32: Option<i32>,
+    /// The raw 16 bytes at the target, or as many as the section holds.
+    bytes: String,
+}
+
+/// One member of the class chain, flattened for an offset lookup.
+#[derive(Clone, Debug)]
+struct MemberSpan {
+    class: String,
+    name: String,
+    offset: u32,
+    size: usize,
+}
+
+/// Every member of `class` and its bases, most-derived class first.
+fn member_spans(index: &PdbIndex, class: &str) -> Vec<MemberSpan> {
+    let mut spans = Vec::new();
+    for owner in index.chain(class) {
+        let Some(layout) = index.layouts.get(&owner) else {
+            continue;
+        };
+        for (name, member) in &layout.members {
+            spans.push(MemberSpan {
+                class: owner.clone(),
+                name: name.clone(),
+                offset: member.offset,
+                size: member.size,
+            });
+        }
+    }
+    spans
+}
+
+/// The member at `displacement`: one starting exactly there, else one whose
+/// bytes cover it (a field of an embedded struct reads as the struct member).
+fn member_at(spans: &[MemberSpan], displacement: u32) -> Option<&MemberSpan> {
+    spans
+        .iter()
+        .find(|span| span.offset == displacement)
+        .or_else(|| {
+            spans.iter().find(|span| {
+                span.size > 0
+                    && span.offset < displacement
+                    && displacement < span.offset + span.size as u32
+            })
+        })
+}
+
+/// Every function symbol whose `Class::Method` name contains `needle`.
+///
+/// The match is a case-sensitive substring, and only symbols whose mangling
+/// yields a `Class::Method` name take part: no demangler is in the crate
+/// graph, so an operator, a destructor or a templated scope has no name to
+/// match against.
+fn find_functions(symbols: &[Symbol], needle: &str) -> Vec<Symbol> {
+    let mut hits: Vec<Symbol> = symbols
+        .iter()
+        .filter(|symbol| symbol.name.as_deref().is_some_and(|n| n.contains(needle)))
+        .cloned()
+        .collect();
+    hits.sort();
+    // One address is one function: the linker folds identical bodies together
+    // and a PDB can publish the same address twice.
+    hits.dedup_by_key(|symbol| symbol.rva);
+    hits
+}
+
+/// RVA -> the name to print for a call to it, preferring a `Class::Method`.
+fn symbol_map(symbols: &[Symbol]) -> BTreeMap<u32, String> {
+    let mut best: BTreeMap<u32, (bool, String)> = BTreeMap::new();
+    for symbol in symbols {
+        let derived = symbol.name.is_some();
+        if let Some((have, _)) = best.get(&symbol.rva) {
+            if *have || !derived {
+                continue;
+            }
+        }
+        best.insert(symbol.rva, (derived, symbol.display().to_string()));
+    }
+    best.into_iter()
+        .map(|(rva, (_, name))| (rva, name))
+        .collect()
+}
+
+/// The `[begin, end)` to decode and where those bounds came from.
+///
+/// `.pdata` is authoritative. A function with no entry falls back to the
+/// first `ret`, and one that runs past the cap without a `ret` says so.
+fn disasm_bounds(pe: &Pe, rva: u32) -> (Vec<u8>, &'static str) {
+    const CAP: usize = 0x1_0000;
+    if let Some((_, end)) = pe.pdata_bounds(rva) {
+        let wanted = end.saturating_sub(rva) as usize;
+        if let Some(bytes) = pe.rva_to_bytes(rva, wanted.min(CAP)) {
+            // A range the section or the cap cuts short is not the function
+            // `.pdata` promised, and says so rather than passing for one.
+            let source = if bytes.len() == wanted {
+                "pdata"
+            } else {
+                "truncated"
+            };
+            return (bytes.to_vec(), source);
+        }
+    }
+    let Some(bytes) = pe.rva_to_bytes(rva, CAP) else {
+        return (Vec::new(), "truncated");
+    };
+    // No `.pdata` entry: decode to the first `ret` and keep it.
+    let mut decoder = Decoder::with_ip(64, bytes, rva as u64, DecoderOptions::NONE);
+    let mut instruction = Instruction::default();
+    while decoder.can_decode() {
+        decoder.decode_out(&mut instruction);
+        if instruction.is_invalid() {
+            break;
+        }
+        if instruction.mnemonic() == Mnemonic::Ret {
+            let end = (instruction.ip() as u32 - rva) as usize + instruction.len();
+            return (bytes[..end.min(bytes.len())].to_vec(), "ret");
+        }
+    }
+    (bytes.to_vec(), "truncated")
+}
+
+/// Decode `buffer`, which starts at `begin`, keeping the printed form.
+fn decode_all(buffer: &[u8], begin: u32) -> Vec<Instr> {
+    let mut decoder = Decoder::with_ip(64, buffer, begin as u64, DecoderOptions::NONE);
+    let mut formatter = evidence_formatter();
+    let mut instrs = Vec::new();
+    let mut instruction = Instruction::default();
+    while decoder.can_decode() {
+        decoder.decode_out(&mut instruction);
+        if instruction.is_invalid() {
+            break;
+        }
+        let mut text = String::new();
+        formatter.format(&instruction, &mut text);
+        instrs.push(Instr {
+            rva: instruction.ip() as u32,
+            instruction,
+            text,
+        });
+    }
+    instrs
+}
+
+/// The `.rdata` bytes a `[rip+K]` operand points at, decoded every way.
+fn constant_at(pe: &Pe, target: u32) -> Option<ConstantOut> {
+    // Only `.rdata`: a `[rip+K]` into `.data` or `.bss` is a mutable global,
+    // and whatever happens to be in the file there is not a constant.
+    if pe.section_of(target)?.name != ".rdata" {
+        return None;
+    }
+    let bytes = pe.rva_to_bytes(target, 16)?;
+    let finite = |value: f64| value.is_finite().then_some(value);
+    Some(ConstantOut {
+        at: format!("{target:#x}"),
+        as_f32: bytes
+            .get(..4)
+            .and_then(|b| finite(f32::from_le_bytes(b.try_into().ok()?) as f64))
+            .and_then(f32_as_written_f64),
+        as_f64: bytes
+            .get(..8)
+            .and_then(|b| finite(f64::from_le_bytes(b.try_into().ok()?))),
+        as_i32: bytes
+            .get(..4)
+            .map(|b| i32::from_le_bytes(b.try_into().unwrap())),
+        bytes: hex(bytes),
+    })
+}
+
+/// The shortest decimal that reads back as the same `f32`, as an `f64`.
+fn f32_as_written_f64(value: f64) -> Option<f64> {
+    f32_as_written(value as f32)
+}
+
+/// Annotate a decoded function: members through `this`, `.rdata` constants
+/// and call targets.
+///
+/// The `this` tracking is [`Regs`], the same one the constructor store tracer
+/// uses: `this` arrives in `rcx` and an alias survives only until the
+/// register is written to otherwise or a call clobbers it.
+fn annotate(
+    pe: &Pe,
+    buffer: &[u8],
+    begin: u32,
+    instrs: &[Instr],
+    spans: &[MemberSpan],
+    symbols: &BTreeMap<u32, String>,
+) -> Vec<InstrOut> {
+    let mut regs = Regs::new();
+    let mut out = Vec::with_capacity(instrs.len());
+    for instr in instrs {
+        let i = &instr.instruction;
+
+        let member = (i.memory_base() != Register::None
+            && i.memory_index() == Register::None
+            && regs.aliases.contains(&i.memory_base())
+            && i.memory_displacement64() <= u32::MAX as u64)
+            .then(|| member_at(spans, i.memory_displacement64() as u32))
+            .flatten()
+            .map(|span| MemberRef {
+                class: span.class.clone(),
+                name: span.name.clone(),
+                offset: span.offset,
+            });
+
+        let constant = i
+            .is_ip_rel_memory_operand()
+            .then(|| constant_at(pe, i.ip_rel_memory_address() as u32))
+            .flatten();
+
+        let call = (i.flow_control() == FlowControl::Call && i.op0_kind() == OpKind::NearBranch64)
+            .then(|| symbols.get(&(i.near_branch64() as u32)).cloned())
+            .flatten();
+
+        let at = (instr.rva - begin) as usize;
+        let bytes = buffer
+            .get(at..(at + i.len()).min(buffer.len()))
+            .unwrap_or_default();
+        out.push(InstrOut {
+            rva: format!("{:#x}", instr.rva),
+            bytes: hex(bytes),
+            text: instr.text.clone(),
+            member,
+            constant,
+            call,
+        });
+
+        regs.step(instr, pe);
+    }
+    out
+}
+
+/// Disassemble and annotate one matched function.
+fn disasm_one(
+    pe: &Pe,
+    index: &PdbIndex,
+    symbols: &BTreeMap<u32, String>,
+    symbol: &Symbol,
+) -> DisasmOut {
+    let (buffer, size_source) = disasm_bounds(pe, symbol.rva);
+    let instrs = decode_all(&buffer, symbol.rva);
+    let spans = symbol
+        .class()
+        .map(|class| member_spans(index, class))
+        .unwrap_or_default();
+    DisasmOut {
+        symbol: symbol.display().to_string(),
+        mangled: symbol.mangled.clone(),
+        rva: format!("{:#x}", symbol.rva),
+        size: buffer.len() as u32,
+        size_source,
+        instructions: annotate(pe, &buffer, symbol.rva, &instrs, &spans, symbols),
+    }
+}
+
+fn run_disasm(args: &DisasmArgs) -> Result<()> {
+    let pe = Pe::load(&args.dll)?;
+    let index = PdbIndex::open(&args.pdb, &pe, true)?;
+    let symbols = symbol_map(&index.symbols);
+    let hits = find_functions(&index.symbols, &args.symbol);
+    if hits.is_empty() {
+        bail!(
+            "no function symbol's Class::Method name contains {:?}",
+            args.symbol
+        );
+    }
+    let out: Vec<DisasmOut> = hits
+        .iter()
+        .map(|symbol| disasm_one(&pe, &index, &symbols, symbol))
+        .collect();
+    for function in &out {
+        println!(
+            "{} @ {} ({} bytes from {}, {} instructions)",
+            function.symbol,
+            function.rva,
+            function.size,
+            function.size_source,
+            function.instructions.len()
+        );
+    }
+    fs::write(&args.out, serde_json::to_string_pretty(&out)? + "\n")
+        .with_context(|| format!("writing {}", args.out.display()))
+}
+
+// ---------------------------------------------------------------------------
+// 7. main
 // ---------------------------------------------------------------------------
 
 struct Args {
@@ -1197,14 +1644,31 @@ struct Args {
     dump: Option<String>,
 }
 
-const USAGE: &str = "usage: sfy-native <dll> <pdb> <out.json> \
-[--class Class[:member,member]] [--expect Class.member=value] [--dump Class]";
+/// `disasm` asks for one named function rather than a member sweep.
+struct DisasmArgs {
+    dll: PathBuf,
+    pdb: PathBuf,
+    /// A case-sensitive substring of a `Class::Method` name.
+    symbol: String,
+    out: PathBuf,
+}
 
-fn parse_args(argv: &[String]) -> Result<Args> {
+/// The two things the tool does.
+enum Mode {
+    Extract(Args),
+    Disasm(DisasmArgs),
+}
+
+const USAGE: &str = "usage: sfy-native <dll> <pdb> <out.json> \
+[--class Class[:member,member]] [--expect Class.member=value] [--dump Class]\n\
+       sfy-native <dll> <pdb> disasm <symbol-substring> --out <json>";
+
+fn parse_args(argv: &[String]) -> Result<Mode> {
     let mut positional = Vec::new();
     let mut classes: Vec<(String, Vec<String>)> = Vec::new();
     let mut expect = Vec::new();
     let mut dump = None;
+    let mut out: Option<PathBuf> = None;
     let mut it = argv.iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -1239,9 +1703,37 @@ fn parse_args(argv: &[String]) -> Result<Args> {
                         .clone(),
                 );
             }
+            "--out" => {
+                out = Some(
+                    it.next()
+                        .ok_or_else(|| anyhow!("--out needs a path"))?
+                        .into(),
+                );
+            }
             other if other.starts_with("--") => bail!("unknown option {other}\n{USAGE}"),
             other => positional.push(other.to_string()),
         }
+    }
+
+    // `disasm` is its own mode: it takes none of the extract options.
+    if positional.get(2).map(String::as_str) == Some("disasm") {
+        let [dll, pdb, _, symbol] = positional.as_slice() else {
+            bail!("disasm needs one symbol substring\n{USAGE}");
+        };
+        if !classes.is_empty() || !expect.is_empty() || dump.is_some() {
+            bail!("disasm takes none of --class, --expect or --dump\n{USAGE}");
+        }
+        let out = out.ok_or_else(|| anyhow!("disasm needs --out <json>\n{USAGE}"))?;
+        return Ok(Mode::Disasm(DisasmArgs {
+            dll: dll.into(),
+            pdb: pdb.into(),
+            symbol: symbol.clone(),
+            out,
+        }));
+    }
+
+    if out.is_some() {
+        bail!("--out belongs to the disasm mode; extract names its output positionally\n{USAGE}");
     }
     let [dll, pdb, out] = positional.as_slice() else {
         bail!("{USAGE}");
@@ -1257,14 +1749,14 @@ fn parse_args(argv: &[String]) -> Result<Args> {
             })
             .collect();
     }
-    Ok(Args {
+    Ok(Mode::Extract(Args {
         dll: dll.into(),
         pdb: pdb.into(),
         out: out.into(),
         classes,
         expect,
         dump,
-    })
+    }))
 }
 
 fn default_members(class: &str) -> Vec<String> {
@@ -1277,7 +1769,7 @@ fn default_members(class: &str) -> Vec<String> {
 
 fn run(args: &Args) -> Result<()> {
     let pe = Pe::load(&args.dll)?;
-    let index = PdbIndex::open(&args.pdb, &pe)?;
+    let index = PdbIndex::open(&args.pdb, &pe, false)?;
 
     // Every class in every requested chain gets each of its member functions
     // disassembled and traced once.
@@ -1386,8 +1878,10 @@ fn check_oracle(output: &Output, expect: &[(String, String, f64)]) -> Result<()>
 
 fn main() -> Result<()> {
     let argv: Vec<String> = std::env::args().skip(1).collect();
-    let args = parse_args(&argv)?;
-    run(&args)
+    match parse_args(&argv)? {
+        Mode::Extract(args) => run(&args),
+        Mode::Disasm(args) => run_disasm(&args),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1398,14 +1892,20 @@ fn main() -> Result<()> {
 mod tests {
     use super::*;
 
-    /// A Pe with one `.rdata`-like section holding `constants` at RVA 0x2000.
+    /// A Pe with one `.rdata` section holding `constants` at RVA 0x2000.
     fn fake_pe(constants: &[u8]) -> Pe {
+        fake_pe_in(".rdata", constants)
+    }
+
+    /// The same, with the section named -- `.data` is not a constant pool.
+    fn fake_pe_in(section: &str, constants: &[u8]) -> Pe {
         let mut bytes = vec![0u8; 0x1000];
         bytes.extend_from_slice(constants);
         bytes.resize(0x2000, 0);
         Pe {
             bytes,
             sections: vec![Section {
+                name: section.to_string(),
                 rva: 0x2000,
                 virtual_size: 0x1000,
                 raw_offset: 0x1000,
@@ -1690,5 +2190,275 @@ mod tests {
         assert_eq!(decode_value("int32", &7i32.to_le_bytes()), Some(7.into()));
         assert_eq!(decode_value("bool", &[1]), Some(true.into()));
         assert_eq!(decode_value("pointer", &[0; 8]), None);
+    }
+
+    // -----------------------------------------------------------------------
+    // The disasm mode
+    // -----------------------------------------------------------------------
+
+    /// A Pe whose `.text` holds `code` at RVA 0x1000 and whose `.rdata` holds
+    /// `constants` at RVA 0x2000.
+    fn fake_module(code: &[u8], constants: &[u8]) -> Pe {
+        let mut pe = fake_pe(constants);
+        let mut bytes = vec![0u8; 0x400];
+        bytes.extend_from_slice(code);
+        bytes.resize(0x400 + 0x1000, 0);
+        bytes.extend_from_slice(&pe.bytes[0x1000..]);
+        pe.bytes = bytes;
+        pe.sections.insert(
+            0,
+            Section {
+                name: ".text".to_string(),
+                rva: 0x1000,
+                virtual_size: 0x1000,
+                raw_offset: 0x400,
+                raw_size: 0x1000,
+            },
+        );
+        // `.rdata`'s bytes moved down by the `.text` the fake module grew.
+        pe.sections[1].raw_offset = 0x1400;
+        pe
+    }
+
+    /// `AFGConveyorBeltHologram : AFGBuildableHologram`, the two members the
+    /// annotation is checked against at the offsets the real PDB gives them.
+    fn fake_index() -> PdbIndex {
+        let float = |offset| Member {
+            offset,
+            type_name: "float".to_string(),
+            size: 4,
+        };
+        let belt = Layout {
+            size: 2400,
+            base: Some("AFGBuildableHologram".to_string()),
+            members: BTreeMap::from([
+                ("mBendRadius".to_string(), float(2120)),
+                ("mMaxSplineLength".to_string(), float(2124)),
+            ]),
+        };
+        let base = Layout {
+            size: 1300,
+            base: None,
+            members: BTreeMap::from([("mGridSnapSize".to_string(), float(1260))]),
+        };
+        PdbIndex {
+            guid: String::new(),
+            age: 0,
+            layouts: HashMap::from([
+                ("AFGConveyorBeltHologram".to_string(), belt),
+                ("AFGBuildableHologram".to_string(), base),
+            ]),
+            functions: HashMap::new(),
+            symbols: Vec::new(),
+        }
+    }
+
+    fn symbol(mangled: &str, rva: u32) -> Symbol {
+        Symbol {
+            rva,
+            name: member_function(mangled)
+                .map(|(class, function, _)| format!("{class}::{function}")),
+            mangled: mangled.to_string(),
+        }
+    }
+
+    #[test]
+    fn a_read_through_this_names_the_member_and_the_class_that_owns_it() {
+        // mov rbx,rcx ; movss xmm0,[rbx+0x848] ; movss xmm1,[rbx+0x4ec]
+        let code = [
+            0x48, 0x8b, 0xd9, 0xf3, 0x0f, 0x10, 0x83, 0x48, 0x08, 0x00, 0x00, 0xf3, 0x0f, 0x10,
+            0x8b, 0xec, 0x04, 0x00, 0x00,
+        ];
+        assert_eq!(
+            text_of(&code),
+            [
+                "mov rbx,rcx",
+                "movss xmm0,dword ptr [rbx+848h]",
+                "movss xmm1,dword ptr [rbx+4ECh]",
+            ]
+        );
+        let pe = fake_module(&code, &[]);
+        let spans = member_spans(&fake_index(), "AFGConveyorBeltHologram");
+        let out = annotate(&pe, &code, 0x1000, &decode(&code), &spans, &BTreeMap::new());
+        assert!(out[0].member.is_none(), "{:?}", out[0].member);
+        let bend = out[1].member.as_ref().expect("[rbx+848h] was not a member");
+        assert_eq!(bend.name, "mBendRadius");
+        assert_eq!(bend.class, "AFGConveyorBeltHologram");
+        assert_eq!(bend.offset, 2120);
+        assert_eq!(out[1].bytes, "f30f108348080000");
+        // The base class's members are in the chain too.
+        let snap = out[2].member.as_ref().expect("[rbx+4ECh] was not a member");
+        assert_eq!(
+            (snap.name.as_str(), snap.class.as_str()),
+            ("mGridSnapSize", "AFGBuildableHologram")
+        );
+    }
+
+    #[test]
+    fn a_displacement_off_no_member_and_one_off_a_dead_alias_are_left_alone() {
+        // movss xmm0,[rcx+0x848] ; call $+5 ; movss xmm0,[rcx+0x848]
+        let code = [
+            0xf3, 0x0f, 0x10, 0x81, 0x48, 0x08, 0x00, 0x00, 0xe8, 0x00, 0x00, 0x00, 0x00, 0xf3,
+            0x0f, 0x10, 0x81, 0x48, 0x08, 0x00, 0x00,
+        ];
+        let pe = fake_module(&code, &[]);
+        let spans = member_spans(&fake_index(), "AFGConveyorBeltHologram");
+        let out = annotate(&pe, &code, 0x1000, &decode(&code), &spans, &BTreeMap::new());
+        assert_eq!(
+            out[0].member.as_ref().map(|m| m.name.as_str()),
+            Some("mBendRadius")
+        );
+        assert!(
+            out[2].member.is_none(),
+            "rcx still counted as `this` after a call"
+        );
+        // Nothing lives at 0x850 in the fake layout.
+        let spans = member_spans(&fake_index(), "AFGConveyorBeltHologram");
+        assert!(member_at(&spans, 0x850).is_none());
+    }
+
+    #[test]
+    fn a_call_rel32_is_resolved_against_the_symbol_map() {
+        // call $+5 ; ret
+        let code = [0xe8, 0x00, 0x00, 0x00, 0x00, 0xc3];
+        assert_eq!(text_of(&code), ["call 0000000000001005h", "ret"]);
+        let pe = fake_module(&code, &[]);
+        let symbols = symbol_map(&[
+            symbol("?GetSplineLength@USplineComponent@@QEBAMXZ", 0x1005),
+            symbol("?Unnamed@?$TArray@M@@QEBAMXZ", 0x1005),
+        ]);
+        let out = annotate(&pe, &code, 0x1000, &decode(&code), &[], &symbols);
+        assert_eq!(
+            out[0].call.as_deref(),
+            Some("USplineComponent::GetSplineLength")
+        );
+        assert!(out[1].call.is_none());
+    }
+
+    #[test]
+    fn a_rip_relative_read_of_rdata_is_decoded_every_way() {
+        // movss xmm0,[rip+0xff8]  -> 0x2000
+        let code = [0xf3, 0x0f, 0x10, 0x05, 0xf8, 0x0f, 0x00, 0x00];
+        assert_eq!(text_of(&code), ["movss xmm0,dword ptr [2000h]"]);
+        let mut constants = 199.0f32.to_le_bytes().to_vec();
+        constants.resize(16, 0);
+        let pe = fake_module(&code, &constants);
+        let out = annotate(&pe, &code, 0x1000, &decode(&code), &[], &BTreeMap::new());
+        let constant = out[0]
+            .constant
+            .as_ref()
+            .expect("the .rdata read was missed");
+        assert_eq!(constant.at, "0x2000");
+        assert_eq!(constant.as_f32, Some(199.0));
+        assert_eq!(constant.as_i32, Some(0x43470000));
+        assert_eq!(constant.bytes, "00004743000000000000000000000000");
+    }
+
+    #[test]
+    fn a_rip_relative_read_of_a_mutable_global_is_not_a_constant() {
+        let code = [0xf3, 0x0f, 0x10, 0x05, 0xf8, 0x0f, 0x00, 0x00];
+        let mut pe = fake_module(&code, &199.0f32.to_le_bytes());
+        pe.sections[1].name = ".data".to_string();
+        let out = annotate(&pe, &code, 0x1000, &decode(&code), &[], &BTreeMap::new());
+        assert!(out[0].constant.is_none(), "a `.data` global was reported");
+    }
+
+    #[test]
+    fn pdata_gives_the_bounds_and_a_function_without_an_entry_falls_back_to_ret() {
+        // nop ; nop ; ret ; nop
+        let code = [0x90, 0x90, 0xc3, 0x90];
+        let mut pe = fake_module(&code, &[]);
+
+        let (buffer, source) = disasm_bounds(&pe, 0x1000);
+        assert_eq!((buffer.len(), source), (3, "ret"));
+
+        pe.functions.insert(0x1000, 0x1004);
+        let (buffer, source) = disasm_bounds(&pe, 0x1000);
+        assert_eq!((buffer.len(), source), (4, "pdata"));
+        assert_eq!(pe.pdata_bounds(0x1000), Some((0x1000, 0x1004)));
+        // A chunk's symbol lands inside its entry, not on it.
+        assert_eq!(pe.pdata_bounds(0x1002), Some((0x1000, 0x1004)));
+        // The end is exclusive, and an RVA no entry covers has no bounds.
+        assert_eq!(pe.pdata_bounds(0x1004), None);
+        assert_eq!(pe.pdata_bounds(0x0800), None);
+    }
+
+    #[test]
+    fn a_function_with_no_ret_in_range_says_it_was_truncated() {
+        let code = [0x90, 0x90, 0x90, 0x90];
+        let mut pe = fake_module(&code, &[]);
+        let (_, source) = disasm_bounds(&pe, 0x1000);
+        assert_eq!(source, "truncated");
+
+        // A `.pdata` range that runs past the section is not the function it
+        // promised either, and must not pass for one.
+        pe.functions.insert(0x1000, 0x9000);
+        let (buffer, source) = disasm_bounds(&pe, 0x1000);
+        assert_eq!((buffer.len(), source), (0x1000, "truncated"));
+    }
+
+    #[test]
+    fn the_substring_match_is_case_sensitive_and_over_the_class_method_form() {
+        let symbols = vec![
+            symbol("?ValidateCurvature@AFGConveyorBeltHologram@@AEAA_NXZ", 0x30),
+            symbol("?ValidateCurvature@AFGPipelineHologram@@AEAA_NXZ", 0x20),
+            // Folded onto one address: one function, reported once.
+            symbol("?Serialize@FInventoryItem@@QEAA_NAEAVFArchive@@@Z", 0x10),
+            symbol("?Serialize@FItemAmount@@QEAA_NAEAVFArchive@@@Z", 0x10),
+            // No Class::Method name, so nothing to match on.
+            symbol("?Get@?$TArray@M@@QEBAMXZ", 0x40),
+        ];
+        let names = |needle: &str| {
+            find_functions(&symbols, needle)
+                .into_iter()
+                .map(|s| s.display().to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            names("AFGConveyorBeltHologram::ValidateCurvature"),
+            ["AFGConveyorBeltHologram::ValidateCurvature"]
+        );
+        // Sorted by RVA, and one entry per address.
+        assert_eq!(
+            names("ValidateCurvature"),
+            [
+                "AFGPipelineHologram::ValidateCurvature",
+                "AFGConveyorBeltHologram::ValidateCurvature",
+            ]
+        );
+        assert_eq!(names("Serialize"), ["FInventoryItem::Serialize"]);
+        assert!(names("validatecurvature").is_empty());
+        assert!(names("TArray").is_empty());
+    }
+
+    #[test]
+    fn the_disasm_mode_is_its_own_command_line() {
+        let argv = |args: &[&str]| args.iter().map(|a| a.to_string()).collect::<Vec<_>>();
+        let Ok(Mode::Disasm(args)) = parse_args(&argv(&[
+            "game.dll",
+            "game.pdb",
+            "disasm",
+            "AFGConveyorBeltHologram::ValidateCurvature",
+            "--out",
+            "vc.json",
+        ])) else {
+            panic!("disasm was not parsed");
+        };
+        assert_eq!(args.symbol, "AFGConveyorBeltHologram::ValidateCurvature");
+        assert_eq!(args.out, PathBuf::from("vc.json"));
+
+        // The extract mode is untouched, and the two do not mix.
+        let Ok(Mode::Extract(args)) = parse_args(&argv(&["game.dll", "game.pdb", "native.json"]))
+        else {
+            panic!("extract was not parsed");
+        };
+        assert_eq!(args.out, PathBuf::from("native.json"));
+        assert!(!args.classes.is_empty());
+        assert!(parse_args(&argv(&["game.dll", "game.pdb", "disasm", "X"])).is_err());
+        assert!(parse_args(&argv(&["game.dll", "game.pdb", "out.json", "--out", "x"])).is_err());
+        assert!(parse_args(&argv(&[
+            "game.dll", "game.pdb", "disasm", "X", "--out", "x", "--dump", "C"
+        ]))
+        .is_err());
     }
 }

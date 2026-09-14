@@ -16,9 +16,22 @@ from flab2bp.sfy import docs
 
 NATIVE = Path(docs.__file__).parent / "data" / "native.json"
 
+WIN64 = "FactoryGame/Binaries/Win64"
+MODULE = "FactoryGameEGS-FactoryGame-Win64-Shipping"
+
 
 def _native():
     return json.loads(NATIVE.read_text())
+
+
+def _dll_and_pdb():
+    """The shipped module DLL and its PDB, or ``(None, None)`` without a game install."""
+    win64 = docs.satisfactory_dir() / WIN64
+    dll = win64 / f"{MODULE}.dll"
+    pdb = win64 / f"{MODULE}.pdb"
+    if dll.is_file() and pdb.is_file():
+        return dll, pdb
+    return None, None
 
 
 def test_oracle_values_reproduced_from_binary():
@@ -73,3 +86,39 @@ def test_provenance_names_the_matching_pdb():
     p = _native()["provenance"]
     assert p["pdb_guid"].upper().replace("-", "") == "A2691F7CB45E794765C6535DE373BA04"
     assert p["pdb_age"] == 1
+
+
+def test_disasm_of_validate_curvature_reads_the_bend_radius(tmp_path):
+    """The disasm mode must find the belt hologram's curvature check and see it read mBendRadius."""
+    import shutil
+    import subprocess
+
+    dll, pdb = _dll_and_pdb()
+    exe = shutil.which("cargo")
+    if exe is None or dll is None:
+        pytest.skip("cargo or the game install is not available")
+    out = tmp_path / "vc.json"
+    subprocess.run(
+        [
+            "cargo",
+            "run",
+            "--release",
+            "--quiet",
+            "--",
+            str(dll),
+            str(pdb),
+            "disasm",
+            "AFGConveyorBeltHologram::ValidateCurvature",
+            "--out",
+            str(out),
+        ],
+        cwd="tools/sfy-native",
+        check=True,
+        timeout=600,
+    )
+    data = json.loads(out.read_text())
+    assert len(data) == 1
+    fn = data[0]
+    assert fn["size_source"] == "pdata"
+    members = {i["member"]["name"] for i in fn["instructions"] if i.get("member")}
+    assert "mBendRadius" in members

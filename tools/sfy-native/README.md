@@ -47,6 +47,76 @@ Other options:
 - `--dump Class` or `--dump Class::Function` prints the disassembly the tracer
   saw. This is the tool for working out why a member came back `null`.
 
+## Reading a function: the `disasm` mode
+
+The constants above are the easy half of what the binary knows. The rules —
+what a hologram accepts as a legal placement, what a struct's `Serialize`
+writes — are *code*, and reading them means reading the disassembly. `disasm`
+prints any function the PDB names, annotated with everything the tool can work
+out about each instruction:
+
+```
+./target/release/sfy-native game.dll game.pdb \
+  disasm AFGConveyorBeltHologram::ValidateCurvature --out vc.json
+```
+
+```json
+[{"symbol": "AFGConveyorBeltHologram::ValidateCurvature",
+  "mangled": "?ValidateCurvature@AFGConveyorBeltHologram@@AEAA_NXZ",
+  "rva": "0xaa5280", "size": 722, "size_source": "pdata",
+  "instructions": [
+    {"rva": "0xaa52dd", "bytes": "f30f5915873b8100",
+     "text": "mulss xmm2,dword ptr [12B8E6Ch]",
+     "constant": {"at": "0x12b8e6c", "f32": 0.02, "f64": 7.105428962728437e-15,
+                  "i32": 1017370378, "bytes": "0ad7a33c0000003dcdcc4c3dcdcccc3d"}},
+    {"rva": "0xaa54cd", "bytes": "e842b34100", "text": "call 0000000000EC0814h",
+     "call": "acos"},
+    {"rva": "0xaa54d2", "bytes": "f30f109748080000",
+     "text": "movss xmm2,dword ptr [rdi+848h]",
+     "member": {"class": "AFGConveyorBeltHologram", "name": "mBendRadius", "offset": 2120}}]}]
+```
+
+**Which functions.** The substring is matched **case-sensitively** against the
+`Class::Method` name, and every match is disassembled — `FInventoryItem::`
+gives all fourteen of that struct's functions, `AFGConveyorBeltHologram::ValidateCurvature`
+gives one. There is no demangler in this tool's crate graph, so that name is
+derived from the MSVC mangling's leading `?Method@Class@@` (and `??0Class@@`
+for a constructor) by the same `member_function` the `extract` mode uses. The
+consequence is that a symbol whose mangling has no plain `Class::Method` form —
+a free function, an operator, a destructor, a templated or nested scope — has
+no name to match against and can never be selected. Public symbols and, where
+a PDB carries them in the global stream, procedure symbols both count; one
+address is reported once, however many symbols the linker folded onto it.
+
+**Where a function ends.** `.pdata` is authoritative: the `RUNTIME_FUNCTION`
+entry covering the RVA gives `[begin, end)` and `size_source` is `pdata`. MSVC
+emits no entry for many leaf functions, and those fall back to the first `ret`
+(`size_source: "ret"`). A function that reaches neither within 64 KiB says
+`truncated` rather than cutting off silently.
+
+**The three annotations.** Each is present only when the tool is sure of it:
+
+- `member` — the instruction's operand is `[reg+disp]`, `reg` is an alias of
+  `this`, and `disp` falls on a member of the function's class or one of its
+  bases, per the PDB type stream. The `this` tracking is the constructor
+  tracer's: `this` arrives in `rcx`, `mov reg, alias` carries it on, and an
+  alias dies the moment its register is written otherwise or a call clobbers
+  it — so a `[rcx+X]` *after* a call is left unannotated rather than guessed
+  at. A displacement inside a member (a field of an embedded struct) reports
+  the member it lands in, with that member's own offset.
+- `constant` — the operand is `[rip+K]` pointing into `.rdata`. The tool does
+  not know the type, so it reports all of them: `f32`, `f64`, `i32` and the raw
+  16 bytes. `.data` and `.bss` are excluded: a mutable global is not a
+  constant. Note that unlike the store tracer, *every* rip-relative operand is
+  reported, not only moves — `mulss xmm2,[12B8E6Ch]` naming its multiplier is
+  the whole point here.
+- `call` — a `call rel32` whose target is a known symbol, named the same way
+  (`Class::Method`, else the mangling). An indirect `call [rip+K]` is not
+  resolved; it gets the `constant` annotation for its IAT slot instead.
+
+Output is deterministic: functions sorted by RVA, instructions in address
+order, fixed key order, so two runs give byte-identical files.
+
 ## The oracle
 
 Four members' values are stated in the public headers, and a fifth is in
@@ -190,5 +260,12 @@ one the reported value came from.
 `cargo test` covers the store tracer's patterns against hand-assembled byte
 sequences (each test asserts the disassembly text too, so a wrong encoding fails
 loudly rather than passing vacuously), the constructor manglings, the CodeView
-GUID formatting and the float decoding. `tests/sfy/test_native.py` holds the
-committed `native.json` to the oracle and to the evidence each value carries.
+GUID formatting and the float decoding. The `disasm` mode's annotations are
+tested the same way — a read through `this` against a hand-built two-class
+layout, a dead alias after a call, a `call rel32` against a fake symbol map, a
+`.rdata` constant and the `.data` global it refuses, and the `.pdata`/`ret`/
+`truncated` bounds. `tests/sfy/test_native.py` holds the committed
+`native.json` to the oracle and to the evidence each value carries, and runs
+`disasm` against the installed game — skipping without one — to check that
+`AFGConveyorBeltHologram::ValidateCurvature` is found through `.pdata` and
+seen reading `mBendRadius`.
