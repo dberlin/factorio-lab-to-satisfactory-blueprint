@@ -287,7 +287,9 @@ out of the validators the hologram itself runs, into
 `src/flab2bp/sfy/data/hologram_rules.json`, and every limit in `registry.json`
 names the rule that governs it and what that rule does with it
 (`provenance.limits[key].governed_by`, `{rule, effect}` with the effect copied
-from the rule — `refuse`, `clamp`, `snap` or `none`) or says why no rule governs
+from the rule — `refuse`, `clamp`, `snap`, `none` or `compute`, the last being a
+function that is no validation at all: it works out a value the game then uses,
+and turns no placement away) or says why no rule governs
 it. Only `refuse` turns a placement away. Each rule is `extracted`, `partial` or
 `unextractable`: a
 `partial` rule is a bound the validator must not assume it knows, and this gate
