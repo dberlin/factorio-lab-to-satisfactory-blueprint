@@ -856,3 +856,167 @@ def test_repair_reselects_source_after_displacing_its_provider(
     assert destinations[0].belt in reached
     assert result.status is DetailedRouteStatus.ROUTED
     assert destinations[1].belt in reached
+
+
+#: The one cell every ``free``-gate truth-table row puts into a single class.
+_FREE_GATE_CELL: Cell = (2, 2, 0)
+
+
+def _free_gate_canvas(kind: str) -> domain._Canvas:
+    """A 5x5 canvas whose one interesting cell is in exactly the named class.
+
+    Every row of the truth table below differs from ``"empty"`` in one field of
+    :class:`~flab2bp.layout.routing_domain._Canvas`, so a verdict that moves
+    names the field that moved it.
+    """
+    canvas = domain._Canvas(limit=(0, 0, 4, 4))
+    x, y, z = _FREE_GATE_CELL
+    if kind == "empty":
+        pass
+    elif kind == "solid":
+        canvas.solid.add((x, y))
+    elif kind == "blocked":
+        canvas.blocked[_FREE_GATE_CELL] = 0
+    elif kind == "keep_out":
+        canvas.keep_out.add((x, y))
+    elif kind == "belt_ban":
+        canvas.belt_ban[(x, y)] = {z}
+    elif kind == "belt_keepout":
+        canvas.belt_keepout[(x, y)] = {z}
+    elif kind == "reserved_other":
+        canvas.reserved[_FREE_GATE_CELL] = (1, 1, 0)
+    elif kind == "reserved_self":
+        canvas.reserved[_FREE_GATE_CELL] = (1, 1, 0)
+        canvas.routing_ports = frozenset({(1, 1, 0)})
+    elif kind == "outside_limit":
+        canvas.limit = (0, 0, 1, 1)
+    else:  # pragma: no cover - a typo in the table, not a branch
+        raise AssertionError(kind)
+    return canvas
+
+
+#: ``kind`` -> the six verdicts the two gates must give for that cell class.
+#:
+#: The columns are ``free(belt=True)``, ``free(belt=False)`` and
+#: ``free_owned_guard`` -- first with the cell OUTSIDE ``guard``, then with the
+#: same cell added to ``guard``.  Written out literally so a merged gate cannot
+#: quietly trade one class's verdict for another's.
+_FREE_GATE_TRUTH_TABLE: tuple[tuple[str, bool, bool, bool, bool, bool, bool], ...] = (
+    # kind             free  free   fog    free  free   fog
+    #                  belt  !belt         belt  !belt
+    #                  ---- unguarded ---  ----- guarded -----
+    ("empty", True, True, False, False, False, True),
+    # `free` deliberately ignores `solid`: a machine sells the levels above its
+    # collider and a belt may cross them.
+    ("solid", True, True, False, False, False, True),
+    ("blocked", False, False, False, False, False, False),
+    ("keep_out", False, False, False, False, False, False),
+    ("belt_ban", False, False, False, False, False, False),
+    # The one class where `belt` matters, and the one class where the two gates
+    # differ about `belt`: `free_owned_guard` applies `belt_keepout` always.
+    ("belt_keepout", False, True, False, False, False, False),
+    ("reserved_other", False, False, False, False, False, False),
+    ("reserved_self", True, True, False, False, False, True),
+    ("outside_limit", False, False, False, False, False, False),
+)
+
+
+@pytest.mark.parametrize(
+    ("kind", "free_belt", "free_object", "fog", "guard_free_belt", "guard_free_object", "fog_own"),
+    _FREE_GATE_TRUTH_TABLE,
+)
+def test_the_free_gates_answer_one_verdict_per_cell_class(
+    kind: str,
+    free_belt: bool,
+    free_object: bool,
+    fog: bool,
+    guard_free_belt: bool,
+    guard_free_object: bool,
+    fog_own: bool,
+) -> None:
+    """Both ``free`` gates, pinned class by class, guarded and unguarded.
+
+    ``free`` and ``free_owned_guard`` were hand-copied twins.  This is the
+    complete input classification they share -- level range, ``blocked``,
+    ``keep_out``, ``solid``, ``belt_ban``, ``belt_keepout``, ``limit`` and
+    ``reserved`` ownership -- crossed with the one clause they disagree about.
+    """
+    canvas = _free_gate_canvas(kind)
+    assert canvas.free(_FREE_GATE_CELL, belt=True) is free_belt
+    assert canvas.free(_FREE_GATE_CELL, belt=False) is free_object
+    assert canvas.free_owned_guard(_FREE_GATE_CELL) is fog
+
+    canvas.guard.add(_FREE_GATE_CELL)
+    assert canvas.free(_FREE_GATE_CELL, belt=True) is guard_free_belt
+    assert canvas.free(_FREE_GATE_CELL, belt=False) is guard_free_object
+    assert canvas.free_owned_guard(_FREE_GATE_CELL) is fog_own
+
+
+def test_the_free_gates_bound_the_level_range_identically() -> None:
+    """Both gates admit exactly ``0 <= z < levels``, and per level at that.
+
+    ``belt_ban`` and ``belt_keepout`` are keyed by tile and hold a set of
+    LEVELS, so a ban on one level must leave the levels above and below it
+    alone in both gates.
+    """
+    canvas = _free_gate_canvas("empty")
+    x, y, _ = _FREE_GATE_CELL
+    for z in range(canvas.levels):
+        assert canvas.free((x, y, z)) is True
+        assert canvas.free_owned_guard((x, y, z)) is False
+    for z in (-2, -1, canvas.levels, canvas.levels + 1):
+        assert canvas.free((x, y, z)) is False
+        assert canvas.free_owned_guard((x, y, z)) is False
+
+    banned = 3
+    canvas.belt_ban[(x, y)] = {banned}
+    canvas.belt_keepout[(x, y)] = {banned + 1}
+    canvas.guard.update((x, y, z) for z in range(canvas.levels))
+    for z in range(canvas.levels):
+        assert canvas.free((x, y, z)) is False, z
+        assert canvas.free_owned_guard((x, y, z)) is (z not in {banned, banned + 1}), z
+    canvas.guard.clear()
+    for z in range(canvas.levels):
+        assert canvas.free((x, y, z), belt=True) is (z not in {banned, banned + 1}), z
+        assert canvas.free((x, y, z), belt=False) is (z != banned), z
+
+
+def test_the_two_free_gates_disagree_only_about_the_guard() -> None:
+    """``free`` and ``free_owned_guard`` share every refusal but the guard set.
+
+    They were two hand-copied gates. A merged helper must keep ``free``'s
+    ``belt=False`` escape (which drops ``belt_keepout`` only) and must keep
+    ``free_owned_guard`` applying ``belt_keepout`` unconditionally.
+    """
+    bounds = (0, 0, 4, 4)
+    canvas = domain._Canvas(limit=bounds)
+    inside = [(x, y, z) for x in range(5) for y in range(5) for z in range(canvas.levels)]
+
+    for cell in inside:
+        assert not (canvas.free(cell) and canvas.free_owned_guard(cell)), cell
+
+    guarded = (2, 2, 0)
+    canvas.guard.add(guarded)
+    assert canvas.free(guarded) is False
+    assert canvas.free_owned_guard(guarded) is True
+
+    canvas.blocked[guarded] = 0
+    assert canvas.free(guarded) is False
+    assert canvas.free_owned_guard(guarded) is False
+    del canvas.blocked[guarded]
+
+    canvas.belt_keepout[(2, 2)] = {0}
+    assert canvas.free(guarded, belt=True) is False
+    assert canvas.free_owned_guard(guarded) is False, (
+        "free_owned_guard applies belt_keepout unconditionally"
+    )
+
+    open_cell = (3, 3, 0)
+    canvas.belt_keepout[(3, 3)] = {0}
+    assert canvas.free(open_cell, belt=True) is False
+    assert canvas.free(open_cell, belt=False) is True
+
+    outside = (9, 9, 0)
+    assert canvas.free(outside) is False
+    canvas.guard.add(outside)
+    assert canvas.free_owned_guard(outside) is False
