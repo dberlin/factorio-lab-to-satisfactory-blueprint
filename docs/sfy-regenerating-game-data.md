@@ -138,10 +138,11 @@ Which member that load names is the tool's annotation, not a name typed into the
 script, and `BeginPlay` is quoted binding each member to the component of that
 name. The one thing the disassembly cannot show is the text behind the two
 `FName` globals those lookups use (a module initialiser with no `Class::Method`
-symbol fills them in at start-up), so the file's `caveat` says that the pairing
-of the first member with the component the content calls `ConveyorAny0` is not
-quoted from the binary. Step 7 attaches the order to every class that inherits
-the constructor, and refuses if such a class does not carry both ports.
+symbol fills them in at start-up), so this file states the order over the two
+**members** and says nothing about what the components are called. Step 5 reads
+that from the cooked class default object instead (`conveyor_connections`), and
+step 7 joins the two and attaches the result to every class that inherits the
+constructor, refusing if such a class does not carry both ports.
 
 ## 5. Cooked assets → `assets.json`
 
@@ -158,9 +159,12 @@ Needs the .NET 10 SDK and an install carrying
 through CUE4Parse and writes: every buildable's connection ports (position,
 rotation, kind, direction, clearance, and a power connection's
 `mMaxNumConnectionLinks`), each buildable's hologram class and any placement
-limit that hologram's Blueprint overrides, the wire lengths, and the full asset
+limit that hologram's Blueprint overrides, the wire lengths, the full asset
 path of every class Docs.json states one for — which is how a blueprint names an
-item descriptor or a recipe.
+item descriptor or a recipe — and `conveyor_connections`, the component each
+conveyor class's `mConnection0`/`mConnection1` points at, read off its class
+default object. That last one is what turns step 4's member order into two port
+names without anyone reading a name that ends in 0 as evidence.
 
 Step 4's file is the second argument and is required: it is what resolves the
 177 ports whose own asset says nothing about their direction. Each port carries

@@ -87,14 +87,11 @@
         }
       ],
       "conveyor_flow": {
-        "caveat": "The two component names are what the cooked content calls the conveyor's connections. BeginPlay binds each member to the component whose FName matches one of two adjacent globals, and the constructor creates them in member order, but an FName global is built at start-up by a module initialiser with no Class::Method symbol, so the text behind each global is not readable through sfy-native disasm. The member order is the binary's; the pairing of the first member with the component named ConveyorAny0 is not quoted from it.",
         "class": "AFGBuildableConveyorBase",
         "entry": {
-          "component": "ConveyorAny0",
           "member": "mConnection0"
         },
         "exit": {
-          "component": "ConveyorAny1",
           "member": "mConnection1"
         },
         "functions": [
@@ -12526,6 +12523,88 @@
       "mMinimumHeightWithVerticalConnection": null,
       "mRotationStep": null,
       "mStepHeight": null
+    }
+  },
+  "conveyor_connections": {
+    "Build_ConveyorBeltMk1_C": {
+      "mConnection0": "ConveyorAny0",
+      "mConnection1": "ConveyorAny1"
+    },
+    "Build_ConveyorBeltMk2_C": {
+      "mConnection0": "ConveyorAny0",
+      "mConnection1": "ConveyorAny1"
+    },
+    "Build_ConveyorBeltMk3_C": {
+      "mConnection0": "ConveyorAny0",
+      "mConnection1": "ConveyorAny1"
+    },
+    "Build_ConveyorBeltMk4_C": {
+      "mConnection0": "ConveyorAny0",
+      "mConnection1": "ConveyorAny1"
+    },
+    "Build_ConveyorBeltMk5_C": {
+      "mConnection0": "ConveyorAny0",
+      "mConnection1": "ConveyorAny1"
+    },
+    "Build_ConveyorBeltMk6_C": {
+      "mConnection0": "ConveyorAny0",
+      "mConnection1": "ConveyorAny1"
+    },
+    "Build_ConveyorLiftMk1_C": {
+      "mConnection0": "ConveyorAny0",
+      "mConnection1": "ConveyorAny1"
+    },
+    "Build_ConveyorLiftMk2_C": {
+      "mConnection0": "ConveyorAny0",
+      "mConnection1": "ConveyorAny1"
+    },
+    "Build_ConveyorLiftMk3_C": {
+      "mConnection0": "ConveyorAny0",
+      "mConnection1": "ConveyorAny1"
+    },
+    "Build_ConveyorLiftMk4_C": {
+      "mConnection0": "ConveyorAny0",
+      "mConnection1": "ConveyorAny1"
+    },
+    "Build_ConveyorLiftMk5_C": {
+      "mConnection0": "ConveyorAny0",
+      "mConnection1": "ConveyorAny1"
+    },
+    "Build_ConveyorLiftMk6_C": {
+      "mConnection0": "ConveyorAny0",
+      "mConnection1": "ConveyorAny1"
+    },
+    "Build_FoundationPassthrough_Hypertube_C": {
+      "mConnection0": "Connection0",
+      "mConnection1": "Connection1"
+    },
+    "Build_HyperTubeJunction_C": {
+      "mConnection0": "Connection0",
+      "mConnection1": "Connection1"
+    },
+    "Build_HypertubeTJunction_C": {
+      "mConnection0": "Connection0",
+      "mConnection1": "Connection1"
+    },
+    "Build_PipeHyper_C": {
+      "mConnection0": "PipeHyperConnection0",
+      "mConnection1": "PipeHyperConnection1"
+    },
+    "Build_PipelineMK2_C": {
+      "mConnection0": "PipelineConnection0",
+      "mConnection1": "PipelineConnection1"
+    },
+    "Build_PipelineMK2_NoIndicator_C": {
+      "mConnection0": "PipelineConnection0",
+      "mConnection1": "PipelineConnection1"
+    },
+    "Build_Pipeline_C": {
+      "mConnection0": "PipelineConnection0",
+      "mConnection1": "PipelineConnection1"
+    },
+    "Build_Pipeline_NoIndicator_C": {
+      "mConnection0": "PipelineConnection0",
+      "mConnection1": "PipelineConnection1"
     }
   },
   "wires": {

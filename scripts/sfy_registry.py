@@ -46,7 +46,12 @@ from dataclasses import fields
 from pathlib import Path
 from typing import Any
 
-from flab2bp.sfy.registry import FLOW_SOURCES, PORT_DIRECTION_SOURCES, Limits
+from flab2bp.sfy.registry import (
+    FLOW_NAME_SOURCES,
+    FLOW_SOURCES,
+    PORT_DIRECTION_SOURCES,
+    Limits,
+)
 from flab2bp.sfy.rules import load_rules
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -120,6 +125,13 @@ LIFT_HEIGHT_FORMULAS: dict[str, tuple[str, float, float]] = {
     "lift_min_vertical_cm": ("H - 50", 1.0, -50.0),
 }
 LIFT_CLASS_PREFIX = "Build_ConveyorLift"
+
+# The one source a port *name* may come from. ``flab2bp.sfy.registry`` re-checks
+# it on load: which component sits in ``mConnection0`` is stated by the cooked
+# class default object and nowhere else, and what a component happens to be
+# called is otherwise a convention rather than a fact about the game.
+FLOW_NAME_SOURCE = "asset"
+assert FLOW_NAME_SOURCE in FLOW_NAME_SOURCES
 
 # Binary values that are not what their name suggests, with the caveat recorded
 # in ``registry.json``'s provenance next to the number. ``mBendRadius`` is two
@@ -411,17 +423,30 @@ def _limits(
     return limits, sources, provenance
 
 
-def _attach_flow(directions: dict[str, Any], buildables: dict[str, Any]) -> dict[str, Any]:
+def _attach_flow(
+    directions: dict[str, Any], connections: dict[str, Any], buildables: dict[str, Any]
+) -> dict[str, Any]:
     """Put the conveyor item-flow order on every class it is about, and return it.
 
-    ``scripts/sfy_native_directions.py`` reads *one* order out of the binary --
-    ``AFGBuildableConveyorBase``'s, because that is where both connections are
-    created and where ``Factory_Tick`` grabs through one of them. The classes it
-    applies to are the ones that inherit that constructor, which the same file
-    already lists as the conveyor connection default's ``owner_classes``; the
-    two names are held to the ports each class actually carries, so a class
-    whose ends were renamed stops the merge rather than shipping a flow order
-    pointing at nothing.
+    Two facts meet here, from two places in the game.
+
+    ``scripts/sfy_native_directions.py`` reads the *order over the two members*
+    out of the binary -- ``AFGBuildableConveyorBase``'s, because that is where
+    both connections are created and where ``Factory_Tick`` grabs through one of
+    them -- and the header states the same. That says ``mConnection0`` is the
+    end items enter by; it does not say what the component in that member is
+    called, and a name that happens to end in 0 is a convention, never evidence.
+
+    ``tools/sfy-extract`` reads the *pairing* off each class's cooked class
+    default object, where ``mConnection0`` is an object property referring to
+    one of the CDO's own subobject exports. That is ``conveyor_connections``,
+    per class, and it is what turns the member order into two port names.
+
+    The classes this applies to are the ones that inherit that constructor,
+    which ``native_directions.json`` already lists as the conveyor connection
+    default's ``owner_classes``; a class whose CDO names no such component, or
+    whose ports do not carry the names it does, stops the merge rather than
+    shipping a flow order pointing at nothing.
     """
     flow = directions["conveyor_flow"]
     if flow["source"] not in FLOW_SOURCES:
@@ -434,25 +459,44 @@ def _attach_flow(directions: dict[str, Any], buildables: dict[str, Any]) -> dict
     # The PDB spells a class ``AFGBuildableConveyorBelt``; Docs.json's
     # ``native_class`` is the same name without UHT's A/U prefix.
     native_classes = {name.removeprefix("A") for name in owner["owner_classes"]}
-    ends = (flow["entry"]["component"], flow["exit"]["component"])
+    members = (flow["entry"]["member"], flow["exit"]["member"])
     applied = []
+    components: dict[str, dict[str, str]] = {}
     for class_name, entry in sorted(buildables.items()):
         if entry["native_class"] not in native_classes:
             continue
+        held = connections.get(class_name)
+        if held is None or any(member not in held for member in members):
+            raise SystemExit(
+                f"{class_name} derives from {flow['class']} but its class default object "
+                f"names no component for {list(members)}; re-run tools/sfy-extract"
+            )
+        ends = (held[members[0]], held[members[1]])
         missing = [name for name in ends if name not in {p["name"] for p in entry["ports"]}]
         if missing:
             raise SystemExit(
-                f"{class_name} derives from {flow['class']} but has no port {missing}: "
+                f"{class_name} holds {missing} in {list(members)} but carries no such port: "
                 "the conveyor flow order cannot be attached to it"
             )
-        entry["flow"] = {"entry": ends[0], "exit": ends[1], "source": flow["source"]}
+        entry["flow"] = {
+            "entry": ends[0],
+            "exit": ends[1],
+            "source": flow["source"],
+            "name_source": FLOW_NAME_SOURCE,
+        }
         applied.append(class_name)
+        components[class_name] = {member: held[member] for member in members}
     if not applied:
         raise SystemExit(
             f"no buildable derives from {sorted(native_classes)}, so the conveyor flow "
             "order has nothing to attach to; re-run scripts/sfy_native_directions.py"
         )
-    return {**flow, "applied_to": applied}
+    return {
+        **flow,
+        "name_source": FLOW_NAME_SOURCE,
+        "components": components,
+        "applied_to": applied,
+    }
 
 
 def _asset_paths(class_paths: dict[str, str], wanted: set[str], what: str) -> dict[str, str]:
@@ -561,7 +605,9 @@ def main(out: Path | None = None) -> int:
         hologram = assets["holograms"].get(class_name) or {}
         buildable["grid_snap_cm"] = hologram.get("mGridSnapSize")
     missing_ports = sorted(set(docs["buildables"]) - set(assets["ports"]))
-    conveyor_flow = _attach_flow(directions, docs["buildables"])
+    conveyor_flow = _attach_flow(
+        directions, assets.get("conveyor_connections", {}), docs["buildables"]
+    )
     direction_counts = _shipped_direction_counts(docs["buildables"])
     item_paths = _asset_paths(assets["class_paths"], _item_classes(docs), "item descriptor")
     recipe_paths = _asset_paths(assets["class_paths"], set(docs["recipes"]), "recipe")
@@ -608,8 +654,9 @@ def main(out: Path | None = None) -> int:
     print("limits still None:", [k for k, v in limits.items() if v is None])
     print(
         "conveyor item flow:",
-        f"{conveyor_flow['entry']['component']} -> {conveyor_flow['exit']['component']}",
-        f"({conveyor_flow['source']}) on {len(conveyor_flow['applied_to'])} classes",
+        f"{conveyor_flow['entry']['member']} -> {conveyor_flow['exit']['member']}",
+        f"({conveyor_flow['source']}), named by the {conveyor_flow['name_source']}",
+        f"on {len(conveyor_flow['applied_to'])} classes",
     )
     print("port directions resolved from:", direction_counts)
     print("over every extracted class:", extracted_counts)

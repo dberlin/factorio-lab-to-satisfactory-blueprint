@@ -336,6 +336,9 @@ def test_which_end_of_a_conveyor_items_enter_by():
         assert flow is not None, class_name
         assert (flow.entry, flow.exit) == ("ConveyorAny0", "ConveyorAny1"), class_name
         assert flow.source in FLOW_SOURCES, class_name
+        # The two names are the class default object's own, not a convention
+        # read off a component whose name ends in 0.
+        assert flow.name_source == "asset", class_name
         # The two ends it names are ports this buildable actually has.
         assert {flow.entry, flow.exit} <= {p.name for p in buildable.ports}, class_name
     # Nothing else claims one: a pole or a machine has no item-flow order.
@@ -350,7 +353,10 @@ def test_the_conveyor_flow_order_carries_the_game_it_was_read_from():
     assert "mConnection0 is the input" in flow["header_text"]
     assert flow["entry"]["member"] == "mConnection0"
     assert flow["exit"]["member"] == "mConnection1"
-    assert flow["entry"]["component"] == "ConveyorAny0"
+    # The binary states the order over the two members and nothing about what
+    # the components in them are called, so it claims nothing about names.
+    assert "component" not in flow["entry"]
+    assert "caveat" not in flow
     if flow["source"] == "native":
         # The grab that makes mConnection0 the entry, and the function it is in.
         assert any(
@@ -361,6 +367,34 @@ def test_the_conveyor_flow_order_carries_the_game_it_was_read_from():
             "UFGFactoryConnectionComponent::Factory_GrabOutput",
         }
         assert all(f["rva"].startswith("0x") for f in flow["functions"])
+
+
+def test_the_component_each_connection_member_holds_comes_from_the_class_default():
+    """The pairing of ``mConnection0`` with a *named* port is read, not assumed.
+
+    The binary and the header both say ``mConnection0`` is the end items enter
+    by; neither says what the component in that member is called. The cooked
+    class default object does -- ``mConnection0`` is an object property that
+    refers to one of the CDO's own subobjects -- and ``tools/sfy-extract``
+    reports that export's name per class.
+    """
+    flow = load_registry().provenance["conveyor_flow"]
+    assert flow["name_source"] == "asset"
+    components = flow["components"]
+    assert len(components) == 12
+    for class_name, members in components.items():
+        assert class_name.startswith(("Build_ConveyorBelt", "Build_ConveyorLift"))
+        assert members == {"mConnection0": "ConveyorAny0", "mConnection1": "ConveyorAny1"}
+
+
+def test_a_flow_whose_names_come_from_no_asset_is_refused(tmp_path):
+    """A port name is only a fact when the class default object states it."""
+    payload = json.loads((Path(docs.__file__).parent / "data" / "registry.json").read_text())
+    payload["buildables"]["Build_ConveyorBeltMk1_C"]["flow"]["name_source"] = "convention"
+    path = tmp_path / "registry.json"
+    path.write_text(json.dumps(payload))
+    with pytest.raises(RegistryError, match="convention"):
+        load_registry(path)
 
 
 def test_a_flow_that_names_a_port_the_buildable_does_not_have_is_refused(tmp_path):

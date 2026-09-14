@@ -109,6 +109,7 @@ Console.Error.WriteLine(
 
 var ports = new SortedDictionary<string, List<object>>(StringComparer.Ordinal);
 var holograms = new SortedDictionary<string, Dictionary<string, object?>>(StringComparer.Ordinal);
+var conveyorConnections = new SortedDictionary<string, Dictionary<string, string>>(StringComparer.Ordinal);
 var unmodelled = new SortedSet<string>(StringComparer.Ordinal);
 
 foreach (var pkg in buildPackages)
@@ -130,6 +131,8 @@ foreach (var pkg in buildPackages)
     if (cdo is null) continue;
     var hologram = HologramLimits(cdo);
     if (hologram is not null) holograms[className] = hologram;
+    var connections = ConveyorConnections(cdo);
+    if (connections is not null) conveyorConnections[className] = connections;
 }
 
 // File.ReadAllText detects the byte-order mark, which this dump carries: it is
@@ -155,6 +158,12 @@ var output = new
     },
     ports,
     holograms,
+    // Which component each of a conveyor's two connection members points at,
+    // read off the class default object. `native_directions.json` says which
+    // *member* items enter and leave by; this says what those members are
+    // called, so the flow order can be attached to named ports without anyone
+    // inferring the pairing from a name that ends in 0.
+    conveyor_connections = conveyorConnections,
     wires = WireLengths(docsText),
     class_paths = classPaths,
     class_paths_ambiguous = ambiguousClasses,
@@ -411,6 +420,36 @@ Dictionary<string, object?>? HologramLimits(UObject cdo)
              })
         limits[key] = defaults is null ? null : Number(defaults, key);
     return limits;
+}
+
+/// The component each of a conveyor's `mConnection0`/`mConnection1` points at.
+///
+/// `AFGBuildableConveyorBase` declares the two members and the header states
+/// that `mConnection0` is the input and `mConnection1` the output; the shipped
+/// binary's `Factory_Tick` shows the same. Neither says what the *components*
+/// those members hold are called, and the names the content gives them --
+/// `ConveyorAny0`, `ConveyorAny1` -- are a convention, not evidence. The class
+/// default object settles it: `mConnection0` is an object property referring to
+/// one of the CDO's own subobject exports, and CUE4Parse hands back that
+/// export, whose `Name` is the component name the registry's ports carry.
+///
+/// Null unless the class has both, so only conveyors appear here.
+static Dictionary<string, string>? ConveyorConnections(UObject cdo)
+{
+    UObject? first;
+    UObject? second;
+    try
+    {
+        first = cdo.GetOrDefault<UObject?>("mConnection0", null);
+        second = cdo.GetOrDefault<UObject?>("mConnection1", null);
+    }
+    catch (Exception) { return null; }
+    if (first is null || second is null) return null;
+    return new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["mConnection0"] = first.Name,
+        ["mConnection1"] = second.Name,
+    };
 }
 
 static string DocsPath(string gameDir) =>

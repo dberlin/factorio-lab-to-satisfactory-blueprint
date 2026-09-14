@@ -160,7 +160,11 @@ Three things are worth stating plainly.
    to, under the `belt.snap_directions` rule in `data/hologram_rules.json`.
    Which end items *do* enter by is its own field now: `conveyor_flow` in the
    same `native_directions.json`, read out of `Factory_Tick`'s grab and carried
-   into `registry.json` as each mark's `flow`.
+   into `registry.json` as each mark's `flow`. That file names the two C++
+   *members*; which component sits in each is `conveyor_connections` here, read
+   off the class default object's `mConnection0`/`mConnection1` object
+   properties, so the two port names are the game's own statement and not an
+   inference from a name that ends in 0.
 2. **The component class default only applies to a Blueprint's own component.**
    A subobject a native constructor made takes that constructor's value, so a
    native subobject with no matching entry above is `unknown` rather than

@@ -257,20 +257,18 @@ OWNERS: tuple[dict[str, Any], ...] = (
 #     against ``UObject::NamePrivate`` -- and stores the match into the member.
 #     That is what ties a named component to a member.
 #
-# ``entry_component``/``exit_component`` are the names those two FNames hold.
-# They are *not* decodable from the disassembly: an FName global is filled in at
-# start-up from a string literal by a module initialiser that carries no
-# ``Class::Method`` symbol, so ``sfy-native disasm`` cannot be pointed at it.
-# What the binary does show is that the constructor creates the two subobjects
-# in member order (``members`` below quotes both stores) and that the cooked
-# content carries exactly two conveyor connection components, ``ConveyorAny0``
-# and ``ConveyorAny1``; ``caveat`` in the written file says as much, and
-# ``scripts/sfy_registry.py`` refuses to attach the flow to a buildable whose
-# ports are not those two.
+# What this file states is the order over the two **members**, and nothing about
+# what the components in them are called. The names are not decodable from the
+# disassembly: ``BeginPlay`` matches by an FName global that a start-up module
+# initialiser fills in from a string literal, and that initialiser carries no
+# ``Class::Method`` symbol for ``sfy-native disasm`` to be pointed at. They do
+# not have to be: each conveyor's cooked class default object holds the
+# component in ``mConnection0`` as an object property, so ``tools/sfy-extract``
+# reports it per class (``conveyor_connections`` in ``assets.json``) and
+# ``scripts/sfy_registry.py`` joins the two. A port name is never taken from a
+# convention here.
 CONVEYOR_FLOW: dict[str, Any] = {
     "class": "AFGBuildableConveyorBase",
-    "entry_component": "ConveyorAny0",
-    "exit_component": "ConveyorAny1",
     "header": "Buildables/FGBuildableConveyorBase.h:380",
     "header_text": (
         "First connection on conveyor belt, Connections are always in the same order, "
@@ -306,15 +304,6 @@ CONVEYOR_FLOW: dict[str, Any] = {
         "branch of that callee) and follows mConnection1 to the conveyor downstream. "
         "That is the item-flow order the header states at line 380, and it is "
         "independent of mDirection, which is FCD_ANY on both ends."
-    ),
-    "caveat": (
-        "The two component names are what the cooked content calls the conveyor's "
-        "connections. BeginPlay binds each member to the component whose FName matches "
-        "one of two adjacent globals, and the constructor creates them in member order, "
-        "but an FName global is built at start-up by a module initialiser with no "
-        "Class::Method symbol, so the text behind each global is not readable through "
-        "sfy-native disasm. The member order is the binary's; the pairing of the first "
-        "member with the component named ConveyorAny0 is not quoted from it."
     ),
 }
 
@@ -461,8 +450,8 @@ def main(out: Path | None = None) -> int:
         )
     flow = payload["conveyor_flow"]
     print(
-        f"conveyor item flow: {flow['entry']['member']} ({flow['entry']['component']}) in, "
-        f"{flow['exit']['member']} ({flow['exit']['component']}) out, from {flow['source']}"
+        f"conveyor item flow: {flow['entry']['member']} in, "
+        f"{flow['exit']['member']} out, from {flow['source']}"
     )
     print(f"-> {target}")
     return 0
@@ -578,8 +567,8 @@ def _conveyor_flow(run) -> dict[str, Any]:
         )
 
     return {
-        "entry": {"member": entry_member, "component": spec["entry_component"]},
-        "exit": {"member": others[0], "component": spec["exit_component"]},
+        "entry": {"member": entry_member},
+        "exit": {"member": others[0]},
         "source": "native",
         "class": spec["class"],
         "header": spec["header"],
@@ -591,7 +580,6 @@ def _conveyor_flow(run) -> dict[str, Any]:
         ],
         "instructions": [_line(found[rva]) for rva in spec["evidence"]],
         "note": spec["note"],
-        "caveat": spec["caveat"],
     }
 
 

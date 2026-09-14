@@ -23,6 +23,7 @@ from flab2bp.sfy.rules import RULE_EFFECTS
 
 __all__ = [
     "BELT_MAX_SPLINE_CM",
+    "FLOW_NAME_SOURCES",
     "FLOW_SOURCES",
     "LIMIT_SOURCES",
     "PIPE_BEND_RADIUS_2D_CM",
@@ -110,6 +111,14 @@ PORT_DIRECTION_SOURCES = ("asset", "asset-inherited", "native", "unknown")
 # which is not a fact about the game.
 FLOW_SOURCES = ("header", "native")
 
+# Where the *names* of the two ends came from. The order above is about the two
+# C++ members; which component sits in each member is a different fact, and the
+# only place the game states it is the cooked class default object, whose
+# ``mConnection0`` object property refers to one of its own subobject exports.
+# A port name is otherwise a convention and never evidence, which is why there is
+# no second entry here.
+FLOW_NAME_SOURCES = ("asset",)
+
 _HEADER_DEFAULTED = (
     "belt_max_spline_cm",
     "pipe_max_spline_cm",
@@ -196,12 +205,15 @@ class ConveyorFlow:
     (the constructor sets them so, and the hologram assigns the pair's
     directions from whatever the belt snapped to), so the direction says nothing
     about which way items travel along the belt itself. ``source`` is where the
-    order was read -- see :data:`FLOW_SOURCES`.
+    order over the two C++ members was read -- see :data:`FLOW_SOURCES` -- and
+    ``name_source`` where the pairing of each member with a *named* port was
+    read, which is a separate fact: see :data:`FLOW_NAME_SOURCES`.
     """
 
     entry: str
     exit: str
     source: str
+    name_source: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -393,15 +405,23 @@ def _ports(raw: Iterable[Mapping[str, Any]]) -> tuple[Port, ...]:
 def _flow(raw: Mapping[str, Any] | None, ports: tuple[Port, ...]) -> ConveyorFlow | None:
     """Read a conveyor's item-flow order, refusing one no game source backs.
 
-    A ``source`` outside :data:`FLOW_SOURCES` is refused rather than loaded, and
-    so is an end that names a port this buildable does not have or names the
-    same port twice: a flow order is a claim about two of *these* ports.
+    A ``source`` outside :data:`FLOW_SOURCES` or a ``name_source`` outside
+    :data:`FLOW_NAME_SOURCES` is refused rather than loaded, and so is an end
+    that names a port this buildable does not have or names the same port twice:
+    a flow order is a claim about two of *these* ports.
     """
     if raw is None:
         return None
-    flow = ConveyorFlow(entry=str(raw["entry"]), exit=str(raw["exit"]), source=str(raw["source"]))
+    flow = ConveyorFlow(
+        entry=str(raw["entry"]),
+        exit=str(raw["exit"]),
+        source=str(raw["source"]),
+        name_source=str(raw["name_source"]),
+    )
     if flow.source not in FLOW_SOURCES:
         raise RegistryError(f"conveyor flow comes from no game source: {flow.source!r}")
+    if flow.name_source not in FLOW_NAME_SOURCES:
+        raise RegistryError(f"conveyor flow names come from no game source: {flow.name_source!r}")
     names = {port.name for port in ports}
     if flow.entry == flow.exit or not {flow.entry, flow.exit} <= names:
         raise RegistryError(

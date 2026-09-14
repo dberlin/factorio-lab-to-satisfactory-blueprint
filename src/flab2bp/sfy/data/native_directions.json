@@ -75,14 +75,11 @@
   }
  ],
  "conveyor_flow": {
-  "caveat": "The two component names are what the cooked content calls the conveyor's connections. BeginPlay binds each member to the component whose FName matches one of two adjacent globals, and the constructor creates them in member order, but an FName global is built at start-up by a module initialiser with no Class::Method symbol, so the text behind each global is not readable through sfy-native disasm. The member order is the binary's; the pairing of the first member with the component named ConveyorAny0 is not quoted from it.",
   "class": "AFGBuildableConveyorBase",
   "entry": {
-   "component": "ConveyorAny0",
    "member": "mConnection0"
   },
   "exit": {
-   "component": "ConveyorAny1",
    "member": "mConnection1"
   },
   "functions": [
