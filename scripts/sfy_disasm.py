@@ -47,6 +47,7 @@ __all__ = [
     "BOUNDED_SIZE_SOURCES",
     "NATIVE_TOOL",
     "disasm",
+    "member_offsets",
     "require_bounded",
     "unbounded",
 ]
@@ -72,6 +73,47 @@ def disasm(dll: Path, pdb: Path, symbol: str, out: Path) -> list[dict[str, Any]]
         stdout=subprocess.DEVNULL,
     )  # fmt: skip
     return json.loads(out.read_text(encoding="utf-8"))
+
+
+def member_offsets(
+    dll: Path, pdb: Path, members: Iterable[tuple[str, str]], out: Path
+) -> dict[tuple[str, str], int]:
+    """The offset the PDB gives each ``(class, member)``, via ``sfy-native``.
+
+    The tool's ``extract`` mode resolves a member against the class layout the
+    PDB states, so this is the game's own answer for *that* member. A caller
+    that wants an offset must ask for the member it means: two members of two
+    classes that happen to sit at the same offset are a coincidence of the
+    layout, and reusing one for the other is a guess wearing a number.
+
+    ``members`` names the class the PDB *declares* the member on, which for an
+    inherited member is a base class rather than the one the caller is thinking
+    of -- ``mPipeConnectionType`` is declared on
+    ``UFGPipeConnectionComponentBase``, not on the two classes that inherit it.
+    """
+    wanted: dict[str, list[str]] = {}
+    for class_name, member in members:
+        wanted.setdefault(class_name, []).append(member)
+    arguments = [
+        argument
+        for class_name, names in wanted.items()
+        for argument in ("--class", f"{class_name}:{','.join(names)}")
+    ]
+    subprocess.run(
+        [
+            "cargo", "run", "--release", "--quiet", "--",
+            str(dll), str(pdb), str(out), *arguments,
+        ],
+        cwd=NATIVE_TOOL,
+        check=True,
+        stdout=subprocess.DEVNULL,
+    )  # fmt: skip
+    classes = json.loads(out.read_text(encoding="utf-8"))["classes"]
+    return {
+        (class_name, member): classes[class_name]["members"][member]["offset"]
+        for class_name, names in wanted.items()
+        for member in names
+    }
 
 
 def unbounded(functions: Iterable[Mapping[str, Any]]) -> list[str]:

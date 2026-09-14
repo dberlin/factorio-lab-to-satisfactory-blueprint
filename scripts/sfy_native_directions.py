@@ -60,7 +60,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from sfy_disasm import disasm, require_bounded
+from sfy_disasm import disasm, member_offsets, require_bounded
 
 from flab2bp.sfy import docs
 
@@ -90,15 +90,22 @@ ENUM_NAMES: dict[str, tuple[str, ...]] = {
 # name (which is what a template's ``Class`` is called in the pak, without the
 # U/A prefix the C++ name carries).
 #
-# ``member`` is the property the direction lives in, and ``offset`` is checked
-# against the one the tool annotates, never assumed. A ``None`` member means the
-# class has no direction property at all, which is the case for a power
-# connection: it is a circuit connection, and ``EFactoryConnectionDirection``
-# is a ``UFGFactoryConnectionComponent`` member.
+# ``member`` is the property the direction lives in, and its offset is read from
+# the PDB for *that* member -- ``layout_class`` is the class the PDB declares it
+# on, which for an inherited member is a base of the class named above. The
+# factory connection's is checked against the offset the tool annotates on the
+# store as well. Nothing here reuses another member's offset: ``mDirection`` and
+# ``mPipeConnectionType`` both happen to sit at 600, and that is a coincidence of
+# two layouts, not a fact about either.
+#
+# A ``None`` member means the class has no direction property at all, which is
+# the case for a power connection: it is a circuit connection, and
+# ``EFactoryConnectionDirection`` is a ``UFGFactoryConnectionComponent`` member.
 COMPONENTS: dict[str, dict[str, Any]] = {
     "FGFactoryConnectionComponent": {
         "class": "UFGFactoryConnectionComponent",
         "member": "mDirection",
+        "layout_class": "UFGFactoryConnectionComponent",
         "enum": "EFactoryConnectionDirection",
         # The constructor stores the enum's zero outright.
         "evidence": ("0x7b5ff1",),
@@ -111,6 +118,9 @@ COMPONENTS: dict[str, dict[str, Any]] = {
     "FGPipeConnectionComponent": {
         "class": "UFGPipeConnectionComponent",
         "member": "mPipeConnectionType",
+        # The PDB declares the member on the base the chain starts at, which is
+        # also the first constructor listed below.
+        "layout_class": "UFGPipeConnectionComponentBase",
         "enum": "EPipeConnectionType",
         # No store: the member keeps UObject's zero-initialisation, PCT_ANY.
         "constructors": (
@@ -126,6 +136,7 @@ COMPONENTS: dict[str, dict[str, Any]] = {
     "FGPipeConnectionFactory": {
         "class": "UFGPipeConnectionFactory",
         "member": "mPipeConnectionType",
+        "layout_class": "UFGPipeConnectionComponentBase",
         "enum": "EPipeConnectionType",
         "constructors": (
             "UFGPipeConnectionComponentBase::UFGPipeConnectionComponentBase",
@@ -141,6 +152,7 @@ COMPONENTS: dict[str, dict[str, Any]] = {
     "FGPowerConnectionComponent": {
         "class": "UFGPowerConnectionComponent",
         "member": None,
+        "layout_class": None,
         "enum": None,
         "constructors": ("UFGPowerConnectionComponent::UFGPowerConnectionComponent",),
         "note": (
@@ -373,14 +385,53 @@ def _pick(functions: list[dict[str, Any]], rvas: tuple[str, ...], what: str) -> 
     return found
 
 
+# The destination memory operand of an instruction: the first ``[...]`` that is
+# followed by a comma, which in Intel syntax is the operand being written.
+_DESTINATION = re.compile(r"\[(?P<inner>[^\]]+)\]\s*,")
+#: One ``base + index*scale + displacement`` term, with the sign that joined it.
+_TERM = re.compile(r"(?P<sign>[+-]?)(?P<term>[^+-]+)")
+#: A displacement as the Intel formatter prints it: hex digits, an ``h`` suffix
+#: above 9, and a leading ``0`` when the first digit would be a letter. ``8``,
+#: ``0Ah`` and ``8E4h`` are all displacements; ``rax``, ``r8`` and ``rax*4`` are
+#: not, because a displacement never starts with a letter.
+_DISPLACEMENT = re.compile(r"[0-9][0-9A-Fa-f]*h?$")
+
+
+def _written_at(text: str) -> tuple[int, bool] | None:
+    """``(displacement, indexed)`` for the memory operand an instruction writes.
+
+    Reading the number out of the operand rather than matching one spelling is
+    what makes this right for every displacement the formatter can print: it
+    drops the ``h`` below 0x0A (``[rbx+8]``), omits the displacement entirely at
+    0 (``[rbx]``), and signs it (``[rbx-10h]``). ``indexed`` says a run-time
+    register is in the address, which means the instruction writes *somewhere*
+    at or beyond the displacement rather than exactly at it.
+    """
+    match = _DESTINATION.search(text)
+    if match is None:
+        return None
+    inner = match.group("inner")
+    displacement = 0
+    for sign, term in _TERM.findall(inner):
+        term = term.strip()
+        if "*" not in term and _DISPLACEMENT.fullmatch(term):
+            value = int(term.removesuffix("h").removesuffix("H"), 16)
+            displacement += -value if sign == "-" else value
+    return displacement, "*" in inner
+
+
 def _stores_at(functions: list[dict[str, Any]], offset: int) -> list[str]:
-    """Every instruction that writes through ``[reg+offset]``."""
-    pattern = re.compile(rf"\[\w+\+{offset:X}h\]\s*,")
+    """Every instruction that writes at ``offset`` through a register.
+
+    An *indexed* write whose displacement is ``offset`` counts: the address it
+    lands on is worked out at run time, so it is a computation rather than the
+    proven absence of a write, and the caller has to stop rather than claim one.
+    """
     return [
         f"{f['symbol']} {i['rva']}: {i['text']}"
         for f in functions
         for i in f["instructions"]
-        if pattern.search(i["text"])
+        if (_written_at(i["text"]) or (None, None))[0] == offset
     ]
 
 
@@ -402,6 +453,7 @@ def main(out: Path | None = None) -> int:
         )
 
     scratch = DATA / ".native_directions_disasm.json"
+    layouts = DATA / ".native_directions_layouts.json"
     cache: dict[str, list[dict[str, Any]]] = {}
 
     def run(symbol: str) -> list[dict[str, Any]]:
@@ -412,11 +464,22 @@ def main(out: Path | None = None) -> int:
         return cache[symbol]
 
     try:
-        components, offset = _components(run)
+        offsets = member_offsets(
+            dll,
+            pdb,
+            {
+                (spec["layout_class"], spec["member"])
+                for spec in COMPONENTS.values()
+                if spec["member"]
+            },
+            layouts,
+        )
+        components, offset = _components(run, offsets)
         owners = [_owner(rule, run, offset) for rule in OWNERS]
         conveyor_flow = _conveyor_flow(run)
     finally:
         scratch.unlink(missing_ok=True)
+        layouts.unlink(missing_ok=True)
 
     payload = {
         "provenance": {
@@ -455,8 +518,13 @@ def main(out: Path | None = None) -> int:
     return 0
 
 
-def _components(run) -> tuple[list[dict[str, Any]], int]:
-    """Every connection component class's own default, and mDirection's offset."""
+def _components(run, offsets: dict[tuple[str, str], int]) -> tuple[list[dict[str, Any]], int]:
+    """Every connection component class's own default, and mDirection's offset.
+
+    ``offsets`` is what the PDB says about each member, keyed by the class that
+    declares it -- see :func:`sfy_disasm.member_offsets`. The offset a claim is
+    made at is that member's own, never another member's that lines up with it.
+    """
     factory = COMPONENTS["FGFactoryConnectionComponent"]
     functions = run(f"{factory['class']}::{factory['class']}")
     store = _pick(functions, factory["evidence"], factory["class"])[factory["evidence"][0]]
@@ -467,7 +535,12 @@ def _components(run) -> tuple[list[dict[str, Any]], int]:
             f"{store['text']}"
         )
     value = _immediate(store["text"])
-    offset = int(member["offset"])
+    offset = offsets[factory["layout_class"], factory["member"]]
+    if int(member["offset"]) != offset:
+        raise SystemExit(
+            f"{factory['evidence'][0]} writes {factory['member']} at "
+            f"{member['offset']}, and the PDB puts it at {offset}"
+        )
     entries = [
         {
             "component_class": "FGFactoryConnectionComponent",
@@ -488,28 +561,34 @@ def _components(run) -> tuple[list[dict[str, Any]], int]:
         if name == "FGFactoryConnectionComponent":
             continue
         functions = [f for symbol in spec["constructors"] for f in run(symbol)]
+        # This member's own offset, out of the PDB. A power connection has no
+        # direction member at all, so there is no offset and nothing to look for.
+        own = offsets[spec["layout_class"], spec["member"]] if spec["member"] else None
         # "No constructor in the chain writes it" is an absence, and an absence
         # read out of half a function is worth nothing: the store may be in the
         # part the decoder never reached. Every one of these constructors has to
         # be bounded by the game -- `.pdata`, its chain, or the PDB's stated
-        # procedure length -- before the claim may be written.
+        # procedure length -- before the claim may be written. The same goes for
+        # the power connection, where what is listed is every base constructor
+        # its own constructor calls.
         require_bounded(
             functions,
-            f"{name}: no constructor in the chain writes at offset {offset}"
-            + (f" ({spec['member']})" if spec["member"] else ""),
+            f"{name}: no constructor in the chain writes {spec['member']} at offset {own}"
+            if spec["member"]
+            else f"{name}: these are all the base constructors its chain calls",
         )
-        wrote = _stores_at(functions, offset)
+        wrote = _stores_at(functions, own) if own is not None else []
         if wrote:
             raise SystemExit(
-                f"{name}: a constructor now writes at offset {offset}, so the "
-                f"zero-initialised default is no longer the answer:\n  " + "\n  ".join(wrote)
+                f"{name}: a constructor now writes {spec['member']} at offset {own}, so "
+                f"the zero-initialised default is no longer the answer:\n  " + "\n  ".join(wrote)
             )
         entries.append(
             {
                 "component_class": name,
                 "class": spec["class"],
                 "member": spec["member"],
-                "offset": offset if spec["member"] else None,
+                "offset": own,
                 "enum": spec["enum"],
                 "value": 0 if spec["member"] else None,
                 "enum_name": ENUM_NAMES[spec["enum"]][0] if spec["enum"] else None,
@@ -607,7 +686,7 @@ def _owner(rule: dict[str, Any], run, offset: int) -> dict[str, Any]:
     found = _pick(functions, rule["evidence"], setter)
     stores = [found[rva] for rva in (rule["store"], *rule.get("also_store", ()))]
     for one in stores:
-        if f"+{offset:X}h]" not in one["text"]:
+        if _written_at(one["text"]) != (offset, False):
             raise SystemExit(f"{one['rva']} no longer writes at offset {offset}: {one['text']}")
     value = _stored_value(rule, found, stores)
 

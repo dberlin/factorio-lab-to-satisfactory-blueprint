@@ -159,15 +159,14 @@ def test_a_truncated_function_is_the_only_kind_no_absence_may_be_claimed_from():
     ]
 
 
-def test_the_directions_script_will_not_call_a_truncated_constructor_a_proven_absence():
-    """``_components`` claims no constructor in the pipe chain writes the member."""
-    spec = sfy_native_directions.COMPONENTS["FGPipeConnectionFactory"]
+def _directions_run(factory_offset: int = 600):
+    """A fake ``run`` whose only whole function is the factory constructor."""
     factory = sfy_native_directions.COMPONENTS["FGFactoryConnectionComponent"]
     store = {
         "rva": factory["evidence"][0],
         "bytes": "c6",
-        "text": "mov byte ptr [rbx+258h],0",
-        "member": {"class": factory["class"], "name": "mDirection", "offset": 600},
+        "text": f"mov byte ptr [rbx+{factory_offset:X}h],0",
+        "member": {"class": factory["class"], "name": "mDirection", "offset": factory_offset},
     }
     seed = _function("pdata", symbol=f"{factory['class']}::{factory['class']}")
     seed["instructions"] = [store]
@@ -178,12 +177,97 @@ def test_the_directions_script_will_not_call_a_truncated_constructor_a_proven_ab
         # Every constructor of every other chain comes back cut short.
         return [_function("truncated", symbol=symbol)]
 
+    return run
+
+
+def _offsets(**by_member: int) -> dict[tuple[str, str], int]:
+    """The PDB offsets ``_components`` asks for, keyed the way it keys them."""
+    return {
+        (spec["layout_class"], spec["member"]): by_member[spec["member"]]
+        for spec in sfy_native_directions.COMPONENTS.values()
+        if spec["member"]
+    }
+
+
+def test_the_directions_script_will_not_call_a_truncated_constructor_a_proven_absence():
+    """``_components`` claims no constructor in the pipe chain writes the member."""
+    spec = sfy_native_directions.COMPONENTS["FGPipeConnectionFactory"]
     with pytest.raises(SystemExit) as caught:
-        sfy_native_directions._components(run)
+        sfy_native_directions._components(
+            _directions_run(), _offsets(mDirection=600, mPipeConnectionType=600)
+        )
     message = str(caught.value)
-    assert "no constructor in the chain writes at offset 600" in message
+    assert "no constructor in the chain writes mPipeConnectionType at offset 600" in message
     assert spec["member"] in message
     assert "truncated" in message
+
+
+def test_the_pipe_entries_take_their_offset_from_the_pipe_classes_own_member():
+    """``mPipeConnectionType``'s offset is read for *that* member, never borrowed.
+
+    It and ``mDirection`` both sit at 600 in the shipped build, which is exactly
+    why the two must be read separately: move one and the other must not follow.
+    """
+    pipe = ("UFGPipeConnectionComponentBase", "mPipeConnectionType")
+    for name in ("FGPipeConnectionComponent", "FGPipeConnectionFactory"):
+        spec = sfy_native_directions.COMPONENTS[name]
+        assert (spec["layout_class"], spec["member"]) == pipe
+        # The class the PDB declares the member on is where the chain starts.
+        assert spec["constructors"][0].split("::")[0] == pipe[0]
+
+    # Every constructor whole, so the absence may be claimed and the entries
+    # come back; the pipe member is deliberately put somewhere else from
+    # `mDirection`, and the pipe entries follow it rather than the factory's.
+    def run(symbol: str) -> list[dict]:
+        factory = sfy_native_directions.COMPONENTS["FGFactoryConnectionComponent"]
+        if symbol == f"{factory['class']}::{factory['class']}":
+            return _directions_run(600)(symbol)
+        return [_function("pdata", symbol=symbol)]
+
+    entries, offset = sfy_native_directions._components(
+        run, _offsets(mDirection=600, mPipeConnectionType=904)
+    )
+    assert offset == 600
+    by_class = {entry["component_class"]: entry for entry in entries}
+    assert by_class["FGFactoryConnectionComponent"]["offset"] == 600
+    for name in ("FGPipeConnectionComponent", "FGPipeConnectionFactory"):
+        assert by_class[name]["offset"] == 904
+    # A power connection has no direction member, so it gets no offset at all.
+    assert by_class["FGPowerConnectionComponent"]["offset"] is None
+
+
+def test_a_store_is_found_at_its_offset_however_the_formatter_prints_it():
+    """``_stores_at`` reads the displacement out of the operand, not one spelling.
+
+    Below 0x0A the formatter drops the ``h``, at 0 it drops the displacement
+    altogether, and an indexed form works the address out at run time -- which
+    is a computation, and so not the absence of a write.
+    """
+    at = sfy_native_directions._written_at
+    assert at("mov byte ptr [rbx+258h],0") == (600, False)
+    assert at("mov dword ptr [rcx+8],1") == (8, False)
+    assert at("mov byte ptr [rcx+0Ah],1") == (10, False)
+    assert at("mov qword ptr [rcx],rax") == (0, False)
+    assert at("mov qword ptr [rbx-10h],rsi") == (-16, False)
+    assert at("mov qword ptr [rdi+rax*8+258h],rsi") == (600, True)
+    # A read is not a write, and a `lea` computes an address rather than storing.
+    assert at("movss xmm0,dword ptr [rbx+258h]") is None
+    assert at("lea rbx,[r14+810h]") is None
+
+    def function(*texts: str) -> dict:
+        return {
+            "symbol": "UFGThing::UFGThing",
+            "instructions": [{"rva": f"0x{n:x}", "text": text} for n, text in enumerate(texts)],
+        }
+
+    found = sfy_native_directions._stores_at(
+        [function("mov qword ptr [rcx],rax", "mov dword ptr [rcx+8],1")], 0
+    )
+    assert found == ["UFGThing::UFGThing 0x0: mov qword ptr [rcx],rax"]
+    assert sfy_native_directions._stores_at([function("mov dword ptr [rcx+8],1")], 8)
+    assert sfy_native_directions._stores_at([function("mov byte ptr [rcx+0Ah],1")], 10)
+    # The indexed form counts: it is a computation, not a proven absence.
+    assert sfy_native_directions._stores_at([function("mov qword ptr [rdi+rax*8+258h],rsi")], 600)
 
 
 def test_a_rule_read_from_a_function_that_was_cut_short_cannot_stay_extracted():
