@@ -3980,7 +3980,7 @@ def _window_adapter_pieces(
     return adapter, problem, state, decode_state(problem, state)
 
 
-def _forbidden_window_pack(strips: object, **kwargs: Any) -> Any:
+def _forbidden_window_pack(strips: object, request: freeform_module._PackWindowRequest) -> Any:
     raise AssertionError("the window must not be solved here")
 
 
@@ -3996,17 +3996,19 @@ def _window_outcome(pack: routing_domain._Pack) -> freeform_module._PackSolveOut
     )
 
 
-def _unchanged_window_pack(strips: object, **kwargs: Any) -> Any:
-    return _window_outcome(kwargs["seed"])
+def _unchanged_window_pack(strips: object, request: freeform_module._PackWindowRequest) -> Any:
+    assert request.seed is not None
+    return _window_outcome(request.seed)
 
 
-def _shifted_window_pack(strips: object, **kwargs: Any) -> Any:
+def _shifted_window_pack(strips: object, request: freeform_module._PackWindowRequest) -> Any:
     """Return a pack that differs from the seed but is still a legal placement.
 
     Translating every strip one tile east keeps the arrangement disjoint, so the
     encoder sees a valid placement and the adapter's own accept path runs.
     """
-    seed = kwargs["seed"]
+    seed = request.seed
+    assert seed is not None
     repaired = replace(seed, at={index: (x + 1, y) for index, (x, y) in seed.at.items()})
     return _window_outcome(repaired)
 
@@ -4078,23 +4080,24 @@ def test_the_window_adapter_solves_under_the_deadline_margin_budget(
     window = frozenset({0})
     seen: list[object] = []
 
-    def capture(strips: object, **kwargs: Any) -> Any:
-        seen.append(kwargs["time_budget_s"])
-        assert kwargs["height"] == problem.outline_height
-        assert kwargs["width_bound"] == decoded.width
-        assert kwargs["window"] == window
-        assert kwargs["direct_candidates"] == expected_candidates
+    def capture(strips: object, request: freeform_module._PackWindowRequest) -> Any:
+        seen.append(request.time_budget_s)
+        assert request.height == problem.outline_height
+        assert request.width_bound == decoded.width
+        assert request.window == window
+        assert request.direct_candidates == expected_candidates
         # CONTENT origins: every strip outside the window is pinned where the
         # incumbent put it, its west channel included.
-        assert kwargs["fixed_at"] == {
+        assert request.fixed_at == {
             index: (decoded.x[index] + west[index], decoded.y[index])
             for index in range(problem.size)
             if index not in window
         }
-        assert kwargs["width_target"] == run.solver._band_target_for(
+        assert request.width_target == run.solver._band_target_for(
             problem.outline_height, decoded.width
         )
-        assert kwargs["width_target"] > 0
+        assert request.width_target is not None
+        assert request.width_target > 0
         return None
 
     monkeypatch.setattr(sequence_solver_module, "_pack_window", capture)
@@ -4121,10 +4124,10 @@ def test_the_window_adapter_guards_a_width_the_scan_cap_refuses(
     run = _window_adapter_run(time.monotonic() + _WINDOW_DEADLINE_MARGIN_S)
     adapter, problem, state, planned = _window_adapter_pieces(run)
     decoded = replace(planned, width=5000)
-    seen: list[int] = []
+    seen: list[int | None] = []
 
-    def capture(strips: object, **kwargs: Any) -> Any:
-        seen.append(kwargs["width_target"])
+    def capture(strips: object, request: freeform_module._PackWindowRequest) -> Any:
+        seen.append(request.width_target)
         return None
 
     monkeypatch.setattr(sequence_solver_module, "_pack_window", capture)
@@ -4148,8 +4151,8 @@ def test_the_window_budget_keeps_a_safety_margin_off_the_run_deadline(
     )
     seen: list[float] = []
 
-    def capture(strips: object, **kwargs: Any) -> Any:
-        seen.append(kwargs["time_budget_s"])
+    def capture(strips: object, request: freeform_module._PackWindowRequest) -> Any:
+        seen.append(request.time_budget_s)
         return None
 
     monkeypatch.setattr(sequence_solver_module, "_pack_window", capture)
@@ -4204,9 +4207,12 @@ def test_the_window_adapter_drops_a_pack_that_did_not_move(
     now = [deadline - _WINDOW_DEADLINE_MARGIN_S]
     solve_seconds = 3.0
 
-    def unchanged_after_three_seconds(strips: object, **kwargs: Any) -> Any:
+    def unchanged_after_three_seconds(
+        strips: object, request: freeform_module._PackWindowRequest
+    ) -> Any:
         now[0] += solve_seconds
-        return _window_outcome(kwargs["seed"])
+        assert request.seed is not None
+        return _window_outcome(request.seed)
 
     monkeypatch.setattr(sequence_solver_module, "_pack_window", unchanged_after_three_seconds)
     monkeypatch.setattr("flab2bp.layout.sequence_solver.time.monotonic", lambda: now[0])
@@ -4332,8 +4338,9 @@ def test_the_window_adapter_sums_the_no_goods_its_window_dropped(
     run = _window_adapter_run(time.monotonic() + _WINDOW_DEADLINE_MARGIN_S)
     adapter, problem, state, decoded = _window_adapter_pieces(run)
 
-    def skip_three(strips: object, **kwargs: Any) -> Any:
-        kwargs["on_skipped"](3)
+    def skip_three(strips: object, request: freeform_module._PackWindowRequest) -> Any:
+        assert request.on_skipped is not None
+        request.on_skipped(3)
         return None
 
     monkeypatch.setattr(sequence_solver_module, "_pack_window", skip_three)

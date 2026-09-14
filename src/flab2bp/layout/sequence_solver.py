@@ -66,6 +66,7 @@ from flab2bp.layout.freeform import (
     _minimum_pack_width,
     _pack,
     _pack_window,
+    _PackWindowRequest,
     _projection_no_good,
     _projection_strip_pair,
     _routing_seed_clearance,
@@ -5679,15 +5680,19 @@ def _production_run(
         started_window = time.monotonic()
         outcome = _pack_window(
             list(selected),
-            height=problem.outline_height,
-            width_bound=decoded.width,
-            direct_candidates=window_candidates,
-            window=window,
-            fixed_at={index: origin for index, origin in pack.at.items() if index not in window},
-            seed=pack,
-            width_target=band_target_for(problem.outline_height, decoded.width),
-            time_budget_s=min(C_WINDOW_SECONDS, remaining - C_WINDOW_DEADLINE_SAFETY_SECONDS),
-            on_skipped=_count_skipped_no_goods,
+            _PackWindowRequest(
+                height=problem.outline_height,
+                width_bound=decoded.width,
+                direct_candidates=window_candidates,
+                window=window,
+                fixed_at={
+                    index: origin for index, origin in pack.at.items() if index not in window
+                },
+                seed=pack,
+                width_target=band_target_for(problem.outline_height, decoded.width),
+                time_budget_s=min(C_WINDOW_SECONDS, remaining - C_WINDOW_DEADLINE_SAFETY_SECONDS),
+                on_skipped=_count_skipped_no_goods,
+            ),
         )
         telemetry.alns_window_seconds += time.monotonic() - started_window
         if outcome is None:
