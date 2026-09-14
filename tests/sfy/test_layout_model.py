@@ -1,0 +1,145 @@
+"""The placement model: where things stand, at the width the file stores it."""
+
+from __future__ import annotations
+
+from fractions import Fraction
+from functools import cache
+
+import pytest
+
+from flab2bp.sfy.labmap import load_lab_map
+from flab2bp.sfy.layout.emit import decode, emit
+from flab2bp.sfy.layout.model import (
+    BeltRun,
+    FoundationObj,
+    Link,
+    MachineObj,
+    PoleObj,
+    Pose,
+    SfyPlacement,
+    belt_ends,
+)
+from flab2bp.sfy.layout.splines import straight, yaw_quaternion
+from flab2bp.sfy.registry import load_registry
+from flab2bp.sfy.spec import designer
+from flab2bp.sfy.templates import TemplateLibrary
+from tests.sfy.conftest import fixture_paths
+
+CONSTRUCTOR = "Build_ConstructorMk1_C"
+BELT = "Build_ConveyorBeltMk1_C"
+FOUNDATION = "Build_Foundation_8x1_01_C"
+POLE = "Build_PowerPoleMk1_C"
+IRON_PLATE = "Recipe_IronPlate_C"
+
+
+@cache
+def _library() -> TemplateLibrary:
+    """The fixture library, built once: scanning 49 blueprints costs seconds."""
+    return TemplateLibrary.from_fixtures(fixture_paths())
+
+
+def _machine_placement(yaw: float) -> SfyPlacement:
+    registry = load_registry()
+    return SfyPlacement(
+        designer=designer("mk1", registry),
+        machines=(MachineObj(4, CONSTRUCTOR, Pose(0.0, 0.0, 100.0, yaw), IRON_PLATE),),
+    )
+
+
+def test_a_pose_becomes_the_transform_the_object_table_writes() -> None:
+    pose = Pose(100.0, -200.0, 50.0, 90.0)
+    transform = pose.transform()
+    assert transform.rotation == yaw_quaternion(90.0)
+    assert transform.translation == (100.0, -200.0, 50.0)
+    assert transform.scale == (1.0, 1.0, 1.0)
+
+
+def test_a_pose_states_its_position_at_the_width_the_file_stores_it() -> None:
+    """An actor's transform is ten 32-bit floats, so a pose carries no more."""
+    pose = Pose(100.000016237143, 0.0, 0.0, 0.0)
+    assert pose.x == 100.00001525878906
+    assert Pose(*pose.location, 0.0) == pose
+
+
+def test_a_belt_runs_local_points_start_at_the_actor_origin() -> None:
+    run = BeltRun(1, BELT, straight((0.0, 300.0, 200.0), (0.0, 1.0, 0.0), 400.0))
+    assert run.start == (0.0, 300.0, 200.0)
+    assert run.end == (0.0, 700.0, 200.0)
+    assert run.pose == Pose(0.0, 300.0, 200.0, 0.0)
+    local = run.local_points()
+    assert local[0][0] == (0.0, 0.0, 0.0)
+    assert local[-1][0] == (0.0, 400.0, 0.0)
+    assert [point[1:] for point in local] == [point[1:] for point in run.points]
+
+
+def test_a_belt_run_needs_two_points_to_be_a_run() -> None:
+    with pytest.raises(ValueError, match="two points"):
+        BeltRun(1, BELT, (((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (1.0, 0.0, 0.0)),))
+
+
+def test_the_ends_of_a_belt_are_the_ones_the_registry_names() -> None:
+    """Which end is the entry is the registry's ``flow``, never a typed name."""
+    registry = load_registry()
+    flow = registry.buildables[BELT].flow
+    assert flow is not None
+    assert belt_ends(registry, BELT) == (flow.entry, flow.exit)
+    with pytest.raises(KeyError, match="flow"):
+        belt_ends(registry, CONSTRUCTOR)
+
+
+def test_by_id_finds_every_kind_of_object_and_says_so_when_it_cannot() -> None:
+    registry = load_registry()
+    machine = MachineObj(1, CONSTRUCTOR, Pose(0.0, 0.0, 100.0, 0.0), IRON_PLATE)
+    belt = BeltRun(2, BELT, straight((0.0, 300.0, 200.0), (0.0, 1.0, 0.0), 400.0))
+    pole = PoleObj(3, POLE, Pose(700.0, 0.0, 100.0, 0.0))
+    slab = FoundationObj(4, FOUNDATION, Pose(0.0, 0.0, 50.0, 0.0))
+    placement = SfyPlacement(
+        designer=designer("mk1", registry),
+        machines=(machine,),
+        belts=(belt,),
+        poles=(pole,),
+        foundations=(slab,),
+    )
+    assert [placement.by_id(n) for n in (1, 2, 3, 4)] == [machine, belt, pole, slab]
+    with pytest.raises(KeyError, match="99"):
+        placement.by_id(99)
+
+
+def test_a_link_names_a_port_on_each_side() -> None:
+    link = Link((1, "Output0"), (2, "ConveyorAny0"))
+    assert link.a == (1, "Output0")
+    assert link.b == (2, "ConveyorAny0")
+
+
+@pytest.mark.parametrize("yaw", [0.0, 90.0, 180.0, -90.0])
+def test_a_machines_pose_comes_back_out_of_the_file_it_went_into(yaw: float) -> None:
+    placement = _machine_placement(yaw)
+    built = emit(
+        placement,
+        load_registry(),
+        _library(),
+        load_lab_map(),
+        # The build version and the engine-version block ride in the header and
+        # nothing here reads them back; test_emit.py holds them to a fixture's.
+        build_version=0,
+        version_data=None,
+    )
+    back = decode(built, load_registry())
+    assert back.machines[0].pose == placement.machines[0].pose
+    assert back.machines[0].pose.transform() == placement.machines[0].pose.transform()
+    assert back == placement
+
+
+def test_what_the_file_cannot_carry_is_left_out_of_what_equality_compares() -> None:
+    """A clock and a belt's rate have no property in the file, so ``decode``
+    hands back the defaults and equality never claimed otherwise."""
+    fast = MachineObj(1, CONSTRUCTOR, Pose(0.0, 0.0, 100.0, 0.0), IRON_PLATE, Fraction(5, 2), 2)
+    plain = MachineObj(1, CONSTRUCTOR, Pose(0.0, 0.0, 100.0, 0.0), IRON_PLATE)
+    assert fast == plain
+    assert fast.clock != plain.clock
+    carried = BeltRun(
+        2, BELT, straight((0.0, 0.0, 200.0), (0.0, 1.0, 0.0), 400.0), "iron-plate", Fraction(2)
+    )
+    empty = BeltRun(2, BELT, straight((0.0, 0.0, 200.0), (0.0, 1.0, 0.0), 400.0))
+    assert carried == empty
+    assert carried.item_id != empty.item_id
