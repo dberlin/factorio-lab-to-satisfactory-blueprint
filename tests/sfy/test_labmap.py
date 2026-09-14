@@ -203,7 +203,9 @@ def test_a_machine_row_for_a_lab_id_the_dataset_dropped_is_refused(
     dataset = load_vendored(Game.SFY)
     items = script._items(dataset, registry)
     machines = {**script.MACHINES, "quantum-constructor": "Build_ConstructorMk1_C"}
-    with pytest.raises(SystemExit, match="quantum-constructor"):
+    # The stale guard runs before the derive-check, so the refusal must be the
+    # stale message itself, not the "no item class" one the derive-check gives.
+    with pytest.raises(SystemExit, match="dataset no longer has.*quantum-constructor"):
         script._check_machines(machines, items, dataset, registry)
 
 

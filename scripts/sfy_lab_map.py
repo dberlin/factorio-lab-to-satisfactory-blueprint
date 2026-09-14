@@ -371,8 +371,8 @@ def _duration(seconds: float) -> Fraction:
     """A game duration as the exact decimal the game data states.
 
     Both sides are compared as :class:`~fractions.Fraction`, never as floats.
-    ``Fraction(seconds)`` would be wrong: the game states 2.4 s for four
-    recipes, whose ``float`` is 2.399999999999999911182…, while the lab states
+    ``Fraction(seconds)`` would be wrong: the game states 2.4 s for one
+    recipe, whose ``float`` is 2.399999999999999911182…, while the lab states
     ``Fraction(12, 5)``. ``repr`` of a float is the shortest decimal that reads
     back as that float, so ``Fraction(str(...))`` recovers the literal the JSON
     carried, which is the number both files are quoting.

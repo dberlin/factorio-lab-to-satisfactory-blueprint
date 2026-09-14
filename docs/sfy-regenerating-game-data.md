@@ -354,8 +354,8 @@ before the derive.
 
 The derive itself reads only committed files — the registry, the names file and
 FactorioLab's vendored `data.json` — and **guesses nothing**. Items match on
-display name, exactly or tolerating one side's trailing `s` after the exact name
-finds nothing; the run prints how many rows needed that licence (it is 0 today).
+display name, exactly (case and runs of whitespace aside); a name with no match
+or more than one refuses the run unless a commented override names the class.
 Recipes match on an exact signature over the *mapped* item classes: producer
 `Build_*_C`, duration as a `Fraction`, and the sorted `(Desc_*_C, amount)` pairs
 on both sides, with fluid amounts multiplied by 1000 because the lab states m3
