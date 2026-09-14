@@ -105,6 +105,10 @@ struct Pe {
     /// its unwind chain resolves to and sorted by RVA. A function MSVC did not
     /// split has one entry here, itself.
     chunks: BTreeMap<u32, Vec<(u32, u32)>>,
+    /// The other direction: each chunk's own `begin` -> the primary entry its
+    /// unwind chain resolves to. A primary maps to itself, so a lookup that
+    /// misses means `.pdata` never mentioned the chunk at all.
+    chunk_owner: BTreeMap<u32, u32>,
     /// Import address table slot RVA -> the imported symbol, as the other
     /// module mangles it. `call qword ptr [rip+K]` through one of these is a
     /// call to another DLL, and this is the only way to name it.
@@ -174,6 +178,7 @@ impl Pe {
             pdb_name,
             functions: BTreeMap::new(),
             chunks: BTreeMap::new(),
+            chunk_owner: BTreeMap::new(),
             imports,
             sha256: String::new(),
         };
@@ -237,17 +242,21 @@ impl Pe {
             .map(|entry| (entry.begin, entry.end))
             .collect();
         let mut chunks: BTreeMap<u32, Vec<(u32, u32)>> = BTreeMap::new();
+        let mut owner: BTreeMap<u32, u32> = BTreeMap::new();
         for entry in entries.iter().filter(|entry| entry.end > entry.begin) {
+            let primary = self.primary_of(*entry);
             chunks
-                .entry(self.primary_of(*entry))
+                .entry(primary)
                 .or_default()
                 .push((entry.begin, entry.end));
+            owner.insert(entry.begin, primary);
         }
         for list in chunks.values_mut() {
             list.sort_unstable();
             list.dedup();
         }
         self.chunks = chunks;
+        self.chunk_owner = owner;
     }
 
     /// The RVA of the entry `entry`'s unwind chain resolves to, transitively.
@@ -914,11 +923,13 @@ impl Stores {
 
 /// One traced function: what it is, how its end was established, what it stored.
 ///
-/// The `&'static str` is `disasm_chunks`' `size_source`, carried all the way
-/// into `native.json` so that every number the tracer reports says which game
-/// datum bounded the function it was read from -- `.pdata`, the PDB's procedure
-/// record, or, when neither knows the function, a `ret` the decoder walked to.
-type TracedFunction = (Function, &'static str, Stores);
+/// The [`Bound`] is `disasm_chunks`' answer, carried all the way into
+/// `native.json` so that every number the tracer reports says which game datum
+/// bounded the function it was read from -- `.pdata`, the PDB's procedure
+/// record, or, when neither knows the function, a `ret` the decoder walked to --
+/// and, when the symbol is not that function's entry point, how far into it the
+/// symbol sits.
+type TracedFunction = (Function, Bound, Stores);
 
 /// Every traced function of a class, by the class it is a member of.
 type Traced = HashMap<String, Vec<TracedFunction>>;
@@ -1311,6 +1322,13 @@ struct Found {
     /// store is only as trustworthy as the bound on the function it sits in,
     /// and a `ret` or a `truncated` says the rest of that function was not read.
     size_source: &'static str,
+    /// How far the symbol sits into the function that was decoded, when it is
+    /// not that function's entry point.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    entry_offset: Option<u32>,
+    /// Why `size_source` is `truncated`. Absent exactly when it is not.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    size_reason: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -1327,6 +1345,13 @@ struct MemberOut {
     /// [`TracedFunction`]. Absent exactly when `set_in` is.
     #[serde(skip_serializing_if = "Option::is_none")]
     size_source: Option<&'static str>,
+    /// How far the symbol sits into the function that was decoded, when it is
+    /// not that function's entry point.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    entry_offset: Option<u32>,
+    /// Why `size_source` is `truncated`. Absent exactly when it is not.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    size_reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     reason: Option<String>,
     /// Other functions of the chain that store a *different* constant here.
@@ -1408,7 +1433,7 @@ struct Writes {
 fn writes_to(chain: &[String], member: &Member, traced: &Traced) -> Writes {
     let mut writes = Writes::default();
     for owner in chain {
-        for (function, size_source, stores) in traced.get(owner).into_iter().flatten() {
+        for (function, bound, stores) in traced.get(owner).into_iter().flatten() {
             if let Some(text) = stores.computed_over(member.offset, member.size) {
                 writes.computed.push(format!("{} -- {text}", function.name));
             }
@@ -1422,7 +1447,9 @@ fn writes_to(chain: &[String], member: &Member, traced: &Traced) -> Writes {
                 set_in: function.name.clone(),
                 value,
                 evidence,
-                size_source,
+                size_source: bound.source,
+                entry_offset: bound.entry_offset,
+                size_reason: bound.reason.clone(),
             };
             if function.is_constructor {
                 writes.from_constructors.push(found);
@@ -1486,6 +1513,8 @@ fn settle(member_name: &str, writes: &Writes, out: &mut MemberOut) {
     out.set_in = Some(primary.set_in.clone());
     out.evidence = Some(primary.evidence.clone());
     out.size_source = Some(primary.size_source);
+    out.entry_offset = primary.entry_offset;
+    out.size_reason = primary.size_reason.clone();
     out.also_set_in = writes
         .from_constructors
         .iter()
@@ -1527,6 +1556,8 @@ fn resolve(class: &str, wanted: &[String], index: &PdbIndex, traced: &Traced) ->
             set_in: None,
             evidence: None,
             size_source: None,
+            entry_offset: None,
+            size_reason: None,
             reason: None,
             also_set_in: Vec::new(),
         };
@@ -1570,6 +1601,13 @@ struct DisasmOut {
     /// procedure record stated the length, `ret` when only the first `ret`
     /// gave them, `truncated` when none did -- never a silent cut.
     size_source: &'static str,
+    /// How far `rva` sits into the function that was disassembled, when the
+    /// symbol is not that function's entry point. Absent when it is.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    entry_offset: Option<u32>,
+    /// Why `size_source` is `truncated`. Absent exactly when it is not.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    size_reason: Option<String>,
     /// Every chunk `instructions` covers, in RVA order. One entry unless the
     /// function was split; `size` is the sum.
     chunks: Vec<ChunkOut>,
@@ -1736,6 +1774,45 @@ struct CodeChunk {
     bytes: Vec<u8>,
 }
 
+/// How far a function was read, and what said so.
+///
+/// `source` is the `size_source` every record carries. The other two fields are
+/// what a reader needs to check it:
+///
+/// * `entry_offset` is set when the requested symbol is *not* the entry point of
+///   the function that was decoded -- it is inside one `.pdata` entry, or on a
+///   chunk MSVC chained onto another function. What was disassembled is then the
+///   whole primary function, from its `begin`, and this says how far into it the
+///   symbol sits. `None` means the symbol is the function.
+/// * `reason` is set exactly when `source` is `truncated`, and says what stopped
+///   the decode: a range the section or the 64 KiB cap cut short, or a byte in
+///   the middle of the function that is not a valid instruction.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Bound {
+    source: &'static str,
+    entry_offset: Option<u32>,
+    reason: Option<String>,
+}
+
+impl Bound {
+    fn new(source: &'static str) -> Bound {
+        Bound {
+            source,
+            entry_offset: None,
+            reason: None,
+        }
+    }
+
+    /// The same bound, cut short for `reason`.
+    fn truncated(&self, reason: String) -> Bound {
+        Bound {
+            source: "truncated",
+            entry_offset: self.entry_offset,
+            reason: Some(reason),
+        }
+    }
+}
+
 /// The chunks to decode and where those bounds came from.
 ///
 /// Three sources, in order of how well each is evidence:
@@ -1752,39 +1829,56 @@ struct CodeChunk {
 ///
 /// A range the section or the 64 KiB cap cuts short says `truncated` whichever
 /// source it came from.
-fn disasm_chunks(
-    pe: &Pe,
-    lengths: &BTreeMap<u32, u32>,
-    rva: u32,
-) -> (Vec<CodeChunk>, &'static str) {
+///
+/// A symbol that is not an entry's `begin` is still bounded: the function is the
+/// primary entry its chunk belongs to, so that whole function is decoded from
+/// its own `begin` and [`Bound::entry_offset`] records how far into it the
+/// symbol sits. Decoding only `[rva, end)` and calling the result `pdata` would
+/// label part of a function as the whole of one.
+fn disasm_chunks(pe: &Pe, lengths: &BTreeMap<u32, u32>, rva: u32) -> (Vec<CodeChunk>, Bound) {
     const CAP: usize = 0x1_0000;
-    if let Some((begin, end)) = pe.pdata_bounds(rva) {
-        // A symbol *on* an entry gets that entry's whole function. A symbol
-        // inside one gets the rest of that entry only: the bytes before it
-        // belong to whatever the entry started as, not to this name.
-        let ranges = match pe.chunks.get(&rva) {
-            Some(chunks) if begin == rva => chunks.clone(),
-            _ => vec![(rva, end)],
+    if let Some((entry_begin, entry_end)) = pe.pdata_bounds(rva) {
+        // The function is the primary the symbol's chunk chains to, whether the
+        // symbol is that primary's own entry point or sits inside it.
+        let primary = pe
+            .chunk_owner
+            .get(&entry_begin)
+            .copied()
+            .unwrap_or(entry_begin);
+        let ranges = match pe.chunks.get(&primary) {
+            Some(chunks) => chunks.clone(),
+            None => vec![(entry_begin, entry_end)],
         };
         let mut out = Vec::with_capacity(ranges.len());
-        let mut whole = true;
+        let mut short = None;
         for (begin, end) in ranges {
             let wanted = end.saturating_sub(begin) as usize;
             let bytes = pe
                 .rva_to_bytes(begin, wanted.min(CAP))
                 .unwrap_or_default()
                 .to_vec();
-            whole &= bytes.len() == wanted;
+            if bytes.len() != wanted && short.is_none() {
+                short = Some(format!(
+                    "the chunk at {begin:#x} is {} bytes of the {wanted} .pdata states: \
+                     the section or the 64 KiB cap cut it short",
+                    bytes.len()
+                ));
+            }
             out.push(CodeChunk { rva: begin, bytes });
         }
+        let source = if out.len() > 1 {
+            "pdata-chained"
+        } else {
+            "pdata"
+        };
+        let bound = Bound {
+            source,
+            entry_offset: (rva != primary).then(|| rva - primary),
+            reason: None,
+        };
         // A range the section or the cap cuts short is not the function
         // `.pdata` promised, and says so rather than passing for one.
-        let source = match (whole, out.len() > 1) {
-            (false, _) => "truncated",
-            (true, true) => "pdata-chained",
-            (true, false) => "pdata",
-        };
-        return (out, source);
+        return (out, short.map_or(bound.clone(), |why| bound.truncated(why)));
     }
     // No `.pdata` entry. The PDB's procedure record still states the length.
     if let Some(len) = lengths.get(&rva).copied().filter(|len| *len > 0) {
@@ -1793,12 +1887,16 @@ fn disasm_chunks(
             .rva_to_bytes(rva, wanted.min(CAP))
             .unwrap_or_default()
             .to_vec();
-        let source = if bytes.len() == wanted {
-            "pdb-procedure-length"
+        let bound = if bytes.len() == wanted {
+            Bound::new("pdb-procedure-length")
         } else {
-            "truncated"
+            Bound::new("pdb-procedure-length").truncated(format!(
+                "the PDB states {wanted} bytes at {rva:#x} and only {} are readable: \
+                 the section or the 64 KiB cap cut it short",
+                bytes.len()
+            ))
         };
-        return (vec![CodeChunk { rva, bytes }], source);
+        return (vec![CodeChunk { rva, bytes }], bound);
     }
 
     let Some(bytes) = pe.rva_to_bytes(rva, CAP) else {
@@ -1807,7 +1905,7 @@ fn disasm_chunks(
                 rva,
                 bytes: Vec::new(),
             }],
-            "truncated",
+            Bound::new("ret").truncated(format!("{rva:#x} is outside every section")),
         );
     };
     // Neither source knows this function: decode to the first `ret`.
@@ -1821,11 +1919,41 @@ fn disasm_chunks(
         if instruction.mnemonic() == Mnemonic::Ret {
             let end = (instruction.ip() as u32 - rva) as usize + instruction.len();
             let bytes = bytes[..end.min(bytes.len())].to_vec();
-            return (vec![CodeChunk { rva, bytes }], "ret");
+            return (vec![CodeChunk { rva, bytes }], Bound::new("ret"));
         }
     }
     let bytes = bytes.to_vec();
-    (vec![CodeChunk { rva, bytes }], "truncated")
+    let reason = format!(
+        "nothing bounds {rva:#x}: no .pdata entry, no PDB procedure length, and no ret \
+         in the {} bytes that were decoded",
+        bytes.len()
+    );
+    (
+        vec![CodeChunk { rva, bytes }],
+        Bound::new("ret").truncated(reason),
+    )
+}
+
+/// The reason the decode of `chunks` stopped short of the bytes it was given.
+///
+/// `decode_all` stops at the first byte that is not a valid instruction, so a
+/// chunk whose decoded instructions do not cover it was only partly read --
+/// which is exactly the case a byte-length check on the chunk cannot see. The
+/// instructions come back grouped the way the chunks were handed out.
+fn undecoded(chunks: &[CodeChunk], decoded: &[Vec<Instr>]) -> Option<String> {
+    for (chunk, instrs) in chunks.iter().zip(decoded) {
+        let read: usize = instrs.iter().map(|i| i.instruction.len()).sum();
+        if read < chunk.bytes.len() {
+            return Some(format!(
+                "decoding stopped {read} bytes into the {}-byte chunk at {:#x}: the byte at \
+                 {:#x} begins no instruction this decoder knows",
+                chunk.bytes.len(),
+                chunk.rva,
+                chunk.rva as usize + read,
+            ));
+        }
+    }
+    None
 }
 
 /// Decode `buffer`, which starts at `begin`, keeping the printed form.
@@ -1956,7 +2084,7 @@ fn disasm_one(
     symbols: &BTreeMap<u32, String>,
     symbol: &Symbol,
 ) -> DisasmOut {
-    let (chunks, size_source) = disasm_chunks(pe, &index.lengths, symbol.rva);
+    let (chunks, bound) = disasm_chunks(pe, &index.lengths, symbol.rva);
     let spans = symbol
         .class()
         .map(|class| member_spans(index, class))
@@ -1964,14 +2092,23 @@ fn disasm_one(
     let this = this_register(&symbol.mangled).register();
     // One tracker across every chunk, stepped in RVA order.
     let mut regs = Regs::with_this(this.map(|(_, register)| register));
+    let decoded: Vec<Vec<Instr>> = chunks
+        .iter()
+        .map(|chunk| decode_all(&chunk.bytes, chunk.rva))
+        .collect();
+    // A chunk the decoder could not read to the end of is a cut the byte
+    // lengths cannot see, so the bound says `truncated` for that reason too.
+    let bound = match undecoded(&chunks, &decoded) {
+        Some(why) => bound.truncated(why),
+        None => bound,
+    };
     let mut instructions = Vec::new();
-    for chunk in &chunks {
-        let instrs = decode_all(&chunk.bytes, chunk.rva);
+    for (chunk, instrs) in chunks.iter().zip(&decoded) {
         instructions.extend(annotate(
             pe,
             &chunk.bytes,
             chunk.rva,
-            &instrs,
+            instrs,
             &spans,
             symbols,
             &mut regs,
@@ -1982,7 +2119,9 @@ fn disasm_one(
         mangled: symbol.mangled.clone(),
         rva: format!("{:#x}", symbol.rva),
         size: chunks.iter().map(|c| c.bytes.len() as u32).sum(),
-        size_source,
+        size_source: bound.source,
+        entry_offset: bound.entry_offset,
+        size_reason: bound.reason,
         chunks: chunks
             .iter()
             .map(|c| ChunkOut {
@@ -2181,26 +2320,34 @@ fn run(args: &Args) -> Result<()> {
             for function in index.functions.get(&owner).into_iter().flatten() {
                 // The same bound, and the same stitching of a split function's
                 // chained chunks, that `disasm` reports.
-                let (chunks, size_source) = disasm_chunks(&pe, &index.lengths, function.rva);
-                let instrs: Vec<Instr> = chunks
+                let (chunks, bound) = disasm_chunks(&pe, &index.lengths, function.rva);
+                let decoded: Vec<Vec<Instr>> = chunks
                     .iter()
-                    .flat_map(|chunk| decode_all(&chunk.bytes, chunk.rva))
+                    .map(|chunk| decode_all(&chunk.bytes, chunk.rva))
                     .collect();
+                // A chunk the decoder could not read to the end of is a cut no
+                // byte-length check can see, and the bound has to say so.
+                let bound = match undecoded(&chunks, &decoded) {
+                    Some(why) => bound.truncated(why),
+                    None => bound,
+                };
+                let instrs: Vec<Instr> = decoded.into_iter().flatten().collect();
                 if Some(function.name.as_str()) == args.dump.as_deref()
                     || Some(owner.as_str()) == args.dump.as_deref()
                 {
                     println!(
-                        "; {} @ {:#x} ({} bytes from {size_source}, {} chunks)",
+                        "; {} @ {:#x} ({} bytes from {}, {} chunks)",
                         function.name,
                         function.rva,
                         chunks.iter().map(|c| c.bytes.len()).sum::<usize>(),
+                        bound.source,
                         chunks.len(),
                     );
                     for instr in &instrs {
                         println!("{:#010x}  {}", instr.rva, instr.text);
                     }
                 }
-                per_function.push((function.clone(), size_source, trace_stores(&instrs, &pe)));
+                per_function.push((function.clone(), bound, trace_stores(&instrs, &pe)));
             }
             traced.insert(owner, per_function);
         }
@@ -2326,6 +2473,7 @@ mod tests {
             pdb_name: String::new(),
             functions: BTreeMap::new(),
             chunks: BTreeMap::new(),
+            chunk_owner: BTreeMap::new(),
             imports: BTreeMap::new(),
             sha256: String::new(),
         }
@@ -2981,17 +3129,17 @@ mod tests {
         let code = [0x90, 0x90, 0xc3, 0x90];
         let mut pe = fake_module(&code, &[]);
 
-        let (chunks, source) = disasm_chunks(&pe, &BTreeMap::new(), 0x1000);
-        assert_eq!((chunks[0].bytes.len(), source), (3, "ret"));
+        let (chunks, bound) = disasm_chunks(&pe, &BTreeMap::new(), 0x1000);
+        assert_eq!((chunks[0].bytes.len(), bound.source), (3, "ret"));
 
         pe.index_pdata(&[RuntimeFunction {
             begin: 0x1000,
             end: 0x1004,
             unwind: 0x2000,
         }]);
-        let (chunks, source) = disasm_chunks(&pe, &BTreeMap::new(), 0x1000);
+        let (chunks, bound) = disasm_chunks(&pe, &BTreeMap::new(), 0x1000);
         assert_eq!(
-            (chunks.len(), chunks[0].bytes.len(), source),
+            (chunks.len(), chunks[0].bytes.len(), bound.source),
             (1, 4, "pdata")
         );
         assert_eq!(pe.pdata_bounds(0x1000), Some((0x1000, 0x1004)));
@@ -3024,9 +3172,9 @@ mod tests {
             unwind: 0x2000,
         }]);
 
-        let (chunks, source) = disasm_chunks(&pe, &BTreeMap::new(), 0x1000);
+        let (chunks, bound) = disasm_chunks(&pe, &BTreeMap::new(), 0x1000);
         assert_eq!(
-            (chunks.len(), chunks[0].bytes.len(), source),
+            (chunks.len(), chunks[0].bytes.len(), bound.source),
             (1, 16, "pdata")
         );
         let instrs: Vec<Instr> = chunks
@@ -3046,8 +3194,8 @@ mod tests {
         // decoder stops at that first `ret`, which is exactly why a bound the
         // game states is what `extract` asks for.
         let unbounded = fake_module(&code, &[]);
-        let (chunks, source) = disasm_chunks(&unbounded, &BTreeMap::new(), 0x1000);
-        assert_eq!((chunks[0].bytes.len(), source), (8, "ret"));
+        let (chunks, bound) = disasm_chunks(&unbounded, &BTreeMap::new(), 0x1000);
+        assert_eq!((chunks[0].bytes.len(), bound.source), (8, "ret"));
     }
 
     /// `UNWIND_INFO`: version 1, `count` codes, optionally chained.
@@ -3123,8 +3271,8 @@ mod tests {
         );
         assert_eq!(pe.chunks.get(&0x1040), Some(&vec![(0x1040, 0x1044)]));
 
-        let (chunks, source) = disasm_chunks(&pe, &BTreeMap::new(), 0x1000);
-        assert_eq!(source, "pdata-chained");
+        let (chunks, bound) = disasm_chunks(&pe, &BTreeMap::new(), 0x1000);
+        assert_eq!(bound.source, "pdata-chained");
         assert_eq!(
             chunks
                 .iter()
@@ -3134,10 +3282,146 @@ mod tests {
         );
 
         // A function nothing chains to is still one chunk, and still `pdata`.
-        let (chunks, source) = disasm_chunks(&pe, &BTreeMap::new(), 0x1040);
-        assert_eq!(source, "pdata");
+        let (chunks, bound) = disasm_chunks(&pe, &BTreeMap::new(), 0x1040);
+        assert_eq!(bound.source, "pdata");
+        assert_eq!(bound.entry_offset, None);
         assert_eq!(chunks.len(), 1);
         assert_eq!((chunks[0].rva, chunks[0].bytes.len()), (0x1040, 4));
+    }
+
+    /// A symbol that is not an entry point still names a whole function.
+    ///
+    /// `.pdata` says which function an RVA belongs to whether the RVA is that
+    /// function's entry point, a byte inside its first chunk, or the start of a
+    /// chunk MSVC chained onto it. Each case decodes the same whole function
+    /// from its own `begin`, and `entry_offset` is what tells the reader the
+    /// name it was asked for sits partway in.
+    #[test]
+    fn a_symbol_inside_a_function_is_bounded_by_the_whole_function_it_is_part_of() {
+        let primary = RuntimeFunction {
+            begin: 0x1000,
+            end: 0x1008,
+            unwind: 0x2000,
+        };
+        let second = RuntimeFunction {
+            begin: 0x1020,
+            end: 0x1030,
+            unwind: 0x2010,
+        };
+        let plain = RuntimeFunction {
+            begin: 0x1040,
+            end: 0x1050,
+            unwind: 0x2060,
+        };
+        let mut unwind = vec![0u8; 0x80];
+        let mut put = |at: u32, bytes: Vec<u8>| {
+            let at = (at - 0x2000) as usize;
+            unwind[at..at + bytes.len()].copy_from_slice(&bytes);
+        };
+        put(0x2000, unwind_info(false, 0, None));
+        put(0x2010, unwind_info(true, 0, Some(primary)));
+        put(0x2060, unwind_info(false, 0, None));
+
+        let code = vec![0x90u8; 0x50];
+        let mut pe = fake_module(&code, &unwind);
+        pe.index_pdata(&[primary, second, plain]);
+
+        let whole = [(0x1000u32, 8usize), (0x1020, 16)];
+        let layout = |chunks: &[CodeChunk]| {
+            chunks
+                .iter()
+                .map(|c| (c.rva, c.bytes.len()))
+                .collect::<Vec<_>>()
+        };
+
+        // A byte inside the primary's own chunk: the function is the primary,
+        // both its chunks are decoded, and the symbol is 4 bytes in.
+        let (chunks, bound) = disasm_chunks(&pe, &BTreeMap::new(), 0x1004);
+        assert_eq!(bound.source, "pdata-chained");
+        assert_eq!(bound.entry_offset, Some(4));
+        assert_eq!(bound.reason, None);
+        assert_eq!(layout(&chunks), whole);
+
+        // The chained chunk's own begin: the same function, 0x20 bytes in --
+        // not a 16-byte "function" starting at 0x1020.
+        let (chunks, bound) = disasm_chunks(&pe, &BTreeMap::new(), 0x1020);
+        assert_eq!(bound.source, "pdata-chained");
+        assert_eq!(bound.entry_offset, Some(0x20));
+        assert_eq!(layout(&chunks), whole);
+
+        // A byte inside an unsplit function reports that function, not the
+        // tail of it, and `pdata` because it has one chunk.
+        let (chunks, bound) = disasm_chunks(&pe, &BTreeMap::new(), 0x1048);
+        assert_eq!((bound.source, bound.entry_offset), ("pdata", Some(8)));
+        assert_eq!(layout(&chunks), [(0x1040, 16)]);
+
+        // An RVA in no entry at all still falls through to the PDB's length.
+        let lengths = BTreeMap::from([(0x1060u32, 4u32)]);
+        let (chunks, bound) = disasm_chunks(&pe, &lengths, 0x1060);
+        assert_eq!(
+            (bound.source, bound.entry_offset),
+            ("pdb-procedure-length", None)
+        );
+        assert_eq!(layout(&chunks), [(0x1060, 4)]);
+    }
+
+    /// A chunk `.pdata` bounds but the decoder cannot read is `truncated`.
+    ///
+    /// The byte-length check sees a whole chunk; only the decode says that it
+    /// stopped in the middle of it, so that is where the reason comes from.
+    #[test]
+    fn a_chunk_the_decoder_stops_inside_is_truncated_with_the_byte_that_stopped_it() {
+        // `xor eax,eax` (2), `ff ff` -- which decodes as nothing -- then a
+        // `ret` the decoder never reaches.
+        let code = [0x33u8, 0xC0, 0xFF, 0xFF, 0xC3];
+        let entry = RuntimeFunction {
+            begin: 0x1000,
+            end: 0x1005,
+            unwind: 0x2000,
+        };
+        let mut pe = fake_module(&code, &unwind_info(false, 0, None));
+        pe.index_pdata(&[entry]);
+
+        let (chunks, bound) = disasm_chunks(&pe, &BTreeMap::new(), 0x1000);
+        assert_eq!((bound.source, chunks[0].bytes.len()), ("pdata", 5));
+
+        let decoded = vec![decode_all(&chunks[0].bytes, chunks[0].rva)];
+        assert_eq!(text_of(&code[..2]), ["xor eax,eax"]);
+        assert_eq!(
+            decoded[0]
+                .iter()
+                .map(|i| i.text.clone())
+                .collect::<Vec<_>>(),
+            ["xor eax,eax"]
+        );
+
+        let why = undecoded(&chunks, &decoded).expect("the decode stopped 2 bytes in");
+        assert!(
+            why.contains("decoding stopped 2 bytes into the 5-byte chunk at 0x1000")
+                && why.contains("0x1002"),
+            "{why}"
+        );
+        let cut = bound.truncated(why);
+        assert_eq!(cut.source, "truncated");
+        assert!(cut.reason.is_some());
+
+        // A chunk the decoder reads to the end of says nothing.
+        let (chunks, bound) = disasm_chunks(&pe, &BTreeMap::new(), 0x1000);
+        let whole = [0x33u8, 0xC0, 0xC3];
+        let decoded = vec![decode_all(&whole, 0x1000)];
+        assert_eq!(decoded[0].len(), 2);
+        assert_eq!(
+            undecoded(
+                &[CodeChunk {
+                    rva: 0x1000,
+                    bytes: whole.to_vec()
+                }],
+                &decoded
+            ),
+            None
+        );
+        assert_eq!(bound.reason, None);
+        drop(chunks);
     }
 
     /// `n` entries, each chaining to the next; the last one is a primary.
@@ -3245,13 +3529,13 @@ mod tests {
 
         // With no `.pdata` entry and no PDB length, the first `ret` is all
         // there is, and the tool says so.
-        let (chunks, source) = disasm_chunks(&pe, &BTreeMap::new(), 0x1000);
-        assert_eq!((chunks[0].bytes.len(), source), (1, "ret"));
+        let (chunks, bound) = disasm_chunks(&pe, &BTreeMap::new(), 0x1000);
+        assert_eq!((chunks[0].bytes.len(), bound.source), (1, "ret"));
 
         // The PDB states the length, so the whole function decodes.
-        let (chunks, source) = disasm_chunks(&pe, &lengths, 0x1000);
+        let (chunks, bound) = disasm_chunks(&pe, &lengths, 0x1000);
         assert_eq!(
-            (chunks.len(), chunks[0].bytes.len(), source),
+            (chunks.len(), chunks[0].bytes.len(), bound.source),
             (1, 4, "pdb-procedure-length")
         );
         assert_eq!(decode_all(&chunks[0].bytes, 0x1000).len(), 4);
@@ -3263,20 +3547,20 @@ mod tests {
             end: 0x1002,
             unwind: 0x2000,
         }]);
-        let (chunks, source) = disasm_chunks(&covered, &lengths, 0x1000);
-        assert_eq!((chunks[0].bytes.len(), source), (2, "pdata"));
+        let (chunks, bound) = disasm_chunks(&covered, &lengths, 0x1000);
+        assert_eq!((chunks[0].bytes.len(), bound.source), (2, "pdata"));
 
         // A stated length the section cannot satisfy is not passed off as one.
-        let (_, source) = disasm_chunks(&pe, &BTreeMap::from([(0x1000u32, 0x9000u32)]), 0x1000);
-        assert_eq!(source, "truncated");
+        let (_, bound) = disasm_chunks(&pe, &BTreeMap::from([(0x1000u32, 0x9000u32)]), 0x1000);
+        assert_eq!(bound.source, "truncated");
     }
 
     #[test]
     fn a_function_with_no_ret_in_range_says_it_was_truncated() {
         let code = [0x90, 0x90, 0x90, 0x90];
         let mut pe = fake_module(&code, &[]);
-        let (_, source) = disasm_chunks(&pe, &BTreeMap::new(), 0x1000);
-        assert_eq!(source, "truncated");
+        let (_, bound) = disasm_chunks(&pe, &BTreeMap::new(), 0x1000);
+        assert_eq!(bound.source, "truncated");
 
         // A `.pdata` range that runs past the section is not the function it
         // promised either, and must not pass for one.
@@ -3285,8 +3569,8 @@ mod tests {
             end: 0x9000,
             unwind: 0x2000,
         }]);
-        let (chunks, source) = disasm_chunks(&pe, &BTreeMap::new(), 0x1000);
-        assert_eq!((chunks[0].bytes.len(), source), (0x1000, "truncated"));
+        let (chunks, bound) = disasm_chunks(&pe, &BTreeMap::new(), 0x1000);
+        assert_eq!((chunks[0].bytes.len(), bound.source), (0x1000, "truncated"));
     }
 
     #[test]

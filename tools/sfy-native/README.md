@@ -336,14 +336,31 @@ that exist today are Blueprint ones, and `assets.json` has those.
     "members": {"<member>": {
        "offset", "type",
        "value" | null, "set_in", "evidence", "size_source",  // a constant found
-       "reason",                                  // when it was not
-       "also_set_in": [{"set_in", "value", "evidence", "size_source"}]}}}}}
+       "entry_offset", "size_reason",             // when the bound needs them
+       "reason",                                  // when no constant was found
+       "also_set_in": [{"set_in", "value", "evidence", "size_source",
+                        "entry_offset", "size_reason"}]}}}}}
 ```
 
 `size_source` is the bound on the function named beside it, from the same
 three-source ladder as `disasm`'s. Every entry in the committed file says
 `pdata`; a `ret` or a `truncated` there would mean the value was read out of a
 function whose end the game does not state, and the rest of it never looked at.
+
+Two keys qualify it, and both are absent whenever they have nothing to say:
+
+- **`entry_offset`** — the symbol is not the entry point of the function that was
+  disassembled. `.pdata` says which function an RVA belongs to, so a symbol
+  *inside* an entry, or on a chunk MSVC chained onto another function, is read as
+  the whole primary function from that function's own `begin`; `entry_offset` is
+  how far into it the name sits. Without it a `pdata` could mean "part of a
+  function" while reading like the whole of one. No entry in the committed file
+  has it: every function the tool is asked for is its own entry point.
+- **`size_reason`** — present exactly when `size_source` is `truncated`, saying
+  what stopped the read: a range the section or the 64 KiB cap cut short, or a
+  byte partway through the function that begins no instruction the decoder
+  knows. A length check cannot see that second one, because the bytes are all
+  there and only the decode stopped.
 
 A class has two constructors whenever UE emits its `FVTableHelper` one as well.
 That one carries only the in-class initialisers; the real one also carries the

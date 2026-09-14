@@ -24,6 +24,15 @@ The first three are the whole function. The last two are *part* of a function,
 and a store, a comparison or a quantisation may sit in the part that was never
 decoded -- so :data:`BOUNDED_SIZE_SOURCES` is the set an absence may be claimed
 from, and :func:`require_bounded` is what refuses the claim otherwise.
+
+Two keys qualify the bound, both absent when they have nothing to say.
+``entry_offset`` means the symbol asked for is not the entry point of the
+function that came back: ``.pdata`` says which function the RVA belongs to, that
+whole function was decoded from its own ``begin``, and this is how far into it
+the name sits. The function is still whole, so such a record is still bounded --
+what changes is that the instructions before the symbol are in the output too.
+``size_reason`` is present exactly when ``size_source`` is ``truncated``, and
+says what stopped the read.
 """
 
 from __future__ import annotations
