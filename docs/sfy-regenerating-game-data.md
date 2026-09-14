@@ -12,8 +12,11 @@ component happens to be called is a convention, not something the game reads.
 
 The files are committed so that the tests, and anyone building the project, need
 no game install. **Re-run this whole sequence after a game update**, in the order
-below: step 4 needs step 2's output and step 5 needs step 4's, and the merge at
-the end is what the package actually reads.
+below: steps 3 and 4 both need step 2's output and refuse without it, step 5
+needs step 4's, and the merge at the end is what the package actually reads.
+
+Every command below is run **from the repository root**, and the ones that `cd`
+into a tool directory `cd` back out again.
 
 ```bash
 export FLAB2BP_SATISFACTORY_DIR="$HOME/Satisfactory"   # the default, if unset
@@ -137,6 +140,13 @@ leaves). An absence read out of half a function is worth nothing, so the script
 stops unless every constructor in the chain came back bounded by `.pdata`, its
 chain, or the PDB's procedure length.
 
+Each of those absences is looked for at **that member's own offset**, which the
+script gets by running `sfy-native`'s `extract` mode once for the class the PDB
+declares the member on (`UFGPipeConnectionComponentBase::mPipeConnectionType`,
+`UFGFactoryConnectionComponent::mDirection`). The two sit at the same offset in
+the shipped build, which is exactly why neither is allowed to stand in for the
+other. That extra run is why the step needs the PDB as well as the DLL.
+
 `tools/sfy-extract` reads the result and resolves every port with it;
 `tools/sfy-extract/README.md` has the table of what was found and why both ends
 of a conveyor are `FCD_ANY` rather than the input and output a header comment
@@ -254,8 +264,19 @@ hand-edited.
 
 1. Run all seven steps. Step 3 is the one most likely to fail: a validator that
    moved stops it by name and address, which is the point.
-2. `uv run pytest tests/sfy` — the drift test and the port cross-checks are the
-   gate.
+2. `uv run pytest tests/sfy` — three things in it are the gate:
+   - the **drift test**,
+     `test_registry.py::test_the_committed_registry_is_what_the_merge_produces`,
+     which re-runs step 7 into a temporary file and diffs it against what is
+     committed;
+   - the **fixture byte-identity suite**, `test_codec.py`'s
+     `test_full_file_round_trip_is_byte_identical` and its siblings over every
+     fixture, which is what says the format reader still reads the format;
+   - the **registry's own consistency tests**, the rest of
+     `tests/sfy/test_registry.py`: every limit filled and sourced, every port's
+     direction traced to the game link that answered, every conveyor's flow and
+     cost segment naming its source, and nothing anywhere coming from the
+     blueprint corpus.
 3. `git diff --stat src/flab2bp/sfy/data/` — a game update should move the build
    version and whatever the patch notes say it moved, and nothing else.
 4. Rebuild the checkpoint blueprint and load it in the game:

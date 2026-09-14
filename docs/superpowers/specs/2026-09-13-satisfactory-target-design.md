@@ -338,8 +338,15 @@ the DSP CLI and web behaviour.
 
 Automated gates:
 
-- Format: every fixture decodes; every fixture re-encodes byte-identically.
-- Registry: extractor output is reproducible; port cross-check passes.
+- Format: every fixture decodes; every fixture re-encodes byte-identically
+  (`tests/sfy/test_codec.py::test_full_file_round_trip_is_byte_identical`, over
+  every file `tests/sfy/data/fixtures` lists).
+- Registry: the merge is reproducible — `test_registry.py`'s drift test
+  (`test_the_committed_registry_is_what_the_merge_produces`) re-runs it into a
+  temporary file and diffs — and the registry's own consistency tests in
+  `tests/sfy/test_registry.py` hold every limit, port, direction, flow and asset
+  path to the game source it names. There is no blueprint-corpus cross-check:
+  the corpus is a format fixture and never evidence for a game fact.
 - Corpus: a set of FactorioLab `sfy` URLs from early to late tiers; the gate
   passes when every URL yields a valid stack within budget or a refusal with a
   named cause.
