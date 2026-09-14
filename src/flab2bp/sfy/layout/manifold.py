@@ -509,10 +509,6 @@ def _ports_for(
         )
     if not out_ports:
         raise RowError(f"{machine.class_name} has no belt output port, so a row cannot drain it")
-    if {port.translation[1] for port in in_ports[: len(items)]} | {
-        out_ports[0].translation[1]
-    } == set():  # pragma: no cover - defensive
-        raise RowError("this machine states no port positions")
     return (tuple(zip(items, in_ports, strict=False)), out_ports[0])
 
 
@@ -581,8 +577,8 @@ def _lay_input_chain(
             _run(
                 registry,
                 lab_map,
-                _port_at(registry, previous, through_out),
-                _port_at(registry, node, through_in),
+                _port_at(previous, through_out),
+                _port_at(node, through_in),
                 item_id=item_id,
                 rate=tail[index],
                 tiers=tiers,
@@ -596,8 +592,8 @@ def _lay_input_chain(
         _run(
             registry,
             lab_map,
-            _port_at(registry, node, side),
-            _port_at(registry, machine, port),
+            _port_at(node, side),
+            _port_at(machine, port),
             item_id=item_id,
             rate=per_machine[index],
             tiers=tiers,
@@ -616,7 +612,7 @@ def _lay_input_chain(
     return ChainEnd(
         object_id=first.id,
         port=through_in.name,
-        pose=Pose(*_port_at(registry, first, through_in), yaw),
+        pose=Pose(*_port_at(first, through_in), yaw),
         item_id=item_id,
         items_per_second=tail[0],
         belt_class=_belt_class(lab_map, _tier(tail[0], tiers, item_id, f"chain {depth}")),
@@ -665,8 +661,8 @@ def _lay_output_chain(
         _run(
             registry,
             lab_map,
-            _port_at(registry, machine, port),
-            _port_at(registry, node, side),
+            _port_at(machine, port),
+            _port_at(node, side),
             item_id=item_id,
             rate=per_machine[index],
             tiers=tiers,
@@ -681,8 +677,8 @@ def _lay_output_chain(
             _run(
                 registry,
                 lab_map,
-                _port_at(registry, last, through_out),
-                _port_at(registry, node, through_in),
+                _port_at(last, through_out),
+                _port_at(node, through_in),
                 item_id=item_id,
                 rate=head[index - 1],
                 tiers=tiers,
@@ -699,7 +695,7 @@ def _lay_output_chain(
     return ChainEnd(
         object_id=last.id,
         port=through_out.name,
-        pose=Pose(*_port_at(registry, last, through_out), yaw),
+        pose=Pose(*_port_at(last, through_out), yaw),
         item_id=item_id,
         items_per_second=head[-1],
         belt_class=_belt_class(lab_map, _tier(head[-1], tiers, item_id, "the merger chain")),
@@ -728,8 +724,8 @@ def _attachment_ports(
     return (entry, exit_, side)
 
 
-def _port_at(registry: Registry, placed: MachineObj | AttachmentObj, port: Port) -> Vector:
-    del registry
+def _port_at(placed: MachineObj | AttachmentObj, port: Port) -> Vector:
+    """Where one of ``placed``'s ports sits in the row's frame."""
     return world_port(placed.pose.transform(), port)
 
 
