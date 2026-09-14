@@ -97,10 +97,24 @@ def test_route_all_declares_no_nonlocal_names() -> None:
     assert offenders == [], "put the rebound name on _RouteAllRun: " + "; ".join(offenders)
 
 
+#: Bound once in `_route_all`'s prologue and only read afterwards. They are
+#: fields because a method cannot capture what a closure could; they are not
+#: run state, which is why they are excluded from the rebound-name pin below.
+PROLOGUE_FIELDS = {
+    "canvas",
+    "nets",
+    "net_index",
+    "owner",
+    "power_discs",
+    "primitives",
+    "last_mile_counts",
+}
+
+
 def test_the_run_object_carries_exactly_the_rebound_names() -> None:
     from dataclasses import fields
 
-    assert {field.name for field in fields(domain._RouteAllRun)} == {
+    assert {field.name for field in fields(domain._RouteAllRun)} - PROLOGUE_FIELDS == {
         "budget",
         "deadline",
         "work",
@@ -126,6 +140,13 @@ def test_the_run_object_carries_exactly_the_rebound_names() -> None:
         "repair_guards",
         "commit_attempt",
     }
+
+
+def test_the_run_object_carries_the_prologue_bound_vocabulary() -> None:
+    """The seven names the lifted vocabulary methods used to capture."""
+    from dataclasses import fields
+
+    assert {field.name for field in fields(domain._RouteAllRun)} >= PROLOGUE_FIELDS
 
 
 def test_a_field_write_is_visible_to_a_sibling_reader() -> None:
@@ -257,3 +278,20 @@ def test_the_run_object_holds_no_copy_of_the_ledger() -> None:
         and target.value.id == "run"
     ]
     assert rebinds == [], f"the run object's ledger is never rebound: {rebinds}"
+
+
+def test_the_net_index_field_is_unset_before_the_prologue_fills_it() -> None:
+    """A late-bound field must raise, not serve an empty index."""
+    run = domain._RouteAllRun(budget=WorkBudget(left=10), deadline=None)
+    with pytest.raises(AttributeError):
+        _ = run.net_index
+
+
+def test_role_rows_is_still_a_generator_consumed_once() -> None:
+    """`_role_rows` yields; a method that eagerly built a list would change when
+    `nets` is read and would materialise every row before `Nets.of` asks."""
+    import inspect
+
+    assert inspect.isgeneratorfunction(domain._RouteAllRun._role_rows)
+    source = SRC.read_text()
+    assert source.count("Nets.of(role_rows())") == 1

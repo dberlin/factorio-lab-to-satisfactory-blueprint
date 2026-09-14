@@ -6269,6 +6269,18 @@ class _RouteAllRun:
     #: victim-cap policy turned a tap away during the current rebuild.
     repair_guards: set[Cell] = field(init=False)
     policy_restricted: bool = field(init=False)
+    # Bound once in `_route_all`'s prologue and only read afterwards. These are
+    # fields because a method cannot capture; they are not run state. They carry
+    # no default for the same reason the eight above do not: an unset read must
+    # be an `AttributeError` where the closure's free-variable read was a
+    # `NameError`, never a silently empty stand-in.
+    canvas: _Canvas = field(init=False)
+    nets: list[_Net] = field(init=False)
+    net_index: Nets[NetId] = field(init=False)
+    owner: dict[Cell, int] = field(init=False)
+    power_discs: tuple[tuple[int, int, int], ...] | None = field(init=False)
+    primitives: RoutePrimitives = field(init=False)
+    last_mile_counts: dict[str, int] = field(init=False)
 
     @property
     def left(self) -> int:
@@ -6282,6 +6294,138 @@ class _RouteAllRun:
         left = self.budget.left
         assert left is not None, "a routing pass needs a ledger"
         return left
+
+    # -- The shared net vocabulary ------------------------------------------
+    #
+    # Ten one-idea helpers every other cluster calls. They were closures of
+    # `_route_all`; the names they captured are the seven prologue fields
+    # above. Module globals they call -- `_expired`, `_buildings_are_powered`
+    # -- stay bare so `monkeypatch.setattr(routing_domain, ...)` still reaches
+    # them; a captured alias on a field would freeze the pre-patch object.
+
+    def _connector_is_powered(self, building: PlacedBuilding) -> bool:
+        return self.power_discs is None or _buildings_are_powered((building,), self.power_discs)
+
+    def _net_id(self, index: int) -> NetId:
+        net_id = self.nets[index].net_id
+        if net_id is None:
+            raise ValueError("detailed routing requires stable net IDs")
+        return net_id
+
+    def _endpoint_cells(self, net: _Net) -> tuple[Cell | None, Cell]:
+        source = None if net.src is None else (net.src.x, net.src.y, net.src.z)
+        return source, (net.dst.x, net.dst.y, net.dst.z)
+
+    def _blocking_endpoint_cells(
+        self,
+        blocking_nets: tuple[NetId, ...],
+    ) -> tuple[tuple[Cell | None, Cell | None], ...]:
+        return tuple(
+            self._endpoint_cells(record[1])
+            if (record := self.net_index.by_id(blocker)) is not None
+            else (None, None)
+            for blocker in blocking_nets
+        )
+
+    def _blocking_nets(
+        self,
+        wall: Sequence[Cell],
+        source_blockers: Sequence[NetId] = (),
+    ) -> tuple[NetId, ...]:
+        # Sort transient integer indices, which have a total order. NetId's
+        # optional strip fields deliberately do not compare across None/int.
+        blocker_indices = sorted(
+            {blocker for cell in wall if (blocker := self.owner.get(cell)) is not None}
+        )
+        return tuple(
+            dict.fromkeys(
+                (*(self._net_id(blocker) for blocker in blocker_indices), *source_blockers)
+            )
+        )
+
+    def _pass_budget_cause(self) -> BudgetCause:
+        """Which bound stopped the pass, for the nets it never got to search."""
+        if _expired(self.deadline):
+            return BudgetCause.DEADLINE
+        # `left` is ``int | None`` on the ledger type, where ``None`` means
+        # unbounded. A routing pass is never unbounded (see `_route_all`'s own
+        # assertion), so narrow it here rather than reading a default.
+        left = self.budget.left
+        assert left is not None
+        if left <= 0:
+            return BudgetCause.ALLOWANCE
+        return BudgetCause.BOUNDED
+
+    def _failure(
+        self,
+        index: int,
+        search: _PathSearchResult,
+        blocking_nets: tuple[NetId, ...],
+    ) -> NetFailure:
+        source, destination = self._endpoint_cells(self.nets[index])
+        kind = search.kind or RouteFailureKind.DYNAMIC_ACCESS
+        return NetFailure(
+            net_id=self._net_id(index),
+            kind=kind,
+            wall=search.wall,
+            blocking_nets=blocking_nets,
+            work=search.work,
+            source=source,
+            destination=destination,
+            blocking_endpoints=self._blocking_endpoint_cells(blocking_nets),
+            budget_cause=(search.cause if kind is RouteFailureKind.BUDGET else BudgetCause.UNKNOWN),
+        )
+
+    def _selection_key(
+        self,
+        selected_paths: Mapping[int, tuple[Cell, ...]],
+        selected_source_hints: Mapping[int, Cell],
+        selected_sink_hints: Mapping[int, Cell],
+        selected_taps: Mapping[int, Cell],
+    ) -> tuple[object, ...]:
+        # Paths are immutable; retain their order and the actual physical
+        # witnesses, not a mutable mapping or just the projected stack bodies.
+        return (
+            tuple(
+                (
+                    index,
+                    path,
+                    selected_source_hints.get(index),
+                    selected_sink_hints.get(index),
+                    selected_taps.get(index),
+                    self.primitives.on_path(path),
+                )
+                for index, path in selected_paths.items()
+            ),
+            frozenset(self.canvas.guard),
+            self.primitives.rules,
+            self.canvas.belt_rules,
+        )
+
+    def _role_rows(self) -> Iterator[tuple[NetId, str, str, Cell, str, tuple[int, _Net]]]:
+        for index, net in enumerate(self.nets):
+            net_id = self._net_id(index)
+            payload = (index, net)
+            if net.src is not None:
+                yield (net_id, net.item, "", (net.src.x, net.src.y, net.src.z), "src", payload)
+            yield net_id, net.item, "", (net.dst.x, net.dst.y, net.dst.z), "dst", payload
+
+    def _last_mile_report(self) -> LastMileReport:
+        return LastMileReport(
+            invocations=self.last_mile_counts["invocations"],
+            solved=self.last_mile_counts["solved"],
+            proved=self.last_mile_counts["proved"],
+            bounded=self.last_mile_counts["bounded"],
+            commit_rejected=self.last_mile_counts["commit_rejected"],
+            restore_mismatch=self.last_mile_counts["restore_mismatch"],
+            relation_skipped_siblings=self.last_mile_counts["relation_skipped_siblings"],
+            same_source_dropped=self.last_mile_counts["same_source_dropped"],
+            nodes=self.last_mile_counts["nodes"],
+            work=self.last_mile_counts["work"],
+            seconds=self.last_mile_seconds,
+            relation_strips=self.relation_strips,
+            relation_evidence=self.relation_evidence,
+        )
 
 
 def _route_all(
@@ -6382,6 +6526,14 @@ def _route_all(
     #: Everything one pass rebinds while it runs, in one place, so a closure
     #: reads and writes `run.x` where it used to declare `nonlocal x`.
     run = _RouteAllRun(budget=budget, deadline=deadline)
+    #: What the vocabulary methods used to capture. Every one of these is bound
+    #: once, above, and only read from here on, so the field is the same object
+    #: the closure's free variable was.
+    run.canvas = canvas
+    run.nets = nets
+    run.owner = owner
+    run.power_discs = power_discs
+    run.primitives = primitives
     fewest_failed = len(nets) + 1
     stale = 0
     #: The round `best_paths` was captured from, or ``-1`` before any round
@@ -6443,6 +6595,7 @@ def _route_all(
             yield net_id, net.item, "", (net.dst.x, net.dst.y, net.dst.z), "dst", payload
 
     net_index = Nets.of(role_rows())
+    run.net_index = net_index
 
     def _blocking_endpoint_cells(
         blocking_nets: tuple[NetId, ...],
@@ -8869,6 +9022,7 @@ def _route_all(
         "nodes": 0,
         "work": 0,
     }
+    run.last_mile_counts = last_mile_counts
     proved_stranded: set[int] = set()
 
     def _last_mile_report() -> LastMileReport:
