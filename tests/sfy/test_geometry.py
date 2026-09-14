@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 
 from flab2bp.sfy.codec import read_sbp_file
 from flab2bp.sfy.geometry import port_forward, quat_rotate
@@ -22,7 +23,13 @@ DYNAMIC_PEERS = ("Build_ConveyorBelt", "Build_ConveyorLift")
 
 
 def _port(yaw: float, pitch: float = 0.0) -> Port:
-    return Port("p", "belt", "output", (0.0, 0.0, 0.0), (pitch, yaw, 0.0), None)
+    """A real registry port turned to face a given way.
+
+    Varying one the registry loaded, rather than constructing one field by
+    field, keeps this test off the `Port` constructor as the extractor grows it.
+    """
+    template = load_registry().buildables["Build_ConstructorMk1_C"].ports[0]
+    return replace(template, translation=(0.0, 0.0, 0.0), rotation=(pitch, yaw, 0.0))
 
 
 def test_port_forward_turns_x_by_the_ports_yaw() -> None:
@@ -32,9 +39,10 @@ def test_port_forward_turns_x_by_the_ports_yaw() -> None:
         (180.0, (-1.0, 0.0, 0.0)),
         (-90.0, (0.0, -1.0, 0.0)),
     ):
-        got = port_forward(IDENTITY, _port(yaw))
-        assert all(abs(a - b) < 1e-9 for a, b in zip(got, expected, strict=True)), (yaw, got)
-    assert port_forward(IDENTITY, _port(0.0, pitch=90.0))[2] > 0.999
+        # Exactly, not approximately: a quarter turn's 6.1e-17 is snapped away so
+        # an axis-aligned belt gets the same zeros the game writes.
+        assert port_forward(IDENTITY, _port(yaw)) == expected, yaw
+    assert port_forward(IDENTITY, _port(0.0, pitch=90.0)) == (0.0, 0.0, 1.0)
 
 
 def test_port_forward_composes_with_the_actors_rotation() -> None:

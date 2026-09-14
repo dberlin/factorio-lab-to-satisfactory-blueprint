@@ -44,10 +44,16 @@ from flab2bp.sfy.codec import (
 from flab2bp.sfy.geometry import distance, port_forward, quat_rotate, world_port
 from flab2bp.sfy.header import BlueprintHeader, BlueprintRecord, read_header
 from flab2bp.sfy.objects import ACTOR, ObjectData, ObjectHeader, Transform
-from flab2bp.sfy.properties import Vector
+from flab2bp.sfy.properties import Array, Object, Vector
 from flab2bp.sfy.query import object_index, spline_points
 from flab2bp.sfy.registry import Port, Registry, load_registry
-from flab2bp.sfy.templates import TemplateLibrary, assemble, connect, set_recipe, set_spline
+from flab2bp.sfy.templates import (
+    TemplateLibrary,
+    apply_recipe,
+    assemble,
+    connect,
+    set_spline,
+)
 
 REPO = Path(__file__).resolve().parent.parent
 FIXTURES = REPO / "tests" / "fixtures" / "sfy"
@@ -153,9 +159,8 @@ def build() -> Blueprint:
             objects += library.instantiate(FOUNDATION, next(ids), _at(x, y, FOUNDATION_Z_CM))
 
     constructor_at = _at(0.0, 0.0, SLAB_TOP_CM)
-    constructor = library.instantiate(CONSTRUCTOR, next(ids), constructor_at)
-    constructor = ((constructor[0][0], set_recipe(constructor[0][1], IRON_PLATE_RECIPE)),) + tuple(
-        constructor[1:]
+    constructor = apply_recipe(
+        library.instantiate(CONSTRUCTOR, next(ids), constructor_at), IRON_PLATE_RECIPE, registry
     )
 
     output = _port(registry, CONSTRUCTOR, "Output0")
@@ -212,14 +217,70 @@ def check(built: Blueprint, path: Path, config: Path) -> None:
     if peer is None:
         raise SystemExit("the belt's ConveyorAny0 is not wired to anything")
 
-    for header, _ in again.objects:
-        if header.kind != ACTOR or header.transform is None:
-            continue
-        x, y, z = header.transform.translation
+    _check_filters(again, registry)
+    for point in _occupied_points(again):
+        x, y, z = point[1]
         if max(abs(x), abs(y)) > DESIGNER_HALF_CM or not 0.0 <= z <= DESIGNER_HEIGHT_CM:
-            raise SystemExit(f"{header.name} at ({x}, {y}, {z}) is outside the designer")
+            raise SystemExit(f"{point[0]} reaches ({x}, {y}, {z}), outside the designer")
     print(f"decoded {path.name}: identical to what was assembled")
     print(f"belt start to Output0: {residual:.3f} cm")
+    print(f"inventory filters match {IRON_PLATE_RECIPE.rsplit('.', 1)[-1]}")
+
+
+def _check_filters(built: Blueprint, registry: Registry) -> None:
+    """The constructor's inventories must accept what its recipe needs and makes."""
+    index = object_index(built)
+    header, data = next((h, d) for h, d in built.objects if h.class_name == CONSTRUCTOR)
+    recipe = registry.recipes[IRON_PLATE_RECIPE.rsplit(".", 1)[-1]]
+    for name, wanted in (
+        ("mInputInventory", [item for item, _ in recipe.ingredients]),
+        ("mOutputInventory", [item for item, _ in recipe.products]),
+    ):
+        ref = next(p.value for p in data.properties if p.tag.name == name)
+        assert isinstance(ref, Object)
+        allowed = next(
+            p.value
+            for p in index[ref.ref.path][1].properties
+            if p.tag.name == "mAllowedItemDescriptors"
+        )
+        assert isinstance(allowed, Array)
+        got = [item.ref.name for item in allowed.items[: len(wanted)] if isinstance(item, Object)]
+        if got != wanted:
+            raise SystemExit(f"{header.name}.{name} allows {got}, the recipe needs {wanted}")
+
+
+def _occupied_points(built: Blueprint) -> list[tuple[str, tuple[float, float, float]]]:
+    """Every point the blueprint's contents actually reach, not just their origins.
+
+    A foundation's transform is at the middle of an 800 cm slab and a belt's is
+    at one end of a spline, so an origin inside the designer says nothing about
+    the object being inside it.
+    """
+    points: list[tuple[str, tuple[float, float, float]]] = []
+    for header, data in built.objects:
+        if header.kind != ACTOR or header.transform is None:
+            continue
+        origin = header.transform.translation
+        points.append((header.name, origin))
+        if header.class_name == FOUNDATION:
+            for dx in (-FOUNDATION_HALF_CM, FOUNDATION_HALF_CM):
+                for dy in (-FOUNDATION_HALF_CM, FOUNDATION_HALF_CM):
+                    corner = quat_rotate(header.transform.rotation, (dx, dy, 0.0))
+                    points.append(
+                        (
+                            f"{header.name} corner",
+                            (corner[0] + origin[0], corner[1] + origin[1], origin[2]),
+                        )
+                    )
+        for location, _, _ in spline_points(data):
+            turned = quat_rotate(header.transform.rotation, (location.x, location.y, location.z))
+            points.append(
+                (
+                    f"{header.name} spline point",
+                    (turned[0] + origin[0], turned[1] + origin[1], turned[2] + origin[2]),
+                )
+            )
+    return points
 
 
 def report(built: Blueprint) -> None:

@@ -8,7 +8,7 @@ import pytest
 
 from flab2bp.sfy.codec import read_sbp, read_sbp_file, write_sbp
 from flab2bp.sfy.objects import ACTOR, COMPONENT, Transform
-from flab2bp.sfy.properties import Array, Object, Vector
+from flab2bp.sfy.properties import Array, Int, Object, Struct, Value, Vector
 from flab2bp.sfy.query import connected, find, object_index, spline_points
 from flab2bp.sfy.registry import load_registry
 from flab2bp.sfy.templates import (
@@ -17,6 +17,7 @@ from flab2bp.sfy.templates import (
     SPLINE_POINT_FIELD_TAGS,
     TEMPLATE_MIN_SAVE_VERSION,
     TemplateLibrary,
+    apply_recipe,
     assemble,
     connect,
     set_recipe,
@@ -28,6 +29,17 @@ from tests.sfy.conftest import fixture_paths
 IDENTITY = Transform((0.0, 0.0, 0.0, 1.0), (0.0, 0.0, 0.0), (1.0, 1.0, 1.0))
 
 IRON_PLATE = "/Game/FactoryGame/Recipes/Constructor/Recipe_IronPlate.Recipe_IronPlate_C"
+
+
+def _reference_names(value: Value) -> list[str]:
+    """Every object-reference path the value tree exposes."""
+    if isinstance(value, Object):
+        return [value.ref.path]
+    if isinstance(value, Array):
+        return [name for item in value.items for name in _reference_names(item)]
+    if isinstance(value, Struct):
+        return [name for p in value.fields for name in _reference_names(p.value)]
+    return []
 
 
 @cache
@@ -277,3 +289,118 @@ def test_assemble_refuses_an_actor_whose_build_recipe_is_unknown() -> None:
             build_version=sample.header.build_version,
             version_data=sample.header.version_data,
         )
+
+
+def _filter_items(objects, data, name: str) -> tuple[str, ...]:
+    """The ``mAllowedItemDescriptors`` of the inventory ``data`` names as ``name``."""
+    ref = find(data.properties, name)
+    assert isinstance(ref, Object)
+    inventory = next(d for h, d in objects if h.path == ref.ref.path)
+    allowed = find(inventory.properties, "mAllowedItemDescriptors")
+    assert isinstance(allowed, Array)
+    return tuple(item.ref.name for item in allowed.items if isinstance(item, Object))
+
+
+def _slot_sizes(objects, data, name: str) -> tuple[int, ...]:
+    ref = find(data.properties, name)
+    assert isinstance(ref, Object)
+    inventory = next(d for h, d in objects if h.path == ref.ref.path)
+    sizes = find(inventory.properties, "mArbitrarySlotSizes")
+    assert isinstance(sizes, Array)
+    return tuple(item.v for item in sizes.items if isinstance(item, Int))
+
+
+def test_apply_recipe_sets_the_recipe_and_both_inventory_filters() -> None:
+    """The template constructor makes Biofuel; after this it must make iron plates."""
+    lib = _lib()
+    reg = load_registry()
+    before = lib.instantiate("Build_ConstructorMk1_C", 20, IDENTITY)
+    assert _filter_items(before, before[0][1], "mInputInventory") == ("Desc_GenericBiomass_C",)
+    assert _filter_items(before, before[0][1], "mOutputInventory")[0] == "Desc_Biofuel_C"
+
+    after = apply_recipe(before, IRON_PLATE, reg)
+    recipe = find(after[0][1].properties, "mCurrentRecipe")
+    assert isinstance(recipe, Object) and recipe.ref.path == IRON_PLATE
+    assert _filter_items(after, after[0][1], "mInputInventory") == ("Desc_IronIngot_C",)
+    assert _filter_items(after, after[0][1], "mOutputInventory")[0] == "Desc_IronPlate_C"
+
+
+def test_apply_recipe_leaves_no_trace_of_the_templates_own_recipe() -> None:
+    """No property anywhere in the emitted objects may still name the old items."""
+    lib = _lib()
+    after = apply_recipe(
+        lib.instantiate("Build_ConstructorMk1_C", 21, IDENTITY), IRON_PLATE, load_registry()
+    )
+    stale = [
+        (h.name, p.tag.name, ref)
+        for h, d in after
+        for p in d.properties
+        for ref in _reference_names(p.value)
+        if "Biomass" in ref or "Biofuel" in ref
+    ]
+    assert stale == [], stale
+
+
+def test_apply_recipe_keeps_the_machines_own_slot_count() -> None:
+    """Slots belong to the machine; only the entries the recipe names are rewritten."""
+    lib = _lib()
+    before = lib.instantiate("Build_ConstructorMk1_C", 22, IDENTITY)
+    after = apply_recipe(before, IRON_PLATE, load_registry())
+    for name in ("mInputInventory", "mOutputInventory"):
+        assert len(_filter_items(after, after[0][1], name)) == len(
+            _filter_items(before, before[0][1], name)
+        )
+        assert _slot_sizes(after, after[0][1], name) == _slot_sizes(before, before[0][1], name)
+    # The spare output slot keeps the wildcard the game leaves in it.
+    assert _filter_items(after, after[0][1], "mOutputInventory")[1] == "FGItemDescriptor"
+
+
+def test_apply_recipe_refuses_a_recipe_the_machine_cannot_run() -> None:
+    lib = _lib()
+    ctor = lib.instantiate("Build_ConstructorMk1_C", 23, IDENTITY)
+    with pytest.raises(ValueError, match="does not produce"):
+        apply_recipe(
+            ctor,
+            "/Game/FactoryGame/Recipes/Smelter/Recipe_IngotIron.Recipe_IngotIron_C",
+            load_registry(),
+        )
+    with pytest.raises(ValueError, match="no recipe"):
+        apply_recipe(
+            ctor,
+            "/Game/FactoryGame/Recipes/Recipe_NoSuchThing.Recipe_NoSuchThing_C",
+            load_registry(),
+        )
+
+
+def test_the_corpus_fills_inventory_filters_from_the_recipe() -> None:
+    """The rule ``apply_recipe`` implements, measured on every fixture manufacturer.
+
+    Ingredients fill the input inventory's leading slots in recipe order and
+    products the output inventory's; whatever slots the machine has left over
+    hold the ``FGItemDescriptor`` wildcard. 160 of 160 agree.
+    """
+    reg = load_registry()
+    checked = 0
+    for path in fixture_paths():
+        bp = read_sbp_file(path)
+        if bp.header.save_version < TEMPLATE_MIN_SAVE_VERSION:
+            continue
+        objects = bp.objects
+        for h, d in objects:
+            if h.kind != ACTOR:
+                continue
+            value = find(d.properties, "mCurrentRecipe")
+            if not isinstance(value, Object) or value.ref.is_null:
+                continue
+            recipe = reg.recipes.get(value.ref.name)
+            if recipe is None or find(d.properties, "mInputInventory") is None:
+                continue
+            ingredients = tuple(item for item, _ in recipe.ingredients)
+            products = tuple(item for item, _ in recipe.products)
+            got_in = _filter_items(objects, d, "mInputInventory")
+            got_out = _filter_items(objects, d, "mOutputInventory")
+            assert got_in[: len(ingredients)] == ingredients, (path.stem, h.name)
+            assert got_out[: len(products)] == products, (path.stem, h.name)
+            assert set(got_out[len(products) :]) <= {"FGItemDescriptor"}, (path.stem, h.name)
+            checked += 1
+    assert checked > 100, checked

@@ -11,7 +11,11 @@ fixture corpus and :meth:`TemplateLibrary.instantiate` stamps out copies of it.
 A copy keeps everything but the links back into the blueprint it came from:
 those name objects the new file does not contain, so every reference into the
 source level is rewritten (when it points inside the copied actor) or dropped
-(when it points anywhere else), and splines start empty.
+(when it points anywhere else), and splines start empty. "Every reference" means
+every one the property tree exposes -- object values, array elements and struct
+fields. A ``MapProperty`` or ``SetProperty`` value is carried as raw bytes by
+:mod:`flab2bp.sfy.properties`, so a reference inside one would be invisible
+here; no object in the fixture corpus has either.
 
 Everything authored here is in the modern (save version 58 and up) tag format,
 because that is the family :data:`TEMPLATE_MIN_SAVE_VERSION` admits as a
@@ -56,6 +60,7 @@ __all__ = [
     "Template",
     "TemplateError",
     "TemplateLibrary",
+    "apply_recipe",
     "assemble",
     "connect",
     "set_recipe",
@@ -145,6 +150,7 @@ CONNECTED_COMPONENT = "mConnectedComponent"
 SPLINE_DATA = "mSplineData"
 BUILT_WITH_RECIPE = "mBuiltWithRecipe"
 CURRENT_RECIPE = "mCurrentRecipe"
+ALLOWED_ITEMS = "mAllowedItemDescriptors"
 
 _CONNECTED_COMPONENT_TAG = Tag(CONNECTED_COMPONENT, "ObjectProperty", 0).as_modern()
 
@@ -284,8 +290,84 @@ def set_spline(belt: ObjectData, points: Sequence[tuple[Vector, Vector, Vector]]
 
 
 def set_recipe(machine: ObjectData, recipe_class_path: str) -> ObjectData:
-    """Point a manufacturer's ``mCurrentRecipe`` at a recipe asset."""
+    """Point a manufacturer's ``mCurrentRecipe`` at a recipe asset.
+
+    This is half of changing a machine's recipe: the inventory filters live on
+    the machine's inventory *components*, so use :func:`apply_recipe` over a
+    whole instantiated actor unless you are certain the filters already agree.
+    """
     return _set_property(machine, CURRENT_RECIPE, Object(ObjectRef("", recipe_class_path)))
+
+
+def apply_recipe(
+    objects: Sequence[tuple[ObjectHeader, ObjectData]],
+    recipe_class_path: str,
+    registry: Registry,
+) -> tuple[tuple[ObjectHeader, ObjectData], ...]:
+    """Run ``recipe_class_path`` on an instantiated manufacturer.
+
+    A machine's recipe is stated in three places, not one: ``mCurrentRecipe`` on
+    the actor, and the ``mAllowedItemDescriptors`` filter on each of its input
+    and output inventory components. Copying a template and setting only the
+    first leaves a constructor that says it makes iron plates while its
+    inventories still only accept what the template made.
+
+    The corpus says what the filters hold, over 160 manufacturers at save
+    version 58 and up: **the input filter is the recipe's ingredients, in recipe
+    order**, and **the output filter is its products**, in recipe order, padded
+    out with the ``FGItemDescriptor`` wildcard the game leaves in the machine's
+    spare output slots. How many slots there are belongs to the machine, not to
+    the recipe -- an oil refinery keeps a slot a solid recipe does not fill --
+    so the slots and their parallel ``mArbitrarySlotSizes`` are left exactly as
+    the template has them and only the entries the recipe names are rewritten.
+    """
+    if not objects:
+        raise TemplateError("apply_recipe needs the actor and its components")
+    actor_header, actor_data = objects[0]
+    recipe = registry.recipes.get(recipe_class_path.rsplit(".", 1)[-1])
+    if recipe is None:
+        raise TemplateError(f"the registry has no recipe {recipe_class_path}")
+    if recipe.producers and actor_header.class_name not in recipe.producers:
+        raise TemplateError(
+            f"{actor_header.class_name} does not produce {recipe.class_name}; "
+            f"the registry says {', '.join(recipe.producers)} do"
+        )
+    actor_data = set_recipe(actor_data, recipe_class_path)
+    wanted = {
+        _inventory_path(actor_header, actor_data, "mInputInventory"): [
+            item for item, _ in recipe.ingredients
+        ],
+        _inventory_path(actor_header, actor_data, "mOutputInventory"): [
+            item for item, _ in recipe.products
+        ],
+    }
+    out = [(actor_header, actor_data)]
+    for header, data in objects[1:]:
+        items = wanted.get(header.path)
+        out.append((header, data if items is None else _set_filter(header, data, items)))
+    return tuple(out)
+
+
+def _inventory_path(header: ObjectHeader, data: ObjectData, name: str) -> str:
+    value = find(data.properties, name)
+    if not isinstance(value, Object) or value.ref.is_null:
+        raise TemplateError(f"{header.path} has no {name} to filter")
+    return value.ref.path
+
+
+def _set_filter(header: ObjectHeader, data: ObjectData, items: Sequence[str]) -> ObjectData:
+    """Rewrite the leading ``mAllowedItemDescriptors`` entries, keeping the slots."""
+    current = find(data.properties, ALLOWED_ITEMS)
+    if not isinstance(current, Array):
+        raise TemplateError(f"{header.path} has no {ALLOWED_ITEMS} array")
+    if len(items) > len(current.items):
+        raise TemplateError(
+            f"{header.path} has {len(current.items)} inventory slots, the recipe needs {len(items)}"
+        )
+    filled: tuple[Value, ...] = tuple(Object(_item_ref(item)) for item in items)
+    return _set_property(
+        data, ALLOWED_ITEMS, replace(current, items=filled + current.items[len(items) :])
+    )
 
 
 def assemble(
