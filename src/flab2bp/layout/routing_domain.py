@@ -9051,6 +9051,11 @@ class _RouteAllRun:
         Called AFTER the unstake that builds each run's environment -- the
         cluster release for run 1, the whole-pack sweep for run 2 -- so what
         the bench snapshots is the grid the search will actually see.
+
+        ``run_index`` is the round number (1 or 2), not the ``_RouteAllRun``
+        object -- that object is ``self`` here, so the parameter that used to
+        be named ``run`` on the pre-lift closure was renamed to avoid
+        shadowing it.
         """
         hook = last_mile.CAPTURE
         if hook is None:
