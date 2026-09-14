@@ -45,12 +45,14 @@ def spline_points(d: ObjectData) -> tuple[tuple[Vector, Vector, Vector], ...]:
     The locations are in the spline actor's own frame, not the world's: put them
     through the actor's transform before comparing them with anything else.
 
-    A belt's two connection components name the two ends of this list, measured
-    over every belt-to-machine link in the fixture corpus (1119 of 1119 agree):
-    ``ConveyorAny0`` is the **first** point and ``ConveyorAny1`` is the **last**.
-    ``tests/sfy/test_port_crosscheck.py`` holds that mapping to the corpus, and
-    ``Buildables/FGBuildableConveyorBase.h:380`` states which end is which:
-    ``mConnection0`` is the conveyor's input and ``mConnection1`` its output.
+    Which of a conveyor's two connections sits at which end of this list is not
+    established here, and no caller may assume it. What *is* read out of the
+    game is the item-flow order of the two connections --
+    ``Buildables/FGBuildableConveyorBase.h:380`` and
+    ``AFGBuildableConveyorBase::Factory_Tick``, which grabs through
+    ``mConnection0`` -- and ``registry.json`` carries it as each conveyor mark's
+    ``flow``. Tying either end to a spline index is a separate reading of the
+    game, not something to take from what a blueprint happens to contain.
 
     Empty for an object that has no spline, which is every object but a
     conveyor belt, a conveyor lift and a pipe, and empty as well for a spline
