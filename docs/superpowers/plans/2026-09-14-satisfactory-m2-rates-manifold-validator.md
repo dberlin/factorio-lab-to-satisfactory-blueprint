@@ -32,6 +32,7 @@ Controller rulings that shape M2 (recorded here so no implementer re-decides the
 - **R7. Machine pitch keeps one grid cell between hard clearance boxes.** `buildable.clearance` is `partial`; touching boxes are not assumed legal. This is stricter than the game may be and is stated as ours.
 - **R8. Curvature is enforced everywhere.** `belt.curvature` refuses only in the curve build mode; this project applies the same bound to every belt it authors, as its own stricter rule, because a blueprint carries no build mode.
 - **R9. Power in M2 is poles and wires where the wire can be authored from game data**; if the wire's custom serialization cannot be decoded from the binary in Task 9, poles are placed without wires, the report says so, and M4 completes it.
+- **R10 (added during execution, after Task 8). M2 is single-level.** Spec section 9.1's "levels are a 1D packing of rows" needs vertical transport between rows on different levels, which is a lift (M3). A manifold row band is about 1500 to 2100 cm deep with the registry's boxes and the minimum belt length, so two rows overflow Mk1 and Mk2 and the five-row reinforced-plate chain refuses every mark; M2's checkpoint 2 therefore uses Mk3 and the two-row iron-plate chain, and internal levels arrive with lifts in M3.
 
 ---
 
