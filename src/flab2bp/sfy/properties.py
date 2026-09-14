@@ -551,6 +551,7 @@ TYPE_PACKAGES: dict[str, str] = {
     "Vector": "/Script/CoreUObject",
     "Vector2D": "/Script/CoreUObject",
     "SplinePointData": "/Script/Engine",
+    "TopLevelAssetPath": "/Script/CoreUObject",
 }
 """Packages for the engine type names the fixtures use. Everything else the game
 serialises comes from ``/Script/FactoryGame``, which :func:`modern_type_name`
