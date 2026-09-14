@@ -117,9 +117,9 @@ class TestMergeFrontierTrace:
             paths,
             (0, 1),
             lambda _x, _y, _level: True,
-            provenance=provenance,
-            source_choices=choices,
-            trace=trace,
+            routing_domain._MergeFrontierRequest(
+                provenance=provenance, source_choices=choices, trace=trace
+            ),
         )
 
         # Replaying the trace with nothing widened reproduces the walk exactly.
@@ -140,7 +140,11 @@ class TestMergeFrontierTrace:
         trace: list[tuple[Cell, Cell, tuple[Cell, ...]]] = []
 
         routing_domain._merge_frontier(
-            canvas, paths, (0, 1), lambda x, _y, _level: x != 0, trace=trace
+            canvas,
+            paths,
+            (0, 1),
+            lambda x, _y, _level: x != 0,
+            routing_domain._MergeFrontierRequest(trace=trace),
         )
 
         assert [asked for asked, _tap, _free in trace] == [B]
