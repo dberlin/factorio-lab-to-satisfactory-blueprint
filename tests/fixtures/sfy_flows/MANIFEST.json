@@ -1,0 +1,55 @@
+{
+ "note": "FactorioLab Satisfactory flow exports, committed byte for byte as FactorioLab wrote them.  Captured through a headless browser with flab2bp.lab.capture.capture_flow_csv; never hand-written.  'exported_url' is line 1 of the CSV, which is the URL flab2bp.lab.flow.verify_provenance compares against.",
+ "generated": "2026-09-14",
+ "flows": [
+  {
+   "file": "iron-plate-60.csv",
+   "requested_url": "https://factoriolab.github.io/sfy/list?v=11&o=iron-plate*60",
+   "exported_url": "https://factoriolab.github.io/sfy/list?o=iron-plate*60&v=11",
+   "captured": "2026-09-14",
+   "note": "whole machine counts at clock 1"
+  },
+  {
+   "file": "reinforced-iron-plate-10.csv",
+   "requested_url": "https://factoriolab.github.io/sfy/list?v=11&o=reinforced-iron-plate*10",
+   "exported_url": "https://factoriolab.github.io/sfy/list?o=reinforced-iron-plate*10&v=11",
+   "captured": "2026-09-14",
+   "note": "a five-row chain, all counts whole"
+  },
+  {
+   "file": "iron-plate-50.csv",
+   "requested_url": "https://factoriolab.github.io/sfy/list?v=11&o=iron-plate*50",
+   "exported_url": "https://factoriolab.github.io/sfy/list?o=iron-plate*50&v=11",
+   "captured": "2026-09-14",
+   "note": "fractional machine counts (2.5, 2.5, 1.25)"
+  },
+  {
+   "file": "plastic-10.csv",
+   "requested_url": "https://factoriolab.github.io/sfy/list?v=11&o=plastic*10",
+   "exported_url": "https://factoriolab.github.io/sfy/list?o=plastic*10&v=11",
+   "captured": "2026-09-14",
+   "note": "a fluid input and a fluid surplus"
+  },
+  {
+   "file": "iron-plate-60-overclock-250.csv",
+   "requested_url": "https://factoriolab.github.io/sfy/list?v=11&o=iron-plate*60&moc=250",
+   "exported_url": "https://factoriolab.github.io/sfy/list?o=iron-plate*60&moc=250&v=11",
+   "captured": "2026-09-14",
+   "note": "build-wide overclock 250%"
+  },
+  {
+   "file": "iron-plate-60-somersloop.csv",
+   "requested_url": "https://factoriolab.github.io/sfy/list?v=11&o=iron-plate*60&e=1*somersloop&m=constructor-id*0",
+   "exported_url": "https://factoriolab.github.io/sfy/list?o=iron-plate*60&e=1*somersloop&m=constructor-id*0&v=11",
+   "captured": "2026-09-14",
+   "note": "one somersloop in every constructor"
+  },
+  {
+   "file": "iron-plate-60-belt-mk3.csv",
+   "requested_url": "https://factoriolab.github.io/sfy/list?v=11&o=iron-plate*60&ibe=conveyor-belt-mk3",
+   "exported_url": "https://factoriolab.github.io/sfy/list?o=iron-plate*60&ibe=conveyor-belt-mk3&v=11",
+   "captured": "2026-09-14",
+   "note": "an explicit belt floor above the dataset default"
+  }
+ ]
+}
