@@ -9,8 +9,27 @@ Three modules carry it:
 | `model.py` | `SfyPlacement`: every object, its class, its id and where it stands |
 | `emit.py` | `emit` writes a placement into a `.sbp`, `decode` reads one back out |
 | `validate.py` | the neutral judge: is this placement one the build gun would accept? |
+| `manifold.py` | one row: a line of machines, its splitter chains and its merger chain |
+| `corridors.py` | which column a trunk takes, and what a corridor path is made of |
+| `strategy.py` | `ManifoldRows`: rows, corridors and a floor, or a named refusal |
 
 Distances are centimetres and the axes are Unreal's, left-handed, `+Z` up.
+
+## Two things the model states that the file does not
+
+* **`links` is held in a canonical order.** A blueprint records a connection on
+  both actors and records no *sequence*, so the order `decode` hands back is the
+  order the connection components stand in the file, which no author chooses.
+  `SfyPlacement` sorts `links` at construction; without that,
+  `decode(emit(p)) == p` is false for every build with more than one belt, over a
+  difference the file does not hold.
+* **A belt end may be flagged as a boundary end.** `BeltRun.boundary_start` and
+  `boundary_end` say that an end stands on the designer wall and is deliberately
+  unwired, because what it meets is outside the blueprint. `ports.connected_once`
+  wants *zero* links on a flagged end rather than one, and `flow.boundary` holds
+  it to the wall it claims. Both flags are outside equality, like the two rate
+  fields: no property in the file carries them, so `decode` hands a belt back
+  unflagged.
 
 ## What the validator checks, and which rule each check names
 
@@ -46,7 +65,7 @@ fails the build if a check drifts from that.
    library and build version the `roundtrip` check writes a file with — which is
    format, not legality.
 
-### The sixteen checks
+### The seventeen checks
 
 `effect` is the effect of the rule the check names, and is blank for a check of
 this project's own — a `project` check enforces no rule and so has no effect to
@@ -66,6 +85,7 @@ report. `needs spec` marks a check that cannot run without an `SfyBuildSpec`.
 | `ports.position` | `project` | — | no | a belt's ends sit within 1 cm of the ports they are wired to and leave within 0.01 rad of the port's facing |
 | `flow.capacity` | `project` | — | **yes** | a belt carries no more than its mark does, and every machine input is fed at the group's per-machine rate. The tier speed comes from the lab dataset through `spec.belt_tiers`, which is why a spec is needed |
 | `flow.balance` | `project` | — | **yes** | per item, rows produced + belted in ≥ rows consumed + sent out |
+| `flow.boundary` | `project` | — | no | every end flagged `boundary_start` stands on the `-Y` wall and every `boundary_end` on the `+Y`, within the same 1 cm `ports.position` allows, and the items at the two walls are the spec's `external_inputs` and its `outputs` plus `surplus_outputs`. A placement with no flagged end is a *fragment* and the check stands aside on it |
 | `spec.machines` | `project` | — | **yes** | classes, counts, recipes and clocks match the spec |
 | `slab.under_every_foot` | `project` | — | no | every machine's hard footprint is covered by foundation tops at its own `z` |
 | `power.wires` | `project` | — | no | every wire inside `wire_max_cm`, every connection inside `max_connections`, every machine on a pole |
@@ -76,7 +96,8 @@ says what it could not cover: `geom.hard_clearance`, because
 `buildable.clearance` is `partial`, and `belt.capsule`, because `belt.clearance`
 leaves the `FFGClearanceData` flag bytes and
 `GetNextDistanceExceedingTolerance` unread. They still run and their findings
-still stand. `power.wires` joins them on a placement with no wires.
+still stand. `power.wires` joins them on a placement with no wires, and
+`flow.boundary` on one with no boundary end.
 
 ### `ports.direction` names no rule, and why
 
@@ -198,6 +219,74 @@ never a bound — the bounds are all in `registry.json`'s `limits`:
 * **`power.wires` stands aside on a placement with no wires**, because `emit`
   refuses to write one until Task 9 decodes the power-line trailer. It says so
   in an `INFO` finding rather than reporting a clean pass.
+
+## What a build looks like: rows, corridors and bridges
+
+`ManifoldRows` (`strategy.py`) is the shape every Satisfactory build this project
+authors takes. It is a shape a player would recognise, and every distance in it
+is read out of the registry or the rules.
+
+**A row** (`manifold.py`) is one machine group: `count` machines of one class in
+a line along `X`, one splitter chain per input item feeding them and one merger
+chain draining them. It is built about its first machine and moved into place.
+
+**The rows stack along `Y`** in topological order of the item graph, so a row
+that makes what another eats stands below it. Every other row is *flipped*, so
+its chain input end faces the same corridor the row before it output into.
+
+**A corridor** runs down each side of the rows: columns of one belt width at
+fixed `X`, a column pitch apart. Every trunk — an external input, a row-to-row
+hand-off, an output — runs up one column and reaches the rows by a *transverse*
+piece across the corridor at one `Y`.
+
+**A bridge** is what a transverse does when the column it has to cross is
+occupied: it climbs one crossing gap before the crossing, crosses at that height,
+and comes down after the last crossed column — inside its own column for a turn
+out of a row, and across the corridor for a turn into one.
+
+**Mergers and splitters** stand in the corridor where a trunk has more than one
+source or more than one sink. Each stands at the `Y` of the row it joins, so the
+belt between the attachment and the row is one straight transverse. The two walls
+are never branches: the entry is below every row and the exit above them, so they
+are always the trunk's own two ends.
+
+### The numbers, and which of them are ours
+
+| quantity | where it comes from | today |
+| --- | --- | --- |
+| column pitch | two `belt.clearance` half-widths and one hologram grid step | 300 cm |
+| turn radius | `grid_ceil(2 × belt_bend_radius_cm)`; `belt.curvature`'s floor is `199 × 1.5 − 15` | 400 cm |
+| bridge height | belt height + the row builder's crossing gap (**ours**, twice a belt box's height) | 300 cm |
+| attachment pitch | `grid_ceil(2 × through-port offset + belt_min_length_cm)`. The brief asked for one grid step; the game's own port offsets make that a belt of −100 cm | 400 cm |
+| climb run | `grid_ceil(rise / tan(belt_max_incline_deg))` | 200 cm per 100 |
+| flat lead out of a port | `grid_ceil(belt_min_length_cm)`, **ours**, because `ports.position` holds a belt to its port's own (horizontal) facing | 200 cm |
+| room at each wall | turn radius + one grid step, less what the row's band already covers. **Ours**: a belt's clearance box is square to the belt, so a box on a turning piece that began ON the wall reaches 4.8 cm outside it and `geom.bounds` refuses the build | 300 cm |
+| gap between two rows | whatever the two turns of a trunk still want after the rows' own overhangs, never less than a grid step. **Ours** | 400 cm |
+| floor | a full field of the shipped foundation at half its own box's thickness | 8 m tiles at z 50 |
+
+### The refusals
+
+`ManifoldRows.lay_out` either hands back a placement the validator passes or
+raises `NoValidLayout` with one of these, and nothing else:
+
+`rows exceed the designer depth` · `rows exceed the designer width` ·
+`corridor needs a bridge that does not fit` · `row too deep` ·
+`run exceeds the belt ceiling` · `fluids are M4` ·
+`corridor assignment exceeded the budget` ·
+`a row makes something the spec never sends out` ·
+`a row is fed from the corridor on the other side of the build` ·
+`nothing in the build supplies a row's input`
+
+The last three are not in the brief's list; they are shapes of spec this build
+form cannot realise, and each is a named cause rather than a stray message. The
+module refuses to raise anything else: `_refuse` checks the string against
+`REFUSALS` and raises `ValueError` on a cause nobody declared.
+
+**What fits.** Two rows and the room their trunks need to turn between them is
+42 m of band. The mk1 designer is 32 m deep and the mk2 is 40, so a two-row build
+is an mk3 one; `iron-plate-60` refuses both smaller marks on depth.
+`reinforced-iron-plate-10` is five rows and 110 m of band, which no designer
+holds, and it refuses for every mark the game ships.
 
 ### The broad phase
 
