@@ -6489,9 +6489,6 @@ def _route_all(
         )
     )
 
-    def connector_is_powered(building: PlacedBuilding) -> bool:
-        return power_discs is None or _buildings_are_powered((building,), power_discs)
-
     history: dict[tuple[int, int, int], float] = defaultdict(float)
     primitives = RoutePrimitives(canvas.belt_rules)
     #: The live routing -- net index to path -- and the same cells the other way
@@ -6534,6 +6531,11 @@ def _route_all(
     run.owner = owner
     run.power_discs = power_discs
     run.primitives = primitives
+    #: The vocabulary, now bound methods. Each alias keeps its call sites
+    #: byte-identical -- and `connector_is_powered` is passed as a VALUE, not
+    #: called, so the bound method has to reach that argument the same way.
+    #: Task 7 deletes the aliases.
+    connector_is_powered = run._connector_is_powered
     fewest_failed = len(nets) + 1
     stale = 0
     #: The round `best_paths` was captured from, or ``-1`` before any round
@@ -6563,81 +6565,15 @@ def _route_all(
     proposals: dict[int, _RouteProposal] = {}
     best_attempt: _CommittedAttempt | None = None
 
-    def _net_id(index: int) -> NetId:
-        net_id = nets[index].net_id
-        if net_id is None:
-            raise ValueError("detailed routing requires stable net IDs")
-        return net_id
-
-    def _pass_budget_cause() -> BudgetCause:
-        """Which bound stopped the pass, for the nets it never got to search."""
-        if _expired(run.deadline):
-            return BudgetCause.DEADLINE
-        # `left` is ``int | None`` on the ledger type, where ``None`` means
-        # unbounded. A routing pass is never unbounded (see `_route_all`'s own
-        # assertion), so narrow it here rather than reading a default.
-        left = budget.left
-        assert left is not None
-        if left <= 0:
-            return BudgetCause.ALLOWANCE
-        return BudgetCause.BOUNDED
-
-    def _endpoint_cells(net: _Net) -> tuple[Cell | None, Cell]:
-        source = None if net.src is None else (net.src.x, net.src.y, net.src.z)
-        return source, (net.dst.x, net.dst.y, net.dst.z)
-
-    def role_rows() -> Iterator[tuple[NetId, str, str, Cell, str, tuple[int, _Net]]]:
-        for index, net in enumerate(nets):
-            net_id = _net_id(index)
-            payload = (index, net)
-            if net.src is not None:
-                yield (net_id, net.item, "", (net.src.x, net.src.y, net.src.z), "src", payload)
-            yield net_id, net.item, "", (net.dst.x, net.dst.y, net.dst.z), "dst", payload
-
+    _net_id = run._net_id
+    _pass_budget_cause = run._pass_budget_cause
+    _endpoint_cells = run._endpoint_cells
+    role_rows = run._role_rows
     net_index = Nets.of(role_rows())
     run.net_index = net_index
-
-    def _blocking_endpoint_cells(
-        blocking_nets: tuple[NetId, ...],
-    ) -> tuple[tuple[Cell | None, Cell | None], ...]:
-        return tuple(
-            _endpoint_cells(record[1])
-            if (record := net_index.by_id(blocker)) is not None
-            else (None, None)
-            for blocker in blocking_nets
-        )
-
-    def _blocking_nets(
-        wall: Sequence[Cell],
-        source_blockers: Sequence[NetId] = (),
-    ) -> tuple[NetId, ...]:
-        # Sort transient integer indices, which have a total order. NetId's
-        # optional strip fields deliberately do not compare across None/int.
-        blocker_indices = sorted(
-            {blocker for cell in wall if (blocker := owner.get(cell)) is not None}
-        )
-        return tuple(
-            dict.fromkeys((*(_net_id(blocker) for blocker in blocker_indices), *source_blockers))
-        )
-
-    def _failure(
-        index: int,
-        search: _PathSearchResult,
-        blocking_nets: tuple[NetId, ...],
-    ) -> NetFailure:
-        source, destination = _endpoint_cells(nets[index])
-        kind = search.kind or RouteFailureKind.DYNAMIC_ACCESS
-        return NetFailure(
-            net_id=_net_id(index),
-            kind=kind,
-            wall=search.wall,
-            blocking_nets=blocking_nets,
-            work=search.work,
-            source=source,
-            destination=destination,
-            blocking_endpoints=_blocking_endpoint_cells(blocking_nets),
-            budget_cause=(search.cause if kind is RouteFailureKind.BUDGET else BudgetCause.UNKNOWN),
-        )
+    _blocking_endpoint_cells = run._blocking_endpoint_cells
+    _blocking_nets = run._blocking_nets
+    _failure = run._failure
 
     def _budget_result(
         current_paths: Mapping[int, tuple[Cell, ...]] | None = None,
@@ -6703,30 +6639,7 @@ def _route_all(
             last_mile=_last_mile_report(),
         )
 
-    def _selection_key(
-        selected_paths: Mapping[int, tuple[Cell, ...]],
-        selected_source_hints: Mapping[int, Cell],
-        selected_sink_hints: Mapping[int, Cell],
-        selected_taps: Mapping[int, Cell],
-    ) -> tuple[object, ...]:
-        # Paths are immutable; retain their order and the actual physical
-        # witnesses, not a mutable mapping or just the projected stack bodies.
-        return (
-            tuple(
-                (
-                    index,
-                    path,
-                    selected_source_hints.get(index),
-                    selected_sink_hints.get(index),
-                    selected_taps.get(index),
-                    primitives.on_path(path),
-                )
-                for index, path in selected_paths.items()
-            ),
-            frozenset(canvas.guard),
-            primitives.rules,
-            canvas.belt_rules,
-        )
+    _selection_key = run._selection_key
 
     def _commit_selection(
         selected_paths: Mapping[int, tuple[Cell, ...]],
@@ -9024,23 +8937,7 @@ def _route_all(
     }
     run.last_mile_counts = last_mile_counts
     proved_stranded: set[int] = set()
-
-    def _last_mile_report() -> LastMileReport:
-        return LastMileReport(
-            invocations=last_mile_counts["invocations"],
-            solved=last_mile_counts["solved"],
-            proved=last_mile_counts["proved"],
-            bounded=last_mile_counts["bounded"],
-            commit_rejected=last_mile_counts["commit_rejected"],
-            restore_mismatch=last_mile_counts["restore_mismatch"],
-            relation_skipped_siblings=last_mile_counts["relation_skipped_siblings"],
-            same_source_dropped=last_mile_counts["same_source_dropped"],
-            nodes=last_mile_counts["nodes"],
-            work=last_mile_counts["work"],
-            seconds=run.last_mile_seconds,
-            relation_strips=run.relation_strips,
-            relation_evidence=run.relation_evidence,
-        )
+    _last_mile_report = run._last_mile_report
 
     def _restrict_proposal(
         index: int,

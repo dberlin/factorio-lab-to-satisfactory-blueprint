@@ -280,6 +280,29 @@ def test_the_run_object_holds_no_copy_of_the_ledger() -> None:
     assert rebinds == [], f"the run object's ledger is never rebound: {rebinds}"
 
 
+def test_the_vocabulary_is_methods_not_closures() -> None:
+    lifted = {
+        "_net_id",
+        "_pass_budget_cause",
+        "_endpoint_cells",
+        "_role_rows",
+        "_blocking_endpoint_cells",
+        "_blocking_nets",
+        "_failure",
+        "_selection_key",
+        "_last_mile_report",
+        "_connector_is_powered",
+    }
+    assert lifted <= set(vars(domain._RouteAllRun)), sorted(lifted - set(vars(domain._RouteAllRun)))
+    root = _route_all_node()
+    still_closures = {
+        node.name
+        for node in ast.walk(root)
+        if isinstance(node, ast.FunctionDef) and node is not root
+    }
+    assert lifted & still_closures == set(), sorted(lifted & still_closures)
+
+
 def test_the_net_index_field_is_unset_before_the_prologue_fills_it() -> None:
     """A late-bound field must raise, not serve an empty index."""
     run = domain._RouteAllRun(budget=WorkBudget(left=10), deadline=None)
