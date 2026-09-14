@@ -35,7 +35,8 @@
           "type": "float",
           "value": 100.0,
           "set_in": "AFGBuildableHologram::AFGBuildableHologram",
-          "evidence": "mov dword ptr [rbx+4ECh],42C80000h @ 0xa5f2b0"
+          "evidence": "mov dword ptr [rbx+4ECh],42C80000h @ 0xa5f2b0",
+          "size_source": "pdata"
         }
       }
     },
@@ -66,7 +67,8 @@
           "type": "float",
           "value": 10000.0,
           "set_in": "AFGBuildableWire::AFGBuildableWire",
-          "evidence": "mov dword ptr [rbx+610h],461C4000h @ 0x55bf1e"
+          "evidence": "mov dword ptr [rbx+610h],461C4000h @ 0x55bf1e",
+          "size_source": "pdata"
         }
       }
     },
@@ -107,21 +109,24 @@
           "type": "float",
           "value": 199.0,
           "set_in": "AFGConveyorBeltHologram::AFGConveyorBeltHologram",
-          "evidence": "mov dword ptr [rbx+848h],43470000h @ 0xa5f940"
+          "evidence": "mov dword ptr [rbx+848h],43470000h @ 0xa5f940",
+          "size_source": "pdata"
         },
         "mMaxIncline": {
           "offset": 2128,
           "type": "float",
           "value": 35.0,
           "set_in": "AFGConveyorBeltHologram::AFGConveyorBeltHologram",
-          "evidence": "mov dword ptr [rbx+850h],420C0000h @ 0xa5f954"
+          "evidence": "mov dword ptr [rbx+850h],420C0000h @ 0xa5f954",
+          "size_source": "pdata"
         },
         "mMaxSplineLength": {
           "offset": 2124,
           "type": "float",
           "value": 5600.1,
           "set_in": "AFGConveyorBeltHologram::AFGConveyorBeltHologram",
-          "evidence": "mov dword ptr [rbx+84Ch],45AF00CDh @ 0x25a0af"
+          "evidence": "mov dword ptr [rbx+84Ch],45AF00CDh @ 0x25a0af",
+          "size_source": "pdata"
         }
       }
     },
@@ -161,7 +166,8 @@
             {
               "set_in": "AFGConveyorLiftHologram::AFGConveyorLiftHologram",
               "value": 0.0,
-              "evidence": "xor eax,eax @ 0xa5f9fb ; mov qword ptr [rbx+8E8h],rax @ 0xa5fb12"
+              "evidence": "xor eax,eax @ 0xa5f9fb ; mov qword ptr [rbx+8E8h],rax @ 0xa5fb12",
+              "size_source": "pdata"
             }
           ]
         },
@@ -174,7 +180,8 @@
             {
               "set_in": "AFGConveyorLiftHologram::AFGConveyorLiftHologram",
               "value": 0.0,
-              "evidence": "xor eax,eax @ 0xa5f9fb ; mov dword ptr [rbx+8F0h],eax @ 0xa5fb19"
+              "evidence": "xor eax,eax @ 0xa5f9fb ; mov dword ptr [rbx+8F0h],eax @ 0xa5fb19",
+              "size_source": "pdata"
             }
           ]
         },
@@ -182,12 +189,13 @@
           "offset": 2276,
           "type": "float",
           "value": null,
-          "reason": "mMinimumHeight is overwritten with a computed value by AFGConveyorLiftHologram::BeginPlay -- movss dword ptr [rbx+8E4h],xmm0 @ 0xa64f39",
+          "reason": "mMinimumHeight is overwritten with a computed value by AFGConveyorLiftHologram::BeginPlay -- movss dword ptr [rbx+8E4h],xmm0 @ 0xa64f39; AFGConveyorLiftHologram::UpdateTopTransform -- movss dword ptr [rbx+8E4h],xmm0 @ 0xaa48c2",
           "also_set_in": [
             {
               "set_in": "AFGConveyorLiftHologram::AFGConveyorLiftHologram",
               "value": 0.0,
-              "evidence": "xor eax,eax @ 0xa5f9fb ; mov qword ptr [rbx+8E0h],rax @ 0xa5fb0b"
+              "evidence": "xor eax,eax @ 0xa5f9fb ; mov qword ptr [rbx+8E0h],rax @ 0xa5fb0b",
+              "size_source": "pdata"
             }
           ]
         },
@@ -195,12 +203,13 @@
           "offset": 2284,
           "type": "float",
           "value": null,
-          "reason": "mMinimumHeightWithVerticalConnection is overwritten with a computed value by AFGConveyorLiftHologram::BeginPlay -- movss dword ptr [rbx+8ECh],xmm0 @ 0xa64f1a",
+          "reason": "mMinimumHeightWithVerticalConnection is overwritten with a computed value by AFGConveyorLiftHologram::BeginPlay -- movss dword ptr [rbx+8ECh],xmm0 @ 0xa64f1a; AFGConveyorLiftHologram::UpdateTopTransform -- movss dword ptr [rbx+8ECh],xmm1 @ 0xaa4867",
           "also_set_in": [
             {
               "set_in": "AFGConveyorLiftHologram::AFGConveyorLiftHologram",
               "value": 0.0,
-              "evidence": "xor eax,eax @ 0xa5f9fb ; mov qword ptr [rbx+8E8h],rax @ 0xa5fb12"
+              "evidence": "xor eax,eax @ 0xa5f9fb ; mov qword ptr [rbx+8E8h],rax @ 0xa5fb12",
+              "size_source": "pdata"
             }
           ]
         },
@@ -210,11 +219,13 @@
           "value": 100.0,
           "set_in": "AFGConveyorLiftHologram::BeginPlay",
           "evidence": "mov dword ptr [rbx+8E0h],42C80000h @ 0xa64f10",
+          "size_source": "pdata",
           "also_set_in": [
             {
               "set_in": "AFGConveyorLiftHologram::AFGConveyorLiftHologram",
               "value": 0.0,
-              "evidence": "xor eax,eax @ 0xa5f9fb ; mov qword ptr [rbx+8E0h],rax @ 0xa5fb0b"
+              "evidence": "xor eax,eax @ 0xa5f9fb ; mov qword ptr [rbx+8E0h],rax @ 0xa5fb0b",
+              "size_source": "pdata"
             }
           ]
         }
@@ -257,28 +268,32 @@
           "type": "float",
           "value": 199.0,
           "set_in": "AFGPipelineHologram::AFGPipelineHologram",
-          "evidence": "mov dword ptr [rbx+800h],43470000h @ 0xaac409"
+          "evidence": "mov dword ptr [rbx+800h],43470000h @ 0xaac409",
+          "size_source": "pdata"
         },
         "mBendRadius2D": {
           "offset": 2052,
           "type": "float",
           "value": 199.0,
           "set_in": "AFGPipelineHologram::AFGPipelineHologram",
-          "evidence": "mov dword ptr [rbx+804h],43470000h @ 0x3551b6"
+          "evidence": "mov dword ptr [rbx+804h],43470000h @ 0x3551b6",
+          "size_source": "pdata"
         },
         "mMaxSplineLength": {
           "offset": 2060,
           "type": "float",
           "value": 5600.1,
           "set_in": "AFGPipelineHologram::AFGPipelineHologram",
-          "evidence": "mov dword ptr [rbx+80Ch],45AF00CDh @ 0x3551ca"
+          "evidence": "mov dword ptr [rbx+80Ch],45AF00CDh @ 0x3551ca",
+          "size_source": "pdata"
         },
         "mMinBendRadius": {
           "offset": 2056,
           "type": "float",
           "value": 75.0,
           "set_in": "AFGPipelineHologram::AFGPipelineHologram",
-          "evidence": "mov dword ptr [rbx+808h],42960000h @ 0x3551c0"
+          "evidence": "mov dword ptr [rbx+808h],42960000h @ 0x3551c0",
+          "size_source": "pdata"
         }
       }
     },

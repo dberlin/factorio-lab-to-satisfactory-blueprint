@@ -1,0 +1,371 @@
+{
+  "provenance": {
+    "cue4parse": "1.2.2.0",
+    "extracted": "2026-09-14",
+    "usmap": "FactoryGame.usmap",
+    "usmap_sha256": "b0e9179d1af4663cc06e54d6cbfe2ce834f3960d50891ef28a90e936978e4b35",
+    "usmap_types": 13792,
+    "requested": 20,
+    "missing": []
+  },
+  "structs": {
+    "FactoryCustomizationColorSlot": {
+      "super": null,
+      "fields": [
+        {
+          "name": "PrimaryColor",
+          "type": "StructProperty",
+          "struct": "LinearColor"
+        },
+        {
+          "name": "SecondaryColor",
+          "type": "StructProperty",
+          "struct": "LinearColor"
+        },
+        {
+          "name": "PaintFinish",
+          "type": "ObjectProperty"
+        }
+      ]
+    },
+    "FactoryCustomizationData": {
+      "super": null,
+      "fields": [
+        {
+          "name": "SwatchDesc",
+          "type": "ObjectProperty"
+        },
+        {
+          "name": "PatternDesc",
+          "type": "ObjectProperty"
+        },
+        {
+          "name": "MaterialDesc",
+          "type": "ObjectProperty"
+        },
+        {
+          "name": "SkinDesc",
+          "type": "ObjectProperty"
+        },
+        {
+          "name": "OverrideColorData",
+          "type": "StructProperty",
+          "struct": "FactoryCustomizationColorSlot"
+        },
+        {
+          "name": "PatternRotation",
+          "type": "ByteProperty"
+        },
+        {
+          "name": "Data",
+          "type": "ArrayProperty",
+          "inner": {
+            "type": "FloatProperty"
+          }
+        },
+        {
+          "name": "ExtraData",
+          "type": "ArrayProperty",
+          "inner": {
+            "type": "FloatProperty"
+          }
+        },
+        {
+          "name": "ColorSlot",
+          "type": "ByteProperty"
+        },
+        {
+          "name": "NeedsSkinUpdate",
+          "type": "BoolProperty"
+        },
+        {
+          "name": "HasPower",
+          "type": "ByteProperty"
+        }
+      ]
+    },
+    "FeetOffset": {
+      "super": null,
+      "fields": [
+        {
+          "name": "FeetIndex",
+          "type": "ByteProperty"
+        },
+        {
+          "name": "OffsetZ",
+          "type": "FloatProperty"
+        },
+        {
+          "name": "IsValidOffset",
+          "type": "BoolProperty"
+        }
+      ]
+    },
+    "GlobalPrefabIconElementSaveData": {
+      "super": null,
+      "fields": [
+        {
+          "name": "ElementName",
+          "type": "StrProperty"
+        },
+        {
+          "name": "IconID",
+          "type": "StructProperty",
+          "struct": "PersistentGlobalIconId"
+        }
+      ]
+    },
+    "InventoryItem": {
+      "super": null,
+      "fields": [
+        {
+          "name": "ItemClass",
+          "type": "ObjectProperty"
+        },
+        {
+          "name": "ItemState",
+          "type": "StructProperty",
+          "struct": "FGDynamicStruct"
+        },
+        {
+          "name": "LegacyItemStateActor",
+          "type": "ObjectProperty"
+        }
+      ]
+    },
+    "InventoryStack": {
+      "super": null,
+      "fields": [
+        {
+          "name": "Item",
+          "type": "StructProperty",
+          "struct": "InventoryItem"
+        },
+        {
+          "name": "NumItems",
+          "type": "IntProperty"
+        }
+      ]
+    },
+    "LinearColor": {
+      "super": null,
+      "fields": [
+        {
+          "name": "R",
+          "type": "FloatProperty"
+        },
+        {
+          "name": "G",
+          "type": "FloatProperty"
+        },
+        {
+          "name": "B",
+          "type": "FloatProperty"
+        },
+        {
+          "name": "A",
+          "type": "FloatProperty"
+        }
+      ]
+    },
+    "LocalUserNetIdBundle": {
+      "super": null,
+      "fields": [
+        {
+          "name": "AssociatedAccountIdString",
+          "type": "StrProperty"
+        },
+        {
+          "name": "DisplayName",
+          "type": "StrProperty"
+        },
+        {
+          "name": "BackendName",
+          "type": "StrProperty"
+        }
+      ]
+    },
+    "PersistentGlobalIconId": {
+      "super": null,
+      "fields": [
+        {
+          "name": "IconLibrary",
+          "type": "StructProperty",
+          "struct": "TopLevelAssetPath"
+        },
+        {
+          "name": "IconID",
+          "type": "IntProperty"
+        }
+      ]
+    },
+    "PlayerInfoHandle": {
+      "super": null,
+      "fields": []
+    },
+    "PrefabIconElementSaveData": {
+      "super": null,
+      "fields": [
+        {
+          "name": "ElementName",
+          "type": "StrProperty"
+        },
+        {
+          "name": "IconID",
+          "type": "IntProperty"
+        }
+      ]
+    },
+    "PrefabTextElementSaveData": {
+      "super": null,
+      "fields": [
+        {
+          "name": "ElementName",
+          "type": "StrProperty"
+        },
+        {
+          "name": "Text",
+          "type": "StrProperty"
+        }
+      ]
+    },
+    "Quat": {
+      "super": null,
+      "fields": [
+        {
+          "name": "X",
+          "type": "DoubleProperty"
+        },
+        {
+          "name": "Y",
+          "type": "DoubleProperty"
+        },
+        {
+          "name": "Z",
+          "type": "DoubleProperty"
+        },
+        {
+          "name": "W",
+          "type": "DoubleProperty"
+        }
+      ]
+    },
+    "SplinePointData": {
+      "super": null,
+      "fields": [
+        {
+          "name": "Location",
+          "type": "StructProperty",
+          "struct": "Vector"
+        },
+        {
+          "name": "ArriveTangent",
+          "type": "StructProperty",
+          "struct": "Vector"
+        },
+        {
+          "name": "LeaveTangent",
+          "type": "StructProperty",
+          "struct": "Vector"
+        }
+      ]
+    },
+    "SplitterSortRule": {
+      "super": null,
+      "fields": [
+        {
+          "name": "ItemClass",
+          "type": "ObjectProperty"
+        },
+        {
+          "name": "OutputIndex",
+          "type": "IntProperty"
+        }
+      ]
+    },
+    "TopLevelAssetPath": {
+      "super": null,
+      "fields": [
+        {
+          "name": "PackageName",
+          "type": "NameProperty"
+        },
+        {
+          "name": "AssetName",
+          "type": "NameProperty"
+        }
+      ]
+    },
+    "Transform": {
+      "super": null,
+      "fields": [
+        {
+          "name": "Rotation",
+          "type": "StructProperty",
+          "struct": "Quat"
+        },
+        {
+          "name": "Translation",
+          "type": "StructProperty",
+          "struct": "Vector"
+        },
+        {
+          "name": "Scale3D",
+          "type": "StructProperty",
+          "struct": "Vector"
+        }
+      ]
+    },
+    "Vector": {
+      "super": null,
+      "fields": [
+        {
+          "name": "X",
+          "type": "DoubleProperty"
+        },
+        {
+          "name": "Y",
+          "type": "DoubleProperty"
+        },
+        {
+          "name": "Z",
+          "type": "DoubleProperty"
+        }
+      ]
+    },
+    "Vector2D": {
+      "super": null,
+      "fields": [
+        {
+          "name": "X",
+          "type": "DoubleProperty"
+        },
+        {
+          "name": "Y",
+          "type": "DoubleProperty"
+        }
+      ]
+    },
+    "WireInstance": {
+      "super": null,
+      "fields": [
+        {
+          "name": "WireMesh",
+          "type": "ObjectProperty"
+        },
+        {
+          "name": "Locations",
+          "type": "StructProperty",
+          "struct": "Vector",
+          "array_size": 2
+        },
+        {
+          "name": "CachedRelativeLocations",
+          "type": "StructProperty",
+          "struct": "Vector",
+          "array_size": 2
+        }
+      ]
+    }
+  }
+}

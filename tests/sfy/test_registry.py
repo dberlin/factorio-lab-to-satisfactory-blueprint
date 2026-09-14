@@ -4,6 +4,7 @@ These read ``data/registry.json`` as shipped, so they are the acceptance for the
 extractor in ``tools/sfy-extract`` and the merge in ``scripts/sfy_registry.py``.
 """
 
+import hashlib
 import json
 import sys
 from dataclasses import fields
@@ -13,12 +14,14 @@ import pytest
 
 from flab2bp.sfy import docs
 from flab2bp.sfy.registry import (
+    FLOW_SOURCES,
     LIMIT_SOURCES,
     PORT_DIRECTION_SOURCES,
-    SPREAD_KEYS,
     Limits,
+    RegistryError,
     load_registry,
 )
+from flab2bp.sfy.rules import RULE_STATUSES, load_rules
 
 # The limits that are native C++ constructor immediates: no cooked asset and no
 # header initialiser carries them, so ``tools/sfy-native`` reads them out of the
@@ -42,8 +45,6 @@ BINARY_DERIVED = ("lift_max_cm", "lift_min_cm", "lift_min_vertical_cm")
 
 # Every lift mark's Docs.json mMeshHeight, and the three heights that follow.
 MESH_HEIGHT_CM = 200.0
-
-MEASURED_JSON = Path(docs.__file__).parent / "data" / "measured.json"
 
 
 def test_registry_has_ports_for_the_core_machines():
@@ -78,11 +79,12 @@ def test_every_limit_is_filled_and_says_where_it_came_from():
 
 
 def test_no_limit_is_filled_from_the_blueprint_corpus():
-    """The corpus corroborates the registry; it is never a source for it.
+    """No limit is measured out of blueprints, because none may be.
 
-    A measured number is an envelope -- what the game was observed to accept --
-    and using one as a limit lets one old blueprint's outlier become the rule.
-    Every limit has a game-data source now, so nothing is tagged ``measured``.
+    A measured number is an envelope -- what something was once observed to
+    produce -- and using one as a limit lets an old blueprint's outlier become
+    the rule. Every limit is read from game data, so nothing is tagged
+    ``measured`` and ``measured`` is not a source a registry may carry.
     """
     assert [k for k, v in load_registry().limits_sources.items() if v == "measured"] == []
 
@@ -147,10 +149,10 @@ def test_the_lift_height_ladder_is_self_consistent():
 
 def test_the_hologram_grid_is_the_native_snap_size():
     reg = load_registry()
-    # AFGBuildableHologram's constructor stores mGridSnapSize = 100.0f. The
-    # corpus gcd said 50, which Task 11 flagged as possibly mesh offsets rather
-    # than the snap size; the binary settles it, and the corpus no longer has a
-    # say in it at all.
+    # AFGBuildableHologram's constructor stores mGridSnapSize = 100.0f, so the
+    # grid is 100. The only 50s in the game's data are three holograms'
+    # own overrides -- the two power poles and the street light -- which
+    # test_a_hologram_that_snaps_finer_carries_its_own_grid pins per buildable.
     assert reg.limits.hologram_grid_cm == 100.0
     assert reg.limits_sources["hologram_grid_cm"] == "binary"
     assert reg.limits.hologram_rotation_step_deg == 90.0
@@ -168,58 +170,135 @@ def test_a_hologram_that_snaps_finer_carries_its_own_grid():
     assert reg.buildables["Build_ConstructorMk1_C"].grid_snap_cm is None
 
 
-def test_every_measured_limit_carries_the_spread_behind_it():
-    """A measured number without its distribution is an outlier waiting to be quoted."""
+def test_every_limit_names_the_rule_that_governs_it_or_why_none_does():
     reg = load_registry()
-    assert set(reg.limits_measured) == set(json.loads(MEASURED_JSON.read_text())["limits"])
-    for key, spread in reg.limits_measured.items():
-        assert set(spread) >= SPREAD_KEYS, key
-        assert spread["min"] <= spread["p05"] <= spread["p50"] <= spread["p95"] <= spread["max"]
-        assert spread["n"] > 0
-        # Not a source: no limit is filled from here. Calling the key "source"
-        # was how the section read as one.
-        assert spread["role"] == "cross-check", key
-        assert "source" not in spread, key
+    for key in (
+        "belt_bend_radius_cm",
+        "belt_max_incline_deg",
+        "belt_max_spline_cm",
+        "lift_min_cm",
+        "lift_max_cm",
+        "hologram_grid_cm",
+    ):
+        entry = reg.provenance["limits"][key]
+        assert entry["governed_by"], key
+        assert set(entry["governed_by"]) == {"rule", "effect", "status"}, key
+    # And every one of them, not just the seven above: each is either governed
+    # by a rule or says why nothing governs it, never both and never neither.
+    for field in fields(Limits):
+        entry = reg.provenance["limits"][field.name]
+        assert bool(entry["governed_by"]) != bool(entry.get("ungoverned")), field.name
 
 
-def test_the_measured_envelope_lies_inside_the_limits_the_game_states():
-    """What players built stays inside what the game allows -- except one key.
-
-    The corpus is restricted to save version 58 and up, so it is the same game
-    the registry describes. ``belt_bend_radius_cm`` is not in here because it is
-    not a bound at all; the test below says what it is instead.
-    """
-    measured = json.loads(MEASURED_JSON.read_text())["limits"]
-    lim = load_registry().limits
-    assert measured["belt_max_incline_deg"]["max"] <= lim.belt_max_incline_deg
-    # The floor for a lift is the height it may be when it meets a vertical
-    # connection, not the ordinary minimum: that is what the third height is for.
-    assert measured["lift_min_cm"]["min"] >= lim.lift_min_vertical_cm - 1.0
-    assert measured["lift_max_cm"]["max"] <= lim.lift_max_cm
-
-
-def test_the_bend_radius_is_a_default_and_not_a_floor():
-    """The corpus bends tighter than ``mBendRadius``, and that is the point.
-
-    ``AFGConveyorBeltHologram::mBendRadius`` is the radius the hologram lays its
-    own arc on when the game auto-routes a belt, not a legality floor on a
-    spline the player guided through pole positions. The corpus settles it: 28
-    of the 370 curved belts in the current-family fixtures read under 190 cm,
-    across 11 blueprints and no pre-1.0 ones.
-
-    So this asserts the documented relation rather than the floor it is not. If
-    a future build did make it a floor -- or if the measurement changed such
-    that nothing bent tighter -- the corpus minimum would rise above the default
-    and this would fail, which is exactly when somebody should look again.
-    """
-    measured = json.loads(MEASURED_JSON.read_text())["limits"]["belt_bend_radius_cm"]
+def test_every_rule_a_limit_names_exists_and_states_the_copied_effect():
+    """A ``governed_by`` that names no rule would be a claim with nothing behind it."""
     reg = load_registry()
-    assert measured["min"] < reg.limits.belt_bend_radius_cm
-    # And the registry says so beside the number, so nobody reads 199 as a limit.
-    note = reg.provenance["limits"]["belt_bend_radius_cm"]
-    assert note["is_a_proven_minimum"] is False
-    assert note["corpus_min"] == measured["min"]
-    assert note["corpus_min_fixture"] == measured["fixture"]
+    rules = load_rules()
+    named = {
+        key: entry["governed_by"]
+        for key, entry in reg.provenance["limits"].items()
+        if entry["governed_by"]
+    }
+    assert named
+    assert {g["rule"] for g in named.values()} <= set(rules)
+    # The effect and the status beside a limit are the rule's own, copied at
+    # merge time; the merge refuses to write when either has drifted.
+    for key, governed in named.items():
+        assert governed["effect"] == rules[governed["rule"]].effect, key
+        assert governed["status"] == rules[governed["rule"]].status, key
+    assert named["belt_bend_radius_cm"]["rule"] == "belt.curvature"
+    assert "mBendRadius" in rules[named["belt_bend_radius_cm"]["rule"]].reads
+    assert "mMaxIncline" in rules[named["belt_max_incline_deg"]["rule"]].reads
+
+
+def test_what_the_game_does_with_each_governed_limit():
+    """A limit's governance says which of refuse/clamp/snap/none the rule does.
+
+    ``enforced_by`` used to claim every one of these was turned away, which the
+    rules themselves contradict: a lift's height is clamped into range, the grid
+    and the rotation step are snapped to. ``lift_step_cm`` is not here at all:
+    no instruction was seen quantising a lift's height to ``mStepHeight``, so
+    nothing governs it and it says so under ``ungoverned``.
+    """
+    governed = {
+        key: entry["governed_by"]["effect"]
+        for key, entry in load_registry().provenance["limits"].items()
+        if entry["governed_by"]
+    }
+    assert governed == {
+        "belt_max_spline_cm": "refuse",
+        "belt_bend_radius_cm": "refuse",
+        "belt_max_incline_deg": "refuse",
+        "lift_min_cm": "clamp",
+        "lift_max_cm": "clamp",
+        "lift_min_vertical_cm": "clamp",
+        "pipe_max_spline_cm": "refuse",
+        "pipe_min_bend_radius_cm": "refuse",
+        "hologram_grid_cm": "snap",
+        "hologram_rotation_step_deg": "compute",
+    }
+
+
+def test_a_limit_whose_rule_was_not_read_in_full_shows_it_without_the_rules_file():
+    """``governed_by.status`` is the rule's own, so a ``partial`` is visible here.
+
+    ``hologram_grid_cm`` is the one in the shipped registry: it is governed by
+    ``buildable.grid_snap``, which is ``partial`` -- the snap the hologram does
+    was read, and not every path through the function was. A reader who saw only
+    the ``snap`` effect would take the rule for a complete account of it.
+    """
+    rules = load_rules()
+    governed = {
+        key: entry["governed_by"]
+        for key, entry in load_registry().provenance["limits"].items()
+        if entry["governed_by"]
+    }
+    assert governed["hologram_grid_cm"]["status"] == "partial"
+    assert governed["hologram_grid_cm"]["rule"] == "buildable.grid_snap"
+    assert {g["status"] for g in governed.values()} <= set(RULE_STATUSES)
+    for key, entry in governed.items():
+        assert entry["status"] == rules[entry["rule"]].status, key
+
+
+def test_the_limits_no_rule_governs_say_why():
+    reg = load_registry()
+    ungoverned = {
+        key: entry["ungoverned"]
+        for key, entry in reg.provenance["limits"].items()
+        if not entry["governed_by"]
+    }
+    assert set(ungoverned) == {
+        "lift_step_cm",
+        "pipe_bend_radius_cm",
+        "pipe_bend_radius_2d_cm",
+        "wire_max_cm",
+    }
+    assert all(reason for reason in ungoverned.values())
+    # The lift step is still read out of the binary; what it is not is a bound
+    # the game applies. The multiple this project keeps to is its own rule.
+    assert "mStepHeight" in ungoverned["lift_step_cm"]
+    assert "never quantises" in ungoverned["lift_step_cm"]
+    assert load_registry().limits_sources["lift_step_cm"] == "binary"
+
+
+def test_nothing_in_the_registry_comes_from_the_blueprint_corpus():
+    """A corpus says what somebody once built, which is not a fact about the game.
+
+    It carries clipped geometry, hacked saves and older game versions, so it is
+    not a source, not a cross-check and not evidence -- for a limit, for a port
+    direction, or for anything else here. Neither is a port's name: what a
+    component is called is a convention, not something the game reads.
+    """
+    reg = load_registry()
+    assert "measured" not in LIMIT_SOURCES
+    assert "corpus" not in PORT_DIRECTION_SOURCES
+    assert "name" not in PORT_DIRECTION_SOURCES
+    assert set(reg.limits_sources.values()) <= set(LIMIT_SOURCES)
+    ports = [p for b in reg.buildables.values() for p in b.ports]
+    assert {p.direction_source for p in ports} <= set(PORT_DIRECTION_SOURCES)
+    assert "measured" not in reg.provenance
+    assert not hasattr(reg, "limits_measured")
+    assert not hasattr(reg, "corpus_statistics")
 
 
 def test_splitter_has_one_input_and_three_outputs():
@@ -236,13 +315,17 @@ def test_pipe_ports_carry_their_own_direction_enum():
     assert pipes == {"PipeInputFactory": "input", "PipeOutputFactory": "output"}
 
 
-def test_a_conveyor_takes_in_at_end_0_and_puts_out_at_end_1():
-    """Both ends of every belt and lift mark, pinned.
+def test_both_ends_of_a_conveyor_are_the_direction_the_constructor_sets():
+    """Both ends of every belt and lift mark, from the game rather than a comment.
 
-    The cooked asset omits ``mDirection`` on these, so the registry used to call
-    both ends inputs. ``FGBuildableConveyorBase.h:380`` states the order --
-    ``mConnection0`` is the input, ``mConnection1`` the output -- and the
-    corpus wires all 1119 belt-to-machine links that way.
+    The cooked asset omits ``mDirection`` on these, because it equals the
+    archetype's -- and the archetype is the component
+    ``AFGBuildableConveyorBase``'s constructor creates. That constructor sets
+    **both** of them to ``FCD_ANY`` (2), which is also what the components are
+    named after. ``FGBuildableConveyorBase.h:380``'s "mConnection0 is the input,
+    mConnection1 is the output" is about which end items enter and leave by, not
+    about ``mDirection``: a placed belt gets its two directions from whatever it
+    snaps to, under the ``belt.snap_directions`` rule.
     """
     reg = load_registry()
     marks = [
@@ -252,10 +335,177 @@ def test_a_conveyor_takes_in_at_end_0_and_puts_out_at_end_1():
     for class_name in marks:
         ends = {p.name: p for p in reg.buildables[class_name].ports if p.kind == "belt"}
         assert sorted(ends) == ["ConveyorAny0", "ConveyorAny1"], class_name
-        assert ends["ConveyorAny0"].direction == "input", class_name
-        assert ends["ConveyorAny1"].direction == "output", class_name
         for port in ends.values():
-            assert port.direction_source == "header", class_name
+            assert port.direction == "any", class_name
+            assert port.direction_source == "native", class_name
+
+
+def test_which_end_of_a_conveyor_items_enter_by():
+    """Both ends are FCD_ANY, so the flow order is a separate fact -- and a needed one.
+
+    A router has to know which end of a belt takes items and which gives them
+    up. ``mDirection`` does not say (the constructor sets both to ``FCD_ANY``),
+    so the registry carries it per conveyor class as ``flow``, from the game:
+    ``AFGBuildableConveyorBase::Factory_Tick`` grabs through ``mConnection0``
+    and the header's line 380 says the same.
+    """
+    reg = load_registry()
+    marks = [
+        c for c in reg.buildables if c.startswith(("Build_ConveyorBelt", "Build_ConveyorLift"))
+    ]
+    assert len(marks) == 12, sorted(marks)
+    for class_name in marks:
+        buildable = reg.buildables[class_name]
+        flow = buildable.flow
+        assert flow is not None, class_name
+        assert (flow.entry, flow.exit) == ("ConveyorAny0", "ConveyorAny1"), class_name
+        assert flow.source in FLOW_SOURCES, class_name
+        # The two names are the class default object's own, not a convention
+        # read off a component whose name ends in 0.
+        assert flow.name_source == "asset", class_name
+        # The two ends it names are ports this buildable actually has.
+        assert {flow.entry, flow.exit} <= {p.name for p in buildable.ports}, class_name
+    # Nothing else claims one: a pole or a machine has no item-flow order.
+    assert sorted(c for c, b in reg.buildables.items() if b.flow) == sorted(marks)
+
+
+def test_the_conveyor_flow_order_carries_the_game_it_was_read_from():
+    """The claim travels with its evidence: the header line and the instructions."""
+    flow = load_registry().provenance["conveyor_flow"]
+    assert flow["source"] in FLOW_SOURCES
+    assert flow["header"].endswith("FGBuildableConveyorBase.h:380")
+    assert "mConnection0 is the input" in flow["header_text"]
+    assert flow["entry"]["member"] == "mConnection0"
+    assert flow["exit"]["member"] == "mConnection1"
+    # The binary states the order over the two members and nothing about what
+    # the components in them are called, so it claims nothing about names.
+    assert "component" not in flow["entry"]
+    assert "caveat" not in flow
+    if flow["source"] == "native":
+        # The grab that makes mConnection0 the entry, and the function it is in.
+        assert any(
+            "Factory_GrabOutput" in line for line in flow["instructions"]
+        ), flow["instructions"]
+        assert {f["symbol"] for f in flow["functions"]} >= {
+            "AFGBuildableConveyorBase::Factory_Tick",
+            "UFGFactoryConnectionComponent::Factory_GrabOutput",
+        }
+        assert all(f["rva"].startswith("0x") for f in flow["functions"])
+
+
+def test_the_component_each_connection_member_holds_comes_from_the_class_default():
+    """The pairing of ``mConnection0`` with a *named* port is read, not assumed.
+
+    The binary and the header both say ``mConnection0`` is the end items enter
+    by; neither says what the component in that member is called. The cooked
+    class default object does -- ``mConnection0`` is an object property that
+    refers to one of the CDO's own subobjects -- and ``tools/sfy-extract``
+    reports that export's name per class.
+    """
+    flow = load_registry().provenance["conveyor_flow"]
+    assert flow["name_source"] == "asset"
+    components = flow["components"]
+    assert len(components) == 12
+    for class_name, members in components.items():
+        assert class_name.startswith(("Build_ConveyorBelt", "Build_ConveyorLift"))
+        assert members == {"mConnection0": "ConveyorAny0", "mConnection1": "ConveyorAny1"}
+
+
+def test_a_flow_whose_names_come_from_no_asset_is_refused(tmp_path):
+    """A port name is only a fact when the class default object states it."""
+    payload = json.loads((Path(docs.__file__).parent / "data" / "registry.json").read_text())
+    payload["buildables"]["Build_ConveyorBeltMk1_C"]["flow"]["name_source"] = "convention"
+    path = tmp_path / "registry.json"
+    path.write_text(json.dumps(payload))
+    with pytest.raises(RegistryError, match="convention"):
+        load_registry(path)
+
+
+def test_every_conveyor_carries_the_cost_segment_the_game_states():
+    """How much run one unit of the build recipe pays for, from Docs.json.
+
+    A belt divides by its own ``mMeshLength`` and a lift by its ``mMeshHeight``
+    -- that is what each mark's ``GetDismantleRefundReturnsMultiplier`` hands
+    to ``AFGBuildable::GetCostMultiplierForLength`` -- and both are class
+    defaults in the game's own dump, so the number is read, never measured off
+    a blueprint's cost list.
+    """
+    reg = load_registry()
+    costed = {
+        name: b.length_per_cost_cm for name, b in reg.buildables.items() if b.length_per_cost_cm
+    }
+    assert len(costed) == 12
+    assert set(costed) == {
+        name
+        for name in reg.buildables
+        if name.startswith(("Build_ConveyorBelt", "Build_ConveyorLift"))
+    }
+    assert set(costed.values()) == {200.0}
+    for name in costed:
+        assert reg.buildables[name].length_per_cost_source == "docs"
+    # A belt's segment is its own mesh length, not a number chosen here.
+    belt = reg.buildables["Build_ConveyorBeltMk1_C"]
+    assert belt.length_per_cost_cm == belt.mesh_length_cm
+    lift = reg.buildables["Build_ConveyorLiftMk1_C"]
+    assert lift.length_per_cost_cm == lift.mesh_height_cm
+    # Everything else is charged its recipe once, so it carries no segment.
+    assert reg.buildables["Build_ConstructorMk1_C"].length_per_cost_cm is None
+    assert reg.buildables["Build_ConstructorMk1_C"].length_per_cost_source is None
+
+
+def test_the_cost_segment_says_which_property_and_which_rule_it_comes_from():
+    provenance = load_registry().provenance["cost_segment"]
+    assert provenance["source"] == "docs"
+    assert provenance["rule"] == "belt.cost"
+    assert provenance["properties"] == {
+        "FGBuildableConveyorBelt": "mMeshLength",
+        "FGBuildableConveyorLift": "mMeshHeight",
+    }
+    assert len(provenance["applied_to"]) == 12
+    # The rule it names is the machine code that divides by the number.
+    rule = load_rules()["belt.cost"]
+    assert rule.effect == "compute"
+    assert {"mMeshLength", "mMeshHeight"} <= set(rule.reads)
+
+
+def test_a_cost_segment_from_no_game_source_is_refused(tmp_path):
+    payload = json.loads((Path(docs.__file__).parent / "data" / "registry.json").read_text())
+    entry = payload["buildables"]["Build_ConveyorBeltMk1_C"]
+    entry["length_per_cost_source"] = "corpus"
+    path = tmp_path / "registry.json"
+    path.write_text(json.dumps(payload))
+    with pytest.raises(RegistryError, match="corpus"):
+        load_registry(path)
+
+
+def test_a_cost_segment_with_no_source_is_refused(tmp_path):
+    """A number with nothing behind it is not a fact, so the loader turns it away."""
+    payload = json.loads((Path(docs.__file__).parent / "data" / "registry.json").read_text())
+    entry = payload["buildables"]["Build_ConveyorBeltMk1_C"]
+    entry["length_per_cost_source"] = None
+    path = tmp_path / "registry.json"
+    path.write_text(json.dumps(payload))
+    with pytest.raises(RegistryError, match="travel together"):
+        load_registry(path)
+
+
+def test_a_flow_that_names_a_port_the_buildable_does_not_have_is_refused(tmp_path):
+    """``flow`` is a claim about two of this buildable's ports, checked on load."""
+    payload = json.loads((Path(docs.__file__).parent / "data" / "registry.json").read_text())
+    payload["buildables"]["Build_ConveyorBeltMk1_C"]["flow"]["entry"] = "ConveyorAny7"
+    path = tmp_path / "registry.json"
+    path.write_text(json.dumps(payload))
+    with pytest.raises(RegistryError, match="ConveyorAny7"):
+        load_registry(path)
+
+
+def test_a_flow_from_no_game_source_is_refused(tmp_path):
+    payload = json.loads((Path(docs.__file__).parent / "data" / "registry.json").read_text())
+    payload["buildables"]["Build_ConveyorBeltMk1_C"]["flow"]["source"] = "corpus"
+    path = tmp_path / "registry.json"
+    path.write_text(json.dumps(payload))
+    with pytest.raises(RegistryError, match="corpus"):
+        load_registry(path)
 
 
 def test_the_power_poles_carry_the_connection_counts_the_assets_state():
@@ -336,13 +586,98 @@ def test_every_item_a_recipe_names_has_an_asset_path():
 
 
 def test_every_port_says_how_its_direction_was_established():
+    """Four sources, all of them game data, and nothing else.
+
+    ``corpus`` and ``name`` were both removed: what a blueprint contains is not
+    a fact about the game, and neither is what a component happens to be called.
+    A port the three game sources leave open is shipped ``unknown`` rather than
+    guessed at, and :func:`test_the_ports_the_game_does_not_give_a_direction`
+    lists those.
+    """
     reg = load_registry()
     ports = [(c, p) for c, b in reg.buildables.items() for p in b.ports]
+    assert set(PORT_DIRECTION_SOURCES) == {"asset", "asset-inherited", "native", "unknown"}
     assert {p.direction_source for _, p in ports} <= set(PORT_DIRECTION_SOURCES)
-    assert [f"{c}.{p.name}" for c, p in ports if p.direction == "unknown"] == []
-    # Pipes and power connections are never in doubt: a pipe spells its own
-    # enum out and a power connection has no direction to begin with.
-    assert {p.direction_source for _, p in ports if p.kind != "belt"} == {"asset"}
+    assert [f"{c}.{p.name}" for c, p in ports if p.direction_source in ("corpus", "name")] == []
+    # "unknown" is the source exactly when the direction is unknown.
+    assert all((p.direction == "unknown") == (p.direction_source == "unknown") for _, p in ports)
+
+
+def test_the_ports_the_game_does_not_give_a_direction():
+    """The ``unknown`` ports, listed rather than counted.
+
+    A port lands here when neither the buildable's own Blueprint, nor a parent
+    Blueprint's template of the same name, nor the archetype's native
+    constructor states a direction. The validator refuses to route to one, and
+    the way to shrink this list is to read more of the game -- never to infer a
+    direction from the port's name or from a blueprint corpus.
+    """
+    reg = load_registry()
+    unknown = sorted(
+        f"{c}.{p.name}"
+        for c, b in reg.buildables.items()
+        for p in b.ports
+        if p.direction_source == "unknown"
+    )
+    assert unknown == []
+
+
+def test_a_port_that_inherits_its_direction_says_so():
+    """Unreal omits a template property that equals its archetype's value.
+
+    So a Blueprint that derives from another Blueprint carries no ``mDirection``
+    of its own for a port the parent already set, and reading the absence as the
+    enum's zero would call that port an input. The extractor walks the parent
+    chain, and the ports it resolves there are tagged ``asset-inherited``.
+    """
+    reg = load_registry()
+    inherited = {
+        f"{c}.{p.name}": p.direction
+        for c, b in reg.buildables.items()
+        for p in b.ports
+        if p.direction_source == "asset-inherited"
+    }
+    assert inherited
+    assert "Build_MinerMk3_C.Output0" in inherited
+    assert inherited["Build_MinerMk3_C.Output0"] == "output"
+
+
+def test_the_native_direction_defaults_carry_their_evidence():
+    """A ``native`` direction is a claim about machine code, so it names it."""
+    reg = load_registry()
+    defaults = reg.provenance["assets"]["native_direction_defaults"]
+    by_class = {entry["component_class"]: entry for entry in defaults["component_defaults"]}
+    factory = by_class["FGFactoryConnectionComponent"]
+    assert factory["direction"] == "input"
+    assert factory["class"] == "UFGFactoryConnectionComponent"
+    assert factory["member"] == "mDirection"
+    assert factory["value"] == 0
+    assert factory["function"] == "UFGFactoryConnectionComponent::UFGFactoryConnectionComponent"
+    assert any("mDirection" in line for line in factory["instructions"])
+    # Four buildables build their own connections and set them, so their
+    # subobject -- not the component class default -- is the archetype.
+    owners = {entry["set_in"]: entry for entry in defaults["owner_defaults"]}
+    assert {name.split("::")[0] for name in owners} == {
+        "AFGBuildableConveyorBase",
+        "AFGBuildablePoleConveyor",
+        "AFGBuildablePipeline",
+        "AFGBuildablePolePipe",
+    }
+    conveyor = owners["AFGBuildableConveyorBase::AFGBuildableConveyorBase"]
+    assert conveyor["direction"] == "any"
+    assert conveyor["value"] == 2
+    assert conveyor["enum_name"] == "FCD_ANY"
+    assert set(conveyor["owner_classes"]) == {
+        "AFGBuildableConveyorBelt",
+        "AFGBuildableConveyorLift",
+    }
+    # Both stores are quoted: the second is 600 bytes past the chunk the symbol
+    # is in, which sfy-native reaches by following the chained .pdata.
+    assert sum("[rax+258h],2" in line for line in conveyor["instructions"]) == 2
+    assert owners["AFGBuildablePoleConveyor::AFGBuildablePoleConveyor"]["direction"] == "snap_only"
+    for entry in defaults["owner_defaults"]:
+        assert entry["instructions"], entry["set_in"]
+        assert len(entry["inheritance"]) == len(entry["owner_classes"]), entry["set_in"]
 
 
 def test_a_rotated_clearance_box_keeps_its_rotation():
@@ -369,10 +704,14 @@ def test_a_rotated_clearance_box_keeps_its_rotation():
 def test_the_committed_registry_is_what_the_merge_produces(tmp_path, capsys):
     """Re-run the merge and diff it, so registry.json can never drift from its inputs.
 
-    Everything but ``merged_at_commit`` has to come out identical: if
-    ``docs.json``, ``assets.json``, ``native.json`` or ``measured.json`` has
-    moved since the registry was written, or the merge itself has, this is where
-    it shows up rather than in whatever consumes the registry next.
+    **Every** key has to come out identical, this file included: if
+    ``docs.json``, ``assets.json``, ``native.json``, ``native_directions.json``
+    or ``hologram_rules.json`` has moved since the registry was written, or the
+    merge itself has, this is where it shows up rather than in whatever consumes
+    the registry next. Nothing is popped before the diff -- the provenance used
+    to carry the repository's ``HEAD``, which no re-run could reproduce, and it
+    now carries the sha256 of each input, which every re-run over the same
+    extraction does.
     """
     sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
     import sfy_registry
@@ -382,9 +721,19 @@ def test_the_committed_registry_is_what_the_merge_produces(tmp_path, capsys):
     capsys.readouterr()
     fresh = json.loads(out.read_text())
     committed = json.loads((Path(docs.__file__).parent / "data" / "registry.json").read_text())
-    for payload in (fresh, committed):
-        payload["provenance"].pop("merged_at_commit")
     assert fresh == committed
+
+
+def test_the_registry_says_which_extraction_it_was_merged_from():
+    """``provenance.inputs_sha256`` is the digest of each file the merge read."""
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+    import sfy_registry
+
+    data = Path(docs.__file__).parent / "data"
+    committed = json.loads((data / "registry.json").read_text())["provenance"]["inputs_sha256"]
+    assert set(committed) == set(sfy_registry.MERGE_INPUTS)
+    for name, digest in committed.items():
+        assert digest == hashlib.sha256((data / name).read_bytes()).hexdigest(), name
 
 
 def test_boxes_the_game_ignores_when_snapping_are_marked():

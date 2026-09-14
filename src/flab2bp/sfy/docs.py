@@ -280,6 +280,11 @@ def _buildable(entry: Mapping[str, Any], native_class: str) -> dict[str, Any]:
         "manufacturing_speed": _number(entry, "mManufacturingSpeed"),
         "belt_speed_per_min": _number(entry, "mSpeed"),
         "mesh_height_cm": _number(entry, "mMeshHeight"),
+        # A conveyor belt's own cost segment: AFGBuildableConveyorBelt::
+        # GetDismantleRefundReturnsMultiplier divides the belt's length by it
+        # (a lift divides its height by mMeshHeight above). See the belt.cost
+        # rule in data/hologram_rules.json.
+        "mesh_length_cm": _number(entry, "mMeshLength"),
         "width_cm": _number(entry, "mWidth"),
         "depth_cm": _number(entry, "mDepth"),
         "height_cm": _number(entry, "mHeight"),

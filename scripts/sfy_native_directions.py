@@ -1,0 +1,800 @@
+"""Read the connection directions the game's own C++ constructors set.
+
+A cooked asset omits a component template's property whenever it equals the
+**archetype**'s value, and for a connection component the archetype is a native
+constructor the pak does not carry. So ``tools/sfy-extract`` sees no
+``mDirection`` on 84 of the 288 connection templates in the content, and the
+value those ports really carry is in the shipped DLL's machine code.
+
+This writes ``src/flab2bp/sfy/data/native_directions.json``, the file
+``tools/sfy-extract`` reads to finish the job. Run it after ``tools/sfy-native``
+and before the extractor::
+
+    uv run python scripts/sfy_native_directions.py
+
+**Nothing here is inferred from a port's name or from a blueprint corpus.**
+Every value is a store (or a proven absence of one) in a constructor the tool
+disassembles, quoted by address, so a game update that moves a constructor stops
+the run rather than shipping a stale answer.
+
+*Proven* absence is meant literally. Before this file may say that no
+constructor in a chain writes a member, every constructor in that chain has to
+have been read to an end the game states -- ``.pdata``, its chain, or the PDB's
+procedure length. :func:`sfy_disasm.require_bounded` stops the run otherwise,
+because a store in the part of a function the decoder never reached would look
+exactly like no store at all.
+
+Two kinds of default come out of it:
+
+``component_defaults``
+    what a connection component carries when nobody sets it -- the class default
+    object's value, from the component class's own constructor. This is the
+    archetype at the root of every chain.
+
+``owner_defaults``
+    a buildable whose native constructor *creates* its connections and sets them
+    itself, which overrides the component class default for every Blueprint
+    deriving from it. ``AFGBuildableConveyorBase`` is the only one: it sets both
+    of its ends to ``FCD_ANY``, which is what ``ConveyorAny0``/``ConveyorAny1``
+    are named after.
+
+``AFGBuildableConveyorBase``'s constructor is one MSVC split into chained
+``.pdata`` chunks, so the store that sets its *second* connection is 600 bytes
+past the chunk the symbol is in. ``sfy-native disasm`` follows the chain, and
+both stores are quoted from its output.
+
+``conveyor_flow``
+    which end of a conveyor items *enter* by, which is a different question from
+    ``mDirection`` and one a router has to answer. Both ends being ``FCD_ANY``,
+    the direction cannot say; ``Factory_Tick`` can, and does --
+    :data:`CONVEYOR_FLOW` explains what is read and what is left unproven.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+import sys
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+from sfy_disasm import disasm, member_offsets, require_bounded
+
+from flab2bp.sfy import docs
+
+ROOT = Path(__file__).resolve().parent.parent
+DATA = ROOT / "src" / "flab2bp" / "sfy" / "data"
+
+WIN64 = "FactoryGame/Binaries/Win64"
+MODULE = "FactoryGameEGS-FactoryGame-Win64-Shipping"
+
+# The two enums, in declaration order, mapped onto the registry's vocabulary.
+# ``Source/FactoryGame/Public/FGFactoryConnectionComponent.h:27`` and
+# ``Source/FactoryGame/Public/FGPipeConnectionComponent.h:20``; both are
+# ``: uint8`` with no explicit values, so the ordinal is the index.
+ENUMS: dict[str, tuple[str, ...]] = {
+    # FCD_INPUT, FCD_OUTPUT, FCD_ANY, FCD_SNAP_ONLY
+    "EFactoryConnectionDirection": ("input", "output", "any", "snap_only"),
+    # PCT_ANY, PCT_CONSUMER, PCT_PRODUCER, PCT_SNAP_ONLY
+    "EPipeConnectionType": ("any", "input", "output", "snap_only"),
+}
+
+ENUM_NAMES: dict[str, tuple[str, ...]] = {
+    "EFactoryConnectionDirection": ("FCD_INPUT", "FCD_OUTPUT", "FCD_ANY", "FCD_SNAP_ONLY"),
+    "EPipeConnectionType": ("PCT_ANY", "PCT_CONSUMER", "PCT_PRODUCER", "PCT_SNAP_ONLY"),
+}
+
+# The class whose constructor states the default, per cooked component class
+# name (which is what a template's ``Class`` is called in the pak, without the
+# U/A prefix the C++ name carries).
+#
+# ``member`` is the property the direction lives in, and its offset is read from
+# the PDB for *that* member -- ``layout_class`` is the class the PDB declares it
+# on, which for an inherited member is a base of the class named above. The
+# factory connection's is checked against the offset the tool annotates on the
+# store as well. Nothing here reuses another member's offset: ``mDirection`` and
+# ``mPipeConnectionType`` both happen to sit at 600, and that is a coincidence of
+# two layouts, not a fact about either.
+#
+# A ``None`` member means the class has no direction property at all, which is
+# the case for a power connection: it is a circuit connection, and
+# ``EFactoryConnectionDirection`` is a ``UFGFactoryConnectionComponent`` member.
+COMPONENTS: dict[str, dict[str, Any]] = {
+    "FGFactoryConnectionComponent": {
+        "class": "UFGFactoryConnectionComponent",
+        "member": "mDirection",
+        "layout_class": "UFGFactoryConnectionComponent",
+        "enum": "EFactoryConnectionDirection",
+        # The constructor stores the enum's zero outright.
+        "evidence": ("0x7b5ff1",),
+        "note": (
+            "UFGFactoryConnectionComponent's constructor stores FCD_INPUT. A machine's "
+            "belt port that says nothing is an input because this is what its archetype "
+            "carries, not because of what the component is called."
+        ),
+    },
+    "FGPipeConnectionComponent": {
+        "class": "UFGPipeConnectionComponent",
+        "member": "mPipeConnectionType",
+        # The PDB declares the member on the base the chain starts at, which is
+        # also the first constructor listed below.
+        "layout_class": "UFGPipeConnectionComponentBase",
+        "enum": "EPipeConnectionType",
+        # No store: the member keeps UObject's zero-initialisation, PCT_ANY.
+        "constructors": (
+            "UFGPipeConnectionComponentBase::UFGPipeConnectionComponentBase",
+            "UFGPipeConnectionComponent::UFGPipeConnectionComponent",
+        ),
+        "note": (
+            "Neither UFGPipeConnectionComponentBase's constructor nor "
+            "UFGPipeConnectionComponent's writes mPipeConnectionType, so it keeps the "
+            "zero UObject construction leaves, which is PCT_ANY."
+        ),
+    },
+    "FGPipeConnectionFactory": {
+        "class": "UFGPipeConnectionFactory",
+        "member": "mPipeConnectionType",
+        "layout_class": "UFGPipeConnectionComponentBase",
+        "enum": "EPipeConnectionType",
+        "constructors": (
+            "UFGPipeConnectionComponentBase::UFGPipeConnectionComponentBase",
+            "UFGPipeConnectionComponent::UFGPipeConnectionComponent",
+            "UFGPipeConnectionFactory::UFGPipeConnectionFactory",
+        ),
+        "note": (
+            "UFGPipeConnectionFactory derives from UFGPipeConnectionComponent (its "
+            "constructor calls it) and no constructor in the chain writes "
+            "mPipeConnectionType, so it too is PCT_ANY."
+        ),
+    },
+    "FGPowerConnectionComponent": {
+        "class": "UFGPowerConnectionComponent",
+        "member": None,
+        "layout_class": None,
+        "enum": None,
+        "constructors": ("UFGPowerConnectionComponent::UFGPowerConnectionComponent",),
+        "note": (
+            "A power connection is a circuit connection: its constructor chains to "
+            "UFGCircuitConnectionComponent, not to UFGFactoryConnectionComponent, and "
+            "the class carries no direction property. 'any' here says there is no "
+            "direction to take, not that one was read."
+        ),
+    },
+}
+
+# A buildable whose own native constructor creates its connections and sets
+# their direction. That subobject is then the archetype of the template every
+# Blueprint deriving from the class carries, so it -- not the component class
+# default -- is what an omitted property means there.
+#
+# There are exactly four in the content, one per family of buildable whose
+# connection templates are outered to the class default object rather than being
+# Blueprint components: belts and lifts, conveyor poles, pipelines and pipeline
+# supports. ``owners`` are the classes a cooked Blueprint chain actually ends at
+# and each is held to the binary -- its constructor must be seen calling
+# ``setter``'s, or the run stops.
+#
+# ``store`` is the instruction that writes the direction. It is an immediate
+# except on the pipeline, where MSVC stores the low byte of a register; ``zeroed``
+# names where that register was cleared, and the run checks nothing writes it in
+# between. (It is ``rbp``, callee-saved under the x64 ABI, so the calls between
+# do not disturb it.)
+OWNERS: tuple[dict[str, Any], ...] = (
+    {
+        "setter": "AFGBuildableConveyorBase::AFGBuildableConveyorBase",
+        "component_class": "FGFactoryConnectionComponent",
+        "enum": "EFactoryConnectionDirection",
+        "owners": ("AFGBuildableConveyorBelt", "AFGBuildableConveyorLift"),
+        # Both stores, each with the load that names the connection it writes.
+        # The second pair is in a chained .pdata chunk, which sfy-native follows.
+        "evidence": ("0x4c98ec", "0x4c9902", "0x4c9914", "0x4c999d", "0x4c9b47", "0x4c9b59"),
+        "store": "0x4c9914",
+        "also_store": ("0x4c9b59",),
+        "note": (
+            "AFGBuildableConveyorBase's constructor creates both ends and sets both to "
+            "FCD_ANY, which is what ConveyorAny0 and ConveyorAny1 are named after. "
+            "FGBuildableConveyorBase.h:380 -- 'mConnection0 is the input, mConnection1 "
+            "is the output' -- is about which end items enter and leave by; it is not "
+            "mDirection. A placed belt takes its two directions from whatever it "
+            "snapped to, under the belt.snap_directions rule."
+        ),
+    },
+    {
+        "setter": "AFGBuildablePoleConveyor::AFGBuildablePoleConveyor",
+        "component_class": "FGFactoryConnectionComponent",
+        "enum": "EFactoryConnectionDirection",
+        "owners": ("AFGBuildablePoleConveyor",),
+        "evidence": ("0x51b567", "0x51b5bf"),
+        "store": "0x51b5bf",
+        "note": (
+            "A conveyor pole's one connection is FCD_SNAP_ONLY: it is something to snap "
+            "a belt to, not something that takes or gives items. Build_ConveyorPole_C "
+            "inherits it; the stackable and wall poles are Blueprint components and "
+            "spell the same value out themselves."
+        ),
+    },
+    {
+        "setter": "AFGBuildablePipeline::AFGBuildablePipeline",
+        "component_class": "FGPipeConnectionComponent",
+        "enum": "EPipeConnectionType",
+        "owners": ("AFGBuildablePipeline",),
+        "evidence": (
+            "0x51ac2c", "0x51ae87", "0x51ae9c", "0x51aeab",
+            "0x51af26", "0x51af3b", "0x51af4a",
+        ),
+        "store": "0x51aeab",
+        "zeroed": "0x51ac2c",
+        "also_store": ("0x51af4a",),
+        "note": (
+            "Both ends of a pipeline are PCT_ANY: fluid runs either way along one. The "
+            "value is stored from bpl, which xor ebp,ebp cleared at the top of the "
+            "constructor and nothing writes again before either store."
+        ),
+    },
+    {
+        "setter": "AFGBuildablePolePipe::AFGBuildablePolePipe",
+        "component_class": "FGPipeConnectionComponent",
+        "enum": "EPipeConnectionType",
+        "owners": ("AFGBuildablePolePipe",),
+        "evidence": ("0x666d23", "0x666d75"),
+        "store": "0x666d75",
+        "note": (
+            "A pipeline support's connection is PCT_SNAP_ONLY, the pipe's counterpart "
+            "to the conveyor pole's FCD_SNAP_ONLY."
+        ),
+    },
+)
+
+# Which end of a conveyor items enter by. This is *not* ``mDirection``: both of
+# a conveyor's connections are ``FCD_ANY`` (see ``OWNERS`` above), so nothing in
+# the direction says which way items travel along the belt. The header states
+# the order outright --
+#
+#   Buildables/FGBuildableConveyorBase.h:380
+#   "First connection on conveyor belt, Connections are always in the same
+#    order, mConnection0 is the input, mConnection1 is the output."
+#
+# -- and the shipped binary makes it explicit, which is what this reads:
+#
+# ``grab_this``/``grab_call``
+#     ``Factory_Tick`` loads one of the two connections and calls
+#     ``UFGFactoryConnectionComponent::Factory_GrabOutput`` on it. Which member
+#     that load annotates is *the* answer, and it is the tool's annotation, not
+#     a name typed here.
+# ``grab_direction``
+#     inside that callee, the grab is the branch taken when the connection's own
+#     ``mDirection`` is the enum's ``FCD_INPUT``: it follows
+#     ``mConnectedComponent`` to an ``FCD_OUTPUT`` connection and asks *it* for
+#     the item. So the end Factory_Tick grabs through is the end items enter by.
+# ``members``
+#     the constructor's two stores, which give the pair of connection members;
+#     the exit is whichever of the two is not the entry.
+# ``binding``
+#     ``BeginPlay`` matches each component by name -- ``cmp [component+18h], r9``
+#     against ``UObject::NamePrivate`` -- and stores the match into the member.
+#     That is what ties a named component to a member.
+#
+# What this file states is the order over the two **members**, and nothing about
+# what the components in them are called. The names are not decodable from the
+# disassembly: ``BeginPlay`` matches by an FName global that a start-up module
+# initialiser fills in from a string literal, and that initialiser carries no
+# ``Class::Method`` symbol for ``sfy-native disasm`` to be pointed at. They do
+# not have to be: each conveyor's cooked class default object holds the
+# component in ``mConnection0`` as an object property, so ``tools/sfy-extract``
+# reports it per class (``conveyor_connections`` in ``assets.json``) and
+# ``scripts/sfy_registry.py`` joins the two. A port name is never taken from a
+# convention here.
+CONVEYOR_FLOW: dict[str, Any] = {
+    "class": "AFGBuildableConveyorBase",
+    "header": "Buildables/FGBuildableConveyorBase.h:380",
+    "header_text": (
+        "First connection on conveyor belt, Connections are always in the same order, "
+        "mConnection0 is the input, mConnection1 is the output."
+    ),
+    "grab_callee": "UFGFactoryConnectionComponent::Factory_GrabOutput",
+    "grab_this": "0x4e1611",
+    "grab_call": "0x4e1635",
+    "grab_direction": "0x7c52d9",
+    "members": ("0x4c98ec", "0x4c999d"),
+    "binding": ("0x4d17f7", "0x4d1803", "0x4d184c", "0x4d1860", "0x4d186a", "0x4d18a0"),
+    "evidence": (
+        # Factory_Tick: the grab through one end, and the other end followed to
+        # the conveyor downstream of it.
+        "0x4e1611", "0x4e1635", "0x4e1684", "0x4e1743", "0x4e174a", "0x4e1761",
+        # UFGFactoryConnectionComponent::Factory_GrabOutput: an input end grabs
+        # from the output end it is connected to.
+        "0x7c52d9", "0x7c52e2", "0x7c52eb", "0x7c52f2", "0x7c5328",
+        # BeginPlay: each member is the component whose name matches.
+        "0x4d17f7", "0x4d1803", "0x4d184c", "0x4d1860", "0x4d186a", "0x4d18a0",
+        # The constructor: the two connections, in member order.
+        "0x4c98a7", "0x4c98c9", "0x4c98ec", "0x4c9958", "0x4c997a", "0x4c999d",
+    ),
+    "functions": (
+        "AFGBuildableConveyorBase::Factory_Tick",
+        "UFGFactoryConnectionComponent::Factory_GrabOutput",
+        "AFGBuildableConveyorBase::BeginPlay",
+        "AFGBuildableConveyorBase::AFGBuildableConveyorBase",
+    ),
+    "note": (
+        "AFGBuildableConveyorBase::Factory_Tick grabs an item through mConnection0 "
+        "(UFGFactoryConnectionComponent::Factory_GrabOutput, which is the FCD_INPUT "
+        "branch of that callee) and follows mConnection1 to the conveyor downstream. "
+        "That is the item-flow order the header states at line 380, and it is "
+        "independent of mDirection, which is FCD_ANY on both ends."
+    ),
+}
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _disasm(dll: Path, pdb: Path, symbol: str, out: Path) -> list[dict[str, Any]]:
+    """The function records ``sfy-native disasm`` reports for exactly ``symbol``."""
+    return [f for f in disasm(dll, pdb, symbol, out) if f["symbol"] == symbol]
+
+
+def _line(instruction: dict[str, Any]) -> str:
+    """One evidence line: the tool's own text, plus whatever it annotated."""
+    text = f"{instruction['rva']}: {instruction['text']}"
+    member = instruction.get("member")
+    if member:
+        return f"{text}  ; {member['class']}::{member['name']} @{member['offset']}"
+    call = instruction.get("call")
+    if call:
+        return f"{text}  ; -> {call}"
+    return text
+
+
+def _function_of(functions: list[dict[str, Any]], instruction: dict[str, Any]) -> dict[str, Any]:
+    """The disassembled function an instruction came out of."""
+    return next(
+        f for f in functions if instruction["rva"] in {i["rva"] for i in f["instructions"]}
+    )
+
+
+def _base_calls(function: dict[str, Any]) -> list[dict[str, Any]]:
+    """The calls to another class's constructor: the inheritance, as the tool saw it."""
+    own = function["symbol"].split("::")[0]
+    return [
+        i
+        for i in function["instructions"]
+        if "::" in i.get("call", "") and i["call"].split("::")[0] != own
+    ]
+
+
+def _by_rva(functions: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {i["rva"]: i for f in functions for i in f["instructions"]}
+
+
+def _pick(functions: list[dict[str, Any]], rvas: tuple[str, ...], what: str) -> dict[str, Any]:
+    """The instructions at ``rvas``, or stop naming the ones that moved."""
+    found = _by_rva(functions)
+    missing = [rva for rva in rvas if rva not in found]
+    if missing:
+        raise SystemExit(
+            f"{what}: no instruction at {missing} -- the constructor moved, and the "
+            "directions have to be re-read before this file can be written"
+        )
+    return found
+
+
+# The destination memory operand of an instruction: the first ``[...]`` that is
+# followed by a comma, which in Intel syntax is the operand being written.
+_DESTINATION = re.compile(r"\[(?P<inner>[^\]]+)\]\s*,")
+#: One ``base + index*scale + displacement`` term, with the sign that joined it.
+_TERM = re.compile(r"(?P<sign>[+-]?)(?P<term>[^+-]+)")
+#: A displacement as the Intel formatter prints it: hex digits, an ``h`` suffix
+#: above 9, and a leading ``0`` when the first digit would be a letter. ``8``,
+#: ``0Ah`` and ``8E4h`` are all displacements; ``rax``, ``r8`` and ``rax*4`` are
+#: not, because a displacement never starts with a letter.
+_DISPLACEMENT = re.compile(r"[0-9][0-9A-Fa-f]*h?$")
+
+
+def _written_at(text: str) -> tuple[int, bool] | None:
+    """``(displacement, indexed)`` for the memory operand an instruction writes.
+
+    Reading the number out of the operand rather than matching one spelling is
+    what makes this right for every displacement the formatter can print: it
+    drops the ``h`` below 0x0A (``[rbx+8]``), omits the displacement entirely at
+    0 (``[rbx]``), and signs it (``[rbx-10h]``). ``indexed`` says a run-time
+    register is in the address, which means the instruction writes *somewhere*
+    at or beyond the displacement rather than exactly at it.
+    """
+    match = _DESTINATION.search(text)
+    if match is None:
+        return None
+    inner = match.group("inner")
+    displacement = 0
+    for sign, term in _TERM.findall(inner):
+        term = term.strip()
+        if "*" not in term and _DISPLACEMENT.fullmatch(term):
+            value = int(term.removesuffix("h").removesuffix("H"), 16)
+            displacement += -value if sign == "-" else value
+    return displacement, "*" in inner
+
+
+def _stores_at(functions: list[dict[str, Any]], offset: int) -> list[str]:
+    """Every instruction that writes at ``offset`` through a register.
+
+    An *indexed* write whose displacement is ``offset`` counts: the address it
+    lands on is worked out at run time, so it is a computation rather than the
+    proven absence of a write, and the caller has to stop rather than claim one.
+    """
+    return [
+        f"{f['symbol']} {i['rva']}: {i['text']}"
+        for f in functions
+        for i in f["instructions"]
+        if (_written_at(i["text"]) or (None, None))[0] == offset
+    ]
+
+
+def main(out: Path | None = None) -> int:
+    """Write ``data/native_directions.json`` from the installed game's binary."""
+    install = docs.satisfactory_dir()
+    win64 = install / WIN64
+    dll, pdb = win64 / f"{MODULE}.dll", win64 / f"{MODULE}.pdb"
+    for path in (dll, pdb):
+        if not path.is_file():
+            raise SystemExit(f"no {path}: this needs the game install, its DLL and its PDB")
+
+    native = json.loads((DATA / "native.json").read_text(encoding="utf-8"))["provenance"]
+    dll_sha256 = _sha256(dll)
+    if dll_sha256 != native["dll_sha256"]:
+        raise SystemExit(
+            "the DLL has moved since native.json was written "
+            f"({dll_sha256} vs {native['dll_sha256']}): re-run tools/sfy-native first"
+        )
+
+    scratch = DATA / ".native_directions_disasm.json"
+    layouts = DATA / ".native_directions_layouts.json"
+    cache: dict[str, list[dict[str, Any]]] = {}
+
+    def run(symbol: str) -> list[dict[str, Any]]:
+        if symbol not in cache:
+            cache[symbol] = _disasm(dll, pdb, symbol, scratch)
+            if not cache[symbol]:
+                raise SystemExit(f"the PDB names no {symbol}")
+        return cache[symbol]
+
+    try:
+        offsets = member_offsets(
+            dll,
+            pdb,
+            {
+                (spec["layout_class"], spec["member"])
+                for spec in COMPONENTS.values()
+                if spec["member"]
+            },
+            layouts,
+        )
+        components, offset = _components(run, offsets)
+        owners = [_owner(rule, run, offset) for rule in OWNERS]
+        conveyor_flow = _conveyor_flow(run)
+    finally:
+        scratch.unlink(missing_ok=True)
+        layouts.unlink(missing_ok=True)
+
+    payload = {
+        "provenance": {
+            "dll": dll.name,
+            "dll_sha256": dll_sha256,
+            "pdb_guid": native["pdb_guid"],
+            "extracted": datetime.now(UTC).date().isoformat(),
+            "tool": native["tool"],
+            "method": (
+                "sfy-native disasm, one run per constructor. Every direction is a store "
+                "the tool decoded, or a proven absence of one, quoted by address. The "
+                "blueprint corpus and the component's name are not inputs and are never "
+                "evidence for a direction."
+            ),
+        },
+        "enums": {name: list(values) for name, values in sorted(ENUMS.items())},
+        "component_defaults": components,
+        "owner_defaults": owners,
+        "conveyor_flow": conveyor_flow,
+    }
+    target = DATA / "native_directions.json" if out is None else Path(out)
+    target.write_text(json.dumps(payload, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+    for entry in components:
+        print(f"{entry['component_class']:<30} {entry['direction']:<10} {entry['class']}")
+    for owner in owners:
+        print(
+            f"{owner['component_class']:<30} {owner['direction']:<10} "
+            f"{owner['set_in']} for {', '.join(owner['owner_classes'])}"
+        )
+    flow = payload["conveyor_flow"]
+    print(
+        f"conveyor item flow: {flow['entry']['member']} in, "
+        f"{flow['exit']['member']} out, from {flow['source']}"
+    )
+    print(f"-> {target}")
+    return 0
+
+
+def _components(run, offsets: dict[tuple[str, str], int]) -> tuple[list[dict[str, Any]], int]:
+    """Every connection component class's own default, and mDirection's offset.
+
+    ``offsets`` is what the PDB says about each member, keyed by the class that
+    declares it -- see :func:`sfy_disasm.member_offsets`. The offset a claim is
+    made at is that member's own, never another member's that lines up with it.
+    """
+    factory = COMPONENTS["FGFactoryConnectionComponent"]
+    functions = run(f"{factory['class']}::{factory['class']}")
+    store = _pick(functions, factory["evidence"], factory["class"])[factory["evidence"][0]]
+    member = store.get("member")
+    if not member or member["name"] != factory["member"]:
+        raise SystemExit(
+            f"{factory['evidence'][0]} is no longer a {factory['member']} store: "
+            f"{store['text']}"
+        )
+    value = _immediate(store["text"])
+    offset = offsets[factory["layout_class"], factory["member"]]
+    if int(member["offset"]) != offset:
+        raise SystemExit(
+            f"{factory['evidence'][0]} writes {factory['member']} at "
+            f"{member['offset']}, and the PDB puts it at {offset}"
+        )
+    entries = [
+        {
+            "component_class": "FGFactoryConnectionComponent",
+            "class": factory["class"],
+            "member": factory["member"],
+            "offset": offset,
+            "enum": factory["enum"],
+            "value": value,
+            "enum_name": ENUM_NAMES[factory["enum"]][value],
+            "direction": ENUMS[factory["enum"]][value],
+            "function": f"{factory['class']}::{factory['class']}",
+            "rva": _function_of(functions, store)["rva"],
+            "instructions": [_line(store)],
+            "note": factory["note"],
+        }
+    ]
+    for name, spec in COMPONENTS.items():
+        if name == "FGFactoryConnectionComponent":
+            continue
+        functions = [f for symbol in spec["constructors"] for f in run(symbol)]
+        # This member's own offset, out of the PDB. A power connection has no
+        # direction member at all, so there is no offset and nothing to look for.
+        own = offsets[spec["layout_class"], spec["member"]] if spec["member"] else None
+        # "No constructor in the chain writes it" is an absence, and an absence
+        # read out of half a function is worth nothing: the store may be in the
+        # part the decoder never reached. Every one of these constructors has to
+        # be bounded by the game -- `.pdata`, its chain, or the PDB's stated
+        # procedure length -- before the claim may be written. The same goes for
+        # the power connection, where what is listed is every base constructor
+        # its own constructor calls.
+        require_bounded(
+            functions,
+            f"{name}: no constructor in the chain writes {spec['member']} at offset {own}"
+            if spec["member"]
+            else f"{name}: these are all the base constructors its chain calls",
+        )
+        wrote = _stores_at(functions, own) if own is not None else []
+        if wrote:
+            raise SystemExit(
+                f"{name}: a constructor now writes {spec['member']} at offset {own}, so "
+                f"the zero-initialised default is no longer the answer:\n  " + "\n  ".join(wrote)
+            )
+        entries.append(
+            {
+                "component_class": name,
+                "class": spec["class"],
+                "member": spec["member"],
+                "offset": own,
+                "enum": spec["enum"],
+                "value": 0 if spec["member"] else None,
+                "enum_name": ENUM_NAMES[spec["enum"]][0] if spec["enum"] else None,
+                "direction": ENUMS[spec["enum"]][0] if spec["enum"] else "any",
+                "function": spec["constructors"][-1],
+                "rva": functions[-1]["rva"],
+                "instructions": [_line(i) for f in functions for i in _base_calls(f)],
+                "note": spec["note"],
+            }
+        )
+    return entries, offset
+
+
+def _conveyor_flow(run) -> dict[str, Any]:
+    """Which conveyor connection items enter by, read out of the machine code.
+
+    The entry member is derived, not typed: it is whatever the tool annotates on
+    the load that feeds ``Factory_Tick``'s call to
+    ``UFGFactoryConnectionComponent::Factory_GrabOutput``. The exit is the other
+    of the two connections the constructor creates. Every claim is held to the
+    binary, so a game update that moves any of the four functions stops the run.
+    """
+    spec = CONVEYOR_FLOW
+    functions = [f for symbol in spec["functions"] for f in run(symbol)]
+    found = _pick(functions, spec["evidence"], "conveyor flow")
+
+    grab_call = found[spec["grab_call"]]
+    if grab_call.get("call") != spec["grab_callee"]:
+        raise SystemExit(
+            f"{spec['grab_call']} is no longer a call to {spec['grab_callee']}: "
+            f"{grab_call['text']}"
+        )
+    load = found[spec["grab_this"]]
+    member = load.get("member")
+    if not member or member["class"] != spec["class"]:
+        raise SystemExit(f"{spec['grab_this']} no longer loads a {spec['class']} member")
+    entry_member = member["name"]
+
+    # The grab is the input branch of the callee: `cmp mDirection, FCD_INPUT`.
+    test = found[spec["grab_direction"]]
+    direction = test.get("member")
+    if not direction or direction["name"] != "mDirection":
+        raise SystemExit(f"{spec['grab_direction']} no longer tests mDirection: {test['text']}")
+    if ENUMS["EFactoryConnectionDirection"][_immediate(test["text"])] != "input":
+        raise SystemExit(
+            f"{spec['grab_direction']} no longer branches on FCD_INPUT: {test['text']}"
+        )
+
+    members = []
+    for rva in spec["members"]:
+        stored = found[rva].get("member")
+        if not stored or stored["class"] != spec["class"]:
+            raise SystemExit(f"{rva} no longer stores a {spec['class']} connection")
+        members.append(stored["name"])
+    others = [name for name in members if name != entry_member]
+    if len(members) != 2 or len(others) != 1:
+        raise SystemExit(f"{spec['class']} no longer has two connections to order: {members}")
+
+    bound = {found[rva]["member"]["name"] for rva in spec["binding"] if "member" in found[rva]}
+    if bound != set(members):
+        raise SystemExit(
+            f"BeginPlay no longer binds both connections by name: {sorted(bound)} vs {members}"
+        )
+
+    return {
+        "entry": {"member": entry_member},
+        "exit": {"member": others[0]},
+        "source": "native",
+        "class": spec["class"],
+        "header": spec["header"],
+        "header_text": spec["header_text"],
+        "functions": [
+            {"symbol": f["symbol"], "rva": f["rva"]}
+            for f in functions
+            if f["symbol"] in spec["functions"]
+        ],
+        "instructions": [_line(found[rva]) for rva in spec["evidence"]],
+        "note": spec["note"],
+    }
+
+
+def _immediate(text: str) -> int:
+    """The immediate a ``mov byte ptr [reg+disp],N`` stores."""
+    match = re.search(r",\s*([0-9A-Fa-f]+)h?$", text)
+    if match is None:
+        raise SystemExit(f"cannot read the stored value out of {text!r}")
+    raw = match.group(1)
+    return int(raw, 16 if text.rstrip().endswith("h") else 10)
+
+
+def _owner(rule: dict[str, Any], run, offset: int) -> dict[str, Any]:
+    """One native buildable's own default, and the classes it reaches."""
+    setter = rule["setter"]
+    functions = run(setter)
+    found = _pick(functions, rule["evidence"], setter)
+    stores = [found[rva] for rva in (rule["store"], *rule.get("also_store", ()))]
+    for one in stores:
+        if _written_at(one["text"]) != (offset, False):
+            raise SystemExit(f"{one['rva']} no longer writes at offset {offset}: {one['text']}")
+    value = _stored_value(rule, found, stores)
+
+    entry: dict[str, Any] = {
+        "component_class": rule["component_class"],
+        "owner_classes": _owners(rule, run),
+        "enum": rule["enum"],
+        "value": value,
+        "enum_name": ENUM_NAMES[rule["enum"]][value],
+        "direction": ENUMS[rule["enum"]][value],
+        "set_in": setter,
+        "rva": _function_of(functions, stores[0])["rva"],
+        "instructions": [_line(found[rva]) for rva in rule["evidence"]],
+        "inheritance": _inheritance(rule, run),
+        "note": rule["note"],
+    }
+    return entry
+
+
+def _stored_value(rule: dict[str, Any], found: dict[str, Any], stores: list[dict[str, Any]]) -> int:
+    """What the stores write: an immediate, or a register something cleared.
+
+    Every store in a rule has to write the same value -- a constructor that set
+    one of a buildable's two connections one way and the other another way would
+    need a rule per connection, and the run stops rather than reporting the
+    first.
+    """
+    if "zeroed" not in rule:
+        values = {_immediate(one["text"]) for one in stores}
+        if len(values) != 1:
+            raise SystemExit(f"{rule['setter']} no longer stores one value: {sorted(values)}")
+        return values.pop()
+    cleared = found[rule["zeroed"]]
+    register = re.fullmatch(r"xor (\w+),\1", cleared["text"])
+    if register is None:
+        raise SystemExit(f"{rule['zeroed']} is no longer a register clear: {cleared['text']}")
+    family = _family(register.group(1))
+    for one in stores:
+        source = one["text"].rsplit(",", 1)[1].strip()
+        if _family(source) != family:
+            raise SystemExit(f"{one['rva']} no longer stores from {family}: {one['text']}")
+        for between in _between(found, cleared["rva"], one["rva"]):
+            if _family(_destination(between["text"])) == family:
+                raise SystemExit(
+                    f"{between['rva']} writes {family} between the clear at "
+                    f"{rule['zeroed']} and the store at {one['rva']}: {between['text']}"
+                )
+    return 0
+
+
+# The register names that are the same machine register, so a store from the low
+# byte of one that ``xor`` cleared is a store of zero.
+_FAMILIES = {
+    frozenset(("rax", "eax", "ax", "al")),
+    frozenset(("rbx", "ebx", "bx", "bl")),
+    frozenset(("rcx", "ecx", "cx", "cl")),
+    frozenset(("rdx", "edx", "dx", "dl")),
+    frozenset(("rsi", "esi", "si", "sil")),
+    frozenset(("rdi", "edi", "di", "dil")),
+    frozenset(("rbp", "ebp", "bp", "bpl")),
+}
+
+
+def _family(register: str) -> str | None:
+    for family in _FAMILIES:
+        if register in family:
+            return min(family)
+    return None
+
+
+def _destination(text: str) -> str:
+    return text.split(None, 1)[1].split(",")[0].strip() if " " in text else ""
+
+
+def _between(found: dict[str, Any], first: str, last: str) -> list[dict[str, Any]]:
+    low, high = int(first, 16), int(last, 16)
+    return [i for rva, i in found.items() if low < int(rva, 16) < high]
+
+
+def _owners(rule: dict[str, Any], run) -> list[str]:
+    """The classes this default reaches, each held to the binary."""
+    _inheritance(rule, run)
+    return list(rule["owners"])
+
+
+def _inheritance(rule: dict[str, Any], run) -> list[str]:
+    """Why each owner class carries ``setter``'s default: its constructor calls it."""
+    setter = rule["setter"]
+    owning_class = setter.split("::")[0]
+    lines = []
+    for owner in rule["owners"]:
+        if owner == owning_class:
+            lines.append(f"{owner}: {setter} is its own constructor")
+            continue
+        calls = [
+            _line(i)
+            for f in run(f"{owner}::{owner}")
+            for i in f["instructions"]
+            if i.get("call") == setter
+        ]
+        if not calls:
+            raise SystemExit(
+                f"{owner}'s constructor is not seen calling {setter}, so it cannot be "
+                "claimed to inherit that default"
+            )
+        lines.append(f"{owner}: {calls[0]}")
+    return lines
+
+
+if __name__ == "__main__":
+    sys.exit(main())

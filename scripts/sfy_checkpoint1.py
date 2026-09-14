@@ -44,7 +44,7 @@ from flab2bp.sfy.codec import (
 from flab2bp.sfy.geometry import distance, port_forward, quat_rotate, world_port
 from flab2bp.sfy.header import BlueprintHeader, BlueprintRecord, read_header
 from flab2bp.sfy.objects import ACTOR, ObjectData, ObjectHeader, Transform
-from flab2bp.sfy.properties import Array, Object, Vector
+from flab2bp.sfy.properties import Array, Object
 from flab2bp.sfy.query import object_index, spline_points
 from flab2bp.sfy.registry import Port, Registry, load_registry
 from flab2bp.sfy.templates import (
@@ -53,6 +53,7 @@ from flab2bp.sfy.templates import (
     assemble,
     connect,
     set_spline,
+    straight_spline,
 )
 
 REPO = Path(__file__).resolve().parent.parent
@@ -128,23 +129,27 @@ def _port(registry: Registry, class_name: str, port_name: str) -> Port:
     return next(p for p in ports if p.name == port_name)
 
 
-def _straight_spline(
-    direction: tuple[float, float, float], length: float
-) -> tuple[tuple[Vector, Vector, Vector], ...]:
-    """A two-point straight conveyor spline in the belt actor's own frame.
+def _belt_entry(registry: Registry) -> str:
+    """The end of the belt items enter by, out of the game rather than typed here.
 
-    The fixtures write a straight belt as a spline whose outer tangents are unit
-    vectors along the run and whose inner tangents are the run scaled to half its
-    length (capped at 600 cm): 56 corpus belts of exactly this length carry
-    ``(1, 200, 200, 1)``. The belt actor stands at the first point, so that point
-    is the local origin.
+    ``registry.json`` carries each conveyor mark's ``flow``: which of its two
+    connection components items enter and leave through, read out of
+    ``AFGBuildableConveyorBase::Factory_Tick``'s grab and named from the cooked
+    class default object's ``mConnection0``/``mConnection1``. The Constructor's
+    ``Output0`` feeds this belt, so the end wired to it is ``flow.entry``.
+
+    The other half of the arrangement -- that the entry sits at spline point 0,
+    where :func:`straight_spline` puts the belt's start -- is **this project's
+    assumption and not something read out of the game**, exactly as
+    ``geometry.port_forward``'s facing rule is. ``flab2bp.sfy.query`` says so at
+    ``query.py:47-54``: which connection sits at which end of ``mSplineData`` is
+    a separate reading of the game that nobody has done, and no caller may take
+    it from what a blueprint happens to contain.
     """
-    x, y, z = direction
-    half = min(length / 2, 600.0)
-    unit = Vector(x, y, z)
-    inner = Vector(x * half, y * half, z * half)
-    end = Vector(x * length, y * length, z * length)
-    return ((Vector(0.0, 0.0, 0.0), unit, inner), (end, inner, unit))
+    flow = registry.buildables[BELT].flow
+    if flow is None:
+        raise SystemExit(f"the registry gives {BELT} no conveyor flow to wire by")
+    return flow.entry
 
 
 def build() -> Blueprint:
@@ -171,11 +176,12 @@ def build() -> Blueprint:
     facing = port_forward(constructor_at, output)
     belt = library.instantiate(BELT, next(ids), _at(*start))
     belt = (
-        (belt[0][0], set_spline(belt[0][1], _straight_spline(facing, BELT_LENGTH_CM))),
+        (belt[0][0], set_spline(belt[0][1], straight_spline(facing, BELT_LENGTH_CM))),
     ) + tuple(belt[1:])
 
+    entry = _belt_entry(registry)
     port_header, port_data = next((h, d) for h, d in constructor[1:] if h.name == "Output0")
-    belt_header, belt_data = next((h, d) for h, d in belt[1:] if h.name == "ConveyorAny0")
+    belt_header, belt_data = next((h, d) for h, d in belt[1:] if h.name == entry)
     port_data, belt_data = connect(port_data, port_header.path, belt_data, belt_header.path)
     constructor = tuple((h, port_data if h.path == port_header.path else d) for h, d in constructor)
     belt = tuple((h, belt_data if h.path == belt_header.path else d) for h, d in belt)
@@ -215,10 +221,11 @@ def check(built: Blueprint, path: Path, config: Path) -> None:
     if residual > PORT_TOLERANCE_CM:
         raise SystemExit(f"belt starts {residual:.3f} cm from the Constructor's output port")
 
-    wired = index[f"{belt_header.path}.ConveyorAny0"][1]
+    entry = _belt_entry(registry)
+    wired = index[f"{belt_header.path}.{entry}"][1]
     peer = next((p.value for p in wired.properties if p.tag.name == "mConnectedComponent"), None)
     if peer is None:
-        raise SystemExit("the belt's ConveyorAny0 is not wired to anything")
+        raise SystemExit(f"the belt's {entry} is not wired to anything")
 
     _check_filters(again, registry)
     for point in _occupied_points(again):

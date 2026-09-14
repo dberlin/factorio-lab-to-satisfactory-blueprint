@@ -161,9 +161,12 @@ imports the JSON directly.
 
 ### 5.3 Cross-checks (tests)
 
-- Extracted port transforms are compared with belt spline endpoints in the
-  fixture corpus (belt endpoint minus machine transform), the same oracle idea
-  as the DSP collider cross-validation.
+- Extracted port transforms are what the cooked asset states, and nothing
+  accepts them against blueprint files: a blueprint says what somebody once
+  built, so it can neither confirm nor refute a port position. (An earlier
+  revision proposed a belt-endpoint oracle over the fixtures, on the DSP
+  collider cross-validation's model; the test that did it,
+  `tests/sfy/test_port_crosscheck.py`, is deleted.)
 - Every recipe's producer class exists in the buildable registry.
 - Every clearance box in Docs.json parses; unknown clearance types fail the
   test rather than defaulting.
@@ -275,15 +278,41 @@ most likely to pass the in-game gates early.
 
 ## 10. Validation (our gate, stricter than the game)
 
+**Legality is what the build gun's hologram allows, and a blueprint corpus is
+never evidence of it.** A `.sbp` can hold clipped geometry, a hacked save or a
+build from an older game version, so a number measured out of one says only that
+something once produced it — it is not a source, not a cross-check and not
+evidence, for a limit or for any other game datum. What the game refuses is read
+out of the validators the hologram itself runs, into
+`src/flab2bp/sfy/data/hologram_rules.json`, and every limit in `registry.json`
+names the rule that governs it and what that rule does with it
+(`provenance.limits[key].governed_by`, `{rule, effect}` with the effect copied
+from the rule — `refuse`, `clamp`, `snap`, `none` or `compute`, the last being a
+function that is no validation at all: it works out a value the game then uses,
+and turns no placement away) or says why no rule governs
+it. Only `refuse` turns a placement away. Each rule is `extracted`, `partial` or
+`unextractable`: a
+`partial` rule is a bound the validator must not assume it knows, and this gate
+may not invent one in its place. The first consequence is concrete —
+`mBendRadius` (199 cm) is the radius the hologram lays its own arcs on, while
+`AFGConveyorBeltHologram::ValidateCurvature` refuses a horizontal radius below
+`mBendRadius * 1.5 - 15` = 283.5 cm, and only in the curve build mode. See
+`docs/sfy-hologram-rules.md`.
+
 - Hard clearance boxes never intersect; soft boxes may intersect only soft
   boxes.
 - Belt clearance capsules (built from the spline like the game's
   `CreateClearanceData`) never intersect other belts or hard boxes, except
-  within a small tolerance (target 5 cm, tuned against fixtures) at the belt's
-  own connection points. Belts through belts are refused.
-- Per belt run: length <= max spline length, bend radius >= registry, incline
-  <= max incline. Per lift: height within min/max, a step multiple, the
-  vertical-connection minimum when attached to a port.
+  within a small tolerance (5 cm) at the belt's own connection points. That
+  tolerance is ours, covering float error where a belt end sits exactly on a
+  port; it is not a game rule and is not derived from the corpus. Belts
+  through belts are refused.
+- Per belt run: length <= max spline length, incline <= max incline, and
+  horizontal radius of curvature >= the `belt.curvature` floor (not
+  `mBendRadius`). Per lift: height within min/max and the vertical-connection
+  minimum when attached to a port; the step multiple is our own stricter rule,
+  because `lift.step` is `partial` and no quantisation was found in the game.
+  `lift_step_cm` is therefore *ungoverned* in the registry and says so.
 - Every port is connected exactly once with matching direction; every net's
   throughput <= its tier; pipes: flow <= tier and head lift within pump limits.
 - Wires <= max length and pole connection counts respected; every machine is
@@ -309,8 +338,15 @@ the DSP CLI and web behaviour.
 
 Automated gates:
 
-- Format: every fixture decodes; every fixture re-encodes byte-identically.
-- Registry: extractor output is reproducible; port cross-check passes.
+- Format: every fixture decodes; every fixture re-encodes byte-identically
+  (`tests/sfy/test_codec.py::test_full_file_round_trip_is_byte_identical`, over
+  every file `tests/sfy/data/fixtures` lists).
+- Registry: the merge is reproducible — `test_registry.py`'s drift test
+  (`test_the_committed_registry_is_what_the_merge_produces`) re-runs it into a
+  temporary file and diffs — and the registry's own consistency tests in
+  `tests/sfy/test_registry.py` hold every limit, port, direction, flow and asset
+  path to the game source it names. There is no blueprint-corpus cross-check:
+  the corpus is a format fixture and never evidence for a game fact.
 - Corpus: a set of FactorioLab `sfy` URLs from early to late tiers; the gate
   passes when every URL yields a valid stack within budget or a refusal with a
   named cause.

@@ -19,16 +19,21 @@ from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
+from flab2bp.sfy.rules import RULE_EFFECTS, RULE_STATUSES
+
 __all__ = [
     "BELT_MAX_SPLINE_CM",
+    "COST_SEGMENT_SOURCES",
+    "FLOW_NAME_SOURCES",
+    "FLOW_SOURCES",
     "LIMIT_SOURCES",
     "PIPE_BEND_RADIUS_2D_CM",
     "PIPE_MAX_SPLINE_CM",
     "PIPE_MIN_BEND_RADIUS_CM",
     "PORT_DIRECTION_SOURCES",
-    "SPREAD_KEYS",
     "Buildable",
     "ClearanceBox",
+    "ConveyorFlow",
     "Limits",
     "Port",
     "Recipe",
@@ -37,8 +42,9 @@ __all__ = [
     "load_registry",
 ]
 
-# Defaults transcribed from the game's public hologram headers. Task 10 measures
-# the rest from the install and overrides these in ``registry.json``.
+# Defaults transcribed from the game's public hologram headers. The merge script
+# (``scripts/sfy_registry.py``) reads the rest from the install and overrides
+# these in ``registry.json``.
 BELT_MAX_SPLINE_CM = 5600.1
 PIPE_MAX_SPLINE_CM = 5600.1
 PIPE_BEND_RADIUS_2D_CM = 199.0
@@ -55,12 +61,14 @@ PIPE_MIN_BEND_RADIUS_CM = 75.0
 # ``header``          an in-class initialiser in ``CommunityResources/Headers.zip``
 # ``constant``        not a game value at all, but a constant this project chose;
 #                     ``provenance`` carries the reason
-# ``measured``        the envelope ``scripts/sfy_measure_limits.py`` takes from the
-#                     blueprint corpus, for a value no game data states anywhere
 #
-# ``measured`` is the only one of these that is not a fact about the game, and
-# :attr:`Registry.limits_measured` carries the spread behind every such value so
-# that it reads as the envelope it is rather than as a constraint.
+# There is deliberately no source for "what a blueprint corpus contains". A
+# community blueprint can carry clipped geometry, a hacked save or an older game
+# version, so what one holds is not a fact about the game: it is not a source,
+# not a cross-check and not evidence, here or anywhere else in the registry.
+# What the game *does* with each number is in :mod:`flab2bp.sfy.rules`, and
+# ``provenance["limits"][key]["governed_by"]`` names the rule for each limit and
+# copies that rule's effect, so a clamp or a snap is never read as a refusal.
 LIMIT_SOURCES = (
     "assets",
     "binary",
@@ -68,24 +76,57 @@ LIMIT_SOURCES = (
     "constant",
     "docs",
     "header",
-    "measured",
 )
 
 # Where a port's direction came from. A cooked asset omits ``mDirection``
-# whenever it equals the component archetype's value, and the archetype is a
-# native constructor the pak does not carry, so ``tools/sfy-extract`` reports
-# those as ``"unknown"`` and ``scripts/sfy_registry.py`` resolves them:
+# whenever it equals the component **archetype**'s value, so an absent property
+# means "whatever my archetype has" rather than the enum's zero, and the chain of
+# archetypes runs from the buildable's own Blueprint up to a native constructor
+# the pak does not carry. ``tools/sfy-extract`` walks all of it:
 #
-# ``asset``   the asset spells the direction out
-# ``header``  a conveyor end, from ``Buildables/FGBuildableConveyorBase.h:380``
-# ``corpus``  the fixtures wire it to a belt end whose direction the header gives
-# ``name``    the component's own name, a convention that agrees with every port
-#             in the content that does spell its direction
-PORT_DIRECTION_SOURCES = ("asset", "header", "corpus", "name")
+# ``asset``            the buildable's own Blueprint states the direction
+# ``asset-inherited``  a parent Blueprint's template of the same name states it
+# ``native``           the archetype's C++ constructor does, read out of the
+#                      shipped DLL; ``provenance["assets"]
+#                      ["native_direction_defaults"]`` carries the class, the
+#                      member, the value and the instructions it was read at
+# ``unknown``          none of the three answered, and the port ships saying so
+#
+# There is deliberately no source for "what a blueprint corpus wires this port
+# to" and none for "what the component is called". A corpus says what somebody
+# once built, which is not a fact about the game, and a naming convention is not
+# something the game reads. A port whose direction is ``"unknown"`` is one no
+# caller may route to.
+PORT_DIRECTION_SOURCES = ("asset", "asset-inherited", "native", "unknown")
 
-# What a ``limits_measured`` entry has to carry: the whole spread of the corpus
-# behind the value, not just the extreme that became the limit.
-SPREAD_KEYS = frozenset({"min", "p05", "p50", "p95", "max", "n", "fixture", "object"})
+# Where a conveyor's item-flow order was read. Both of a conveyor's connections
+# are ``FCD_ANY``, so ``mDirection`` does not say which end items enter by, and
+# that is a fact a router needs:
+#
+# ``header``  the declaration comment in ``CommunityResources/Headers.zip``
+#             (``Buildables/FGBuildableConveyorBase.h:380``) states the order
+# ``native``  the shipped DLL's machine code makes it explicit as well, and
+#             ``provenance["conveyor_flow"]`` carries the functions, their RVAs
+#             and the instructions
+#
+# There is no third source. A blueprint corpus says what somebody once wired up,
+# which is not a fact about the game.
+FLOW_SOURCES = ("header", "native")
+
+# Where the *names* of the two ends came from. The order above is about the two
+# C++ members; which component sits in each member is a different fact, and the
+# only place the game states it is the cooked class default object, whose
+# ``mConnection0`` object property refers to one of its own subobject exports.
+# A port name is otherwise a convention and never evidence, which is why there is
+# no second entry here.
+FLOW_NAME_SOURCES = ("asset",)
+
+# Where a buildable's cost segment came from. The game's own Docs.json states
+# it as a class default -- ``mMeshLength`` on a conveyor belt, ``mMeshHeight``
+# on a lift -- and ``provenance["cost_segment"]`` names the property per native
+# class beside the ``belt.cost`` rule whose machine code reads it. There is no
+# second entry: this number is never measured off a blueprint's cost list.
+COST_SEGMENT_SOURCES = ("docs",)
 
 _HEADER_DEFAULTED = (
     "belt_max_spline_cm",
@@ -140,10 +181,11 @@ class ClearanceBox:
 class Port:
     """A belt, pipe or power connection on a buildable, in its local frame.
 
-    ``direction_source`` says how ``direction`` was established, because the
-    cooked asset only answers for the ports that spell ``mDirection`` out; see
-    :data:`PORT_DIRECTION_SOURCES`. ``direction`` is ``"unknown"`` only if
-    nothing resolved it, which no port in the shipped registry is.
+    ``direction_source`` says where in the game ``direction`` was read, because
+    the cooked asset only answers for the ports that spell the property out; see
+    :data:`PORT_DIRECTION_SOURCES`. ``direction`` is ``"unknown"`` exactly when
+    the source is, which means no part of the game gave this port a direction:
+    a caller must refuse to route to it rather than assume one.
 
     ``max_connections`` is how many wires may end on a power connection, from
     ``FGCircuitConnectionComponent::mMaxNumConnectionLinks``. It is ``None`` on
@@ -164,6 +206,26 @@ class Port:
 
 
 @dataclass(frozen=True, slots=True)
+class ConveyorFlow:
+    """Which end of a conveyor items enter by, and which they leave by.
+
+    ``entry`` and ``exit`` are port names on the same buildable. This is not
+    :attr:`Port.direction`: a conveyor's two connections are both ``FCD_ANY``
+    (the constructor sets them so, and the hologram assigns the pair's
+    directions from whatever the belt snapped to), so the direction says nothing
+    about which way items travel along the belt itself. ``source`` is where the
+    order over the two C++ members was read -- see :data:`FLOW_SOURCES` -- and
+    ``name_source`` where the pairing of each member with a *named* port was
+    read, which is a separate fact: see :data:`FLOW_NAME_SOURCES`.
+    """
+
+    entry: str
+    exit: str
+    source: str
+    name_source: str
+
+
+@dataclass(frozen=True, slots=True)
 class Buildable:
     """A placeable building, with whatever of its stats Docs.json carries.
 
@@ -181,6 +243,7 @@ class Buildable:
     manufacturing_speed: float | None
     belt_speed_per_min: float | None
     mesh_height_cm: float | None
+    mesh_length_cm: float | None
     width_cm: float | None
     depth_cm: float | None
     height_cm: float | None
@@ -193,6 +256,16 @@ class Buildable:
     # and street lights override it, all to 50.
     grid_snap_cm: float | None = None
     ports: tuple[Port, ...] = ()
+    # The item-flow order of the two conveyor ends, on the belt and lift marks
+    # and on nothing else. ``None`` means this class carries no such order.
+    flow: ConveyorFlow | None = None
+    # How much of a spline buildable one unit of its build recipe pays for, and
+    # where that number was read -- see :data:`COST_SEGMENT_SOURCES`. ``None``
+    # for everything the game charges its recipe exactly once, which is
+    # everything that is not costed by length. The ``belt.cost`` rule in
+    # ``data/hologram_rules.json`` is the machine code that divides by it.
+    length_per_cost_cm: float | None = None
+    length_per_cost_source: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -214,21 +287,23 @@ class Limits:
     """Spline, lift and hologram limits the placer must respect.
 
     Only the four values the public headers state outright have defaults; every
-    other field stays ``None`` until the merge fills it from the game assets or
-    from the measured envelope. :attr:`Registry.limits_sources` says which of
-    the three each field in a loaded registry came from.
+    other field stays ``None`` until the merge fills it from a game source --
+    the cooked assets, the shipped binary, a formula read out of that binary,
+    Docs.json, a header, or this project's own stated constant.
+    :attr:`Registry.limits_sources` says which of those six
+    (:data:`LIMIT_SOURCES`) each field in a loaded registry came from. There is
+    no "measured envelope": nothing here is measured off a blueprint corpus.
     """
 
     belt_max_spline_cm: float = BELT_MAX_SPLINE_CM
     # AFGConveyorBeltHologram::mBendRadius, read from the shipped DLL (source
-    # ``binary``): the radius the hologram lays its own arc on when the game
-    # auto-routes a belt. **It is not a proven minimum.** A spline the player
-    # guides through pole positions may bend tighter, and the current-family
-    # corpus does -- 129.84 cm on a belt in logistics-24.sbp, against this
-    # field's 199.0, with 28 of 370 curved belts under 190. A placer may use it
-    # as the radius to lay its own turns on; it may not use it as the tightest
-    # turn the game will accept. ``Registry.provenance["limits"]`` repeats this
-    # beside the number, and ``Registry.limits_measured`` carries the spread.
+    # ``binary``): the radius the hologram lays its own arcs on when it
+    # auto-routes a belt. **It is not the tightest turn the game accepts.**
+    # ``AFGConveyorBeltHologram::ValidateCurvature`` refuses a horizontal radius
+    # of curvature below ``mBendRadius * 1.5 - 15`` -- 283.5 cm at this field's
+    # 199.0 -- and only checks it at all in the curve build mode. Use this as
+    # the radius to lay turns on and the ``belt.curvature`` rule in
+    # :mod:`flab2bp.sfy.rules` as the bound.
     belt_bend_radius_cm: float | None = None
     belt_max_incline_deg: float | None = None
     lift_step_cm: float | None = None
@@ -264,13 +339,6 @@ class Registry:
     recipe_paths: dict[str, str]
     limits: Limits
     limits_sources: dict[str, str]  # Limits field -> one of LIMIT_SOURCES
-    # The spread of the corpus beside a limit: ``min``, ``p05``, ``p50``,
-    # ``p95``, ``max``, ``n`` and the witness fixture and object. Every entry
-    # says ``"role": "cross-check"``, because that is all it is -- no limit in
-    # the shipped registry is sourced from here. A measured value is an envelope
-    # -- the game accepted every number in that spread -- never a constraint the
-    # game enforces.
-    limits_measured: dict[str, Any]
 
     @classmethod
     def from_docs_only(cls, data: Mapping[str, Any]) -> Registry:
@@ -291,7 +359,6 @@ class Registry:
             recipe_paths={},
             limits=Limits(),
             limits_sources=dict.fromkeys(_HEADER_DEFAULTED, "header"),
-            limits_measured={},
         )
 
 
@@ -324,7 +391,14 @@ def _clearance(raw: Iterable[Mapping[str, Any]]) -> tuple[ClearanceBox, ...]:
 
 
 def _ports(raw: Iterable[Mapping[str, Any]]) -> tuple[Port, ...]:
-    return tuple(
+    """Read a buildable's ports, refusing a direction no game source backs.
+
+    ``direction_source`` is a claim about where in the game a direction was
+    read, so a value outside :data:`PORT_DIRECTION_SOURCES` -- the ``"corpus"``
+    and ``"name"`` a Milestone 1 registry carried, say -- is refused rather than
+    loaded. So is a direction and a source that disagree about being unknown.
+    """
+    ports = tuple(
         Port(
             name=str(port["name"]),
             kind=str(port["kind"]),
@@ -337,6 +411,71 @@ def _ports(raw: Iterable[Mapping[str, Any]]) -> tuple[Port, ...]:
         )
         for port in raw
     )
+    wrong = [
+        f"{p.name}: direction {p.direction!r} from {p.direction_source!r}"
+        for p in ports
+        if p.direction_source not in PORT_DIRECTION_SOURCES
+        or (p.direction == "unknown") != (p.direction_source == "unknown")
+    ]
+    if wrong:
+        raise RegistryError(f"port directions come from no game source: {wrong}")
+    return ports
+
+
+def _cost_segment(class_name: str, entry: Mapping[str, Any]) -> dict[str, Any]:
+    """``length_per_cost_cm`` and its source, refusing a number with no source.
+
+    A buildable costed by length carries both or neither: a length with no
+    source would be a number nothing stands behind, and a source with no length
+    would be a claim about a value that is not there. The source must be one of
+    :data:`COST_SEGMENT_SOURCES`, and the length must be positive -- the game
+    treats a segment of 1e-4 or less as "not costed by length" and charges the
+    recipe once (the ``belt.cost`` rule quotes the branch).
+    """
+    length = _opt_float(entry.get("length_per_cost_cm"))
+    source = entry.get("length_per_cost_source")
+    source = None if source is None else str(source)
+    if (length is None) != (source is None):
+        raise RegistryError(
+            f"{class_name} states a cost segment of {length!r} from {source!r}: "
+            "a length and its source travel together"
+        )
+    if source is not None and source not in COST_SEGMENT_SOURCES:
+        raise RegistryError(f"{class_name}'s cost segment comes from no game source: {source!r}")
+    if length is not None and length <= 0.0:
+        raise RegistryError(
+            f"{class_name} states a cost segment of {length}, which is not a length"
+        )
+    return {"length_per_cost_cm": length, "length_per_cost_source": source}
+
+
+def _flow(raw: Mapping[str, Any] | None, ports: tuple[Port, ...]) -> ConveyorFlow | None:
+    """Read a conveyor's item-flow order, refusing one no game source backs.
+
+    A ``source`` outside :data:`FLOW_SOURCES` or a ``name_source`` outside
+    :data:`FLOW_NAME_SOURCES` is refused rather than loaded, and so is an end
+    that names a port this buildable does not have or names the same port twice:
+    a flow order is a claim about two of *these* ports.
+    """
+    if raw is None:
+        return None
+    flow = ConveyorFlow(
+        entry=str(raw["entry"]),
+        exit=str(raw["exit"]),
+        source=str(raw["source"]),
+        name_source=str(raw["name_source"]),
+    )
+    if flow.source not in FLOW_SOURCES:
+        raise RegistryError(f"conveyor flow comes from no game source: {flow.source!r}")
+    if flow.name_source not in FLOW_NAME_SOURCES:
+        raise RegistryError(f"conveyor flow names come from no game source: {flow.name_source!r}")
+    names = {port.name for port in ports}
+    if flow.entry == flow.exit or not {flow.entry, flow.exit} <= names:
+        raise RegistryError(
+            f"conveyor flow names ends this buildable has no port for: "
+            f"{flow.entry!r} -> {flow.exit!r}"
+        )
+    return flow
 
 
 def _buildables(raw: Mapping[str, Mapping[str, Any]]) -> dict[str, Buildable]:
@@ -344,6 +483,7 @@ def _buildables(raw: Mapping[str, Mapping[str, Any]]) -> dict[str, Buildable]:
     for class_name, entry in raw.items():
         try:
             dims = entry["designer_dims"]
+            ports = _ports(entry.get("ports", ()))
             out[class_name] = Buildable(
                 class_name=class_name,
                 display_name=entry["display_name"],
@@ -353,6 +493,7 @@ def _buildables(raw: Mapping[str, Mapping[str, Any]]) -> dict[str, Buildable]:
                 manufacturing_speed=_opt_float(entry["manufacturing_speed"]),
                 belt_speed_per_min=_opt_float(entry["belt_speed_per_min"]),
                 mesh_height_cm=_opt_float(entry["mesh_height_cm"]),
+                mesh_length_cm=_opt_float(entry["mesh_length_cm"]),
                 width_cm=_opt_float(entry["width_cm"]),
                 depth_cm=_opt_float(entry["depth_cm"]),
                 height_cm=_opt_float(entry["height_cm"]),
@@ -360,8 +501,10 @@ def _buildables(raw: Mapping[str, Mapping[str, Any]]) -> dict[str, Buildable]:
                 max_potential=_opt_float(entry["max_potential"]),
                 potential_shard_slots=_opt_int(entry["potential_shard_slots"]),
                 production_boost_slots=_opt_int(entry["production_boost_slots"]),
+                **_cost_segment(class_name, entry),
                 grid_snap_cm=_opt_float(entry.get("grid_snap_cm")),
-                ports=_ports(entry.get("ports", ())),
+                ports=ports,
+                flow=_flow(entry.get("flow"), ports),
             )
         except (KeyError, IndexError, TypeError, ValueError) as exc:
             raise RegistryError(f"buildable {class_name!r} is malformed: {exc}") from exc
@@ -436,28 +579,51 @@ def _limits_sources(raw: Mapping[str, Any], limits: Limits) -> dict[str, str]:
     return {str(k): str(v) for k, v in raw.items()}
 
 
-def _limits_measured(raw: Mapping[str, Any], sources: Mapping[str, str]) -> dict[str, Any]:
-    """Check the corpus spreads: every one names a limit, every measured limit has one.
+def _governance(provenance: Mapping[str, Any], limits: Limits) -> None:
+    """Check that every limit says which rule governs it, or why none does.
 
-    A key here is corroboration, not a source: most of these sit beside a value
-    the game states, so that the two can be compared. A limit whose *value* came
-    from the corpus must have one, or nothing says how wide the envelope behind
-    it was.
+    A number with no ``governed_by`` and no ``ungoverned`` reason is a value
+    somebody found in the game's data, not a limit. ``governed_by`` is
+    ``{"rule": <id>, "effect": <effect>, "status": <status>}`` with both the
+    effect and the status copied from the rule, and each has to be one
+    :mod:`flab2bp.sfy.rules` knows -- a limit that claimed to be ``enforced`` by
+    a rule that only clamps or snaps would tell a validator to refuse a
+    placement the game accepts, and one whose rule is ``partial`` is a bound read
+    out of a function the tool could not finish, which the reader should see
+    without opening the rules file.
+    ``scripts/sfy_registry.py`` fills these from its ``GOVERNED_BY`` and
+    ``NOT_GOVERNED`` tables and holds both against ``data/hologram_rules.json``;
+    this re-checks the shape of the claim on load, without reading the rules.
     """
-    unknown = sorted(set(raw) - {f.name for f in fields(Limits)})
-    if unknown:
-        raise RegistryError(f"registry limits_measured names unknown limits: {unknown}")
-    missing = sorted({k for k, v in sources.items() if v == "measured"} - set(raw))
-    if missing:
-        raise RegistryError(f"registry limits_measured has no spread for: {missing}")
-    incomplete = sorted(k for k, v in raw.items() if not set(v) >= SPREAD_KEYS)
-    if incomplete:
-        raise RegistryError(f"registry limits_measured entries are missing a spread: {incomplete}")
-    return {str(k): dict(v) for k, v in raw.items()}
+    entries = provenance.get("limits", {})
+    silent, malformed = [], []
+    for f in fields(Limits):
+        entry = entries.get(f.name, {})
+        governed = entry.get("governed_by")
+        if bool(governed) == bool(entry.get("ungoverned")):
+            silent.append(f.name)
+        elif governed is not None and (
+            set(governed) != {"rule", "effect", "status"}
+            or governed["effect"] not in RULE_EFFECTS
+            or governed["status"] not in RULE_STATUSES
+        ):
+            malformed.append(f"{f.name}: {governed}")
+    if silent:
+        raise RegistryError(
+            "registry limits must each name the rule that governs them or say why none "
+            f"does, and never both: {sorted(silent)}"
+        )
+    if malformed:
+        raise RegistryError(f"registry limits name a governing rule badly: {sorted(malformed)}")
 
 
 def load_registry(path: Path | None = None) -> Registry:
-    """Read the full registry from ``data/registry.json`` (written by Task 10).
+    """Read the full registry from ``data/registry.json``.
+
+    That file is generated, never hand-edited: ``scripts/sfy_registry.py`` merges
+    Docs.json, the cooked assets, the shipped binary and the hologram rules into
+    it, and ``docs/sfy-regenerating-game-data.md`` is the order the seven steps
+    behind it run in.
 
     Raises :class:`RegistryError` if the file is missing a top-level section or
     a malformed entry; the caller gets no half-built registry.
@@ -471,8 +637,10 @@ def load_registry(path: Path | None = None) -> Registry:
         raise RegistryError(f"registry at {path} is not JSON: {exc}") from exc
     limits = _limits(_require(data, "limits"))
     sources = _limits_sources(_require(data, "limits_sources"), limits)
+    provenance = dict(_require(data, "provenance"))
+    _governance(provenance, limits)
     return Registry(
-        provenance=dict(_require(data, "provenance")),
+        provenance=provenance,
         buildables=_buildables(_require(data, "buildables")),
         recipes=_recipes(_require(data, "recipes")),
         descriptors=dict(_require(data, "descriptors")),
@@ -481,5 +649,4 @@ def load_registry(path: Path | None = None) -> Registry:
         recipe_paths=_paths(_require(data, "recipe_paths"), "recipe_paths"),
         limits=limits,
         limits_sources=sources,
-        limits_measured=_limits_measured(_require(data, "limits_measured"), sources),
     )

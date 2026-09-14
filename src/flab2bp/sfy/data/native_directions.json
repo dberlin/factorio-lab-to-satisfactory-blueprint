@@ -1,0 +1,252 @@
+{
+ "component_defaults": [
+  {
+   "class": "UFGFactoryConnectionComponent",
+   "component_class": "FGFactoryConnectionComponent",
+   "direction": "input",
+   "enum": "EFactoryConnectionDirection",
+   "enum_name": "FCD_INPUT",
+   "function": "UFGFactoryConnectionComponent::UFGFactoryConnectionComponent",
+   "instructions": [
+    "0x7b5ff1: mov byte ptr [rbx+258h],0  ; UFGFactoryConnectionComponent::mDirection @600"
+   ],
+   "member": "mDirection",
+   "note": "UFGFactoryConnectionComponent's constructor stores FCD_INPUT. A machine's belt port that says nothing is an input because this is what its archetype carries, not because of what the component is called.",
+   "offset": 600,
+   "rva": "0x7b5fd0",
+   "value": 0
+  },
+  {
+   "class": "UFGPipeConnectionComponent",
+   "component_class": "FGPipeConnectionComponent",
+   "direction": "any",
+   "enum": "EPipeConnectionType",
+   "enum_name": "PCT_ANY",
+   "function": "UFGPipeConnectionComponent::UFGPipeConnectionComponent",
+   "instructions": [
+    "0x355439: call 000000000024C350h  ; -> UFGConnectionComponent::UFGConnectionComponent",
+    "0x8b3915: call 000000000024C3A0h  ; -> UFGConnectionComponent::UFGConnectionComponent",
+    "0x3553d9: call 000000000024C350h  ; -> UFGConnectionComponent::UFGConnectionComponent",
+    "0x8b3899: call 00000000008B3900h  ; -> UFGPipeConnectionComponentBase::UFGPipeConnectionComponentBase"
+   ],
+   "member": "mPipeConnectionType",
+   "note": "Neither UFGPipeConnectionComponentBase's constructor nor UFGPipeConnectionComponent's writes mPipeConnectionType, so it keeps the zero UObject construction leaves, which is PCT_ANY.",
+   "offset": 600,
+   "rva": "0x8b3890",
+   "value": 0
+  },
+  {
+   "class": "UFGPipeConnectionFactory",
+   "component_class": "FGPipeConnectionFactory",
+   "direction": "any",
+   "enum": "EPipeConnectionType",
+   "enum_name": "PCT_ANY",
+   "function": "UFGPipeConnectionFactory::UFGPipeConnectionFactory",
+   "instructions": [
+    "0x355439: call 000000000024C350h  ; -> UFGConnectionComponent::UFGConnectionComponent",
+    "0x8b3915: call 000000000024C3A0h  ; -> UFGConnectionComponent::UFGConnectionComponent",
+    "0x3553d9: call 000000000024C350h  ; -> UFGConnectionComponent::UFGConnectionComponent",
+    "0x8b3899: call 00000000008B3900h  ; -> UFGPipeConnectionComponentBase::UFGPipeConnectionComponentBase",
+    "0x3554d9: call 000000000024C350h  ; -> UFGConnectionComponent::UFGConnectionComponent",
+    "0x8b39c9: call 00000000008B3890h  ; -> UFGPipeConnectionComponent::UFGPipeConnectionComponent"
+   ],
+   "member": "mPipeConnectionType",
+   "note": "UFGPipeConnectionFactory derives from UFGPipeConnectionComponent (its constructor calls it) and no constructor in the chain writes mPipeConnectionType, so it too is PCT_ANY.",
+   "offset": 600,
+   "rva": "0x8b39c0",
+   "value": 0
+  },
+  {
+   "class": "UFGPowerConnectionComponent",
+   "component_class": "FGPowerConnectionComponent",
+   "direction": "any",
+   "enum": null,
+   "enum_name": null,
+   "function": "UFGPowerConnectionComponent::UFGPowerConnectionComponent",
+   "instructions": [
+    "0x36e819: call 000000000023FBD0h  ; -> UFGCircuitConnectionComponent::UFGCircuitConnectionComponent",
+    "0x8f116d: call 00000000006F41A0h  ; -> UFGCircuitConnectionComponent::UFGCircuitConnectionComponent"
+   ],
+   "member": null,
+   "note": "A power connection is a circuit connection: its constructor chains to UFGCircuitConnectionComponent, not to UFGFactoryConnectionComponent, and the class carries no direction property. 'any' here says there is no direction to take, not that one was read.",
+   "offset": null,
+   "rva": "0x8f1160",
+   "value": null
+  }
+ ],
+ "conveyor_flow": {
+  "class": "AFGBuildableConveyorBase",
+  "entry": {
+   "member": "mConnection0"
+  },
+  "exit": {
+   "member": "mConnection1"
+  },
+  "functions": [
+   {
+    "rva": "0x4e10e0",
+    "symbol": "AFGBuildableConveyorBase::Factory_Tick"
+   },
+   {
+    "rva": "0x7c52b0",
+    "symbol": "UFGFactoryConnectionComponent::Factory_GrabOutput"
+   },
+   {
+    "rva": "0x4d1650",
+    "symbol": "AFGBuildableConveyorBase::BeginPlay"
+   },
+   {
+    "rva": "0x1b9af0",
+    "symbol": "AFGBuildableConveyorBase::AFGBuildableConveyorBase"
+   },
+   {
+    "rva": "0x4c96b0",
+    "symbol": "AFGBuildableConveyorBase::AFGBuildableConveyorBase"
+   }
+  ],
+  "header": "Buildables/FGBuildableConveyorBase.h:380",
+  "header_text": "First connection on conveyor belt, Connections are always in the same order, mConnection0 is the input, mConnection1 is the output.",
+  "instructions": [
+   "0x4e1611: mov rcx,qword ptr [rdi+6A0h]  ; AFGBuildableConveyorBase::mConnection0 @1696",
+   "0x4e1635: call 00000000007C52B0h  ; -> UFGFactoryConnectionComponent::Factory_GrabOutput",
+   "0x4e1684: mov rax,qword ptr [rdi+6A8h]  ; AFGBuildableConveyorBase::mConnection1 @1704",
+   "0x4e1743: mov rax,qword ptr [rdi+6A8h]  ; AFGBuildableConveyorBase::mConnection1 @1704",
+   "0x4e174a: mov rcx,qword ptr [rax+260h]",
+   "0x4e1761: call 00000000001B7DD0h  ; -> AFGBuildableConveyorBase::StaticClass",
+   "0x7c52d9: cmp byte ptr [rbx+258h],0  ; UFGFactoryConnectionComponent::mDirection @600",
+   "0x7c52e2: cmp byte ptr [rbx+268h],0  ; UFGFactoryConnectionComponent::mHasConnectedComponent @616",
+   "0x7c52eb: mov rbx,qword ptr [rbx+260h]  ; UFGFactoryConnectionComponent::mConnectedComponent @608",
+   "0x7c52f2: cmp byte ptr [rbx+258h],1",
+   "0x7c5328: call 00000000007C52B0h  ; -> UFGFactoryConnectionComponent::Factory_GrabOutput",
+   "0x4d17f7: mov r9,qword ptr [19EE958h]",
+   "0x4d1803: cmp qword ptr [rax+18h],r9",
+   "0x4d184c: mov qword ptr [rdi+6A0h],rbx  ; AFGBuildableConveyorBase::mConnection0 @1696",
+   "0x4d1860: mov r9,qword ptr [19EE960h]",
+   "0x4d186a: cmp qword ptr [rax+18h],r9",
+   "0x4d18a0: mov qword ptr [rdi+6A8h],rbx  ; AFGBuildableConveyorBase::mConnection1 @1704",
+   "0x4c98a7: mov rbx,qword ptr [19EE958h]",
+   "0x4c98c9: call qword ptr [0EE8600h]",
+   "0x4c98ec: mov qword ptr [rdi+6A0h],rbx  ; AFGBuildableConveyorBase::mConnection0 @1696",
+   "0x4c9958: mov rbx,qword ptr [19EE960h]",
+   "0x4c997a: call qword ptr [0EE8600h]",
+   "0x4c999d: mov qword ptr [rdi+6A8h],rbx  ; AFGBuildableConveyorBase::mConnection1 @1704"
+  ],
+  "note": "AFGBuildableConveyorBase::Factory_Tick grabs an item through mConnection0 (UFGFactoryConnectionComponent::Factory_GrabOutput, which is the FCD_INPUT branch of that callee) and follows mConnection1 to the conveyor downstream. That is the item-flow order the header states at line 380, and it is independent of mDirection, which is FCD_ANY on both ends.",
+  "source": "native"
+ },
+ "enums": {
+  "EFactoryConnectionDirection": [
+   "input",
+   "output",
+   "any",
+   "snap_only"
+  ],
+  "EPipeConnectionType": [
+   "any",
+   "input",
+   "output",
+   "snap_only"
+  ]
+ },
+ "owner_defaults": [
+  {
+   "component_class": "FGFactoryConnectionComponent",
+   "direction": "any",
+   "enum": "EFactoryConnectionDirection",
+   "enum_name": "FCD_ANY",
+   "inheritance": [
+    "AFGBuildableConveyorBelt: 0x1b9cb9: call 00000000001B9AF0h  ; -> AFGBuildableConveyorBase::AFGBuildableConveyorBase",
+    "AFGBuildableConveyorLift: 0x1b9e09: call 00000000001B9AF0h  ; -> AFGBuildableConveyorBase::AFGBuildableConveyorBase"
+   ],
+   "instructions": [
+    "0x4c98ec: mov qword ptr [rdi+6A0h],rbx  ; AFGBuildableConveyorBase::mConnection0 @1696",
+    "0x4c9902: mov rax,qword ptr [rdi+6A0h]  ; AFGBuildableConveyorBase::mConnection0 @1696",
+    "0x4c9914: mov byte ptr [rax+258h],2",
+    "0x4c999d: mov qword ptr [rdi+6A8h],rbx  ; AFGBuildableConveyorBase::mConnection1 @1704",
+    "0x4c9b47: mov rax,qword ptr [rdi+6A8h]  ; AFGBuildableConveyorBase::mConnection1 @1704",
+    "0x4c9b59: mov byte ptr [rax+258h],2"
+   ],
+   "note": "AFGBuildableConveyorBase's constructor creates both ends and sets both to FCD_ANY, which is what ConveyorAny0 and ConveyorAny1 are named after. FGBuildableConveyorBase.h:380 -- 'mConnection0 is the input, mConnection1 is the output' -- is about which end items enter and leave by; it is not mDirection. A placed belt takes its two directions from whatever it snapped to, under the belt.snap_directions rule.",
+   "owner_classes": [
+    "AFGBuildableConveyorBelt",
+    "AFGBuildableConveyorLift"
+   ],
+   "rva": "0x4c96b0",
+   "set_in": "AFGBuildableConveyorBase::AFGBuildableConveyorBase",
+   "value": 2
+  },
+  {
+   "component_class": "FGFactoryConnectionComponent",
+   "direction": "snap_only",
+   "enum": "EFactoryConnectionDirection",
+   "enum_name": "FCD_SNAP_ONLY",
+   "inheritance": [
+    "AFGBuildablePoleConveyor: AFGBuildablePoleConveyor::AFGBuildablePoleConveyor is its own constructor"
+   ],
+   "instructions": [
+    "0x51b567: call 00000000002BA120h  ; -> ?Z_Construct_UClass_UFGFactoryConnectionComponent_NoRegister@@YAPEAVUClass@@XZ",
+    "0x51b5bf: mov byte ptr [rbx+258h],3"
+   ],
+   "note": "A conveyor pole's one connection is FCD_SNAP_ONLY: it is something to snap a belt to, not something that takes or gives items. Build_ConveyorPole_C inherits it; the stackable and wall poles are Blueprint components and spell the same value out themselves.",
+   "owner_classes": [
+    "AFGBuildablePoleConveyor"
+   ],
+   "rva": "0x51b4c0",
+   "set_in": "AFGBuildablePoleConveyor::AFGBuildablePoleConveyor",
+   "value": 3
+  },
+  {
+   "component_class": "FGPipeConnectionComponent",
+   "direction": "any",
+   "enum": "EPipeConnectionType",
+   "enum_name": "PCT_ANY",
+   "inheritance": [
+    "AFGBuildablePipeline: AFGBuildablePipeline::AFGBuildablePipeline is its own constructor"
+   ],
+   "instructions": [
+    "0x51ac2c: xor ebp,ebp",
+    "0x51ae87: mov qword ptr [rdi+648h],rbx  ; AFGBuildablePipeBase::mConnection0 @1608",
+    "0x51ae9c: mov rax,qword ptr [rdi+648h]  ; AFGBuildablePipeBase::mConnection0 @1608",
+    "0x51aeab: mov byte ptr [rax+258h],bpl",
+    "0x51af26: mov qword ptr [rdi+650h],rbx  ; AFGBuildablePipeBase::mConnection1 @1616",
+    "0x51af3b: mov rax,qword ptr [rdi+650h]  ; AFGBuildablePipeBase::mConnection1 @1616",
+    "0x51af4a: mov byte ptr [rax+258h],bpl"
+   ],
+   "note": "Both ends of a pipeline are PCT_ANY: fluid runs either way along one. The value is stored from bpl, which xor ebp,ebp cleared at the top of the constructor and nothing writes again before either store.",
+   "owner_classes": [
+    "AFGBuildablePipeline"
+   ],
+   "rva": "0x51ac10",
+   "set_in": "AFGBuildablePipeline::AFGBuildablePipeline",
+   "value": 0
+  },
+  {
+   "component_class": "FGPipeConnectionComponent",
+   "direction": "snap_only",
+   "enum": "EPipeConnectionType",
+   "enum_name": "PCT_SNAP_ONLY",
+   "inheritance": [
+    "AFGBuildablePolePipe: AFGBuildablePolePipe::AFGBuildablePolePipe is its own constructor"
+   ],
+   "instructions": [
+    "0x666d23: call 0000000000354780h  ; -> ?Z_Construct_UClass_UFGPipeConnectionComponentBase_NoRegister@@YAPEAVUClass@@XZ",
+    "0x666d75: mov byte ptr [rbx+258h],3"
+   ],
+   "note": "A pipeline support's connection is PCT_SNAP_ONLY, the pipe's counterpart to the conveyor pole's FCD_SNAP_ONLY.",
+   "owner_classes": [
+    "AFGBuildablePolePipe"
+   ],
+   "rva": "0x666c10",
+   "set_in": "AFGBuildablePolePipe::AFGBuildablePolePipe",
+   "value": 3
+  }
+ ],
+ "provenance": {
+  "dll": "FactoryGameEGS-FactoryGame-Win64-Shipping.dll",
+  "dll_sha256": "65fc5a6bde6d44782da387976b144a41a6b94e4fa78ec6e1bc49c3dad2d47513",
+  "extracted": "2026-09-14",
+  "method": "sfy-native disasm, one run per constructor. Every direction is a store the tool decoded, or a proven absence of one, quoted by address. The blueprint corpus and the component's name are not inputs and are never evidence for a direction.",
+  "pdb_guid": "A2691F7C-B45E-7947-65C6-535DE373BA04",
+  "tool": "sfy-native 0.1.0"
+ }
+}

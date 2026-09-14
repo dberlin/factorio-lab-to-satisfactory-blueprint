@@ -26,6 +26,7 @@ other format, so a tag built wrongly fails loudly at write time.
 from __future__ import annotations
 
 import math
+from array import array
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -52,10 +53,13 @@ from flab2bp.sfy.versions import BLUEPRINT_HEADER_VERSION
 
 __all__ = [
     "BLUEPRINT_HEADER_VERSION",
-    "CONVEYOR_SEGMENT_CM",
     "DEFAULT_SAVE_VERSION",
+    "ITEM_DESCRIPTOR_CLASS",
     "LEVEL",
     "SPLINE_POINT_FIELD_TAGS",
+    "STRAIGHT_TANGENT_HALF",
+    "STRAIGHT_TANGENT_MAX_CM",
+    "STRAIGHT_TANGENT_MIN_CM",
     "TEMPLATE_MIN_SAVE_VERSION",
     "Template",
     "TemplateError",
@@ -65,6 +69,7 @@ __all__ = [
     "connect",
     "set_recipe",
     "set_spline",
+    "straight_spline",
 ]
 
 LEVEL = "Persistent_Level"
@@ -78,16 +83,6 @@ with the modern property tag, which is what a blueprint written today needs."""
 
 DEFAULT_SAVE_VERSION = 60
 
-CONVEYOR_SEGMENT_CM = 200.0
-"""How much belt one unit of the belt's build recipe pays for.
-
-Measured on the corpus: ``production-4`` has six Mk1 belts of 300, 200, 200,
-300, 200 and 200 cm and its header charges 8 iron plates over the non-spline
-buildings, which is ``sum(ceil(length / 200))``; ``logistics-9``'s twelve belts
-come to 34 the same way. A fixture's whole bill is not reproducible -- it also
-counts items sitting in inventories and lightweight buildables that are not
-saved as objects at all -- but the belts in it are."""
-
 SPLINE_POINT_FIELD_TAGS: tuple[Tag, ...] = tuple(
     Tag(name, "StructProperty", 0, struct_name="Vector").as_modern(TAG_NATIVE_SERIALIZE)
     for name in ("Location", "ArriveTangent", "LeaveTangent")
@@ -97,6 +92,17 @@ SPLINE_POINT_FIELD_TAGS: tuple[Tag, ...] = tuple(
 ``Vector`` is natively serialised, hence the flag, and it lives in
 ``/Script/CoreUObject``, which :data:`~flab2bp.sfy.properties.TYPE_PACKAGES`
 knows. A test compares these against a fixture belt's own tags."""
+
+ITEM_DESCRIPTOR_CLASS = "/Script/FactoryGame.FGItemDescriptor"
+"""The item-descriptor base class, which an inventory slot allows when it allows
+anything.
+
+``AFGBuildableManufacturer::SetUpInventoryFilters`` puts this class on every
+slot past the last ingredient or product -- ``0x549f83`` and ``0x54a6a1`` call
+``Z_Construct_UClass_UFGItemDescriptor_NoRegister`` and hand the result to
+``SetAllowedItemOnIndex``; see the ``manufacturer.inventory_filters`` rule. The
+spelling is Unreal's own path for a native class, ``/Script/<module>.<class>``,
+which is how the codec reads one out of a blueprint and how it writes one back."""
 
 CONNECTED_COMPONENT = "mConnectedComponent"
 SPLINE_DATA = "mSplineData"
@@ -218,12 +224,66 @@ def connect(
     )
 
 
+STRAIGHT_TANGENT_HALF = 0.5
+"""The fraction of a straight run's length its inner tangents start at, before
+the clamp: ``0xafcf0d`` ``mulsd xmm0, 0.5`` in
+``FSplineUtils::BuildStraightSpline2D`` (and ``0xafd2a5`` in its 3D twin)."""
+
+STRAIGHT_TANGENT_MIN_CM = 50.0
+"""The floor that half-length is clamped up to, in centimetres: ``0xafcf1d``
+``maxsd xmm0, 50.0`` (``0xafd2b5`` in the 3D builder). A 60 cm run gets 50 cm
+tangents, not 30."""
+
+STRAIGHT_TANGENT_MAX_CM = 600.0
+"""How long the inner tangents of a straight conveyor run are: half its length,
+clamped between 50 and 600 centimetres. This constant is the ceiling --
+``0xafcf15`` ``minsd xmm0, 600.0`` -- and the docstring for all three.
+
+Read out of the game, not off a blueprint. ``FSplineUtils::BuildStraightSpline2D``
+(``0xafcf0d`` ``mulsd 0.5``, ``0xafcf15`` ``minsd 600.0``, ``0xafcf1d``
+``maxsd 50.0``) and its 3D twin scale the unit run direction by that, and the
+belt hologram's ``AutoRouteSpline`` is what calls them. See the
+``belt.straight_tangents`` rule in ``data/hologram_rules.json``."""
+
+
+def straight_spline(
+    direction: tuple[float, float, float], length: float
+) -> tuple[tuple[Vector, Vector, Vector], ...]:
+    """A two-point straight conveyor spline, shaped the way the game shapes one.
+
+    ``direction`` is a unit vector and the points are in the belt actor's own
+    frame, so a belt placed at its first point starts at the local origin.
+
+    The shape is ``AFGConveyorBeltHologram::AutoRouteSpline``'s, through
+    ``FSplineBuilder`` -- see the ``belt.straight_tangents`` rule. ``Start``
+    (``0xb220b0``) normalises the tangent it is given into *both* of the first
+    point's tangents, so the outer ones are unit vectors;
+    ``BuildStraightSpline2D`` scales the run direction by
+    ``clamp(length / 2, 50, 600)`` and ``AddSegment`` (``0xaf1e80``) rescales
+    the first point's leave tangent to that length and gives the second point
+    that tangent to arrive on and its unit direction to leave by. A 400 cm run
+    is ``(1, 200, 200, 1)``.
+    """
+    x, y, z = direction
+    inner_length = min(
+        max(length * STRAIGHT_TANGENT_HALF, STRAIGHT_TANGENT_MIN_CM), STRAIGHT_TANGENT_MAX_CM
+    )
+    unit = Vector(x, y, z)
+    inner = Vector(x * inner_length, y * inner_length, z * inner_length)
+    end = Vector(x * length, y * length, z * length)
+    return ((Vector(0.0, 0.0, 0.0), unit, inner), (end, inner, unit))
+
+
 def set_spline(belt: ObjectData, points: Sequence[tuple[Vector, Vector, Vector]]) -> ObjectData:
     """Replace a conveyor's ``mSplineData`` with ``(location, arrive, leave)`` triples.
 
     The locations are in the belt actor's own frame, so a belt placed at its
     first point starts its spline at the origin. The array keeps the template's
     own tag; the points are built with :data:`SPLINE_POINT_FIELD_TAGS`.
+
+    What a *straight* run's triples are is a fact about the game rather than a
+    choice: :func:`straight_spline` builds them the way the belt hologram's own
+    router does.
     """
     current = find(belt.properties, SPLINE_DATA)
     if not isinstance(current, Array):
@@ -244,9 +304,13 @@ def set_spline(belt: ObjectData, points: Sequence[tuple[Vector, Vector, Vector]]
 def set_recipe(machine: ObjectData, recipe_class_path: str) -> ObjectData:
     """Point a manufacturer's ``mCurrentRecipe`` at a recipe asset.
 
-    This is half of changing a machine's recipe: the inventory filters live on
-    the machine's inventory *components*, so use :func:`apply_recipe` over a
-    whole instantiated actor unless you are certain the filters already agree.
+    This is half of changing a machine's recipe, and it is the half
+    ``AFGBuildableManufacturer::SetRecipe`` (``0x548d10``) does last: the
+    inventory filters live on the machine's inventory *components*, and the
+    game rewrites them from the new recipe immediately afterwards
+    (``0x548f5b``, the call to ``SetUpInventoryFilters``). So use
+    :func:`apply_recipe` over a whole instantiated actor unless you are certain
+    the filters already agree.
     """
     return _set_property(machine, CURRENT_RECIPE, Object(ObjectRef("", recipe_class_path)))
 
@@ -264,14 +328,23 @@ def apply_recipe(
     first leaves a constructor that says it makes iron plates while its
     inventories still only accept what the template made.
 
-    The corpus says what the filters hold, over 160 manufacturers at save
-    version 58 and up: **the input filter is the recipe's ingredients, in recipe
-    order**, and **the output filter is its products**, in recipe order, padded
-    out with the ``FGItemDescriptor`` wildcard the game leaves in the machine's
-    spare output slots. How many slots there are belongs to the machine, not to
-    the recipe -- an oil refinery keeps a slot a solid recipe does not fill --
-    so the slots and their parallel ``mArbitrarySlotSizes`` are left exactly as
-    the template has them and only the entries the recipe names are rewritten.
+    What the filters have to hold is what the game writes into them.
+    ``AFGBuildableManufacturer::SetRecipe`` (``0x548d10``) calls
+    ``SetUpInventoryFilters`` (``0x549a70``), which walks each inventory once
+    per *slot* and calls
+    ``UFGInventoryComponent::SetAllowedItemOnIndex(i, class)`` with the
+    recipe's i-th ingredient -- or its i-th product, for the output inventory --
+    while there is one, and with ``UFGItemDescriptor`` itself, the wildcard, on
+    every slot past the last. See the ``manufacturer.inventory_filters`` rule in
+    ``data/hologram_rules.json`` for the instructions.
+
+    So the input filter is the recipe's ingredients in recipe order and the
+    output filter is its products in recipe order, each padded to the machine's
+    own slot count with the wildcard. How many slots there are belongs to the
+    machine, not to the recipe -- an oil refinery keeps a slot a solid recipe
+    does not fill -- so the slots and their parallel ``mArbitrarySlotSizes`` are
+    left exactly as the template has them, and the game does not touch those
+    either.
     """
     if not objects:
         raise TemplateError("apply_recipe needs the actor and its components")
@@ -310,7 +383,12 @@ def _inventory_path(header: ObjectHeader, data: ObjectData, name: str) -> str:
 def _set_filter(
     header: ObjectHeader, data: ObjectData, items: Sequence[str], registry: Registry
 ) -> ObjectData:
-    """Rewrite the leading ``mAllowedItemDescriptors`` entries, keeping the slots."""
+    """Rewrite every ``mAllowedItemDescriptors`` entry, keeping the slot count.
+
+    Slot i allows ``items[i]`` while there is one, and every slot past the last
+    allows :data:`ITEM_DESCRIPTOR_CLASS` -- which is what the game writes there,
+    not what the template happened to be carrying (see :func:`apply_recipe`).
+    """
     current = find(data.properties, ALLOWED_ITEMS)
     if not isinstance(current, Array):
         raise TemplateError(f"{header.path} has no {ALLOWED_ITEMS} array")
@@ -318,10 +396,10 @@ def _set_filter(
         raise TemplateError(
             f"{header.path} has {len(current.items)} inventory slots, the recipe needs {len(items)}"
         )
+    wildcard = Object(ObjectRef("", ITEM_DESCRIPTOR_CLASS))
     filled: tuple[Value, ...] = tuple(Object(_item_ref(registry, item)) for item in items)
-    return _set_property(
-        data, ALLOWED_ITEMS, replace(current, items=filled + current.items[len(items) :])
-    )
+    spare = (wildcard,) * (len(current.items) - len(items))
+    return _set_property(data, ALLOWED_ITEMS, replace(current, items=filled + spare))
 
 
 def assemble(
@@ -336,8 +414,8 @@ def assemble(
     """Put objects into a blueprint, with the header the game expects.
 
     ``cost`` is what the contents would take out of the player's inventory: each
-    actor's ``mBuiltWithRecipe`` costed through the registry, and a conveyor
-    costed once per :data:`CONVEYOR_SEGMENT_CM` of spline. ``recipes`` is the
+    actor's ``mBuiltWithRecipe`` costed through the registry, once per cost
+    segment of the buildable (see :func:`_segments`). ``recipes`` is the
     distinct build recipes in first-seen order. The objects come out actors
     first and components after, in the order they were handed in, which is how
     47 of the 49 corpus fixtures are written.
@@ -352,7 +430,7 @@ def assemble(
         recipe = registry.recipes.get(ref.name)
         if recipe is None:
             raise TemplateError(f"{h.path}: the registry has no recipe {ref.name}")
-        count = _segments(d)
+        count = _segments(h, d, registry)
         for item, amount in recipe.ingredients:
             cost[item] = cost.get(item, 0) + amount * count
     header = BlueprintHeader(
@@ -382,12 +460,61 @@ def _recipe_ref(h: ObjectHeader, d: ObjectData) -> ObjectRef:
     return value.ref
 
 
-def _segments(d: ObjectData) -> int:
+def _f32(value: float) -> float:
+    """``value`` as the nearest IEEE-754 single, which is the width the game works in.
+
+    Every float in the ``belt.cost`` arithmetic is a 32-bit one -- ``divss``,
+    ``addss``, ``cvtss2si`` -- so a sum Python carries at 64 bits can sit on the
+    far side of a tie from the number the game actually rounds. ``array("f")``
+    is the round trip; no dependency and no packing format to get wrong.
+    """
+    return array("f", (value,))[0]
+
+
+def _round_to_int(value: float) -> int:
+    """``FMath::RoundToInt``, as the shipped binary computes it.
+
+    UE's SSE form, quoted in the ``belt.cost`` rule at ``0x4a6bc2``..``0x4a6bd2``:
+    double the value, add a half, convert with the round-to-nearest-even the
+    hardware is in, and shift the result right by one.
+
+    Halving an even result of that is a half rounded **towards positive
+    infinity**, not away from zero and not the half-to-even Python's own
+    ``round`` does: 1.5 goes to 2 and -1.5 goes to -1, because ``-1.5`` doubled
+    plus a half is ``-2.5``, which the hardware's round-to-nearest-even makes
+    ``-2``, and ``-2 >> 1`` is ``-1``. (Every length this module costs is
+    positive, so the negative half only matters to whoever reads this next.)
+
+    Each step is taken at ``float`` width for the same reason the game's is:
+    a tie in single precision is not always a tie in double.
+    """
+    single = _f32(value)
+    return round(_f32(_f32(single + single) + 0.5)) >> 1
+
+
+def _segments(header: ObjectHeader, d: ObjectData, registry: Registry) -> int:
     """How many units of its build recipe this actor costs.
 
-    One, unless it is a spline buildable: a conveyor is charged by length, and
-    a part-used segment is charged whole.
+    One, unless the registry says this class is costed by length: a conveyor is
+    charged its recipe once per ``length_per_cost_cm`` of run, which is the
+    mark's own mesh out of the game's Docs.json. The arithmetic is
+    ``AFGBuildable::GetCostMultiplierForLength``'s, quoted in the ``belt.cost``
+    rule -- ``max(1, RoundToInt(length / segment))``, with a segment of 1e-4 or
+    less meaning "not costed by length" -- so a *round*, not a ceiling: 300 cm
+    of Mk1 belt costs two iron plates and 299 cm costs one.
+
+    The length is the sum of the chords between stored spline points, where the
+    game divides ``mLength``, which a belt takes from its spline component's
+    ``GetSplineLength``. The two agree on the straight runs this module authors
+    and diverge on a curve, where the arc is longer than its chords.
+
+    The divide is taken at ``float`` width because ``0x4a6bb9`` is a ``divss``:
+    see :func:`_f32`.
     """
+    buildable = registry.buildables.get(header.class_name)
+    segment = None if buildable is None else buildable.length_per_cost_cm
+    if segment is None or segment <= 1e-4:
+        return 1
     value = find(d.properties, SPLINE_DATA)
     if not isinstance(value, Array) or len(value.items) < 2:
         return 1
@@ -401,7 +528,7 @@ def _segments(d: ObjectData) -> int:
         if previous is not None:
             length += math.dist(previous, current)
         previous = current
-    return max(1, math.ceil(length / CONVEYOR_SEGMENT_CM - 1e-9))
+    return max(1, _round_to_int(_f32(_f32(length) / _f32(segment))))
 
 
 def _set_property(d: ObjectData, name: str, value: Value, tag: Tag | None = None) -> ObjectData:

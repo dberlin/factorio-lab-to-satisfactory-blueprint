@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
+import sys
 from functools import cache
+from pathlib import Path
 
 import pytest
 
@@ -10,10 +13,13 @@ from flab2bp.sfy.codec import read_sbp, read_sbp_file, write_sbp
 from flab2bp.sfy.objects import ACTOR, COMPONENT, Transform
 from flab2bp.sfy.properties import Array, Int, Object, Struct, Value, Vector
 from flab2bp.sfy.query import connected, find, object_index, spline_points
-from flab2bp.sfy.registry import load_registry
+from flab2bp.sfy.registry import DATA_DIR, load_registry
+from flab2bp.sfy.rules import load_rules
 from flab2bp.sfy.templates import (
-    CONVEYOR_SEGMENT_CM,
+    ITEM_DESCRIPTOR_CLASS,
     SPLINE_POINT_FIELD_TAGS,
+    STRAIGHT_TANGENT_MAX_CM,
+    STRAIGHT_TANGENT_MIN_CM,
     TEMPLATE_MIN_SAVE_VERSION,
     TemplateLibrary,
     apply_recipe,
@@ -21,6 +27,7 @@ from flab2bp.sfy.templates import (
     connect,
     set_recipe,
     set_spline,
+    straight_spline,
 )
 from flab2bp.sfy.trailers import trailer_for_new
 from tests.sfy.conftest import fixture_paths
@@ -28,53 +35,6 @@ from tests.sfy.conftest import fixture_paths
 IDENTITY = Transform((0.0, 0.0, 0.0, 1.0), (0.0, 0.0, 0.0), (1.0, 1.0, 1.0))
 
 IRON_PLATE = "/Game/FactoryGame/Recipes/Constructor/Recipe_IronPlate.Recipe_IronPlate_C"
-
-_PARTS = "/Game/FactoryGame/Resource/Parts"
-
-# The asset path of every item descriptor the fixture corpus's own header costs
-# name, transcribed by hand from the corpus when ``templates.py`` carried this
-# table itself. It is an oracle now, and only an oracle: the registry's
-# ``item_paths`` are extracted from the game's Docs.json, and this says the
-# extraction agrees with what the game wrote into 49 blueprints.
-_ITEM_FOLDERS: dict[str, str] = {
-    "Desc_AluminumCasing_C": f"{_PARTS}/AluminumCasing",
-    "Desc_AluminumPlate_C": f"{_PARTS}/AluminumPlate",
-    "Desc_Cable_C": f"{_PARTS}/Cable",
-    "Desc_Cement_C": f"{_PARTS}/Cement",
-    "Desc_CircuitBoardHighSpeed_C": f"{_PARTS}/CircuitBoardHighSpeed",
-    "Desc_Computer_C": f"{_PARTS}/Computer",
-    "Desc_CopperIngot_C": f"{_PARTS}/CopperIngot",
-    "Desc_CopperSheet_C": f"{_PARTS}/CopperSheet",
-    "Desc_CrystalOscillator_C": f"{_PARTS}/CrystalOscillator",
-    "Desc_CrystalShard_C": "/Game/FactoryGame/Resource/Environment/Crystal",
-    "Desc_FicsiteMesh_C": f"{_PARTS}/FicsiteMesh",
-    "Desc_Fuel_C": f"{_PARTS}/Fuel",
-    "Desc_HighSpeedWire_C": f"{_PARTS}/HighSpeedWire",
-    "Desc_IronIngot_C": f"{_PARTS}/IronIngot",
-    "Desc_IronPlateReinforced_C": f"{_PARTS}/IronPlateReinforced",
-    "Desc_IronPlate_C": f"{_PARTS}/IronPlate",
-    "Desc_IronRod_C": f"{_PARTS}/IronRod",
-    "Desc_Leaves_C": f"{_PARTS}/GenericBiomass",
-    "Desc_ModularFrameHeavy_C": f"{_PARTS}/ModularFrameHeavy",
-    "Desc_ModularFrame_C": f"{_PARTS}/ModularFrame",
-    "Desc_Motor_C": f"{_PARTS}/Motor",
-    "Desc_Plastic_C": f"{_PARTS}/Plastic",
-    "Desc_QuartzCrystal_C": f"{_PARTS}/QuartzCrystal",
-    "Desc_Rotor_C": f"{_PARTS}/Rotor",
-    "Desc_Rubber_C": f"{_PARTS}/Rubber",
-    "Desc_SAMFluctuator_C": f"{_PARTS}/SAMFluctuator",
-    "Desc_Silica_C": f"{_PARTS}/Silica",
-    "Desc_SteelPipe_C": f"{_PARTS}/SteelPipe",
-    "Desc_SteelPlateReinforced_C": f"{_PARTS}/SteelPlateReinforced",
-    "Desc_SteelPlate_C": f"{_PARTS}/SteelPlate",
-    "Desc_TimeCrystal_C": f"{_PARTS}/TimeCrystal",
-    "Desc_WAT2_C": "/Game/FactoryGame/Prototype/WAT",
-    "Desc_Wire_C": f"{_PARTS}/Wire",
-}
-
-ITEM_CLASS_PATHS: dict[str, str] = {
-    item: f"{folder}/{item.removesuffix('_C')}.{item}" for item, folder in _ITEM_FOLDERS.items()
-}
 
 
 def _reference_names(value: Value) -> list[str]:
@@ -250,31 +210,49 @@ def test_authored_spline_point_tags_match_the_tags_a_fixture_belt_carries() -> N
     pytest.fail("no current-family belt with a spline in the corpus")
 
 
-def test_item_paths_agree_with_every_fixture_cost_entry() -> None:
-    """The registry's descriptor asset paths are what the game wrote in the corpus."""
-    reg = load_registry()
-    seen = 0
-    for path in fixture_paths():
-        for entry in read_sbp_file(path).header.cost:
-            assert reg.item_paths.get(entry.item.name) == entry.item.path, entry.item.name
-            seen += 1
-    assert seen > 100
+def test_item_paths_are_the_paths_the_cooked_descriptor_assets_carry() -> None:
+    """The registry's item paths, held to a reading of the game they did not come from.
 
-
-def test_the_extracted_item_paths_match_the_hand_transcribed_oracle() -> None:
-    """What the extractor read out of Docs.json equals what was typed by hand.
-
-    The 33 entries in :data:`ITEM_CLASS_PATHS` were transcribed from the fixture
-    corpus before ``tools/sfy-extract`` collected any of them; they are here to
-    hold the extraction to a source it did not come from.
+    ``item_paths`` come from Docs.json: ``tools/sfy-extract`` matches the whole
+    paths the dump spells out wherever one entry refers to another, and the
+    merge keeps the ones the registry needs (``assets.json``'s ``class_paths``).
+    ``assets.json``'s ``descriptor_paths`` is the *other* reading of the same
+    game -- every cooked Blueprint whose class chain reaches ``FGItemDescriptor``
+    in the shipped usmap, keyed by the class name its
+    ``BlueprintGeneratedClass`` export carries and valued at the package path
+    that export's own outer states. Nothing in either leg is a blueprint, and
+    the two have to agree entry for entry.
     """
     reg = load_registry()
-    assert {item: reg.item_paths.get(item) for item in ITEM_CLASS_PATHS} == ITEM_CLASS_PATHS
-    assert len(reg.item_paths) > 700
+    assets = json.loads((DATA_DIR / "assets.json").read_text(encoding="utf-8"))
+    cooked: dict[str, str] = assets["descriptor_paths"]
+    assert len(cooked) > 700
+    assert {item: cooked.get(item) for item in reg.item_paths} == reg.item_paths
+    # The other direction: every item descriptor Docs.json lists is authorable.
+    assert set(reg.descriptors) <= set(reg.item_paths)
+
+
+def test_the_checkpoint_takes_the_belt_end_it_wires_from_the_registry() -> None:
+    """``scripts/sfy_checkpoint1.py`` names no port; the game's flow order does.
+
+    Which of a conveyor's two connections items enter by is
+    ``registry.json``'s ``flow``, read out of ``Factory_Tick`` and named from
+    the cooked class default object. The script used to spell ``ConveyorAny0``
+    out twice, which is a port name taken on trust.
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+    import sfy_checkpoint1
+
+    reg = load_registry()
+    flow = reg.buildables[sfy_checkpoint1.BELT].flow
+    assert flow is not None and flow.name_source == "asset"
+    assert sfy_checkpoint1._belt_entry(reg) == flow.entry
+    source = Path(sfy_checkpoint1.__file__).read_text(encoding="utf-8")
+    assert flow.entry not in source and flow.exit not in source
 
 
 def test_authoring_reaches_every_item_a_recipe_names() -> None:
-    """The hand table covered 33 descriptors; every recipe in the registry needs one."""
+    """Every ingredient and product in the registry needs a path to author with."""
     reg = load_registry()
     wanted = {
         item
@@ -308,11 +286,87 @@ def test_assemble_puts_every_actor_before_every_component() -> None:
     ]
 
 
+def _belt_cost(length: float) -> list[tuple[str, int]]:
+    """The blueprint bill for one straight Mk1 belt of ``length`` centimetres."""
+    lib = _lib()
+    reg = load_registry()
+    belt = lib.instantiate("Build_ConveyorBeltMk1_C", 1, IDENTITY)
+    actor = set_spline(
+        belt[0][1],
+        (
+            (Vector(0, 0, 0), Vector(1, 0, 0), Vector(length, 0, 0)),
+            (Vector(length, 0, 0), Vector(length, 0, 0), Vector(1, 0, 0)),
+        ),
+    )
+    sample = read_sbp_file(fixture_paths()[0])
+    bp = assemble(
+        ((belt[0][0], actor), *belt[1:]),
+        (4, 4, 4),
+        reg,
+        build_version=sample.header.build_version,
+        version_data=sample.header.version_data,
+    )
+    return [(c.item.name, c.amount) for c in bp.header.cost]
+
+
+def test_the_cost_round_is_taken_at_the_width_the_game_takes_it() -> None:
+    """``FMath::RoundToInt`` is ``divss``/``addss``/``cvtss2si``: single, throughout.
+
+    A ratio that is not a tie as a double can be one as a float, and then the
+    game rounds up where a double-width copy of the same arithmetic rounds
+    down. Every step is taken at float width for that reason.
+    """
+    from flab2bp.sfy.templates import _round_to_int
+
+    # 2.4999999999 is not 2.5 as a double; as a float it is exactly 2.5.
+    assert _round_to_int(2.4999999999) == 3
+    assert (round(2.4999999999 + 2.4999999999 + 0.5) >> 1) == 2  # the double answer
+    # The half goes towards +infinity: not away from zero, not to even.
+    assert [_round_to_int(v) for v in (0.5, 1.5, 2.5, 3.5)] == [1, 2, 3, 4]
+    assert [_round_to_int(v) for v in (-0.5, -1.5, -2.5, -3.5)] == [0, -1, -2, -3]
+
+
+def test_a_belt_is_costed_by_the_cost_segment_the_registry_read_from_the_game() -> None:
+    """``AFGBuildableConveyorBelt::GetDismantleRefundReturnsMultiplier``'s segment.
+
+    The mark's own ``mMeshLength``, which Docs.json states as 200 cm for every
+    belt in 1.2.0; the registry carries it as ``length_per_cost_cm`` with the
+    source ``docs``, and nothing here hard-codes it.
+    """
+    reg = load_registry()
+    segment = reg.buildables["Build_ConveyorBeltMk1_C"].length_per_cost_cm
+    assert segment is not None
+    assert reg.buildables["Build_ConveyorBeltMk1_C"].length_per_cost_source == "docs"
+    assert _belt_cost(3 * segment) == [("Desc_IronPlate_C", 3)]
+    # Nothing that is not costed by length carries a segment at all.
+    assert reg.buildables["Build_ConstructorMk1_C"].length_per_cost_cm is None
+
+
+def test_a_part_used_belt_segment_is_rounded_the_way_the_game_rounds_it() -> None:
+    """``max(1, RoundToInt(length / segment))``, not a ceiling.
+
+    ``AFGBuildable::GetCostMultiplierForLength`` at 0x4a6bb0 divides, doubles,
+    adds a half, converts and shifts -- UE's ``RoundToInt`` -- and takes the
+    larger of that and 1. So three-quarters of a segment still costs one unit
+    and one-and-a-quarter segments costs one, where a ceiling would have
+    charged two.
+    """
+    segment = load_registry().buildables["Build_ConveyorBeltMk1_C"].length_per_cost_cm
+    assert segment == 200.0
+    assert _belt_cost(0.75 * segment) == [("Desc_IronPlate_C", 1)]
+    assert _belt_cost(1.25 * segment) == [("Desc_IronPlate_C", 1)]
+    # A half goes away from zero, which is what the SSE form does.
+    assert _belt_cost(1.5 * segment) == [("Desc_IronPlate_C", 2)]
+    assert _belt_cost(2.5 * segment) == [("Desc_IronPlate_C", 3)]
+    # Shorter than a whole segment still costs one: the floor is the cmovl.
+    assert _belt_cost(1.0) == [("Desc_IronPlate_C", 1)]
+
+
 def test_cost_counts_a_belt_once_per_conveyor_segment() -> None:
     lib = _lib()
     reg = load_registry()
     belt = lib.instantiate("Build_ConveyorBeltMk1_C", 1, IDENTITY)
-    length = 3 * CONVEYOR_SEGMENT_CM
+    length = 3 * 200.0
     actor = set_spline(
         belt[0][1],
         (
@@ -442,35 +496,90 @@ def test_apply_recipe_refuses_a_recipe_the_machine_cannot_run() -> None:
         )
 
 
-def test_the_corpus_fills_inventory_filters_from_the_recipe() -> None:
-    """The rule ``apply_recipe`` implements, measured on every fixture manufacturer.
+def test_apply_recipe_writes_the_filters_the_game_writes() -> None:
+    """``SetUpInventoryFilters``' shape: recipe order, then the wildcard, exactly.
 
-    Ingredients fill the input inventory's leading slots in recipe order and
-    products the output inventory's; whatever slots the machine has left over
-    hold the ``FGItemDescriptor`` wildcard. 160 of 160 agree.
+    Slot i allows the recipe's i-th ingredient (i-th product, for the output
+    inventory) while there is one, and every slot past the last allows
+    ``UFGItemDescriptor``. The rule ``manufacturer.inventory_filters`` quotes
+    the loops; this holds what we author to them, over the machines the
+    templates cover.
     """
     reg = load_registry()
-    checked = 0
-    for path in fixture_paths():
-        bp = read_sbp_file(path)
-        if bp.header.save_version < TEMPLATE_MIN_SAVE_VERSION:
-            continue
-        objects = bp.objects
-        for h, d in objects:
-            if h.kind != ACTOR:
-                continue
-            value = find(d.properties, "mCurrentRecipe")
-            if not isinstance(value, Object) or value.ref.is_null:
-                continue
-            recipe = reg.recipes.get(value.ref.name)
-            if recipe is None or find(d.properties, "mInputInventory") is None:
-                continue
-            ingredients = tuple(item for item, _ in recipe.ingredients)
-            products = tuple(item for item, _ in recipe.products)
-            got_in = _filter_items(objects, d, "mInputInventory")
-            got_out = _filter_items(objects, d, "mOutputInventory")
-            assert got_in[: len(ingredients)] == ingredients, (path.stem, h.name)
-            assert got_out[: len(products)] == products, (path.stem, h.name)
-            assert set(got_out[len(products) :]) <= {"FGItemDescriptor"}, (path.stem, h.name)
-            checked += 1
-    assert checked > 100, checked
+    rules = load_rules()
+    assert rules["manufacturer.inventory_filters"].effect == "compute"
+    lib = _lib()
+    recipe = reg.recipes[IRON_PLATE.rsplit(".", 1)[-1]]
+    ingredients = [item for item, _ in recipe.ingredients]
+    products = [item for item, _ in recipe.products]
+    after = apply_recipe(lib.instantiate("Build_ConstructorMk1_C", 24, IDENTITY), IRON_PLATE, reg)
+    got_in = _filter_items(after, after[0][1], "mInputInventory")
+    got_out = _filter_items(after, after[0][1], "mOutputInventory")
+    assert list(got_in[: len(ingredients)]) == ingredients
+    assert list(got_out[: len(products)]) == products
+    assert set(got_in[len(ingredients) :]) <= {"FGItemDescriptor"}
+    assert set(got_out[len(products) :]) <= {"FGItemDescriptor"}
+    assert ITEM_DESCRIPTOR_CLASS.endswith(".FGItemDescriptor")
+
+
+def test_a_spare_slot_gets_the_wildcard_and_not_what_the_template_had() -> None:
+    """The game rewrites every slot, so a class left over from before is a bug.
+
+    ``SetUpInventoryFilters`` writes ``UFGItemDescriptor`` on every slot past
+    the last ingredient (``0x549f83``/``0x549fb0``) rather than leaving it as it
+    was, so applying a one-ingredient recipe over a two-ingredient one has to
+    clear the second slot. A refinery runs both kinds.
+    """
+    reg = load_registry()
+    lib = _lib()
+    machine = "Build_OilRefinery_C"
+    two = reg.recipe_paths["Recipe_Alternate_CoatedCable_C"]
+    one = reg.recipe_paths["Recipe_Alternate_PolymerResin_C"]
+    assert len(reg.recipes["Recipe_Alternate_CoatedCable_C"].ingredients) == 2
+    assert len(reg.recipes["Recipe_Alternate_PolymerResin_C"].ingredients) == 1
+    after_two = apply_recipe(lib.instantiate(machine, 25, IDENTITY), two, reg)
+    assert "FGItemDescriptor" not in _filter_items(after_two, after_two[0][1], "mInputInventory")[1]
+    after_one = apply_recipe(after_two, one, reg)
+    got = _filter_items(after_one, after_one[0][1], "mInputInventory")
+    assert got[0] == reg.recipes["Recipe_Alternate_PolymerResin_C"].ingredients[0][0]
+    assert set(got[1:]) == {"FGItemDescriptor"}
+
+
+def test_a_straight_spline_is_shaped_the_way_the_game_shapes_one() -> None:
+    """``belt.straight_tangents``: unit vectors outside, clamp(L/2, 50, 600) inside.
+
+    ``FSplineBuilder::Start`` normalises the tangent it is given into both of
+    the first point's tangents, ``BuildStraightSpline2D`` scales the run
+    direction by half the run's length clamped to [50, 600], and ``AddSegment``
+    gives the second point that tangent to arrive on and its unit direction to
+    leave by.
+    """
+    assert load_rules()["belt.straight_tangents"].effect == "compute"
+    points = straight_spline((1.0, 0.0, 0.0), 400.0)
+    assert len(points) == 2
+    (first_loc, first_arrive, first_leave), (last_loc, last_arrive, last_leave) = points
+    assert (first_loc.x, first_loc.y, first_loc.z) == (0.0, 0.0, 0.0)
+    assert (last_loc.x, last_loc.y, last_loc.z) == (400.0, 0.0, 0.0)
+    # The outer tangents are the unit direction; the inner ones carry the length.
+    assert (first_arrive.x, last_leave.x) == (1.0, 1.0)
+    assert (first_leave.x, last_arrive.x) == (200.0, 200.0)
+    assert first_arrive != first_leave and last_arrive != last_leave
+
+
+def test_a_short_straight_spline_keeps_the_games_fifty_centimetre_floor() -> None:
+    """``maxsd 50.0`` at 0xafcf1d: a 60 cm run still gets 50 cm tangents."""
+    short = straight_spline((0.0, 1.0, 0.0), 60.0)
+    assert short[0][2].y == STRAIGHT_TANGENT_MIN_CM
+    assert short[1][1].y == STRAIGHT_TANGENT_MIN_CM
+    # And the 600 cm cap at the other end: minsd 600.0 at 0xafcf15.
+    long = straight_spline((0.0, 0.0, 1.0), 5000.0)
+    assert long[0][2].z == STRAIGHT_TANGENT_MAX_CM
+    assert long[1][1].z == STRAIGHT_TANGENT_MAX_CM
+
+
+def test_a_straight_spline_scales_by_the_full_three_dimensional_length() -> None:
+    """The clamp is on the 3D distance even in the 2D builder (0xafcf03/0xafcf08)."""
+    diagonal = (0.6, 0.0, 0.8)
+    points = straight_spline(diagonal, 1000.0)
+    assert points[0][2].x == 0.6 * 500.0
+    assert points[0][2].z == 0.8 * 500.0
