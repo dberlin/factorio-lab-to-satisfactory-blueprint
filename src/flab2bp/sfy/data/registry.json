@@ -40005,9 +40005,14 @@
   },
   "max_connections": {
    "class": "UFGCircuitConnectionComponent",
+   "ctor_bodies": [
+    "0x23fbd0",
+    "0x6f41a0"
+   ],
    "evidence": "mov dword ptr [rbx+280h],1 @ 0x6f41c1",
    "member": "mMaxNumConnectionLinks",
    "native_default": 1,
+   "note": "The constructor symbol UFGCircuitConnectionComponent::UFGCircuitConnectionComponent resolves to 2 bodies in the PDB (0x23fbd0, 0x6f41a0), which is what the compiler emits for a complete-object and a base-object constructor. Only the second stores mMaxNumConnectionLinks -- the evidence 'mov dword ptr [rbx+280h],1 @ 0x6f41c1' is an address inside it -- so the value is read from that body and the first is not evidence of anything. Anyone re-reading this member must check both bodies rather than the first the symbol resolves to.",
    "offset": 640,
    "set_in": "UFGCircuitConnectionComponent::UFGCircuitConnectionComponent",
    "size_source": "pdata",

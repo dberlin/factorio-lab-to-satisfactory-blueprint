@@ -596,6 +596,10 @@ def _fill_native_connection_links(
                 port["max_connections_source"] = "native"
             source = port["max_connections_source"]
             counts[source] = counts.get(source, 0) + 1
+    klass = native["classes"]["UFGCircuitConnectionComponent"]
+    bodies = klass.get("ctor_rva", {}).get(
+        "UFGCircuitConnectionComponent::UFGCircuitConnectionComponent", []
+    )
     return {
         "native_default": value,
         "class": "UFGCircuitConnectionComponent",
@@ -604,6 +608,17 @@ def _fill_native_connection_links(
         "set_in": entry["set_in"],
         "evidence": entry["evidence"],
         "size_source": entry["size_source"],
+        "ctor_bodies": list(bodies),
+        "note": (
+            "The constructor symbol "
+            "UFGCircuitConnectionComponent::UFGCircuitConnectionComponent resolves to "
+            f"{len(bodies)} bodies in the PDB ({', '.join(bodies)}), which is what the "
+            "compiler emits for a complete-object and a base-object constructor. Only the "
+            f"second stores mMaxNumConnectionLinks -- the evidence {entry['evidence']!r} is "
+            "an address inside it -- so the value is read from that body and the first is "
+            "not evidence of anything. Anyone re-reading this member must check both bodies "
+            "rather than the first the symbol resolves to."
+        ),
         "sources": dict(sorted(counts.items())),
     }
 

@@ -367,11 +367,27 @@ Dictionary<string, object?>? MeshBounds(UObject generatedClass, List<UObject> ex
     for (var depth = 0; depth < 16 && current is not null; depth++)
     {
         var cdo = currentExports.FirstOrDefault(e => e.Name == "Default__" + current.Name);
+        // `mMesh` before `mMidMesh` is an ASSUMPTION about today's classes, not a
+        // rule the game states: no buildable in this build carries both, so the
+        // order has never had to decide anything. A class that did carry both
+        // would silently take `mMesh` here, and that is the case to revisit --
+        // for a conveyor the mid mesh is the repeating span and the wrong pick
+        // would measure one segment instead of the piece.
         foreach (var property in new[] { "mMesh", "mMidMesh" })
         {
             UStaticMesh? mesh;
             try { mesh = cdo?.GetOrDefault<UStaticMesh?>(property, null); }
-            catch (Exception) { continue; }
+            catch (Exception error)
+            {
+                // Never swallowed: a mesh that will not load is a bounds box
+                // this tool cannot state, and the buildable then ships with no
+                // `mesh_bounds_cm` at all. Saying so on stderr is the only way
+                // that shows up as anything but a silently missing number.
+                Console.Error.WriteLine(
+                    $"warning: {current.Name}.{property} would not load "
+                    + $"({error.GetType().Name}: {error.Message}); its bounds are unavailable");
+                continue;
+            }
             if (mesh is null) continue;
             var record = new Dictionary<string, object?>
             {
