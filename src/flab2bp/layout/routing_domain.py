@@ -6351,6 +6351,34 @@ class _RouteAllRun:
     source_family: dict[int, tuple[int, ...]] = field(init=False)
     source_family_distance: dict[int, int] = field(init=False)
     priority: set[int] = field(init=False)
+    #: What the commit cluster used to capture. `settle`, `destination_canvas`
+    #: and `proposals` are bound once; the six `best_*`, `round_work` and
+    #: `iterations` are the incumbent the round loop re-derives, so the field is
+    #: written at every binding point the local had.
+    settle: Callable[[_Canvas, tuple[frozenset[NetId], ...]], RouteSettlement] | None = field(
+        init=False
+    )
+    destination_canvas: _Canvas = field(init=False)
+    iterations: int = field(init=False)
+    best_paths: Mapping[int, tuple[Cell, ...]] = field(init=False)
+    best_failures: dict[int, NetFailure] = field(init=False)
+    best_source_hints: dict[int, Cell] = field(init=False)
+    best_path_taps: dict[int, Cell] = field(init=False)
+    best_sink_hints: dict[int, Cell] = field(init=False)
+    round_work: dict[int, int] = field(init=False)
+    proposals: dict[int, _RouteProposal] = field(init=False)
+    best_attempt: _CommittedAttempt | None = field(init=False)
+    #: Bound below `_repair`, ~1,300 lines under `_finish`, the only reader.
+    proved_stranded: set[int] = field(init=False)
+    #: The per-round snapshot that replaced `retain_commit_failures`'s two
+    #: keyword-only default arguments. A default binds the object that existed
+    #: when the `def` executed -- once per round, after `round_failures` is
+    #: rebuilt from the round's stranded set and before the round rebuilds it
+    #: again. Reading a live binding at call time would write a round's commit
+    #: evidence into a dict nobody returns, so the snapshot stays explicit and
+    #: is taken at the statement slot the `def` used to occupy.
+    retained_failures: dict[int, NetFailure] = field(init=False)
+    retained_blockers: dict[int, tuple[NetId, ...]] = field(init=False)
 
     @property
     def left(self) -> int:
@@ -8072,6 +8100,11 @@ def _route_all(
     run.junction_obstacle_span = junction_obstacle_span
     run.history = history
     run.paths = paths
+    #: What the commit cluster used to capture and is bound above `run`:
+    #: the settlement callback, the caller's canvas, and the round counter.
+    run.settle = settle
+    run.destination_canvas = destination_canvas
+    run.iterations = iterations
     fewest_failed = len(nets) + 1
     stale = 0
     #: The round `best_paths` was captured from, or ``-1`` before any round
@@ -8100,6 +8133,16 @@ def _route_all(
     round_work: dict[int, int] = {}
     proposals: dict[int, _RouteProposal] = {}
     best_attempt: _CommittedAttempt | None = None
+    #: The same objects the closures' free variables held. Nothing runs between
+    #: the block above and here, so this is the block's own binding point.
+    run.best_paths = best_paths
+    run.best_failures = best_failures
+    run.best_source_hints = best_source_hints
+    run.best_path_taps = best_path_taps
+    run.best_sink_hints = best_sink_hints
+    run.round_work = round_work
+    run.proposals = proposals
+    run.best_attempt = best_attempt
 
     #: The vocabulary and the search cluster, now bound methods. Each alias
     #: keeps its call sites byte-identical; Task 7 deletes the aliases.
@@ -9111,6 +9154,7 @@ def _route_all(
     }
     run.last_mile_counts = last_mile_counts
     proved_stranded: set[int] = set()
+    run.proved_stranded = proved_stranded
     _last_mile_report = run._last_mile_report
 
     def _restrict_proposal(
@@ -9751,6 +9795,7 @@ def _route_all(
             # and the remaining shared quota, under the same deadline.
             coverage_pass = coverage_first and it == 0
             iterations = it + 1
+            run.iterations = iterations
             round_work.clear()
             for index in list(paths):
                 _unstake(index)
@@ -9883,6 +9928,13 @@ def _route_all(
                 ) or (
                     isinstance(attempt.settlement, RouteSettlementRefused) and not attempt.unlinked
                 )
+
+            #: The snapshot the two keyword-only defaults below take when this
+            #: `def` executes, made explicit: `round_failures` is rebuilt again
+            #: further down this round, and a live read at call time would put
+            #: the round's commit evidence in a dict nobody returns.
+            run.retained_failures = round_failures
+            run.retained_blockers = search_blockers
 
             def retain_commit_failures(
                 unlinked: Collection[int],
@@ -10167,18 +10219,24 @@ def _route_all(
                 # mutated in place by the rip-up and by the repair, so keeping the
                 # reference would make "the best round" mean "the last one".
                 fewest_failed, stale, best_paths = failed, 0, MappingProxyType(dict(paths))
+                run.best_paths = best_paths
                 best_round = it
                 best_failures = dict(round_failures)
+                run.best_failures = best_failures
                 best_source_hints = {
                     index: hint for index, hint in source_hint.items() if index in best_paths
                 }
+                run.best_source_hints = best_source_hints
                 best_sink_hints = {
                     index: hint for index, hint in sink_hint.items() if index in best_paths
                 }
+                run.best_sink_hints = best_sink_hints
                 best_path_taps = {
                     index: tap for index, tap in path_tap.items() if index in best_paths
                 }
+                run.best_path_taps = best_path_taps
                 best_attempt = run.commit_attempt
+                run.best_attempt = best_attempt
             else:
                 stale += 1
             # An exhausted work budget ends the search as surely as a stale

@@ -9,6 +9,7 @@ seen by every sibling, and a per-call reset is still per call.
 from __future__ import annotations
 
 import ast
+from collections import defaultdict
 from dataclasses import replace
 from fractions import Fraction
 from pathlib import Path
@@ -20,7 +21,7 @@ from flab2bp.layout import routing_domain as domain
 from flab2bp.layout.band_policy import BandPolicy
 from flab2bp.layout.base import PlacedBuilding
 from flab2bp.layout.budget import WorkBudget
-from flab2bp.layout.route_feedback import NetId, NetRole
+from flab2bp.layout.route_feedback import NetId, NetRole, RouteFailureKind
 
 SRC = Path(__file__).resolve().parents[2] / "src" / "flab2bp" / "layout" / "routing_domain.py"
 
@@ -175,7 +176,7 @@ def test_the_run_object_carries_exactly_the_rebound_names() -> None:
 
     assert {
         field.name for field in fields(domain._RouteAllRun)
-    } - PROLOGUE_FIELDS - SEARCH_FIELDS == {
+    } - PROLOGUE_FIELDS - SEARCH_FIELDS - COMMIT_FIELDS == {
         "budget",
         "deadline",
         "work",
@@ -486,3 +487,162 @@ def test_the_proposal_deadline_narrowing_is_still_conditional_and_nested() -> No
     assert "def admit_source_family(" in source
     assert "admit_proposal = admit_source_family" in source
     assert "raise _GeometricDeadline from error" in source
+
+
+COMMIT_METHODS = (
+    "_budget_result",
+    "_commit_selection",
+    "_finish",
+    "_commit_once",
+    "_terminal_attempt",
+    "_retain_commit_failures",
+)
+
+#: What the lifted commit cluster used to capture and Tasks 1-3 had not added.
+#: `settle`, `destination_canvas` and `proposals` are bound once; the six
+#: `best_*`, `round_work` and `iterations` are the incumbent, re-derived per
+#: round exactly as the locals were; `proved_stranded` is the last-mile proof's
+#: set; `retained_failures` and `retained_blockers` are the per-round snapshot
+#: that replaced `retain_commit_failures`'s default arguments.
+COMMIT_FIELDS = {
+    "best_attempt",
+    "best_failures",
+    "best_path_taps",
+    "best_paths",
+    "best_sink_hints",
+    "best_source_hints",
+    "destination_canvas",
+    "iterations",
+    "proposals",
+    "proved_stranded",
+    "round_work",
+    "settle",
+    "retained_failures",
+    "retained_blockers",
+}
+
+
+def test_the_commit_cluster_is_methods() -> None:
+    missing = sorted(set(COMMIT_METHODS) - set(vars(domain._RouteAllRun)))
+    assert missing == [], missing
+
+
+def test_the_run_object_carries_the_commit_cluster_fields() -> None:
+    """The fourteen names the lifted commit methods used to capture."""
+    from dataclasses import fields
+
+    assert {field.name for field in fields(domain._RouteAllRun)} >= COMMIT_FIELDS
+
+
+def test_the_late_commit_fields_are_unset_until_their_owner_binds_them() -> None:
+    """No default: a read before the binding point must still be a hard error."""
+    run = domain._RouteAllRun(budget=WorkBudget(left=10), deadline=None)
+    for name in ("proved_stranded", "retained_failures", "retained_blockers"):
+        with pytest.raises(AttributeError):
+            getattr(run, name)
+
+
+def test_retain_commit_failures_takes_no_snapshot_default_arguments() -> None:
+    """The two keyword-only defaults are gone from the signature.
+
+    `def f(..., x=round_failures)` evaluated `round_failures` once, when the
+    `def` executed. A method cannot carry that, so the two parameters became
+    two fields written at the same statement slot; the signature must no longer
+    offer them, or a caller could pass a third dict and split the evidence.
+    """
+    import inspect
+
+    parameters = inspect.signature(domain._RouteAllRun._retain_commit_failures).parameters
+    assert list(parameters) == ["self", "unlinked", "details"]
+
+    source = SRC.read_text()
+    assert "retained_failures: dict[int, NetFailure] = round_failures" not in source
+    assert "retained_blockers: dict[int, tuple[NetId, ...]] = search_blockers" not in source
+
+
+def test_retain_commit_failures_uses_the_rounds_snapshot_not_the_live_dict() -> None:
+    """The default-argument snapshot became two explicit per-round fields.
+
+    `round_failures` is rebound again later in the round, after the point the
+    closure's default bound it. Reading a live binding instead would write a
+    round's commit evidence into the wrong dict, so the method must write
+    through `self.retained_failures`, set once where the `def` used to stand.
+    """
+    source = SRC.read_text()
+    assert "run.retained_failures = round_failures" in source
+    assert "run.retained_blockers = search_blockers" in source
+
+    run = domain._RouteAllRun(budget=WorkBudget(left=10), deadline=None)
+    first: dict[int, Any] = {}
+    run.retained_failures = first
+    run.retained_blockers = {}
+    run.nets = [
+        domain._Net(
+            domain._Port(0, 1, 1, 1, 1),
+            domain._Port(1, 5, 5, 5, 5),
+            "gear",
+            net_id=NetId(0, 1, "gear", NetRole.INTERNAL, 0),
+        )
+    ]
+    run.paths = {}  # type: ignore[assignment]
+    run.history = defaultdict(float)
+    run.rejected_path_cells = defaultdict(set)
+
+    run._retain_commit_failures((0,), {0: domain._CommitFailure((3, 4, 0), "path")})
+    assert list(first) == [0], "the method wrote somewhere other than the snapshot"
+    assert first[0].kind is RouteFailureKind.COMMIT_LINK
+
+    # Rebinding the field afterwards must not retro-fit the write.
+    second: dict[int, Any] = {}
+    run.retained_failures = second
+    assert list(first) == [0] and second == {}
+
+
+def test_the_snapshot_is_taken_where_the_def_stood() -> None:
+    """Between the round's `round_failures` rebind and the first call of the method."""
+    node = _route_all_node()
+    lines: dict[str, int] = {}
+    for child in ast.walk(node):
+        if (
+            isinstance(child, ast.Assign)
+            and len(child.targets) == 1
+            and isinstance(child.targets[0], ast.Attribute)
+            and child.targets[0].attr in ("retained_failures", "retained_blockers")
+            and isinstance(child.value, ast.Name)
+        ):
+            lines[child.targets[0].attr] = child.lineno
+    assert sorted(lines) == ["retained_blockers", "retained_failures"], lines
+
+    # Only the round loop's own calls order lexically against the snapshot;
+    # `_complete_source_dependents` and `_last_mile` are defined above the loop
+    # and called from inside it, so their call sites are lexically earlier and
+    # dynamically later.
+    calls: list[int] = []
+
+    def own_scope(scope: ast.AST) -> None:
+        for child in ast.iter_child_nodes(scope):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                continue
+            if (
+                isinstance(child, ast.Call)
+                and isinstance(child.func, ast.Name)
+                and child.func.id == "retain_commit_failures"
+            ):
+                calls.append(child.lineno)
+            own_scope(child)
+
+    own_scope(node)
+    assert calls, "the round loop no longer calls the alias -- rewrite this pin"
+    snapshot = max(lines.values())
+    assert snapshot < min(calls), (snapshot, sorted(calls))
+
+    rebinds = [
+        child.lineno
+        for child in ast.walk(node)
+        if isinstance(child, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "round_failures"
+            for target in child.targets
+        )
+    ]
+    assert any(rebind < snapshot for rebind in rebinds), (snapshot, sorted(rebinds))
