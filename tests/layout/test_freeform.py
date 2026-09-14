@@ -4038,8 +4038,8 @@ def test_the_window_is_withheld_on_a_pack_that_only_ties_the_best_failing_one(
     )
     launched: list[object] = []
 
-    def record_window(*_args: object, **kwargs: object) -> None:
-        launched.append(kwargs)
+    def record_window(_strips: object, request: object) -> None:
+        launched.append(request)
 
     monkeypatch.setattr(freeform, "_pack_window", record_window)
 
@@ -4071,8 +4071,8 @@ def test_the_window_is_withheld_on_a_pack_worse_than_the_best_failing_one(
     )
     launched: list[object] = []
 
-    def record_window(*_args: object, **kwargs: object) -> None:
-        launched.append(kwargs)
+    def record_window(_strips: object, request: object) -> None:
+        launched.append(request)
 
     monkeypatch.setattr(freeform, "_pack_window", record_window)
 
@@ -5468,8 +5468,8 @@ def test_exact_one_net_feedback_admits_the_next_configured_arrangement(
 ) -> None:
     launched: list[object] = []
 
-    def record_window(*_args: object, **kwargs: object) -> None:
-        launched.append(kwargs)
+    def record_window(_strips: object, request: object) -> None:
+        launched.append(request)
 
     monkeypatch.setattr(freeform, "_pack_window", record_window)
     result, seen, attempts = _sweep_after_first_routing(
