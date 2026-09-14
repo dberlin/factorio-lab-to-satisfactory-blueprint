@@ -45,9 +45,8 @@ def port_forward(transform: Transform, port: Port) -> Vector:
     That a belt wired to a port must *leave* along this direction, whichever way
     the items flow, is a modelling assumption this project builds on and not a
     rule read out of the game: no hologram validator has been read that states
-    it. ``tests/sfy/test_geometry.py`` observes that the blueprints in
-    ``tests/fixtures/sfy`` all do it, which says what those files contain, not
-    what the game refuses.
+    it. What the game's own router does with a connection's facing is in
+    ``data/hologram_rules.json`` under ``belt.straight_tangents``.
     """
     pitch, yaw = math.radians(port.rotation[0]), math.radians(port.rotation[1])
     local = (math.cos(pitch) * math.cos(yaw), math.cos(pitch) * math.sin(yaw), math.sin(pitch))
