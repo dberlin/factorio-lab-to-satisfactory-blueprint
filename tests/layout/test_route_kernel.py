@@ -11,7 +11,7 @@ from flab2bp.lab.techs import belt_rules_for_url
 from flab2bp.layout import routing_domain
 from flab2bp.layout.budget import WorkBudget
 from flab2bp.layout.geometric_router import GeometricQuery, route
-from flab2bp.layout.geometric_world import GeometricWorld
+from flab2bp.layout.geometric_world import GeometricWorld, GridIndex
 from flab2bp.layout.route_feedback import RouteFailureKind
 
 _BELT_RULES = belt_rules_for_url("https://factoriolab.github.io/dsp/list?o=iron-ingot*60&v=11")
@@ -350,3 +350,68 @@ def test_summarize_maps_each_kernel_outcome_to_one_flag() -> None:
     assert gr.summarize(result("budget")).exhausted_budget
     assert gr.summarize(result("cancelled")).cancelled
     assert gr.summarize(result("exhausted")).exhausted
+
+
+def test_the_grid_codec_round_trips_every_cell_the_search_encodes() -> None:
+    """The search's flat index and `GridIndex` are the same arithmetic.
+
+    routing_domain spelled the x-major formula inline at four sites inside
+    `_geometric_search`. `GridIndex` documents itself as the one place that
+    knows the layout; this pins that the two agree before they are merged.
+    """
+    codec = GridIndex(gx0=-3, gy0=5, rows=7, levels=4)
+    for x in range(-3, 4):
+        for y in range(5, 12):
+            for level in range(4):
+                index = codec.encode((x, y, level))
+                assert codec.decode(index) == (x, y, level)
+                assert index == ((x + 3) * 7 + (y - 5)) * 4 + level
+
+
+def test_the_grid_codec_is_the_grids_own_stride_arithmetic() -> None:
+    """`_Grid.codec` IS `(x-gx0)*xstep + (y-gy0)*levels + lvl`.
+
+    `refresh_history` and `_geometric_search` reached for `xstep`/`gh` strides
+    directly. `xstep == gh * levels` is what makes the two spellings one
+    formula; pin it so a grid whose `xstep` drifted from its codec is a red
+    test and not a silently mis-columned router.
+    """
+    bounds = (0, 0, 4, 3)
+    canvas = routing_domain._Canvas(limit=bounds, belt_rules=_BELT_RULES)
+    grid = routing_domain._make_grid(canvas, bounds, (-2, -2, 6, 5), {})
+    assert grid.xstep == grid.gh * grid.levels
+    assert grid.codec == GridIndex(grid.gx0, grid.gy0, grid.gh, grid.levels)
+    for x in range(-2, 7):
+        for y in range(-2, 6):
+            for level in range(grid.levels):
+                inline = (x - grid.gx0) * grid.xstep + (y - grid.gy0) * grid.levels + level
+                assert grid.codec.encode((x, y, level)) == inline
+                assert grid.codec.decode(inline) == (x, y, level)
+
+
+def test_the_geometric_search_spells_the_index_once() -> None:
+    import ast
+    from pathlib import Path
+
+    source = Path(routing_domain.__file__).resolve().parent
+    text = (source / "routing_domain.py").read_text()
+    tree = ast.parse(text)
+    search = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_geometric_search"
+    )
+    body = ast.unparse(search)
+    assert "divmod(source // levels, gh)" not in body
+    assert "divmod(target // levels, gh)" not in body
+
+
+def test_the_history_flattener_spells_the_index_once() -> None:
+    """`_Grid.refresh_history` flattens through the codec, not its own strides."""
+    import ast
+    import inspect
+    import textwrap
+
+    body = ast.unparse(ast.parse(textwrap.dedent(inspect.getsource(routing_domain._Grid))))
+    assert "(cx - gx0) * xstep + (cy - gy0) * self.levels + clvl" not in body
+    assert "self.codec.encode" in body

@@ -4643,8 +4643,10 @@ class _Grid:
     size: int
     #: The flat-index arithmetic above, as the one object every reader shares.
     #: ``xstep`` is ``gh * levels``, so ``codec.encode`` IS the formula in this
-    #: docstring; the field stays because the transition tables and the history
-    #: flattener add whole-column strides rather than encoding cells.
+    #: docstring, and :meth:`index`, :meth:`refresh_history` and
+    #: :func:`_geometric_search` all reach a cell's index through it. ``xstep``
+    #: survives beside it because the transition tables and ``_make_grid``'s
+    #: row fills add whole-column strides rather than encoding cells.
     codec: GridIndex
     base: bytes
     occ: bytearray
@@ -4680,10 +4682,10 @@ class _Grid:
             return
         lo_x, lo_y, hi_x, hi_y = self.box
         flat = array("d", bytes(8 * self.size))
-        gx0, gy0, xstep = self.gx0, self.gy0, self.xstep
-        for (cx, cy, clvl), used in history.items():
+        for cell, used in history.items():
+            cx, cy, clvl = cell
             if lo_x <= cx <= hi_x and lo_y <= cy <= hi_y and 0 <= clvl < self.levels:
-                flat[(cx - gx0) * xstep + (cy - gy0) * self.levels + clvl] = used
+                flat[self.codec.encode(cell)] = used
         self.hist = flat
 
 
@@ -4976,11 +4978,13 @@ def _geometric_search(
     for source, edges in admitted_edges.items():
         if not 0 <= source < size:
             raise ValueError("extra edge source index is outside the grid")
-        source_x, source_y = divmod(source // levels, gh)
+        # Absolute cells, where this used to read the column-relative pair. Only
+        # the displacement below is used, and `gx0`/`gy0` cancel in a difference.
+        source_x, source_y, _ = flat.codec.decode(source)
         for target, cost in edges:
             if not 0 <= target < size:
                 raise ValueError("extra edge landing index is outside the grid")
-            target_x, target_y = divmod(target // levels, gh)
+            target_x, target_y, _ = flat.codec.decode(target)
             if not math.isfinite(cost) or cost < abs(target_x - source_x) + abs(
                 target_y - source_y
             ):
