@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from enum import IntEnum
+from enum import IntEnum, StrEnum
 from fractions import Fraction
 from urllib.parse import unquote, urlparse
 
@@ -36,6 +36,7 @@ __all__ = [
     "BeaconSetting",
     "CostSettings",
     "DisplayRate",
+    "Game",
     "ItemSetting",
     "LabRequest",
     "LabUrlError",
@@ -50,8 +51,25 @@ __all__ = [
     "parse_url",
 ]
 
-#: The only dataset this tool builds blueprints for.
-DSP_MOD_ID = "dsp"
+
+class Game(StrEnum):
+    """A FactorioLab dataset this tool builds blueprints for.
+
+    The value is the first path segment of a FactorioLab URL and the directory
+    name under ``data/`` that serves that dataset's ``data.json``/``hash.json``.
+    """
+
+    DSP = "dsp"
+    SFY = "sfy"
+
+
+#: The Dyson Sphere Program dataset.  Kept as a name of its own because it is
+#: the default everywhere and a good deal of code imports it directly.
+DSP_MOD_ID = Game.DSP.value
+
+#: The first path segments ``parse_url`` accepts, built once rather than per call.
+_SUPPORTED_MOD_IDS = frozenset(game.value for game in Game)
+_SUPPORTED_MOD_IDS_TEXT = ", ".join(sorted(_SUPPORTED_MOD_IDS))
 
 #: The only URL encoding version we read.  Porting the V0-V10 migration chain
 #: (~1000 lines) would buy very little: FactorioLab rewrites the URL to V11 on
@@ -97,7 +115,7 @@ class UnsupportedZipVersionError(LabUrlError):
 
 
 class UnsupportedDatasetError(LabUrlError):
-    """The URL is not for the Dyson Sphere Program dataset."""
+    """The URL names a dataset outside :class:`Game`."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -235,6 +253,11 @@ class LabRequest:
     zip_version: str = SUPPORTED_ZIP_VERSION
     is_bare: bool = True
     source_url: str = ""
+
+    @property
+    def game(self) -> Game:
+        """Which game's dataset this request is written against."""
+        return Game(self.mod_id)
 
 
 # --- query-string handling ---------------------------------------------------
@@ -438,14 +461,16 @@ def parse_url(url: str, *, mod_hash: ModHash | None = None) -> LabRequest:
     segments = [s for s in parsed.path.split("/") if s]
     if not segments:
         raise UnsupportedDatasetError(
-            f"no dataset in URL path {parsed.path!r}; expected a {DSP_MOD_ID!r} path "
-            f"such as https://factoriolab.github.io/{DSP_MOD_ID}/flow?..."
+            f"no dataset in URL path {parsed.path!r}; expected one of "
+            f"{_SUPPORTED_MOD_IDS_TEXT} as the first path segment, such as "
+            f"https://factoriolab.github.io/{DSP_MOD_ID}/flow?..."
         )
     mod_id = segments[0]
-    if mod_id != DSP_MOD_ID:
+    if mod_id not in _SUPPORTED_MOD_IDS:
         raise UnsupportedDatasetError(
             f"dataset {mod_id!r} is not supported; this tool builds Dyson Sphere "
-            f"Program blueprints and needs a {DSP_MOD_ID!r} URL"
+            f"Program ({Game.DSP.value!r}) and Satisfactory ({Game.SFY.value!r}) "
+            f"blueprints, so it needs one of {_SUPPORTED_MOD_IDS_TEXT}"
         )
 
     raw = _split_query(parsed.query)
