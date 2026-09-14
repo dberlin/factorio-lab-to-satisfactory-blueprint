@@ -249,7 +249,8 @@ EVIDENCE: dict[str, tuple[str, ...]] = {
     "belt.curvature": (
         "0xaa529a", "0xaa52d0", "0xaa52dd", "0xaa52ea", "0xaa52ee", "0xaa52f6",
         "0xaa52fa", "0xaa52fc", "0xaa5300", "0xaa5305", "0xaa5307", "0xaa5340",
-        "0xaa5356", "0xaa535b", "0xaa53d6", "0xaa53df", "0xaa53e3", "0xaa53e7",
+        "0xaa5356", "0xaa535b", "0xaa53a4", "0xaa53a9", "0xaa53ab", "0xaa53b2",
+        "0xaa53d6", "0xaa53df", "0xaa53e3", "0xaa53e7",
         "0xaa540a", "0xaa540f", "0xaa54a3", "0xaa54a7", "0xaa54ab", "0xaa54b0",
         "0xaa54b4", "0xaa54b8", "0xaa54bf", "0xaa54c5", "0xaa54cd", "0xaa54d2",
         "0xaa54da", "0xaa54de", "0xaa54e2", "0xaa54ea", "0xaa54ee", "0xaa54f6",
@@ -526,7 +527,25 @@ INTERPRETATIONS: dict[str, tuple[str, str, str, str]] = {
         "mBendRadius of 199.0, not 199.0. The radius is estimated per sample as "
         "arc length over the angle between the two tangents, both flattened to "
         "the XY plane by GetSafeNormal2D, so a climb is not curvature here; "
-        "belt.incline judges that separately. Two further bounds are part of "
+        "belt.incline judges that separately. Four details of the arithmetic "
+        "have to be reproduced exactly or the number comes out wrong. The "
+        "numerator is `step` itself -- the sample spacing, identical for every "
+        "sample -- and not the distance between the two sampled points: "
+        "0xaa54da reloads xmm14, which 0xaa5300 set to length/n, and 0xaa54de "
+        "divides it by acos's answer. RoundToInt is UE's SSE form -- `addss "
+        "xmm2,xmm2; addss 0.5; cvtss2si; sar esi,1` -- and the doubling is not "
+        "decoration: cvtss2si rounds half to EVEN under the default MXCSR, and "
+        "doubling first puts the tie on 2n+0.5 rather than on n, so the shift "
+        "recovers floor(n + 0.5), half UP. A straight pair gives "
+        "theta == 0, and the hardware division yields +inf, which passes the "
+        "`jb` -- so a straight belt is legal by arithmetic rather than by a "
+        "guard. And a sample whose tangent has no horizontal part at all is "
+        "NOT skipped: 0xaa53a4 compares the squared 2-D length against 1e-8 and "
+        "0xaa53ab loads FVector::ZeroVector through the global at 0xee7288 when "
+        "it is under, so the dot product is 0, acos(0) is PI/2, and the radius "
+        "comes out step / (PI/2) -- about 32 cm at the 50 cm sampling, far "
+        "inside the floor. A vertical belt is refused by THIS rule, not by "
+        "belt.incline. Two further bounds are part of "
         "the rule. First, sampling is one point per 50 cm of spline, so a turn "
         "tighter than the sample spacing can hide between samples. Second, and "
         "decisively, ValidateConveyorBelt only calls this when the build gun is "

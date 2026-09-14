@@ -101,6 +101,35 @@ So `mBendRadius` is two things, and neither is "the tightest legal turn":
 Validation is the binding one, and it binds only in the curve build mode. See
 the `belt.curvature` rule for the instructions.
 
+### Four details of `ValidateCurvature` that have to be copied exactly
+
+The rule's `interpretation` now states them, because reproducing the loop from
+the prose alone gets three of the four wrong:
+
+- **The numerator is `step`.** `0xaa5300` sets `xmm14` to `length / n` and
+  `0xaa54da` reloads it before `0xaa54de divsd xmm1, xmm0` — so the radius is the
+  sample *spacing* over the angle, not the distance between the two sampled
+  points.
+- **`RoundToInt` is the doubling trick, and the doubling is load-bearing.**
+  `addss xmm2,xmm2; addss 0.5; cvtss2si; sar esi,1` is UE's SSE form.
+  `cvtss2si` rounds half to *even* under the default `MXCSR`, which alone would
+  send 0.5 to 0; doubling first puts the tie on `2n + 0.5` instead of on `n`, so
+  the shift back recovers `floor(n + 0.5)` — half **up**. A ceiling or a C cast
+  gives a different sample count on exactly the lengths where it matters.
+- **A straight pair passes by arithmetic, not by a guard.** `theta == 0` makes
+  `divsd` yield `+inf`, and `0xaa54f9 jb` is not taken. There is no
+  "skip a straight segment" branch to reproduce.
+- **A vertical tangent is refused by this rule.** `0xaa53a4` compares the
+  squared 2-D length against `1e-8` and, under it, `0xaa53ab` loads
+  `FVector::ZeroVector` through the global at `0xee7288` (`movups` +
+  `movsd [rax+10h]`, the three doubles) and uses it as the normalised tangent.
+  The dot product is then 0, `acos(0)` is `PI/2`, and the radius comes out
+  `step / (PI/2)` — about 32 cm at the 50 cm sampling, far inside the 283.5 cm
+  floor. So `GetSafeNormal2D` zeroing `Z` means a climb does not *count* as
+  curvature, **not** that a climbing sample is passed over: a belt going
+  straight up is refused here, and `belt.incline` refuses it separately on the
+  chord.
+
 ### What a straight run's tangents are — `belt.straight_tangents`
 
 `AutoRouteSpline` (97) builds `mSplineData` through an `FSplineBuilder`:

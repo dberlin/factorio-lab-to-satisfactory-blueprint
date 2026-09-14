@@ -45,6 +45,10 @@
     "0xaa5340: mov rcx,qword ptr [rdi+770h]  ; AFGSplineHologram::mSplineComponent @1904",
     "0xaa5356: mulss xmm2,xmm12",
     "0xaa535b: call qword ptr [0EEB7D8h]  ; -> ?GetTangentAtDistanceAlongSpline@USplineComponent@@QEBA?AU?$TVector@N@Math@UE@@MW4Type@ESplineCoordinateSpace@@@Z",
+    "0xaa53a4: comisd xmm1,xmm11",
+    "0xaa53a9: jae short 0000000000AA53D0h",
+    "0xaa53ab: mov rax,qword ptr [0EE7288h]  ; const 0xee7288 f32=5.258285e-38 f64=1.29239223e-316",
+    "0xaa53b2: movups xmm2,xmmword ptr [rax]",
     "0xaa53d6: sqrtsd xmm1,xmm1",
     "0xaa53df: divsd xmm3,xmm1",
     "0xaa53e3: mulsd xmm6,xmm3",
@@ -76,7 +80,7 @@
    "function": "ValidateCurvature",
    "header": "Hologram/FGConveyorBeltHologram.h:105",
    "id": "belt.curvature",
-   "interpretation": "The belt hologram rejects a turn whose horizontal radius of curvature is below mBendRadius * 1.5 - 15.0 -- 283.5 cm at the shipped mBendRadius of 199.0, not 199.0. The radius is estimated per sample as arc length over the angle between the two tangents, both flattened to the XY plane by GetSafeNormal2D, so a climb is not curvature here; belt.incline judges that separately. Two further bounds are part of the rule. First, sampling is one point per 50 cm of spline, so a turn tighter than the sample spacing can hide between samples. Second, and decisively, ValidateConveyorBelt only calls this when the build gun is in the *curve* build mode (0xaa515e reads mBuildModeCurve, 0xaa5180 AFGHologram::IsCurrentBuildMode, 0xaa5187 je skips the call): in the straight and zoop modes the game never checks curvature at all. A placer that lays its own arcs should use mBendRadius as the radius to lay them on and 283.5 cm as the floor it must not go under.",
+   "interpretation": "The belt hologram rejects a turn whose horizontal radius of curvature is below mBendRadius * 1.5 - 15.0 -- 283.5 cm at the shipped mBendRadius of 199.0, not 199.0. The radius is estimated per sample as arc length over the angle between the two tangents, both flattened to the XY plane by GetSafeNormal2D, so a climb is not curvature here; belt.incline judges that separately. Four details of the arithmetic have to be reproduced exactly or the number comes out wrong. The numerator is `step` itself -- the sample spacing, identical for every sample -- and not the distance between the two sampled points: 0xaa54da reloads xmm14, which 0xaa5300 set to length/n, and 0xaa54de divides it by acos's answer. RoundToInt is UE's SSE form -- `addss xmm2,xmm2; addss 0.5; cvtss2si; sar esi,1` -- and the doubling is not decoration: cvtss2si rounds half to EVEN under the default MXCSR, and doubling first puts the tie on 2n+0.5 rather than on n, so the shift recovers floor(n + 0.5), half UP. A straight pair gives theta == 0, and the hardware division yields +inf, which passes the `jb` -- so a straight belt is legal by arithmetic rather than by a guard. And a sample whose tangent has no horizontal part at all is NOT skipped: 0xaa53a4 compares the squared 2-D length against 1e-8 and 0xaa53ab loads FVector::ZeroVector through the global at 0xee7288 when it is under, so the dot product is 0, acos(0) is PI/2, and the radius comes out step / (PI/2) -- about 32 cm at the 50 cm sampling, far inside the floor. A vertical belt is refused by THIS rule, not by belt.incline. Two further bounds are part of the rule. First, sampling is one point per 50 cm of spline, so a turn tighter than the sample spacing can hide between samples. Second, and decisively, ValidateConveyorBelt only calls this when the build gun is in the *curve* build mode (0xaa515e reads mBuildModeCurve, 0xaa5180 AFGHologram::IsCurrentBuildMode, 0xaa5187 je skips the call): in the straight and zoop modes the game never checks curvature at all. A placer that lays its own arcs should use mBendRadius as the radius to lay them on and 283.5 cm as the floor it must not go under.",
    "reads": [
     "mBendRadius",
     "mSplineComponent"
