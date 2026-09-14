@@ -78,11 +78,12 @@ def test_every_limit_is_filled_and_says_where_it_came_from():
 
 
 def test_no_limit_is_filled_from_the_blueprint_corpus():
-    """The corpus corroborates the registry; it is never a source for it.
+    """No limit is measured out of blueprints, because none may be.
 
-    A measured number is an envelope -- what the game was observed to accept --
-    and using one as a limit lets one old blueprint's outlier become the rule.
-    Every limit has a game-data source now, so nothing is tagged ``measured``.
+    A measured number is an envelope -- what something was once observed to
+    produce -- and using one as a limit lets an old blueprint's outlier become
+    the rule. Every limit is read from game data, so nothing is tagged
+    ``measured`` and ``measured`` is not a source a registry may carry.
     """
     assert [k for k, v in load_registry().limits_sources.items() if v == "measured"] == []
 
@@ -147,10 +148,10 @@ def test_the_lift_height_ladder_is_self_consistent():
 
 def test_the_hologram_grid_is_the_native_snap_size():
     reg = load_registry()
-    # AFGBuildableHologram's constructor stores mGridSnapSize = 100.0f. The
-    # corpus gcd said 50, which Task 11 flagged as possibly mesh offsets rather
-    # than the snap size; the binary settles it, and the corpus no longer has a
-    # say in it at all.
+    # AFGBuildableHologram's constructor stores mGridSnapSize = 100.0f, so the
+    # grid is 100. The only 50s in the game's data are three holograms'
+    # own overrides -- the two power poles and the street light -- which
+    # test_a_hologram_that_snaps_finer_carries_its_own_grid pins per buildable.
     assert reg.limits.hologram_grid_cm == 100.0
     assert reg.limits_sources["hologram_grid_cm"] == "binary"
     assert reg.limits.hologram_rotation_step_deg == 90.0

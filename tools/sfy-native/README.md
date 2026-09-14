@@ -276,8 +276,10 @@ so a hologram Blueprint can override it,
 and three do: `assets.json` has `Holo_PowerPole_C`, `Holo_PowerTower_C` and
 `Holo_StreetLight_C` at 50, which the merge puts on each buildable as
 `grid_snap_cm`. The native constructor default — the value every
-other hologram uses — is **100**, which is what the registry carries. Task 11's
-corpus gcd of 50 was mesh offsets, exactly as its concern 4 suspected.
+other hologram uses — is **100**, which is what the registry carries. So the
+grid is 100 cm, and the only 50s in the game's data are the three pole and
+street-light holograms' own overrides, which travel with the buildables that
+carry them.
 
 ## The codegen patterns the store tracer handles
 

@@ -79,14 +79,21 @@ with the modern property tag, which is what a blueprint written today needs."""
 DEFAULT_SAVE_VERSION = 60
 
 CONVEYOR_SEGMENT_CM = 200.0
-"""How much belt one unit of the belt's build recipe pays for.
+"""How much belt one unit of the belt's build recipe pays for, in the cost list
+this module writes.
 
-Measured on the corpus: ``production-4`` has six Mk1 belts of 300, 200, 200,
-300, 200 and 200 cm and its header charges 8 iron plates over the non-spline
-buildings, which is ``sum(ceil(length / 200))``; ``logistics-9``'s twelve belts
-come to 34 the same way. A fixture's whole bill is not reproducible -- it also
+**This number is an inference from blueprint files, not a value read out of the
+game**, and it is the last such number here. It reproduces the header cost of
+the fixture blueprints -- ``production-4``'s six Mk1 belts of 300, 200, 200,
+300, 200 and 200 cm are charged 8 iron plates over the non-spline buildings,
+which is ``sum(ceil(length / 200))``, and ``logistics-9``'s twelve belts come to
+34 the same way -- so a blueprint written with it carries the same bill those
+files do. What the game itself computes is in
+``AFGBlueprintSubsystem``/``AFGBuildableConveyorBase::GetDismantleInventoryReturns``
+and has not been read; until it is, treat this as a working assumption rather
+than a game fact. (A blueprint's whole bill is a wider thing again: it also
 counts items sitting in inventories and lightweight buildables that are not
-saved as objects at all -- but the belts in it are."""
+saved as objects at all.)"""
 
 SPLINE_POINT_FIELD_TAGS: tuple[Tag, ...] = tuple(
     Tag(name, "StructProperty", 0, struct_name="Vector").as_modern(TAG_NATIVE_SERIALIZE)
@@ -264,11 +271,15 @@ def apply_recipe(
     first leaves a constructor that says it makes iron plates while its
     inventories still only accept what the template made.
 
-    The corpus says what the filters hold, over 160 manufacturers at save
-    version 58 and up: **the input filter is the recipe's ingredients, in recipe
-    order**, and **the output filter is its products**, in recipe order, padded
-    out with the ``FGItemDescriptor`` wildcard the game leaves in the machine's
-    spare output slots. How many slots there are belongs to the machine, not to
+    What the filters have to hold is taken from the template blueprints this
+    module clones from -- over 160 manufacturers at save version 58 and up all
+    hold the same shape: **the input filter is the recipe's ingredients, in
+    recipe order**, and **the output filter is its products**, in recipe order,
+    padded out with the ``FGItemDescriptor`` wildcard that sits in the
+    machine's spare output slots. That is the shape of the files we copy, not a
+    rule read out of the game; what
+    ``UFGInventoryComponent::SetAllowedItemDescriptors`` is called with when a
+    recipe is set has not been read. How many slots there are belongs to the machine, not to
     the recipe -- an oil refinery keeps a slot a solid recipe does not fill --
     so the slots and their parallel ``mArbitrarySlotSizes`` are left exactly as
     the template has them and only the entries the recipe names are rewritten.

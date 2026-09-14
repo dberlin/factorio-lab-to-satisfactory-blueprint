@@ -161,9 +161,12 @@ imports the JSON directly.
 
 ### 5.3 Cross-checks (tests)
 
-- Extracted port transforms are compared with belt spline endpoints in the
-  fixture corpus (belt endpoint minus machine transform), the same oracle idea
-  as the DSP collider cross-validation.
+- Extracted port transforms are what the cooked asset states, and nothing
+  accepts them against blueprint files: a blueprint says what somebody once
+  built, so it can neither confirm nor refute a port position. (An earlier
+  revision proposed a belt-endpoint oracle over the fixtures, on the DSP
+  collider cross-validation's model; the test that did it,
+  `tests/sfy/test_port_crosscheck.py`, is deleted.)
 - Every recipe's producer class exists in the buildable registry.
 - Every clearance box in Docs.json parses; unknown clearance types fail the
   test rather than defaulting.
@@ -282,8 +285,11 @@ something once produced it — it is not a source, not a cross-check and not
 evidence, for a limit or for any other game datum. What the game refuses is read
 out of the validators the hologram itself runs, into
 `src/flab2bp/sfy/data/hologram_rules.json`, and every limit in `registry.json`
-names the rule that enforces it (`provenance.limits[key].enforced_by`) or says
-why nothing does. Each rule is `extracted`, `partial` or `unextractable`: a
+names the rule that governs it and what that rule does with it
+(`provenance.limits[key].governed_by`, `{rule, effect}` with the effect copied
+from the rule — `refuse`, `clamp`, `snap` or `none`) or says why no rule governs
+it. Only `refuse` turns a placement away. Each rule is `extracted`, `partial` or
+`unextractable`: a
 `partial` rule is a bound the validator must not assume it knows, and this gate
 may not invent one in its place. The first consequence is concrete —
 `mBendRadius` (199 cm) is the radius the hologram lays its own arcs on, while

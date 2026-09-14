@@ -1,4 +1,16 @@
-"""Port facing: what ``geometry.port_forward`` says, against what the corpus does."""
+"""Port facing: ``geometry.port_forward``'s arithmetic, and one observation.
+
+The first two tests are the arithmetic on synthetic values: an ``FRotator``'s
+``Vector()`` composed with an actor's quaternion.
+
+The third observes that every belt in ``tests/fixtures/sfy`` leaves the port it
+is wired to along that direction. That is a fact about those files -- what a
+blueprint contains is never evidence about the game -- and it is here because
+the checkpoint blueprint is authored on that assumption, so a change to
+``port_forward`` that broke it would silently change what we write. No hologram
+validator that states such a rule has been read; if one is, this becomes a rule
+in ``data/hologram_rules.json`` and this test is not what backs it.
+"""
 
 from __future__ import annotations
 
@@ -14,11 +26,12 @@ from tests.sfy.conftest import fixture_paths
 
 IDENTITY = Transform((0.0, 0.0, 0.0, 1.0), (0.0, 0.0, 0.0), (1.0, 1.0, 1.0))
 
-# Belts are only cross-checked against the class family the registry describes.
+# Only the fixtures of the class family the registry describes are looked at;
+# the older ones predate 1.0 and are here for the format tests.
 CURRENT_SAVE_VERSION = 58
 
 # A belt's own ends and a lift's upper end are not class constants, so their
-# ports carry no usable rotation either. Same exclusion as the port cross-check.
+# ports carry no usable rotation to compare a run against.
 DYNAMIC_PEERS = ("Build_ConveyorBelt", "Build_ConveyorLift")
 
 
@@ -53,11 +66,13 @@ def test_port_forward_composes_with_the_actors_rotation() -> None:
 
 
 def test_every_wired_belt_leaves_its_port_along_the_ports_facing() -> None:
-    """The law the checkpoint blueprint's belt is built on, over the whole corpus.
+    """The assumption the checkpoint blueprint is authored on, over the fixtures.
 
     At the end where a belt meets a machine, its first spline segment runs along
     that port's forward direction -- outward from the machine, for an input port
-    as much as for an output one.
+    as much as for an output one. Every belt in the fixture files does this; that
+    is an observation about those files and not evidence about the game, and
+    nothing in the registry or in ``data/hologram_rules.json`` rests on it.
     """
     reg = load_registry()
     checked = 0

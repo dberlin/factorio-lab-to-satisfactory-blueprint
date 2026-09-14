@@ -133,11 +133,13 @@ def _straight_spline(
 ) -> tuple[tuple[Vector, Vector, Vector], ...]:
     """A two-point straight conveyor spline in the belt actor's own frame.
 
-    The fixtures write a straight belt as a spline whose outer tangents are unit
-    vectors along the run and whose inner tangents are the run scaled to half its
-    length (capped at 600 cm): 56 corpus belts of exactly this length carry
-    ``(1, 200, 200, 1)``. The belt actor stands at the first point, so that point
-    is the local origin.
+    The shape is the one the template blueprints this script clones from write:
+    outer tangents that are unit vectors along the run, inner tangents that are
+    the run scaled to half its length (capped at 600 cm) -- 56 straight belts of
+    exactly this length in those files carry ``(1, 200, 200, 1)``. It is the
+    shape of the files we copy rather than a rule read out of the game; what
+    ``AFGConveyorBeltHologram::AutoRouteSpline`` builds has not been read.
+    The belt actor stands at the first point, so that point is the local origin.
     """
     x, y, z = direction
     half = min(length / 2, 600.0)

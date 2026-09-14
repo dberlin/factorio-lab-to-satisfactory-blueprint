@@ -35,16 +35,19 @@ def world_port(transform: Transform, port: Port) -> Vector:
 def port_forward(transform: Transform, port: Port) -> Vector:
     """Which way ``port`` faces in world space on an actor placed at ``transform``.
 
-    A port faces out of the machine, so a belt wired to it runs away along this
-    direction whichever way the items flow -- measured over 1119 belt-to-machine
-    links in the corpus, inputs and outputs alike, by
-    ``tests/sfy/test_geometry.py``.
-
     :attr:`Port.rotation` is an ``FRotator`` in degrees, in Unreal's own field
-    order -- pitch, yaw, roll -- and this is ``FRotator``'s
-    ``Vector()``: the unit vector the rotation turns ``+X`` into. Every belt and
-    pipe port in the registry is a pure yaw, so the corpus exercises the yaw
-    term alone; pitch is here because a conveyor lift's ports will need it.
+    order -- pitch, yaw, roll, straight out of the cooked asset -- and this is
+    ``FRotator``'s ``Vector()``: the unit vector the rotation turns ``+X`` into.
+    That much is arithmetic on game data. Every belt and pipe port in the
+    registry is a pure yaw today; pitch is here because a conveyor lift's ports
+    will need it.
+
+    That a belt wired to a port must *leave* along this direction, whichever way
+    the items flow, is a modelling assumption this project builds on and not a
+    rule read out of the game: no hologram validator has been read that states
+    it. ``tests/sfy/test_geometry.py`` observes that the blueprints in
+    ``tests/fixtures/sfy`` all do it, which says what those files contain, not
+    what the game refuses.
     """
     pitch, yaw = math.radians(port.rotation[0]), math.radians(port.rotation[1])
     local = (math.cos(pitch) * math.cos(yaw), math.cos(pitch) * math.sin(yaw), math.sin(pitch))
