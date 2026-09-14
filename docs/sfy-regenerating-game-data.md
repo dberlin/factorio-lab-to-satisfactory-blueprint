@@ -232,8 +232,9 @@ functions, their RVAs and the instructions behind it. Every limit also gets
 `provenance.limits[key].governed_by` — `{"rule": <rule id>, "effect": <effect>}`
 for the hologram rule that governs it, with the effect copied from that rule, or
 `null` and an `ungoverned` sentence saying why no rule does. **Only the effect
-`refuse` turns a placement away**: `clamp` and `snap` move the hologram instead,
-so a validator that treats either as a bound refuses builds the game accepts. A
+`refuse` turns a placement away**: `clamp` and `snap` move the hologram instead
+and `compute` only works a number out, so a validator that treats any of the
+three as a bound refuses builds the game accepts. A
 rule whose effect is `none` governs nothing and is never named here — the limit
 it was read beside is `ungoverned`, with the rule's id in the reason (this is
 `lift_step_cm` and `lift.step`). The merge refuses to write when a limit's

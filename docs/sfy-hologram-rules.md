@@ -269,6 +269,11 @@ the *snapped buildable* default rather than a universal constant.
 constant; `buildable.rotation_step` is the evidence that 90 is the game's own
 default for that case, and re-sourcing that limit is a separate change.
 
+**Nothing in the function quantises anything**, which is why its effect is
+`compute` and not `snap`: the evidence is a compare-and-return ladder that hands
+a number of degrees back, and whichever caller asked for it applies the step.
+A validator must not treat it as a bound; a placer reproduces it.
+
 `FGFactoryHologram.h` adds nothing (it is a two-line subclass);
 `FGFactoryBuildingHologram.h` overrides `CheckValidPlacement` and
 `CheckValidFloor` for foundations and walls, which the placer does not use yet.
@@ -324,9 +329,9 @@ placement because it is not a validator. The shipped twenty:
 | --- | --- |
 | `refuse` | `belt.curvature`, `belt.incline`, `belt.min_length`, `belt.max_length`, `pipe.min_length`, `pipe.curvature`, `pipe.max_length`, `pipe.fluid_requirements`, `lift.placement`, `buildable.clearance` |
 | `clamp` | `lift.height_range` |
-| `snap` | `belt.snap_directions`, `buildable.grid_snap`, `buildable.rotation_step` |
+| `snap` | `belt.snap_directions`, `buildable.grid_snap` |
 | `none` | `belt.clearance`, `lift.step`, `lift.clearance` |
-| `compute` | `belt.cost`, `belt.straight_tangents`, `manufacturer.inventory_filters` |
+| `compute` | `belt.cost`, `belt.straight_tangents`, `buildable.rotation_step`, `manufacturer.inventory_filters` |
 
 Two of those deserve their own sentence. `buildable.clearance` is `partial` —
 the box-against-box test is in `AFGHologram::TestClearanceOverlap`, which was

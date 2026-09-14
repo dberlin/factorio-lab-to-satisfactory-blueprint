@@ -734,7 +734,7 @@ INTERPRETATIONS: dict[str, tuple[str, str, str, str]] = {
     ),
     "buildable.rotation_step": (
         "extracted",
-        "snap",
+        "compute",
         "GetRotationStep is a leaf -- 0xa7c050 has no RUNTIME_FUNCTION, the "
         "neighbouring .pdata entries being 0xa7bfc0..0xa7c04a and "
         "0xa7c0d0..0xa7c140 -- so its 77 bytes come from the PDB's procedure "
@@ -754,7 +754,12 @@ INTERPRETATIONS: dict[str, tuple[str, str, str, str]] = {
         "mUseGradualFoundationRotations (0xa7c085/0xa7c08c) gives "
         "`mov eax, 2Dh; ret` at 0xa7c08e/0xa7c093 -- 45 -- or the 90 again.",
         "The build gun's rotation step is a four-way ladder, and every rung is "
-        "now read rather than inferred. **0** (no quantisation) is what a "
+        "now read rather than inferred. **Nothing in this function quantises "
+        "anything**: it is a compare-and-return ladder that hands a number of "
+        "degrees back, and whichever caller asked applies it -- which is why "
+        "the effect is compute and not snap. A validator must not treat it as "
+        "a bound, and a placer reproduces it rather than being refused by it. "
+        "**0** (no quantisation) is what a "
         "hologram gets when mSnappedBuilding is null -- that is, when it is "
         "*not* snapped to a building, which is also what the base "
         "AFGHologram::GetRotationStep returns outright (0x13b010, `xor eax, "

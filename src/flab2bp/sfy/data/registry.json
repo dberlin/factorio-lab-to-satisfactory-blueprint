@@ -35548,7 +35548,7 @@
    },
    "hologram_rotation_step_deg": {
     "governed_by": {
-     "effect": "snap",
+     "effect": "compute",
      "rule": "buildable.rotation_step"
     },
     "reason": "the step the build gun rotates a hologram by. It is in no cooked asset, no shipped header and no constructor immediate tools/sfy-native found; 90 degrees is this project's constant, not a number read from the game."
@@ -35612,7 +35612,7 @@
     "ungoverned": "no rule was extracted for it. AFGBuildableWire::mMaxLength is a buildable's property rather than a hologram member, and AFGWireHologram was not disassembled; what refuses an over-long wire is still unread."
    }
   },
-  "merged_at_commit": "1c28301fc0c5a41ba686a89809c6a85bebfae7ba",
+  "merged_at_commit": "0618d9b9ba5bfce323e5a91dd21fd5f7671a4b77",
   "native": {
    "dll": "FactoryGameEGS-FactoryGame-Win64-Shipping.dll",
    "dll_sha256": "65fc5a6bde6d44782da387976b144a41a6b94e4fa78ec6e1bc49c3dad2d47513",

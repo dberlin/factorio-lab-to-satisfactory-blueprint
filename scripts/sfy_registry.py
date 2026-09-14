@@ -16,9 +16,10 @@ the registry that :func:`flab2bp.sfy.registry.load_registry` reads.
 
 **Every limit in the registry comes from game data, and says what the game does
 with it.** ``provenance.limits[key].governed_by`` names the hologram rule that
-governs it and copies that rule's effect -- ``refuse``, ``clamp``, ``snap`` or
-``none`` -- or is ``null``, with ``ungoverned`` carrying the reason no rule does.
-Only a ``refuse`` turns a placement away; a clamp or a snap moves it.
+governs it and copies that rule's effect -- ``refuse``, ``clamp``, ``snap``,
+``compute`` or ``none`` -- or is ``null``, with ``ungoverned`` carrying the
+reason no rule does. Only a ``refuse`` turns a placement away: a clamp or a snap
+moves the hologram, and a compute only works a number out.
 
 **Nothing here comes from a blueprint corpus, and nothing from a port's name.**
 A community blueprint can carry clipped geometry, a hacked save or an older game
@@ -176,12 +177,15 @@ BINARY_NOTES: dict[str, str] = {
 # says what the hologram does with the number, and only some of them refuse.
 # ``provenance.limits[key].governed_by`` is ``{"rule": id, "effect": effect}``
 # with the effect copied from the rule itself, so a reader of the registry
-# cannot take a clamp or a snap for a refusal -- which is what the old
-# ``enforced_by`` invited: it named ``lift.height_range`` (a clamp),
-# ``buildable.grid_snap`` and ``buildable.rotation_step`` (snaps) as things that
-# "turn the value away". It also named ``lift.step``, where nothing was found to
-# be enforced at all; that limit is in :data:`NOT_GOVERNED` now, because a rule
-# whose effect is ``none`` governs nothing.
+# cannot take a clamp, a snap or a computation for a refusal -- which is what
+# the old ``enforced_by`` invited: it named ``lift.height_range`` (a clamp),
+# ``buildable.grid_snap`` (a snap) and ``buildable.rotation_step`` (which
+# quantises nothing at all: it works a step out and returns it, effect
+# ``compute``) as things that "turn the value away". It also named
+# ``lift.step``, where nothing was found to be enforced at all; that limit is in
+# :data:`NOT_GOVERNED` now, because a rule whose effect is ``none`` governs
+# nothing. A ``compute`` rule does govern: it says where the number comes from,
+# and it says the game never refuses over it.
 #
 # Every key of :class:`Limits` is in this table or in :data:`NOT_GOVERNED`, and
 # ``_check_rules`` holds the named ids and the copied effects against
@@ -379,9 +383,9 @@ def _limits(
     project's own constants. A blueprint corpus is not among them and is not
     evidence for any of them.
 
-    Every limit also says which hologram rule governs it and what that rule
-    does with it -- refuse, clamp, snap or nothing -- or that no rule governs it
-    at all, and why. That is what makes a number in here a limit rather than a
+    Every limit also says which hologram rule governs it and what that rule does
+    with it -- refuse, clamp, snap, compute or nothing -- or that no rule governs
+    it at all, and why. That is what makes a number in here a limit rather than a
     value somebody found in the game's data.
     """
     holograms = assets["holograms"]

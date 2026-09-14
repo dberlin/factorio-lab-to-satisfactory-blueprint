@@ -103,7 +103,7 @@ def test_the_effects_the_shipped_rules_state():
         "lift.placement": "refuse",
         "lift.clearance": "none",
         "buildable.grid_snap": "snap",
-        "buildable.rotation_step": "snap",
+        "buildable.rotation_step": "compute",
         "buildable.clearance": "refuse",
         "belt.cost": "compute",
         "manufacturer.inventory_filters": "compute",
@@ -114,10 +114,9 @@ def test_the_effects_the_shipped_rules_state():
 def test_the_cost_rule_is_a_computation_and_not_a_bound():
     """``belt.cost`` says what the game *works out*, not what it refuses.
 
-    It is the only rule that is ``extracted`` with no refusal, clamp or snap
-    behind it, and that is not the ``extracted``/``none`` contradiction: the
-    function was read in full and it is not a validator. A caller must never
-    treat it as a bound.
+    It is ``extracted`` with no refusal, clamp or snap behind it, and that is
+    not the ``extracted``/``none`` contradiction: the function was read in full
+    and it is not a validator. A caller must never treat it as a bound.
     """
     rule = load_rules()["belt.cost"]
     assert (rule.status, rule.effect) == ("extracted", "compute")
@@ -271,6 +270,10 @@ def test_a_leaf_functions_rule_is_extracted_through_the_pdbs_procedure_length():
     """GetRotationStep has no .pdata entry; the PDB's length still bounds it."""
     r = load_rules()["buildable.rotation_step"]
     assert r.status == "extracted"
+    # It quantises nothing: a compare-and-return ladder, and the caller applies
+    # the step it hands back. A validator must not read it as a bound.
+    assert r.effect == "compute"
+    assert "compute and not snap" in r.interpretation
     for member in ("mSnappedBuilding", "mUseGradualFoundationRotations"):
         assert member in r.reads, member
     # All four returns, not just the one before the first `ret` at 0xa7c07a.

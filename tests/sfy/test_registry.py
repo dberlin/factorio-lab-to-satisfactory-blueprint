@@ -232,7 +232,7 @@ def test_what_the_game_does_with_each_governed_limit():
         "pipe_max_spline_cm": "refuse",
         "pipe_min_bend_radius_cm": "refuse",
         "hologram_grid_cm": "snap",
-        "hologram_rotation_step_deg": "snap",
+        "hologram_rotation_step_deg": "compute",
     }
 
 
