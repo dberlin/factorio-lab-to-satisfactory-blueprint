@@ -13,6 +13,11 @@ which members it uses, and — for a belt — where the spline that gets validat
 comes from. Line numbers are into `CommunityResources/Headers.zip`, under
 `Source/FactoryGame/Public/`.
 
+Most of what is here is a *validation*: code that turns a placement away, or
+moves it. A few rules are the other kind — code that **works out** a value the
+game then writes, which this project has to reproduce rather than enforce when
+it authors a blueprint. Those carry the effect `compute`; `belt.cost` is one.
+
 ## How a placement is refused
 
 Nothing returns an error. `AFGHologram::CheckValidPlacement` and its overrides
@@ -85,6 +90,42 @@ So `mBendRadius` is two things, and neither is "the tightest legal turn":
 
 Validation is the binding one, and it binds only in the curve build mode. See
 the `belt.curvature` rule for the instructions.
+
+### What a belt costs — `belt.cost`
+
+Not a hologram rule at all, and the only reason it is in this file is that it is
+the same kind of fact read the same way: the machine code of the shipped game.
+`AFGBuildable::GetCostMultiplierForLength(totalLength, costSegmentLength)`
+(`Buildables/FGBuildable.h:475`, `0x4a6bb0`) is thirteen instructions:
+
+```
+comiss xmm1,[0FD7934h]   ; costSegmentLength vs 1e-4
+jbe                      ;   -> return 1
+divss  xmm0,xmm1         ; r = totalLength / costSegmentLength
+addss  xmm0,xmm0 ; addss xmm0,[0F6DEE8h] ; cvtss2si ; sar eax,1   ; RoundToInt(r)
+cmp/cmovl                ; max(1, that)
+```
+
+So a spline buildable is charged its build recipe `max(1, round(length /
+segment))` times — a **round**, not a ceiling. Which segment is the mark's own
+mesh: `AFGBuildableConveyorBelt::GetDismantleRefundReturnsMultiplier`
+(`0x4edf70`) passes `mMeshLength` and its `mLength`, the lift's (`0x4edf90`)
+passes `mMeshHeight` and its height, and `AFGBuildable`'s (`0x2434e0`) returns 1
+for everything else. Both mesh properties are Docs.json class defaults (200 cm
+for all twelve marks in 1.2.0), so `registry.json` carries the number per
+buildable as `length_per_cost_cm` with the source `docs`.
+
+`AFGBuildable::GetDismantleRefundReturns` (`0x4a7720`) reads that multiplier
+through the primary vtable at `+8C8h` and merges one stack per ingredient of
+`multiplier * FItemAmount::Amount` (`0x4a781d imul`), and
+`AFGBlueprintSubsystem::CalculateBlueprintCost` (`0x6738d0`) sums the refund of
+every buildable in the designer, which is the `Cost` array in the `.sbp` header.
+
+The one hop that is not an instruction is the vtable slot: the belt's
+constructor stores its primary vtable `0xF79290` (`0x1b9ccf`), and the qword at
+`0xF79290 + 8C8h` is `0x4edf70` — the belt's own override, whose RVA the rule's
+`also_read` reports. That is `.rdata`, checkable with a hex dump, not something
+`sfy-native disasm` can quote.
 
 ## Conveyor lifts — `Hologram/FGConveyorLiftHologram.h`
 
@@ -196,7 +237,7 @@ default for that case, and re-sourcing that limit is a separate change.
 
 A rule's `status` says how well it was read; its `effect` says what the hologram
 *does*, and that is the field a validator has to read before it refuses
-anything. Four values:
+anything. Five values:
 
 | `effect` | what the instructions show | what a placer does |
 | --- | --- | --- |
@@ -204,10 +245,13 @@ anything. Four values:
 | `clamp` | the value is forced into range | any value is buildable; the game moves it |
 | `snap` | the value is quantised or aligned | any value is buildable; the game moves it |
 | `none` | nothing in the instructions read enforces it | treat the number as known-good practice, not a bound |
+| `compute` | the function is not a validation: it works out a value the game then writes | reproduce the arithmetic when authoring; never enforce it |
 
 `none` is only allowed beside a `partial` or `unextractable` status —
 `flab2bp.sfy.rules.load_rules` refuses it on an `extracted` rule, because a
-branch that was read says what it does. The shipped seventeen:
+branch that was read says what it does. `compute` is the opposite case and is
+allowed beside `extracted`: the code was read in full, and it does nothing to a
+placement because it is not a validator. The shipped eighteen:
 
 | `effect` | rules |
 | --- | --- |
@@ -215,6 +259,7 @@ branch that was read says what it does. The shipped seventeen:
 | `clamp` | `lift.height_range` |
 | `snap` | `belt.snap_directions`, `buildable.grid_snap`, `buildable.rotation_step` |
 | `none` | `belt.clearance`, `lift.step`, `lift.clearance` |
+| `compute` | `belt.cost` |
 
 Two of those deserve their own sentence. `buildable.clearance` is `partial` —
 the box-against-box test is in `AFGHologram::TestClearanceOverlap`, which was
@@ -241,7 +286,7 @@ multiple of it.
 
 ## What was extracted, and what was not
 
-`hologram_rules.json` carries seventeen rules; twelve are `extracted` and five
+`hologram_rules.json` carries eighteen rules; thirteen are `extracted` and five
 `partial`. A `partial` rule is a **bound the placer must not assume it knows** —
 its `comparison` names where the comparison actually is, and its
 `interpretation` is a lead for the next extraction, not a constraint.

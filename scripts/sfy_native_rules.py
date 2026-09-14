@@ -51,6 +51,7 @@ import hashlib
 import json
 import subprocess
 import sys
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -156,6 +157,31 @@ TARGETS: dict[str, tuple[str, str, str]] = {
         "CheckClearance",
         "Hologram/FGHologram.h:545",
     ),
+    "belt.cost": (
+        "AFGBuildable",
+        "GetCostMultiplierForLength",
+        "Buildables/FGBuildable.h:475",
+    ),
+}
+
+# Rules the game spreads over more than one function. The entry above is the one
+# the rule is named for -- its RVA and its header are the rule's -- and these are
+# disassembled beside it, their instructions merged into the same pool so the
+# evidence can quote a caller or a callee by address. ``also_read`` in the
+# written rule lists each with the RVA it was found at.
+# A ``Class::Method@0xRVA`` names one of several bodies the linker gave the same
+# ``Class::Method`` name -- two overloads, or a constructor emitted twice -- and
+# the run fails if nothing sits at that RVA.
+ALSO_READ: dict[str, tuple[str, ...]] = {
+    "belt.cost": (
+        "AFGBlueprintSubsystem::CalculateBlueprintCost@0x6738d0",
+        "AFGBuildable::GetDismantleRefund_Implementation",
+        "AFGBuildable::GetDismantleRefundReturns",
+        "AFGBuildable::GetDismantleRefundReturnsMultiplier",
+        "AFGBuildableConveyorBelt::GetDismantleRefundReturnsMultiplier",
+        "AFGBuildableConveyorLift::GetDismantleRefundReturnsMultiplier",
+        "AFGBuildableConveyorBelt::AFGBuildableConveyorBelt@0x1b9cb0",
+    ),
 }
 
 # The instructions each rule was read at. Every one is copied out of the tool's
@@ -256,6 +282,30 @@ EVIDENCE: dict[str, tuple[str, ...]] = {
     "buildable.clearance": (
         "0xab8012", "0xab8242", "0xab827a", "0xab83ea", "0xab844b",
     ),
+    "belt.cost": (
+        # AFGBuildable::GetCostMultiplierForLength: the whole function.
+        "0x4a6bb0", "0x4a6bb7", "0x4a6bb9", "0x4a6bbd", "0x4a6bc2", "0x4a6bc6",
+        "0x4a6bce", "0x4a6bd2", "0x4a6bd4", "0x4a6bd6", "0x4a6bd9", "0x4a6bda",
+        "0x4a6bdf",
+        # AFGBuildableConveyorBelt::GetDismantleRefundReturnsMultiplier: the two
+        # members it divides, and the tail jump into the helper above.
+        "0x4edf70", "0x4edf78", "0x4edf80",
+        # The lift's, which divides its height by mMeshHeight instead.
+        "0x4edfa5", "0x4edfb5",
+        # AFGBuildable::GetDismantleRefundReturnsMultiplier: 1 for everything else.
+        "0x2434e0", "0x2434e5",
+        # AFGBuildable::GetDismantleRefundReturns: the virtual multiplier, the
+        # build recipe, its ingredients, and amount * multiplier per ingredient.
+        "0x4a773d", "0x4a774a", "0x4a774c", "0x4a77d6", "0x4a7816", "0x4a781d",
+        "0x4a7826", "0x4a7831", "0x4a7840",
+        # AFGBuildableConveyorBelt's constructor storing its primary vtable, the
+        # table whose slot at +8C8h holds the belt's multiplier override.
+        "0x1b9cbe", "0x1b9ccf",
+        # AFGBuildable::GetDismantleRefund_Implementation calls the returns.
+        "0x4a78ee",
+        # AFGBlueprintSubsystem::CalculateBlueprintCost asks each buildable.
+        "0x67394f", "0x67396a",
+    ),
 }
 
 # status, effect, comparison, interpretation. The comparison is a transcription
@@ -271,11 +321,15 @@ EVIDENCE: dict[str, tuple[str, ...]] = {
 # ``clamp``   the value is forced into range and the placement goes ahead
 # ``snap``    the value is quantised or aligned and the placement goes ahead
 # ``none``    nothing in the instructions that were read enforces it at all
+# ``compute`` the function is not a validation: it works out a value the game
+#             then writes, and turns no placement away
 #
 # ``none`` is only allowed beside a ``partial`` or ``unextractable`` status, and
 # :func:`flab2bp.sfy.rules.load_rules` refuses the pair: a branch that was read
-# says what it does. Where the instructions hand the value to a callee that was
-# not followed -- ``FHologramHelpers::SnapToFloor`` -- the effect is what the
+# says what it does. ``compute`` is the opposite case and is not that pair:
+# the function was read in full and does nothing to a placement because it is
+# not a validator at all. Where the instructions hand the value to a callee that
+# was not followed -- ``FHologramHelpers::SnapToFloor`` -- the effect is what the
 # call does with it, not what the callee's arithmetic turns out to be.
 INTERPRETATIONS: dict[str, tuple[str, str, str, str]] = {
     "belt.curvature": (
@@ -667,6 +721,53 @@ INTERPRETATIONS: dict[str, tuple[str, str, str, str]] = {
         "tolerance and its soft-versus-hard distinction, which live in "
         "TestClearanceOverlap.",
     ),
+    "belt.cost": (
+        "extracted",
+        "compute",
+        "AFGBuildable::GetCostMultiplierForLength(totalLength, costSegmentLength) "
+        "returns 1 when costSegmentLength <= 1e-4 (0x4a6bb0 comiss against "
+        "0.0001, 0x4a6bb7 jbe, 0x4a6bda mov eax,1); otherwise r = "
+        "totalLength / costSegmentLength (0x4a6bb9 divss) and the answer is "
+        "max(1, RoundToInt(r)) -- 0x4a6bc2 addss xmm0,xmm0, 0x4a6bc6 addss 0.5, "
+        "0x4a6bce cvtss2si, 0x4a6bd2 sar eax,1 (UE's RoundToInt on SSE), then "
+        "0x4a6bd4 cmp/0x4a6bd6 cmovl against the 1 loaded at 0x4a6bbd. "
+        "AFGBuildableConveyorBelt::GetDismantleRefundReturnsMultiplier "
+        "(0x4edf70) calls it with mMeshLength as the segment (0x4edf70) and "
+        "mLength as the total (0x4edf78, tail jump at 0x4edf80); the lift's "
+        "(0x4edf90) passes mMeshHeight (0x4edfa5, jump at 0x4edfb5) and its own "
+        "height; AFGBuildable's (0x2434e0) returns 1 for everything else. "
+        "AFGBuildable::GetDismantleRefundReturns reads that multiplier through "
+        "the primary vtable at +8C8h (0x4a773d call, 0x4a774a mov ebp,eax), "
+        "takes mBuiltWithRecipe (0x4a774c) and its ingredients (0x4a77d6 "
+        "UFGRecipe::GetIngredients) and merges one stack per ingredient of "
+        "multiplier * FItemAmount::Amount (0x4a7816 edx = multiplier, 0x4a781d "
+        "imul edx,[rbx+8], 0x4a7826 FInventoryStack, 0x4a7831 MergeInventoryItem, "
+        "0x4a7840 add rbx,10h for the 16-byte stride). "
+        "AFGBuildable::GetDismantleRefund_Implementation calls it (0x4a78ee) and "
+        "AFGBlueprintSubsystem::CalculateBlueprintCost asks every buildable in "
+        "the designer for that refund (0x67394f Execute_CanDismantle, 0x67396a "
+        "Execute_GetDismantleRefund), summing the result into the blueprint's "
+        "cost. Which override slot +8C8h holds is not an instruction: the belt's "
+        "constructor stores its primary vtable 0xF79290 (0x1b9cbe lea, 0x1b9ccf "
+        "mov [rbx],rax) and the qword at 0xF79290 + 8C8h is 0x4edf70, the RVA "
+        "this rule's also_read reports for the belt's override.",
+        "A conveyor is charged its build recipe once per cost segment, and the "
+        "segment is the mark's own mesh: mMeshLength for a belt (200 cm for all "
+        "six marks in 1.2.0) and mMeshHeight for a lift (200 cm as well). The "
+        "count is a ROUND, not a ceiling -- a 300 cm Mk1 belt costs 2 iron "
+        "plates and a 299 cm one costs 1 -- with a floor of 1, and RoundToInt "
+        "here is UE's SSE form, which takes a half away from zero (1.5 -> 2). "
+        "Everything that is not a spline buildable costs its recipe once. A "
+        "blueprint's header cost is the same arithmetic summed over the "
+        "buildables in the designer, so authoring a belt and costing it this "
+        "way reproduces what the game writes. Two things this does not cover: "
+        "the interface dispatch from CalculateBlueprintCost lands on "
+        "AFGBuildable::GetDismantleRefund_Implementation, which also adds "
+        "GetDismantleBlueprintReturns and the contents of the building's "
+        "inventories, and lightweight buildables are costed through "
+        "GetDismantleRefundReturnsMultiplierForLightweight instead. Neither "
+        "matters for a blueprint of machines and belts we authored empty.",
+    ),
 }
 
 
@@ -718,8 +819,17 @@ def _line(instruction: dict[str, Any]) -> str:
     return text
 
 
-def _rule(rule_id: str, function: dict[str, Any]) -> dict[str, Any]:
-    """Turn one disassembled function into the rule record, evidence and all."""
+def _rule(
+    rule_id: str, function: dict[str, Any], also: Sequence[tuple[str, dict[str, Any]]] = ()
+) -> dict[str, Any]:
+    """Turn one disassembled function into the rule record, evidence and all.
+
+    ``also`` are the other functions this rule was read across, as
+    ``(symbol, disassembly)``: their instructions join the same pool, so the
+    evidence can quote a caller or a callee by address, and they are listed in
+    ``also_read`` with the RVA each was found at. The rule's own ``rva``,
+    ``class`` and ``function`` stay the entry in :data:`TARGETS`.
+    """
     cls, name, header = TARGETS[rule_id]
     status, effect, comparison, interpretation = INTERPRETATIONS[rule_id]
     if effect not in RULE_EFFECTS:
@@ -729,37 +839,60 @@ def _rule(rule_id: str, function: dict[str, Any]) -> dict[str, Any]:
             f"{rule_id}: an extracted rule cannot have the effect 'none' -- either the "
             "branch that was read does something, or the status is not 'extracted'"
         )
-    by_rva = {i["rva"]: i for i in function["instructions"]}
+    instructions = list(function["instructions"])
+    for _symbol, other in also:
+        instructions += other["instructions"]
+    by_rva = {i["rva"]: i for i in instructions}
     missing = [rva for rva in EVIDENCE[rule_id] if rva not in by_rva]
     if missing:
         raise SystemExit(
             f"{rule_id}: {cls}::{name} has no instruction at {missing} -- the function "
             "moved, and its interpretation has to be re-read before this can be written"
         )
-    return {
+    rule = {
         "id": rule_id,
         "class": cls,
         "function": name,
         "rva": function["rva"],
         "status": status,
         "effect": effect,
-        "reads": sorted({i["member"]["name"] for i in function["instructions"] if "member" in i}),
+        "reads": sorted({i["member"]["name"] for i in instructions if "member" in i}),
         "constants": sorted(
             {
                 f"{i['constant']['at']} f32={i['constant']['f32']} f64={i['constant']['f64']}"
-                for i in function["instructions"]
+                for i in instructions
                 if "constant" in i
             }
         ),
         "calls": sorted(
-            {i["call"] for i in function["instructions"] if "call" in i}
-            | {i["import"] for i in function["instructions"] if "import" in i}
+            {i["call"] for i in instructions if "call" in i}
+            | {i["import"] for i in instructions if "import" in i}
         ),
         "comparison": comparison,
         "interpretation": interpretation,
         "evidence": [_line(by_rva[rva]) for rva in sorted(EVIDENCE[rule_id], key=_rva)],
         "header": header,
     }
+    if also:
+        rule["also_read"] = [f"{symbol} @ {other['rva']}" for symbol, other in also]
+    return rule
+
+
+def _one(functions: list[dict[str, Any]], spec: str) -> dict[str, Any]:
+    """The single disassembly ``spec`` names, refusing an ambiguous match.
+
+    ``spec`` is ``Class::Method`` or ``Class::Method@0xRVA``; the second form is
+    how one of several bodies the linker gave the same name -- two overloads, a
+    constructor emitted twice -- is picked out.
+    """
+    symbol, _, rva = spec.partition("@")
+    found = [f for f in functions if f["symbol"] == symbol and (not rva or f["rva"] == rva)]
+    if len(found) != 1:
+        raise SystemExit(
+            f"{spec} matched {len(found)} of the symbols sfy-native reported "
+            f"({[f['rva'] for f in functions if f['symbol'] == symbol]}), wanted one"
+        )
+    return found[0]
 
 
 def main(out: Path | None = None) -> int:
@@ -785,13 +918,16 @@ def main(out: Path | None = None) -> int:
     try:
         for rule_id, (cls, name, _header) in TARGETS.items():
             symbol = f"{cls}::{name}"
-            found = [f for f in _disasm(dll, pdb, symbol, scratch) if f["symbol"] == symbol]
-            if len(found) != 1:
-                raise SystemExit(f"{rule_id}: {symbol} matched {len(found)} symbols, wanted one")
-            rule = _rule(rule_id, found[0])
+            primary = _one(_disasm(dll, pdb, symbol, scratch), symbol)
+            also = []
+            for spec in ALSO_READ.get(rule_id, ()):
+                other = spec.partition("@")[0]
+                also.append((other, _one(_disasm(dll, pdb, other, scratch), spec)))
+            rule = _rule(rule_id, primary, also)
             rules.append(rule)
+            across = f" (+{len(also)} functions)" if also else ""
             print(
-                f"{rule_id:<26} {symbol} @ {found[0]['rva']}  "
+                f"{rule_id:<26} {symbol} @ {primary['rva']}{across}  "
                 f"{rule['status']}, {rule['effect']}"
             )
     finally:

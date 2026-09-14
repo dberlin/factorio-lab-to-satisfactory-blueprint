@@ -31,8 +31,9 @@ def test_every_required_rule_is_present_with_a_status_and_evidence():
 
 
 def test_every_rule_says_what_the_hologram_does_with_the_number():
-    """``effect`` is the whole point of a rule: refuse, clamp, snap, or nothing."""
-    assert RULE_EFFECTS == ("refuse", "clamp", "snap", "none")
+    """``effect`` is the whole point of a rule: refuse, clamp, snap, nothing, or
+    -- for a function that is not a validation at all -- compute."""
+    assert RULE_EFFECTS == ("refuse", "clamp", "snap", "none", "compute")
     for rule in load_rules().values():
         assert rule.effect in RULE_EFFECTS, rule.id
 
@@ -104,7 +105,65 @@ def test_the_effects_the_shipped_rules_state():
         "buildable.grid_snap": "snap",
         "buildable.rotation_step": "snap",
         "buildable.clearance": "refuse",
+        "belt.cost": "compute",
     }
+
+
+def test_the_cost_rule_is_a_computation_and_not_a_bound():
+    """``belt.cost`` says what the game *works out*, not what it refuses.
+
+    It is the only rule that is ``extracted`` with no refusal, clamp or snap
+    behind it, and that is not the ``extracted``/``none`` contradiction: the
+    function was read in full and it is not a validator. A caller must never
+    treat it as a bound.
+    """
+    rule = load_rules()["belt.cost"]
+    assert (rule.status, rule.effect) == ("extracted", "compute")
+    assert rule.cls == "AFGBuildable"
+    assert rule.function == "GetCostMultiplierForLength"
+    assert rule.rva == "0x4a6bb0"
+    assert rule.header == "Buildables/FGBuildable.h:475"
+    # The two mesh members the conveyor overrides divide by, and the 0.5 the
+    # SSE RoundToInt adds, are in what the tool reported.
+    assert {"mMeshLength", "mMeshHeight", "mLength"} <= set(rule.reads)
+    assert any("f32=0.5" in constant for constant in rule.constants)
+
+
+def test_the_cost_rule_names_every_function_it_was_read_across():
+    """A rule the game spreads over several functions lists all of them."""
+    rule = load_rules()["belt.cost"]
+    symbols = {line.split(" @ ")[0] for line in rule.also_read}
+    assert symbols == {
+        "AFGBlueprintSubsystem::CalculateBlueprintCost",
+        "AFGBuildable::GetDismantleRefund_Implementation",
+        "AFGBuildable::GetDismantleRefundReturns",
+        "AFGBuildable::GetDismantleRefundReturnsMultiplier",
+        "AFGBuildableConveyorBelt::GetDismantleRefundReturnsMultiplier",
+        "AFGBuildableConveyorLift::GetDismantleRefundReturnsMultiplier",
+        "AFGBuildableConveyorBelt::AFGBuildableConveyorBelt",
+    }
+    assert all(line.split(" @ ")[1].startswith("0x") for line in rule.also_read)
+    # The belt's own override, whose body is the two members it divides.
+    assert "AFGBuildableConveyorBelt::GetDismantleRefundReturnsMultiplier @ 0x4edf70" in (
+        rule.also_read
+    )
+    # Every other rule was read from one function and says so.
+    assert all(not r.also_read for r in load_rules().values() if r.id != "belt.cost")
+
+
+def test_the_cost_rules_evidence_carries_the_rounding_and_the_multiply():
+    """The arithmetic a placer has to reproduce, quoted instruction by instruction."""
+    evidence = load_rules()["belt.cost"].evidence
+    at = {line.split(":")[0]: line for line in evidence}
+    assert "divss" in at["0x4a6bb9"]
+    assert "addss" in at["0x4a6bc2"] and "addss" in at["0x4a6bc6"]
+    assert "cvtss2si" in at["0x4a6bce"] and "sar eax,1" in at["0x4a6bd2"]
+    assert "cmovl" in at["0x4a6bd6"]
+    # amount * multiplier, per ingredient of the build recipe.
+    assert "imul" in at["0x4a781d"]
+    assert "mBuiltWithRecipe" in at["0x4a774c"]
+    assert "mMeshLength" in at["0x4edf70"]
+    assert "mMeshHeight" in at["0x4edfa5"]
 
 
 def test_belt_curvature_rule_reads_the_bend_radius():

@@ -50,7 +50,9 @@ Reads `$FLAB2BP_SATISFACTORY_DIR/CommunityResources/Docs/en-US.json`, the game's
 own reflection dump of every buildable, recipe and descriptor class default
 (UTF-16, despite the extension), and keeps the fields the placer needs:
 clearance boxes, power draw, manufacturing speed, belt speed, mesh and designer
-dimensions, the recipe graph and the build recipes. It records the dump's
+dimensions (including `mMeshLength` and `mMeshHeight`, which are what a conveyor
+is charged its build recipe once per — see the `belt.cost` rule), the recipe
+graph and the build recipes. It records the dump's
 sha256 in the file's provenance.
 
 ## 2. The shipped binary → `native.json`
@@ -94,7 +96,8 @@ resolved.
 
 A number in `registry.json` says what the game's data contains; this says what
 the hologram *does* with it. It drives `sfy-native disasm` once per rule over
-`AFGConveyorBeltHologram::ValidateCurvature` and its sixteen siblings, and
+`AFGConveyorBeltHologram::ValidateCurvature` and its siblings (and, for a rule
+the game spreads over several functions, once per function — `ALSO_READ`), and
 writes each one's entry RVA, the members it reads, the `.rdata` constants it
 uses, the calls it makes, and the instructions the comparison was read at. Each
 rule is `extracted`, `partial` or `unextractable`, and a `partial` is a bound the

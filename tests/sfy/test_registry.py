@@ -397,6 +397,74 @@ def test_a_flow_whose_names_come_from_no_asset_is_refused(tmp_path):
         load_registry(path)
 
 
+def test_every_conveyor_carries_the_cost_segment_the_game_states():
+    """How much run one unit of the build recipe pays for, from Docs.json.
+
+    A belt divides by its own ``mMeshLength`` and a lift by its ``mMeshHeight``
+    -- that is what each mark's ``GetDismantleRefundReturnsMultiplier`` hands
+    to ``AFGBuildable::GetCostMultiplierForLength`` -- and both are class
+    defaults in the game's own dump, so the number is read, never measured off
+    a blueprint's cost list.
+    """
+    reg = load_registry()
+    costed = {
+        name: b.length_per_cost_cm for name, b in reg.buildables.items() if b.length_per_cost_cm
+    }
+    assert len(costed) == 12
+    assert set(costed) == {
+        name
+        for name in reg.buildables
+        if name.startswith(("Build_ConveyorBelt", "Build_ConveyorLift"))
+    }
+    assert set(costed.values()) == {200.0}
+    for name in costed:
+        assert reg.buildables[name].length_per_cost_source == "docs"
+    # A belt's segment is its own mesh length, not a number chosen here.
+    belt = reg.buildables["Build_ConveyorBeltMk1_C"]
+    assert belt.length_per_cost_cm == belt.mesh_length_cm
+    lift = reg.buildables["Build_ConveyorLiftMk1_C"]
+    assert lift.length_per_cost_cm == lift.mesh_height_cm
+    # Everything else is charged its recipe once, so it carries no segment.
+    assert reg.buildables["Build_ConstructorMk1_C"].length_per_cost_cm is None
+    assert reg.buildables["Build_ConstructorMk1_C"].length_per_cost_source is None
+
+
+def test_the_cost_segment_says_which_property_and_which_rule_it_comes_from():
+    provenance = load_registry().provenance["cost_segment"]
+    assert provenance["source"] == "docs"
+    assert provenance["rule"] == "belt.cost"
+    assert provenance["properties"] == {
+        "FGBuildableConveyorBelt": "mMeshLength",
+        "FGBuildableConveyorLift": "mMeshHeight",
+    }
+    assert len(provenance["applied_to"]) == 12
+    # The rule it names is the machine code that divides by the number.
+    rule = load_rules()["belt.cost"]
+    assert rule.effect == "compute"
+    assert {"mMeshLength", "mMeshHeight"} <= set(rule.reads)
+
+
+def test_a_cost_segment_from_no_game_source_is_refused(tmp_path):
+    payload = json.loads((Path(docs.__file__).parent / "data" / "registry.json").read_text())
+    entry = payload["buildables"]["Build_ConveyorBeltMk1_C"]
+    entry["length_per_cost_source"] = "corpus"
+    path = tmp_path / "registry.json"
+    path.write_text(json.dumps(payload))
+    with pytest.raises(RegistryError, match="corpus"):
+        load_registry(path)
+
+
+def test_a_cost_segment_with_no_source_is_refused(tmp_path):
+    """A number with nothing behind it is not a fact, so the loader turns it away."""
+    payload = json.loads((Path(docs.__file__).parent / "data" / "registry.json").read_text())
+    entry = payload["buildables"]["Build_ConveyorBeltMk1_C"]
+    entry["length_per_cost_source"] = None
+    path = tmp_path / "registry.json"
+    path.write_text(json.dumps(payload))
+    with pytest.raises(RegistryError, match="travel together"):
+        load_registry(path)
+
+
 def test_a_flow_that_names_a_port_the_buildable_does_not_have_is_refused(tmp_path):
     """``flow`` is a claim about two of this buildable's ports, checked on load."""
     payload = json.loads((Path(docs.__file__).parent / "data" / "registry.json").read_text())

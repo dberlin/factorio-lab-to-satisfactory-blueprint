@@ -47,6 +47,7 @@ from pathlib import Path
 from typing import Any
 
 from flab2bp.sfy.registry import (
+    COST_SEGMENT_SOURCES,
     FLOW_NAME_SOURCES,
     FLOW_SOURCES,
     PORT_DIRECTION_SOURCES,
@@ -132,6 +133,26 @@ LIFT_CLASS_PREFIX = "Build_ConveyorLift"
 # called is otherwise a convention rather than a fact about the game.
 FLOW_NAME_SOURCE = "asset"
 assert FLOW_NAME_SOURCE in FLOW_NAME_SOURCES
+
+# How much of a spline buildable one unit of its build recipe pays for, per
+# native class, and which Docs.json class default states it.
+#
+# The game divides by it in ``AFGBuildable::GetCostMultiplierForLength``: a
+# conveyor belt's ``GetDismantleRefundReturnsMultiplier`` passes mMeshLength and
+# a lift's passes mMeshHeight, and everything else inherits AFGBuildable's,
+# which returns 1. The ``belt.cost`` rule in ``data/hologram_rules.json`` quotes
+# all of it. ``mLengthPerCost``, which the name of the registry field echoes, is
+# the same idea on a different family -- ``AFGBuildableWire`` (2500) and
+# ``AFGBuildableBeam`` (400) -- and is *not* what a conveyor divides by;
+# neither carries the property at all.
+COST_SEGMENT_PROPERTY: dict[str, tuple[str, str]] = {
+    # native class -> (the docs.json key, the game's own property name)
+    "FGBuildableConveyorBelt": ("mesh_length_cm", "mMeshLength"),
+    "FGBuildableConveyorLift": ("mesh_height_cm", "mMeshHeight"),
+}
+COST_SEGMENT_SOURCE = "docs"
+COST_SEGMENT_RULE = "belt.cost"
+assert COST_SEGMENT_SOURCE in COST_SEGMENT_SOURCES
 
 # Binary values that are not what their name suggests, with the caveat recorded
 # in ``registry.json``'s provenance next to the number. ``mBendRadius`` is two
@@ -499,6 +520,54 @@ def _attach_flow(
     }
 
 
+def _attach_cost_segments(
+    rules: dict[str, Any], buildables: dict[str, Any]
+) -> dict[str, Any]:
+    """Put each spline buildable's cost segment on it, and return the provenance.
+
+    A conveyor is charged its build recipe once per segment of its own mesh:
+    ``AFGBuildableConveyorBelt::GetDismantleRefundReturnsMultiplier`` hands
+    ``mMeshLength`` to ``AFGBuildable::GetCostMultiplierForLength`` and the
+    lift's hands ``mMeshHeight``. Both properties are Docs.json class defaults,
+    so the number is read rather than measured, and the rule that divides by it
+    travels with it. Everything else keeps ``None``: ``AFGBuildable``'s own
+    multiplier returns 1, so its recipe is charged exactly once.
+    """
+    if COST_SEGMENT_RULE not in rules:
+        raise SystemExit(
+            f"hologram_rules.json has no {COST_SEGMENT_RULE} rule, so nothing states what "
+            "the cost segment is divided by; re-run scripts/sfy_native_rules.py"
+        )
+    applied: dict[str, float] = {}
+    for class_name, entry in sorted(buildables.items()):
+        pair = COST_SEGMENT_PROPERTY.get(entry["native_class"])
+        if pair is None:
+            continue
+        key, prop = pair
+        value = entry.get(key)
+        if value is None or float(value) <= 0.0:
+            raise SystemExit(
+                f"{class_name} is costed by length but Docs.json states no {prop} "
+                f"for it ({key}={value!r}); re-run flab2bp.sfy.docs"
+            )
+        entry["length_per_cost_cm"] = float(value)
+        entry["length_per_cost_source"] = COST_SEGMENT_SOURCE
+        applied[class_name] = float(value)
+    if not applied:
+        raise SystemExit(
+            f"no buildable has a native class in {sorted(COST_SEGMENT_PROPERTY)}, so no "
+            "conveyor would be costed by length; docs.json has moved"
+        )
+    return {
+        "rule": COST_SEGMENT_RULE,
+        "source": COST_SEGMENT_SOURCE,
+        "properties": {
+            native: prop for native, (_key, prop) in sorted(COST_SEGMENT_PROPERTY.items())
+        },
+        "applied_to": applied,
+    }
+
+
 def _asset_paths(class_paths: dict[str, str], wanted: set[str], what: str) -> dict[str, str]:
     """The asset path of every class in ``wanted``, or refuse naming the gaps.
 
@@ -608,6 +677,7 @@ def main(out: Path | None = None) -> int:
     conveyor_flow = _attach_flow(
         directions, assets.get("conveyor_connections", {}), docs["buildables"]
     )
+    cost_segments = _attach_cost_segments(load_rules(), docs["buildables"])
     direction_counts = _shipped_direction_counts(docs["buildables"])
     item_paths = _asset_paths(assets["class_paths"], _item_classes(docs), "item descriptor")
     recipe_paths = _asset_paths(assets["class_paths"], set(docs["recipes"]), "recipe")
@@ -623,6 +693,7 @@ def main(out: Path | None = None) -> int:
             "native": native["provenance"],
             "hologram_rules": rules_provenance,
             "conveyor_flow": conveyor_flow,
+            "cost_segment": cost_segments,
             "limits": limit_provenance,
             "port_directions": {
                 "sources": list(PORT_DIRECTION_SOURCES),

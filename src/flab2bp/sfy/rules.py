@@ -1,4 +1,4 @@
-"""What the build gun's hologram accepts, read out of the shipped binary.
+"""What the game's own code does, read out of the shipped binary.
 
 Legality in Satisfactory is whatever the hologram does or allows. A blueprint in
 a community corpus is not evidence of it: the corpus carries clipped geometry,
@@ -27,16 +27,21 @@ a constraint to enforce.
 Every rule also says *what the hologram does* with the number --
 :attr:`HologramRule.effect`, one of :data:`RULE_EFFECTS`:
 
-``refuse``  a validation disqualifies the hologram, so the placement is rejected
-``clamp``   the value is forced into range and the placement goes ahead
-``snap``    the value is quantised or aligned and the placement goes ahead
-``none``    no enforcement was found in the instructions that were read
+``refuse``   a validation disqualifies the hologram, so the placement is rejected
+``clamp``    the value is forced into range and the placement goes ahead
+``snap``     the value is quantised or aligned and the placement goes ahead
+``none``     no enforcement was found in the instructions that were read
+``compute``  the function is not a validation at all: it works out a value the
+             game then writes, and turns no placement away
 
 The difference matters to a placer and to a validator: a ``clamp`` or a ``snap``
 never produces a refusal, so treating one as a bound refuses builds the game
 would accept, and treating a ``refuse`` as a clamp ships blueprints the game
 turns away. ``none`` is only allowed on a rule that is not ``extracted``: if the
-comparison and its branch were read, what the branch does is known.
+comparison and its branch were read, what the branch does is known. ``compute``
+is the other side of that: the code *was* read in full, and what it does is
+produce a number rather than judge one. A ``compute`` rule is what this project
+reproduces when it authors a blueprint, never a bound it enforces.
 """
 
 from __future__ import annotations
@@ -78,6 +83,7 @@ REQUIRED_RULE_IDS = (
     "buildable.grid_snap",
     "buildable.rotation_step",
     "buildable.clearance",
+    "belt.cost",
 )
 
 RULE_STATUSES = ("extracted", "partial", "unextractable")
@@ -85,7 +91,7 @@ RULE_STATUSES = ("extracted", "partial", "unextractable")
 # What the hologram does with the value, as the instructions show it. See the
 # module docstring: ``none`` says nothing was seen enforcing it, which a rule
 # whose branch was read cannot claim.
-RULE_EFFECTS = ("refuse", "clamp", "snap", "none")
+RULE_EFFECTS = ("refuse", "clamp", "snap", "none", "compute")
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
 RULES_PATH = DATA_DIR / "hologram_rules.json"
@@ -105,6 +111,10 @@ class HologramRule:
     ``this``-relative members the function touches, ``constants`` the ``.rdata``
     values its operands point at and ``calls`` the call targets that resolved to
     a symbol -- all three straight from the tool, never hand-listed.
+
+    ``also_read`` is the other functions the rule was read across, each as
+    ``Class::Method @ 0xrva``, for a rule the game spreads over more than one
+    function; it is empty for a rule read from ``function`` alone.
 
     ``comparison`` is the branch in the game's own terms; ``interpretation`` is
     what that means for a placer, and is the only field written by a human.
@@ -128,6 +138,7 @@ class HologramRule:
     interpretation: str
     evidence: tuple[str, ...]
     header: str
+    also_read: tuple[str, ...] = ()
 
 
 def _strings(raw: Iterable[Any]) -> tuple[str, ...]:
@@ -162,6 +173,7 @@ def _rule(raw: Mapping[str, Any]) -> HologramRule:
             interpretation=str(raw["interpretation"]),
             evidence=_strings(raw["evidence"]),
             header=str(raw["header"]),
+            also_read=_strings(raw.get("also_read", ())),
         )
     except KeyError as exc:
         raise RulesError(f"hologram rule is missing the {exc.args[0]!r} key: {raw}") from exc

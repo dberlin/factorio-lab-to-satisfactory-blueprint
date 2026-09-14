@@ -23,6 +23,7 @@ from flab2bp.sfy.rules import RULE_EFFECTS
 
 __all__ = [
     "BELT_MAX_SPLINE_CM",
+    "COST_SEGMENT_SOURCES",
     "FLOW_NAME_SOURCES",
     "FLOW_SOURCES",
     "LIMIT_SOURCES",
@@ -118,6 +119,13 @@ FLOW_SOURCES = ("header", "native")
 # A port name is otherwise a convention and never evidence, which is why there is
 # no second entry here.
 FLOW_NAME_SOURCES = ("asset",)
+
+# Where a buildable's cost segment came from. The game's own Docs.json states
+# it as a class default -- ``mMeshLength`` on a conveyor belt, ``mMeshHeight``
+# on a lift -- and ``provenance["cost_segment"]`` names the property per native
+# class beside the ``belt.cost`` rule whose machine code reads it. There is no
+# second entry: this number is never measured off a blueprint's cost list.
+COST_SEGMENT_SOURCES = ("docs",)
 
 _HEADER_DEFAULTED = (
     "belt_max_spline_cm",
@@ -234,6 +242,7 @@ class Buildable:
     manufacturing_speed: float | None
     belt_speed_per_min: float | None
     mesh_height_cm: float | None
+    mesh_length_cm: float | None
     width_cm: float | None
     depth_cm: float | None
     height_cm: float | None
@@ -249,6 +258,13 @@ class Buildable:
     # The item-flow order of the two conveyor ends, on the belt and lift marks
     # and on nothing else. ``None`` means this class carries no such order.
     flow: ConveyorFlow | None = None
+    # How much of a spline buildable one unit of its build recipe pays for, and
+    # where that number was read -- see :data:`COST_SEGMENT_SOURCES`. ``None``
+    # for everything the game charges its recipe exactly once, which is
+    # everything that is not costed by length. The ``belt.cost`` rule in
+    # ``data/hologram_rules.json`` is the machine code that divides by it.
+    length_per_cost_cm: float | None = None
+    length_per_cost_source: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -402,6 +418,33 @@ def _ports(raw: Iterable[Mapping[str, Any]]) -> tuple[Port, ...]:
     return ports
 
 
+def _cost_segment(class_name: str, entry: Mapping[str, Any]) -> dict[str, Any]:
+    """``length_per_cost_cm`` and its source, refusing a number with no source.
+
+    A buildable costed by length carries both or neither: a length with no
+    source would be a number nothing stands behind, and a source with no length
+    would be a claim about a value that is not there. The source must be one of
+    :data:`COST_SEGMENT_SOURCES`, and the length must be positive -- the game
+    treats a segment of 1e-4 or less as "not costed by length" and charges the
+    recipe once (the ``belt.cost`` rule quotes the branch).
+    """
+    length = _opt_float(entry.get("length_per_cost_cm"))
+    source = entry.get("length_per_cost_source")
+    source = None if source is None else str(source)
+    if (length is None) != (source is None):
+        raise RegistryError(
+            f"{class_name} states a cost segment of {length!r} from {source!r}: "
+            "a length and its source travel together"
+        )
+    if source is not None and source not in COST_SEGMENT_SOURCES:
+        raise RegistryError(f"{class_name}'s cost segment comes from no game source: {source!r}")
+    if length is not None and length <= 0.0:
+        raise RegistryError(
+            f"{class_name} states a cost segment of {length}, which is not a length"
+        )
+    return {"length_per_cost_cm": length, "length_per_cost_source": source}
+
+
 def _flow(raw: Mapping[str, Any] | None, ports: tuple[Port, ...]) -> ConveyorFlow | None:
     """Read a conveyor's item-flow order, refusing one no game source backs.
 
@@ -446,6 +489,7 @@ def _buildables(raw: Mapping[str, Mapping[str, Any]]) -> dict[str, Buildable]:
                 manufacturing_speed=_opt_float(entry["manufacturing_speed"]),
                 belt_speed_per_min=_opt_float(entry["belt_speed_per_min"]),
                 mesh_height_cm=_opt_float(entry["mesh_height_cm"]),
+                mesh_length_cm=_opt_float(entry["mesh_length_cm"]),
                 width_cm=_opt_float(entry["width_cm"]),
                 depth_cm=_opt_float(entry["depth_cm"]),
                 height_cm=_opt_float(entry["height_cm"]),
@@ -453,6 +497,7 @@ def _buildables(raw: Mapping[str, Mapping[str, Any]]) -> dict[str, Buildable]:
                 max_potential=_opt_float(entry["max_potential"]),
                 potential_shard_slots=_opt_int(entry["potential_shard_slots"]),
                 production_boost_slots=_opt_int(entry["production_boost_slots"]),
+                **_cost_segment(class_name, entry),
                 grid_snap_cm=_opt_float(entry.get("grid_snap_cm")),
                 ports=ports,
                 flow=_flow(entry.get("flow"), ports),

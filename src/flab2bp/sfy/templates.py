@@ -52,7 +52,6 @@ from flab2bp.sfy.versions import BLUEPRINT_HEADER_VERSION
 
 __all__ = [
     "BLUEPRINT_HEADER_VERSION",
-    "CONVEYOR_SEGMENT_CM",
     "DEFAULT_SAVE_VERSION",
     "LEVEL",
     "SPLINE_POINT_FIELD_TAGS",
@@ -77,23 +76,6 @@ TEMPLATE_MIN_SAVE_VERSION = 58
 with the modern property tag, which is what a blueprint written today needs."""
 
 DEFAULT_SAVE_VERSION = 60
-
-CONVEYOR_SEGMENT_CM = 200.0
-"""How much belt one unit of the belt's build recipe pays for, in the cost list
-this module writes.
-
-**This number is an inference from blueprint files, not a value read out of the
-game**, and it is the last such number here. It reproduces the header cost of
-the fixture blueprints -- ``production-4``'s six Mk1 belts of 300, 200, 200,
-300, 200 and 200 cm are charged 8 iron plates over the non-spline buildings,
-which is ``sum(ceil(length / 200))``, and ``logistics-9``'s twelve belts come to
-34 the same way -- so a blueprint written with it carries the same bill those
-files do. What the game itself computes is in
-``AFGBlueprintSubsystem``/``AFGBuildableConveyorBase::GetDismantleInventoryReturns``
-and has not been read; until it is, treat this as a working assumption rather
-than a game fact. (A blueprint's whole bill is a wider thing again: it also
-counts items sitting in inventories and lightweight buildables that are not
-saved as objects at all.)"""
 
 SPLINE_POINT_FIELD_TAGS: tuple[Tag, ...] = tuple(
     Tag(name, "StructProperty", 0, struct_name="Vector").as_modern(TAG_NATIVE_SERIALIZE)
@@ -347,8 +329,8 @@ def assemble(
     """Put objects into a blueprint, with the header the game expects.
 
     ``cost`` is what the contents would take out of the player's inventory: each
-    actor's ``mBuiltWithRecipe`` costed through the registry, and a conveyor
-    costed once per :data:`CONVEYOR_SEGMENT_CM` of spline. ``recipes`` is the
+    actor's ``mBuiltWithRecipe`` costed through the registry, once per cost
+    segment of the buildable (see :func:`_segments`). ``recipes`` is the
     distinct build recipes in first-seen order. The objects come out actors
     first and components after, in the order they were handed in, which is how
     47 of the 49 corpus fixtures are written.
@@ -363,7 +345,7 @@ def assemble(
         recipe = registry.recipes.get(ref.name)
         if recipe is None:
             raise TemplateError(f"{h.path}: the registry has no recipe {ref.name}")
-        count = _segments(d)
+        count = _segments(h, d, registry)
         for item, amount in recipe.ingredients:
             cost[item] = cost.get(item, 0) + amount * count
     header = BlueprintHeader(
@@ -393,12 +375,38 @@ def _recipe_ref(h: ObjectHeader, d: ObjectData) -> ObjectRef:
     return value.ref
 
 
-def _segments(d: ObjectData) -> int:
+def _round_to_int(value: float) -> int:
+    """``FMath::RoundToInt``, as the shipped binary computes it.
+
+    UE's SSE form, quoted in the ``belt.cost`` rule at ``0x4a6bc2``..``0x4a6bd2``:
+    double the value, add a half, convert with the round-to-nearest-even the
+    hardware is in, and shift the result right by one. That is a half rounded
+    *away from zero*, not the half-to-even Python's own ``round`` does, which is
+    why this is spelled out rather than called.
+    """
+    return round(value + value + 0.5) >> 1
+
+
+def _segments(header: ObjectHeader, d: ObjectData, registry: Registry) -> int:
     """How many units of its build recipe this actor costs.
 
-    One, unless it is a spline buildable: a conveyor is charged by length, and
-    a part-used segment is charged whole.
+    One, unless the registry says this class is costed by length: a conveyor is
+    charged its recipe once per ``length_per_cost_cm`` of run, which is the
+    mark's own mesh out of the game's Docs.json. The arithmetic is
+    ``AFGBuildable::GetCostMultiplierForLength``'s, quoted in the ``belt.cost``
+    rule -- ``max(1, RoundToInt(length / segment))``, with a segment of 1e-4 or
+    less meaning "not costed by length" -- so a *round*, not a ceiling: 300 cm
+    of Mk1 belt costs two iron plates and 299 cm costs one.
+
+    The length is the sum of the chords between stored spline points, where the
+    game divides ``mLength``, which a belt takes from its spline component's
+    ``GetSplineLength``. The two agree on the straight runs this module authors
+    and diverge on a curve, where the arc is longer than its chords.
     """
+    buildable = registry.buildables.get(header.class_name)
+    segment = None if buildable is None else buildable.length_per_cost_cm
+    if segment is None or segment <= 1e-4:
+        return 1
     value = find(d.properties, SPLINE_DATA)
     if not isinstance(value, Array) or len(value.items) < 2:
         return 1
@@ -412,7 +420,7 @@ def _segments(d: ObjectData) -> int:
         if previous is not None:
             length += math.dist(previous, current)
         previous = current
-    return max(1, math.ceil(length / CONVEYOR_SEGMENT_CM - 1e-9))
+    return max(1, _round_to_int(length / segment))
 
 
 def _set_property(d: ObjectData, name: str, value: Value, tag: Tag | None = None) -> ObjectData:

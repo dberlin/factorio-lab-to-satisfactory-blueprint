@@ -12,7 +12,6 @@ from flab2bp.sfy.properties import Array, Int, Object, Struct, Value, Vector
 from flab2bp.sfy.query import connected, find, object_index, spline_points
 from flab2bp.sfy.registry import load_registry
 from flab2bp.sfy.templates import (
-    CONVEYOR_SEGMENT_CM,
     SPLINE_POINT_FIELD_TAGS,
     TEMPLATE_MIN_SAVE_VERSION,
     TemplateLibrary,
@@ -308,11 +307,70 @@ def test_assemble_puts_every_actor_before_every_component() -> None:
     ]
 
 
+def _belt_cost(length: float) -> list[tuple[str, int]]:
+    """The blueprint bill for one straight Mk1 belt of ``length`` centimetres."""
+    lib = _lib()
+    reg = load_registry()
+    belt = lib.instantiate("Build_ConveyorBeltMk1_C", 1, IDENTITY)
+    actor = set_spline(
+        belt[0][1],
+        (
+            (Vector(0, 0, 0), Vector(1, 0, 0), Vector(length, 0, 0)),
+            (Vector(length, 0, 0), Vector(length, 0, 0), Vector(1, 0, 0)),
+        ),
+    )
+    sample = read_sbp_file(fixture_paths()[0])
+    bp = assemble(
+        ((belt[0][0], actor), *belt[1:]),
+        (4, 4, 4),
+        reg,
+        build_version=sample.header.build_version,
+        version_data=sample.header.version_data,
+    )
+    return [(c.item.name, c.amount) for c in bp.header.cost]
+
+
+def test_a_belt_is_costed_by_the_cost_segment_the_registry_read_from_the_game() -> None:
+    """``AFGBuildableConveyorBelt::GetDismantleRefundReturnsMultiplier``'s segment.
+
+    The mark's own ``mMeshLength``, which Docs.json states as 200 cm for every
+    belt in 1.2.0; the registry carries it as ``length_per_cost_cm`` with the
+    source ``docs``, and nothing here hard-codes it.
+    """
+    reg = load_registry()
+    segment = reg.buildables["Build_ConveyorBeltMk1_C"].length_per_cost_cm
+    assert segment is not None
+    assert reg.buildables["Build_ConveyorBeltMk1_C"].length_per_cost_source == "docs"
+    assert _belt_cost(3 * segment) == [("Desc_IronPlate_C", 3)]
+    # Nothing that is not costed by length carries a segment at all.
+    assert reg.buildables["Build_ConstructorMk1_C"].length_per_cost_cm is None
+
+
+def test_a_part_used_belt_segment_is_rounded_the_way_the_game_rounds_it() -> None:
+    """``max(1, RoundToInt(length / segment))``, not a ceiling.
+
+    ``AFGBuildable::GetCostMultiplierForLength`` at 0x4a6bb0 divides, doubles,
+    adds a half, converts and shifts -- UE's ``RoundToInt`` -- and takes the
+    larger of that and 1. So three-quarters of a segment still costs one unit
+    and one-and-a-quarter segments costs one, where a ceiling would have
+    charged two.
+    """
+    segment = load_registry().buildables["Build_ConveyorBeltMk1_C"].length_per_cost_cm
+    assert segment == 200.0
+    assert _belt_cost(0.75 * segment) == [("Desc_IronPlate_C", 1)]
+    assert _belt_cost(1.25 * segment) == [("Desc_IronPlate_C", 1)]
+    # A half goes away from zero, which is what the SSE form does.
+    assert _belt_cost(1.5 * segment) == [("Desc_IronPlate_C", 2)]
+    assert _belt_cost(2.5 * segment) == [("Desc_IronPlate_C", 3)]
+    # Shorter than a whole segment still costs one: the floor is the cmovl.
+    assert _belt_cost(1.0) == [("Desc_IronPlate_C", 1)]
+
+
 def test_cost_counts_a_belt_once_per_conveyor_segment() -> None:
     lib = _lib()
     reg = load_registry()
     belt = lib.instantiate("Build_ConveyorBeltMk1_C", 1, IDENTITY)
-    length = 3 * CONVEYOR_SEGMENT_CM
+    length = 3 * 200.0
     actor = set_spline(
         belt[0][1],
         (
