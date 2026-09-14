@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fractions import Fraction
 from functools import cache
+from unittest.mock import patch
 
 import pytest
 
@@ -143,3 +144,28 @@ def test_what_the_file_cannot_carry_is_left_out_of_what_equality_compares() -> N
     empty = BeltRun(2, BELT, straight((0.0, 0.0, 200.0), (0.0, 1.0, 0.0), 400.0))
     assert carried == empty
     assert carried.item_id != empty.item_id
+
+
+def test_by_id_answers_from_an_index_rather_than_walking_every_object() -> None:
+    """A validator asks this per link and per wire; a scan per question is quadratic."""
+    registry = load_registry()
+    poles = tuple(PoleObj(i, POLE, Pose(float(i) * 100.0, 0.0, 0.0, 0.0)) for i in range(50))
+    placement = SfyPlacement(designer=designer("mk1", registry), poles=poles)
+    assert placement.by_id(37) is poles[37]
+    assert placement.by_id(0) is poles[0]
+    with pytest.raises(KeyError, match="no object with id 99"):
+        placement.by_id(99)
+
+    calls = 0
+    original = SfyPlacement.objects.fget
+    assert original is not None
+
+    def counted(self: SfyPlacement) -> tuple[object, ...]:
+        nonlocal calls
+        calls += 1
+        return original(self)
+
+    with patch.object(SfyPlacement, "objects", property(counted)):
+        for _ in range(10):
+            placement.by_id(37)
+    assert calls == 0, "the index was built on the first lookup and is kept"

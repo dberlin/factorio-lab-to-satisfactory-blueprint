@@ -284,3 +284,22 @@ def test_decode_refuses_an_actor_the_placement_model_has_no_object_for() -> None
     )
     with pytest.raises(EmitError, match="Build_Ladder_C"):
         decode(built, registry)
+
+
+@pytest.mark.parametrize("yaw", [45.5, 22.25, 7.125, 123.456, -30.75])
+def test_a_fractional_yaw_comes_back_out_of_the_file_it_went_into(yaw: float) -> None:
+    """An ``FQuat`` of four ``f32`` cannot hold an ``f64`` angle.
+
+    ``Pose`` therefore states its yaw at the width the object table writes, and
+    ``decode`` hands it back at the same width: the ``f64`` angle the stored
+    components encode misses by about a part in ten million, and rounding it to
+    a ``float`` lands back on the number that went in.
+    """
+    placement = replace(
+        _placement(),
+        machines=(MachineObj(4, CONSTRUCTOR, Pose(0.0, 0.0, SLAB_TOP_CM, yaw), IRON_PLATE),),
+        belts=(),
+        links=(),
+    )
+    assert placement.machines[0].pose.yaw_deg == pytest.approx(yaw, abs=1e-4)
+    assert decode(_emit(placement), load_registry()) == placement

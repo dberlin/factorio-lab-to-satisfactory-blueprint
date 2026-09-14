@@ -46,6 +46,7 @@ from flab2bp.sfy.layout.model import (
     Pose,
     SfyPlacement,
     SplinePoint,
+    stored_float,
 )
 from flab2bp.sfy.layout.splines import Quaternion, yaw_quaternion
 from flab2bp.sfy.objects import ACTOR, ObjectData, ObjectHeader, Transform
@@ -338,6 +339,12 @@ def _yaw_degrees(header: ObjectHeader, transform: Transform) -> float:
     object table, so when those numbers are a whole degree's quaternion at that
     width -- which is every yaw the build gun can produce -- that whole degree is
     the answer rather than the seven-digit angle they encode.
+
+    Any other angle comes back at the same 32-bit width :class:`Pose` states it
+    at.  The ``f64`` angle four ``f32`` components encode is not the angle that
+    built them -- it misses by about a part in ten million -- and rounding it to
+    a ``float`` lands back on the number that went in, which is what makes
+    ``decode(emit(placement)) == placement`` hold for a fractional yaw.
     """
     x, y, z, w = transform.rotation
     if abs(x) > _ROTATION_TOLERANCE or abs(y) > _ROTATION_TOLERANCE:
@@ -348,7 +355,7 @@ def _yaw_degrees(header: ObjectHeader, transform: Transform) -> float:
     whole = float(round(yaw))
     if _same_rotation(yaw_quaternion(whole), transform.rotation):
         return whole
-    return yaw
+    return stored_float(yaw)
 
 
 def _same_rotation(a: Quaternion, b: tuple[float, float, float, float]) -> bool:

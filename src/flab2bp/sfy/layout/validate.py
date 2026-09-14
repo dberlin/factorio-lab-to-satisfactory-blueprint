@@ -57,11 +57,9 @@ from flab2bp.sfy.header import BlueprintHeader, read_header
 from flab2bp.sfy.labmap import LabMap, load_lab_map
 from flab2bp.sfy.layout.emit import EmitError, decode, emit
 from flab2bp.sfy.layout.model import (
-    AttachmentObj,
     BeltRun,
-    FoundationObj,
     MachineObj,
-    PoleObj,
+    Placed,
     SfyPlacement,
     Vector,
     WireObj,
@@ -148,6 +146,18 @@ DEG_TO_RAD = 0.017453292
 constant is a ``float`` and the branch is a strict compare, so at exactly the
 limit the two disagree."""
 
+HALF_PI_F32 = 1.5707963705062866
+"""The ``pi/2`` ``ValidateIncline`` subtracts ``acos`` from (``0xaa57ce``,
+``0xaa57d2``).  Unreal's ``PI`` is a ``float``, so the game's right angle is
+4.4e-8 rad off ``math.pi / 2`` -- which is the whole elevation of a level chord
+and is why this is written out rather than computed."""
+
+ZERO_NORMAL = 1e-8
+"""The SQUARED length below which ``FVector::GetSafeNormal`` hands back
+``ZeroVector`` (``belt.incline`` ``0xaa576a``, ``belt.curvature``
+``0xaa53a1``/``0xaa53ab``).  It is squared, not a length, and the zero vector it
+returns is USED by both callers rather than ending the comparison."""
+
 BELT_CLEARANCE_HALF_WIDTH_CM = 79.0
 BELT_CLEARANCE_HALF_HEIGHT_CM = 15.0
 """``belt.clearance``'s box about a segment's axis: ``Min = (-L/2, -79, -15)``,
@@ -169,6 +179,17 @@ _HARD_CLEARANCE_UNREAD = (
     "soft-versus-hard distinction are unknown and this check's silence about "
     "them proves nothing."
 )
+_CAPSULE_UNREAD = (
+    "belt.clearance leaves two things unread, so this check's silence about "
+    "them proves nothing: the two flag bytes of FFGClearanceData, where a "
+    "CT_Soft marking would live, so every box in the chain is treated as hard; "
+    "and the tolerance arithmetic inside "
+    "UFGSplineMeshGenerationLibrary::GetNextDistanceExceedingTolerance, so the "
+    "game's own segment lengths cannot be reproduced and the chain is cut at "
+    "this project's own 50 cm instead. The exclusion of the box a wired port "
+    "sits inside rests on the same unread AFGHologram::TestClearanceOverlap "
+    "that keeps buildable.clearance partial."
+)
 _NO_WIRES = (
     "the placement carries no wires, and emit refuses to write one until Task 9 "
     "decodes the power-line trailer, so there is nothing here to judge"
@@ -178,8 +199,16 @@ _FIXTURE_DIR = Path(__file__).resolve().parents[4] / "tests" / "fixtures" / "sfy
 
 
 class Severity(StrEnum):
+    """What a finding means for the build.
+
+    Two values, not the DSP judge's three.  ``ERROR`` is a placement this
+    project will not author; ``INFO`` is a check saying what it did not cover.
+    There is no ``WARNING``, because nothing here emits one: a severity no
+    finding carries is a promise the report does not keep, and a reader who
+    filtered on it would be filtering on nothing.
+    """
+
     ERROR = "error"
-    WARNING = "warning"
     INFO = "info"
 
 
@@ -212,10 +241,6 @@ class Report:
     def errors(self) -> tuple[Finding, ...]:
         return tuple(f for f in self.findings if f.severity is Severity.ERROR)
 
-    @property
-    def warnings(self) -> tuple[Finding, ...]:
-        return tuple(f for f in self.findings if f.severity is Severity.WARNING)
-
     def by_check(self, check: str) -> tuple[Finding, ...]:
         return tuple(f for f in self.findings if f.check == check)
 
@@ -230,6 +255,11 @@ class WorldBox:
     ``axes`` are the box's own three unit axes in world space and ``half`` its
     half extent along each of them, so a corner is
     ``centre + sum(+-half[k] * axes[k])``.
+
+    ``reach`` is the half extent of the box's world-axis-aligned bounding box,
+    computed once at construction.  It is what :func:`_apart` rejects a pair on
+    before anything runs a separating-axis test, and on a designer full of belts
+    that broad phase is the difference between a report and a coffee break.
     """
 
     owner: int
@@ -239,6 +269,23 @@ class WorldBox:
     half: Vector
     soft: bool = False
     exclude_for_snapping: bool = False
+    reach: Vector = field(default=(0.0, 0.0, 0.0), init=False, compare=False, repr=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "reach",
+            tuple(sum(self.half[k] * abs(self.axes[k][i]) for k in range(3)) for i in range(3)),
+        )
+
+    def holds(self, point: Vector) -> bool:
+        """Whether ``point`` is inside the box, a face counting as inside."""
+        offset = (
+            point[0] - self.centre[0],
+            point[1] - self.centre[1],
+            point[2] - self.centre[2],
+        )
+        return all(abs(_dot(offset, self.axes[k])) <= self.half[k] + TOUCH_CM for k in range(3))
 
     def corners(self) -> tuple[Vector, ...]:
         out: list[Vector] = []
@@ -318,6 +365,19 @@ def _unit(v: Vector) -> Vector:
     if scale == 0.0:
         raise ValueError("a zero vector has no direction")
     return (v[0] / scale, v[1] / scale, v[2] / scale)
+
+
+def _apart(a: WorldBox, b: WorldBox) -> bool:
+    """Whether the two boxes' world bounding boxes miss each other.
+
+    The broad phase.  A world axis that separates the two AABBs separates the
+    boxes inside them, so a ``True`` here is a real answer and not a guess --
+    and it costs three subtractions where :func:`_penetration` costs fifteen
+    projections over eight products each.
+    """
+    return any(
+        abs(b.centre[i] - a.centre[i]) > a.reach[i] + b.reach[i] + TOUCH_CM for i in range(3)
+    )
 
 
 def _penetration(a: WorldBox, b: WorldBox) -> float:
@@ -427,8 +487,6 @@ def _belt_chain(run: BeltRun) -> tuple[WorldBox, ...]:
 
 # --- the context every check is handed -------------------------------------
 
-Placed = MachineObj | AttachmentObj | BeltRun | PoleObj | WireObj | FoundationObj
-
 
 @dataclass
 class Context:
@@ -438,6 +496,9 @@ class Context:
     spec: SfyBuildSpec | None
     registry: Registry
     rules: Mapping[str, HologramRule]
+    #: The templates ``roundtrip`` writes with, or ``None`` to take the repo's
+    #: own blueprint corpus.
+    library: TemplateLibrary | None = None
     skipped: dict[str, str] = field(default_factory=dict)
 
     def skip(self, cid: str, reason: str) -> Finding:
@@ -477,6 +538,44 @@ class Context:
     @cached_property
     def belt_chains(self) -> dict[int, tuple[WorldBox, ...]]:
         return {run.id: _belt_chain(run) for run in self.placement.belts}
+
+    @cached_property
+    def wired_port_boxes(self) -> dict[int, frozenset[int]]:
+        """Belt id -> indices into :attr:`boxes` of the boxes holding its own ports.
+
+        The narrow form of "a belt is not tested against what it is wired to".
+        A Constructor's ``Output0`` sits at ``(0, 300, 100)`` inside a hard box
+        that runs to ``y = 500``, so the belt starting there starts 200 cm
+        inside the machine and the game must be excluding something; what it
+        excludes is unread (``TestClearanceOverlap``).  Excluding the ONE box
+        the port is inside leaves every other box of the same buildable --
+        an Assembler's second, upper box, for instance -- under test.
+        """
+        out: dict[int, set[int]] = {}
+        for link in self.placement.links:
+            for side, other in ((link.a, link.b), (link.b, link.a)):
+                run = self.placed.get(other[0])
+                if not isinstance(run, BeltRun):
+                    continue
+                where = self.world_port(*side)
+                if where is None:
+                    continue
+                for i, box in enumerate(self.boxes):
+                    if box.owner == side[0] and box.holds(where):
+                        out.setdefault(run.id, set()).add(i)
+        return {run_id: frozenset(indices) for run_id, indices in out.items()}
+
+    @cached_property
+    def connection_points(self) -> dict[frozenset[int], tuple[Vector, ...]]:
+        """Where two linked objects meet, in world space, by the pair they join."""
+        out: dict[frozenset[int], list[Vector]] = {}
+        for link in self.placement.links:
+            key = frozenset((link.a[0], link.b[0]))
+            for side in (link.a, link.b):
+                where = self.world_port(*side)
+                if where is not None:
+                    out.setdefault(key, []).append(where)
+        return {pair: tuple(points) for pair, points in out.items()}
 
     @cached_property
     def partners(self) -> dict[int, frozenset[int]]:
@@ -636,6 +735,8 @@ def _hard_clearance(ctx: Context) -> Iterable[Finding]:
         for second in hard[i + 1 :]:
             if first.owner == second.owner:
                 continue
+            if _apart(first, second):
+                continue
             depth = _penetration(first, second)
             if depth > TOUCH_CM:
                 yield ctx.finding(
@@ -645,6 +746,7 @@ def _hard_clearance(ctx: Context) -> Iterable[Finding]:
                     first.owner,
                     second.owner,
                     depth_cm=round(depth, 3),
+                    exclude_for_snapping=first.exclude_for_snapping or second.exclude_for_snapping,
                 )
 
 
@@ -660,28 +762,36 @@ def _capsule(ctx: Context) -> Iterable[Finding]:
     out boxes and turns nothing away -- and the rule that does refuse,
     ``buildable.clearance``, is ``partial``.
 
-    Two parts of ``belt.clearance`` are unread and neither is assumed here: the
-    two flag bytes of ``FFGClearanceData`` (where a ``CT_Soft`` marking would
-    live, so every box in the chain is treated as hard) and the tolerance
-    arithmetic inside ``GetNextDistanceExceedingTolerance`` (so the chain is cut
-    at :data:`CAPSULE_SEGMENT_CM`, ours, which only makes it hug the spline more
-    closely than the game's would).
+    **What this check does not know**, and why it is always in ``skipped``: two
+    parts of ``belt.clearance`` were never read, and neither is guessed at here.
+    The two flag bytes of ``FFGClearanceData`` -- where a ``CT_Soft`` marking
+    would live -- are unread, so every box in the chain is treated as hard.  And
+    the tolerance arithmetic inside ``GetNextDistanceExceedingTolerance`` is
+    unread, so the game's own segment LENGTHS cannot be reproduced and the chain
+    is cut at :data:`CAPSULE_SEGMENT_CM`, which is ours.
 
-    A belt is not tested against a buildable it is WIRED to.  That is ours too,
-    and it is forced by the game's own numbers rather than by convenience: a
+    A belt is not tested against **the one box a port it is wired to sits
+    inside**.  That exclusion is forced by the game's own numbers: a
     Constructor's ``Output0`` sits at ``(0, 300, 100)`` inside a hard box that
     runs to ``y = 500``, so a belt that starts at its own port starts 200 cm
-    inside the machine feeding it.  Where two belts meet, the lap at the shared
-    point is forgiven up to :data:`BELT_CONNECTION_CM`.
+    inside the machine feeding it, and the game must be excluding something in
+    the unread ``TestClearanceOverlap``.  Every OTHER box of the same buildable
+    stays under test -- an Assembler's upper box is not forgiven because its
+    lower one holds the port.
+
+    Where two belts meet, the lap is forgiven up to :data:`BELT_CONNECTION_CM`,
+    and only for segment pairs within one box length of the shared connection
+    point: two runs joined end to end lap by a sliver where their tangents
+    differ, and that is the only place they are entitled to.
     """
+    yield ctx.skip("belt.capsule", _CAPSULE_UNREAD)
     chains = ctx.belt_chains
-    hard = [box for box in ctx.boxes if not box.soft]
+    hard = [(i, box) for i, box in enumerate(ctx.boxes) if not box.soft]
     runs = list(ctx.placement.belts)
     for i, run in enumerate(runs):
         for other in runs[i + 1 :]:
-            wired = other.id in ctx.partners.get(run.id, frozenset())
-            tolerance = BELT_CONNECTION_CM if wired else TOUCH_CM
-            clash = _worst(chains[run.id], chains[other.id], tolerance)
+            near = ctx.connection_points.get(frozenset((run.id, other.id)), ())
+            clash = _worst(chains[run.id], chains[other.id], near)
             if clash is not None:
                 depth, first, second = clash
                 yield ctx.finding(
@@ -692,10 +802,11 @@ def _capsule(ctx: Context) -> Iterable[Finding]:
                     other.id,
                     depth_cm=round(depth, 3),
                 )
-        for box in hard:
-            if box.owner in ctx.partners.get(run.id, frozenset()):
+        excluded = ctx.wired_port_boxes.get(run.id, frozenset())
+        for index, box in hard:
+            if index in excluded:
                 continue
-            clash = _worst(chains[run.id], (box,), TOUCH_CM)
+            clash = _worst(chains[run.id], (box,), ())
             if clash is not None:
                 depth, first, _ = clash
                 yield ctx.finding(
@@ -708,16 +819,64 @@ def _capsule(ctx: Context) -> Iterable[Finding]:
 
 
 def _worst(
-    left: Sequence[WorldBox], right: Sequence[WorldBox], tolerance: float
+    left: Sequence[WorldBox], right: Sequence[WorldBox], near: Sequence[Vector] = ()
 ) -> tuple[float, WorldBox, WorldBox] | None:
-    """The deepest lap between two sets of boxes, or ``None`` under ``tolerance``."""
+    """The deepest lap between two sets of boxes, or ``None`` if there is none.
+
+    A lap under :data:`TOUCH_CM` is arithmetic noise.  A lap under
+    :data:`BELT_CONNECTION_CM` is forgiven as well, but only where BOTH boxes
+    are within one box length of a point in ``near`` -- the place the two runs
+    are wired together.  Ten metres down the belt, the same five centimetres is
+    a belt through a belt.
+    """
     found: tuple[float, WorldBox, WorldBox] | None = None
+    if _spans_miss(left, right):
+        return None
     for a in left:
         for b in right:
+            if _apart(a, b):
+                continue
             depth = _penetration(a, b)
-            if depth > tolerance and (found is None or depth > found[0]):
+            if depth <= TOUCH_CM:
+                continue
+            if depth <= BELT_CONNECTION_CM and _at_connection(a, b, near):
+                continue
+            if found is None or depth > found[0]:
                 found = (depth, a, b)
     return found
+
+
+def _spans_miss(left: Sequence[WorldBox], right: Sequence[WorldBox]) -> bool:
+    """Whether the two SETS of boxes are apart, over one bounding box each.
+
+    The same world-axis reject as :func:`_apart`, one level up.  Two belts at
+    opposite ends of a designer are settled in six comparisons instead of a
+    hundred boxes against a hundred boxes, and a designer full of belts is
+    almost all such pairs.
+    """
+    if not left or not right:
+        return True
+    for i in range(3):
+        low = max(
+            min(box.centre[i] - box.reach[i] for box in left),
+            min(box.centre[i] - box.reach[i] for box in right),
+        )
+        high = min(
+            max(box.centre[i] + box.reach[i] for box in left),
+            max(box.centre[i] + box.reach[i] for box in right),
+        )
+        if low > high + TOUCH_CM:
+            return True
+    return False
+
+
+def _at_connection(a: WorldBox, b: WorldBox, near: Sequence[Vector]) -> bool:
+    """Whether both boxes sit within one box length of a shared connection point."""
+    return any(
+        math.dist(a.centre, point) <= 2.0 * a.half[0]
+        and math.dist(b.centre, point) <= 2.0 * b.half[0]
+        for point in near
+    )
 
 
 @check("slab.under_every_foot")
@@ -866,10 +1025,12 @@ def _incline(ctx: Context) -> Iterable[Finding]:
         for i in range(len(run.points) - 1):
             head, tail = run.points[i][0], run.points[i + 1][0]
             delta = (tail[0] - head[0], tail[1] - head[1], tail[2] - head[2])
-            span = math.sqrt(_dot(delta, delta))
-            if span < 1e-8:  # GetSafeNormal's own floor: a zero chord has no slope
-                continue
-            elevation = abs(math.pi / 2.0 - math.acos(min(1.0, max(-1.0, delta[2] / span))))
+            squared = _dot(delta, delta)
+            # GetSafeNormal tests the SQUARED length against 1e-8 (0xaa576a) and
+            # hands back ZeroVector below it, whose Z is 0 -- so a zero chord
+            # comes out level rather than being passed over.
+            up = 0.0 if squared < ZERO_NORMAL else delta[2] / math.sqrt(squared)
+            elevation = abs(HALF_PI_F32 - math.acos(min(1.0, max(-1.0, up))))
             if elevation > limit:
                 yield ctx.finding(
                     "belt.incline",
@@ -898,7 +1059,11 @@ def _curvature(ctx: Context) -> Iterable[Finding]:
       ``GetTangentAtDistanceAlongSpline`` at ``i * step`` and ``(i + 1) * step``
       (``0xaa535b``, ``0xaa540f``), each through ``GetSafeNormal2D`` -- the
       ``1e-8`` / reciprocal-square-root dance at ``0xaa53d6..0xaa53e7``, which
-      zeroes ``Z``.  So a climb is not curvature; ``belt.incline`` judges that.
+      zeroes ``Z``.  So a climb does not COUNT as curvature; ``belt.incline``
+      judges the slope.  A tangent with no horizontal part at all is a different
+      matter: ``GetSafeNormal2D`` hands back ``FVector::ZeroVector``
+      (``0xaa53ab``), the dot is ``0``, ``acos(0)`` is ``pi/2`` and the radius
+      is ``step / (pi/2)`` -- so a vertical sample is REFUSED, not skipped.
     * ``theta = acos(clamp(A . B, -1, 1))`` (``0xaa54a3`` dot, ``0xaa54b8`` and
       ``0xaa54c5`` clamp, ``0xaa54cd call acos``).
     * The radius is ``step / theta`` -- ``0xaa54da movaps xmm1,xmm14`` (``xmm14``
@@ -937,8 +1102,6 @@ def _curvature(ctx: Context) -> Iterable[Finding]:
             second = _flat(
                 tangent_at_distance(run.points, (i + 1) * step, samples=CURVATURE_SAMPLES)
             )
-            if first is None or second is None:
-                continue
             theta = math.acos(min(1.0, max(-1.0, _dot(first, second))))
             radius = math.inf if theta == 0.0 else step / theta
             if radius < tightest:
@@ -958,23 +1121,33 @@ def _round_to_int(value: float) -> int:
     """``FMath::RoundToInt`` as ``ValidateCurvature`` performs it on SSE.
 
     ``addss xmm2,xmm2; addss 0.5; cvtss2si; sar 1`` -- double, add a half,
-    convert to the nearest integer (``cvtss2si`` rounds half to even under the
-    default ``MXCSR``), then shift back.  Python's ``round`` is the same
-    half-to-even rule and ``>> 1`` is the same arithmetic shift.
+    convert to the nearest integer, then shift back.  ``cvtss2si`` rounds half
+    to EVEN under the default ``MXCSR``, and the doubling is precisely what
+    stops that showing: the tie lands on ``2x + 0.5`` instead of on ``x``, and
+    the shift recovers ``floor(x + 0.5)`` -- half UP -- for every ``x``.
+    Python's ``round`` is the same half-to-even rule and ``>> 1`` the same
+    arithmetic shift, so this is the instruction sequence rather than a
+    paraphrase of its result.
     """
     return int(round(2.0 * value + 0.5)) >> 1
 
 
-def _flat(tangent: Vector) -> Vector | None:
+def _flat(tangent: Vector) -> Vector:
     """``FVector::GetSafeNormal2D``: flatten ``Z`` away and normalise.
 
-    ``None`` where the game returns ``ZeroVector``: its guard is a squared
-    length under ``1e-8`` (``0xaa53..``), and a zero tangent has no direction to
-    compare.
+    The guard is the SQUARED horizontal length against ``1e-8``
+    (:data:`ZERO_NORMAL`, ``0xaa53a1``), and what it hands back is
+    ``FVector::ZeroVector`` (``0xaa53ab``) rather than nothing at all.  That
+    matters: the zero vector goes on into the dot product like any other, the
+    dot is ``0``, ``acos(0)`` is ``pi/2``, and the radius comes out
+    ``step / (pi/2)`` -- about 32 cm at the game's own 50 cm sampling, far
+    inside the floor.  **A belt that climbs vertically is refused by the
+    curvature rule**, not passed over, and that is the game's arithmetic and not
+    an interpretation of it.
     """
     squared = tangent[0] * tangent[0] + tangent[1] * tangent[1]
-    if squared < 1e-8:
-        return None
+    if squared < ZERO_NORMAL:
+        return (0.0, 0.0, 0.0)
     scale = math.sqrt(squared)
     return (tangent[0] / scale, tangent[1] / scale, 0.0)
 
@@ -1042,9 +1215,9 @@ def _connected_once(ctx: Context) -> Iterable[Finding]:
                 )
 
 
-@check("ports.direction", rule="belt.snap_directions")
+@check("ports.direction")
 def _direction(ctx: Context) -> Iterable[Finding]:
-    """A link runs from an output to an input -- ``belt.snap_directions``.
+    """A link runs from an output to an input.  This project's own rule.
 
     ``AFGConveyorBeltHologram::SetupSnappedConnectionDirections`` does not let a
     belt choose: ``mConnectionComponents[0]->mDirection`` is set to the snapped
@@ -1054,12 +1227,15 @@ def _direction(ctx: Context) -> Iterable[Finding]:
     end is whatever the port it met is compatible with, and its far end carries
     the port's direction outward, to meet the compatible thing at the other end.
 
-    The rule's ``effect`` is ``snap``, not ``refuse``, and this check respects
-    that: it does not refuse a placement for a bound the hologram would clamp or
-    move.  What it reports is a pairing the assignment above **cannot produce**
-    -- an output wired to an output, an input to an input -- which is not a
-    placement the build gun turns away but a placement it never makes.  It
-    enforces no number.
+    ``belt.snap_directions`` is the EVIDENCE for that and not the rule this
+    check enforces, which is why the check is ours.  Its ``effect`` is ``snap``:
+    the hologram does not turn a mismatched pair away, so a refusal built on it
+    would be this project's judgement wearing the game's name.  What the
+    instructions do show is that the assignment above **cannot produce** an
+    output wired to an output or an input to an input -- a belt's two directions
+    are taken from the connection it met, never chosen -- so such a link is not
+    a placement the build gun refuses but a placement it never makes, and we
+    decline to author one.  The check enforces no number.
 
     A belt's own two ends are ``any``; which is which is ``flow``'s answer in
     ``registry.json``, so the upstream side of a link must be the belt's exit
@@ -1408,20 +1584,22 @@ def _roundtrip(ctx: Context) -> Iterable[Finding]:
     the rest of the report is judging in place of the thing that will actually
     be pasted.
 
-    ``emit`` needs a template library and a build version, and both come from
-    the corpus the way Task 5's tests take them -- the newest fixture header,
-    and one actor of each class to clone.  That is the corpus used as a source
-    of FORMAT, which is what ``TemplateLibrary`` is for; no bound and no
-    tolerance anywhere in this module is read from a blueprint.  A class the
-    library has no template for is a gap in the corpus rather than a fault in
-    the placement, so it goes to ``skipped`` with the reason.
+    ``emit`` needs a template library and a build version.  The caller supplies
+    the library through ``validate(..., library=...)``; where it does not, both
+    come from the repo's own corpus the way Task 5's tests take them -- the
+    newest fixture header, and one actor of each class to clone.  That is the
+    corpus used as a source of FORMAT, which is what ``TemplateLibrary`` is for;
+    no bound and no tolerance anywhere in this module is read from a blueprint.
+    A class the library has no template for is a gap in the library rather than
+    a fault in the placement, so it goes to ``skipped`` with the reason.
     """
-    library, header = _corpus()
+    fallback, header = _corpus()
+    library = ctx.library if ctx.library is not None else fallback
     if library is None or header is None:
         yield ctx.skip(
             "roundtrip",
-            f"no blueprint corpus at {_FIXTURE_DIR}, so there is no template library "
-            "to write this placement with",
+            f"no library was given and there is no blueprint corpus at {_FIXTURE_DIR}, "
+            "so this placement cannot be written at all",
         )
         return
     try:
@@ -1489,6 +1667,7 @@ def validate(
     *,
     rules: Mapping[str, HologramRule] | None = None,
     only: Iterable[str] | None = None,
+    library: TemplateLibrary | None = None,
 ) -> Report:
     """Judge ``placement``, optionally against the ``spec`` it should realise.
 
@@ -1498,9 +1677,15 @@ def validate(
     itself there too and says why in an ``INFO`` finding -- so a report with an
     empty ``findings`` and a populated ``skipped`` is not a clean build, it is a
     build nobody finished looking at.
+
+    ``rules`` is the rule table to judge by, ``data/hologram_rules.json``'s by
+    default; it is what :func:`_may_refuse` reads to hold every check to the
+    effect of the rule it names.  ``library`` is the templates ``roundtrip``
+    writes with, the repo's own corpus by default.
     """
     wanted = set(only) if only is not None else None
-    ctx = Context(placement, spec, registry, rules if rules is not None else load_rules())
+    known = rules if rules is not None else load_rules()
+    ctx = Context(placement, spec, registry, known, library)
     findings: list[Finding] = []
     ran: list[str] = []
     skipped: list[str] = []
@@ -1518,6 +1703,34 @@ def validate(
                 )
             )
             continue
-        findings.extend(fn(ctx))
+        produced = list(fn(ctx))
+        if any(f.severity is Severity.ERROR for f in produced):
+            _may_refuse(cid, known)
+        findings.extend(produced)
         (skipped if cid in ctx.skipped else ran).append(cid)
     return Report(tuple(findings), tuple(ran), tuple(skipped))
+
+
+def _may_refuse(cid: str, rules: Mapping[str, HologramRule]) -> None:
+    """Refuse to REPORT a refusal a check has no authority for.
+
+    The discipline in this module's docstring, enforced by this module rather
+    than by a test: a check that turns a placement away either names a rule the
+    instructions show turning one away -- ``effect`` ``refuse`` -- or declares
+    the bound this project's own.  A ``compute``, ``clamp`` or ``snap`` rule
+    describes something the game works out or moves, so a refusal citing one
+    would be our judgement wearing the game's name.  Raising here rather than
+    dropping the finding is deliberate: a validator quietly weakening itself is
+    worse than one that stops.
+    """
+    rule = RULE_FOR[cid]
+    if rule == PROJECT:
+        return
+    effect = rules[rule].effect
+    if effect != "refuse":
+        raise ValueError(
+            f"check {cid!r} reported an error citing {rule!r}, whose effect is "
+            f"{effect!r}: nothing in that rule's instructions turns a placement away. "
+            f"Either name the rule that does, or register the check with rule={PROJECT!r} "
+            "and say in its docstring why this project is stricter than the game."
+        )

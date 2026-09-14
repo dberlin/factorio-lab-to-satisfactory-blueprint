@@ -48,27 +48,60 @@ fails the build if a check drifts from that.
 
 ### The sixteen checks
 
-| id | rule | effect | what it enforces |
-| --- | --- | --- | --- |
-| `geom.bounds` | `project` | — | every origin, clearance-box corner and spline point inside `[-half, half]² × [0, height]` of the designer, sized from `designer_dims` and the shipped foundation's footprint |
-| `geom.hard_clearance` | `buildable.clearance` | refuse | no two **hard** clearance boxes lap, by a separating-axis test on the boxes' full `RelativeTransform`. Soft boxes may share space — that is how a machine stands on a foundation. A box flagged `ExcludeForSnapping` is still tested: the flag excludes it from *snapping*, not from clearance |
-| `belt.capsule` | `project` | — | a belt's clearance chain — `Min = (-L/2, -79, -15)`, `Max = (L/2, 79, 15)` per segment, from `belt.clearance` — laps no other belt's and no hard box |
-| `belt.max_length` | `belt.max_length` | refuse | `spline_length` ≤ `mMaxSplineLength` (`limits.belt_max_spline_cm`), arc length, strict |
-| `belt.min_length` | `belt.min_length` | refuse | the **polyline** between stored points > `mMeshLength × 0.5001` (`limits.belt_min_length_cm`), strict |
-| `belt.incline` | `belt.incline` | refuse | per chord, <code>&#124;π/2 − acos(clamp(u.Z, −1, 1))&#124;</code> ≤ `mMaxIncline × 0.017453292` |
-| `belt.curvature` | `belt.curvature` | refuse | `step / acos(A·B)` ≥ `mBendRadius × 1.5 − 15` at every one of `RoundToInt(L × 0.02)` samples (see below) |
-| `ports.connected_once` | `project` | — | every belt end wired exactly once, no connection carrying two belts, nothing wired to a `snap_only` or `unknown` connection |
-| `ports.direction` | `belt.snap_directions` | snap | a link runs output → input, and meets a belt by the end `flow` names |
-| `ports.position` | `project` | — | a belt's ends sit within 1 cm of the ports they are wired to and leave within 0.01 rad of the port's facing |
-| `flow.capacity` | `project` | — | a belt carries no more than its mark does, and every machine input is fed at the group's per-machine rate |
-| `flow.balance` | `project` | — | per item, rows produced + belted in ≥ rows consumed + sent out |
-| `spec.machines` | `project` | — | classes, counts, recipes and clocks match the spec |
-| `slab.under_every_foot` | `project` | — | every machine's hard footprint is covered by foundation tops at its own `z` |
-| `power.wires` | `project` | — | every wire inside `wire_max_cm`, every connection inside `max_connections`, every machine on a pole |
-| `roundtrip` | `project` | — | `decode(emit(placement)) == placement` |
+`effect` is the effect of the rule the check names, and is blank for a check of
+this project's own — a `project` check enforces no rule and so has no effect to
+report. `needs spec` marks a check that cannot run without an `SfyBuildSpec`.
 
-`flow.capacity`, `flow.balance` and `spec.machines` need an `SfyBuildSpec`;
-without one they are listed in `skipped` rather than passing in silence.
+| id | rule | effect | needs spec | what it enforces |
+| --- | --- | --- | --- | --- |
+| `geom.bounds` | `project` | — | no | every origin, clearance-box corner and spline point inside `[-half, half]² × [0, height]` of the designer, sized from `designer_dims` and the shipped foundation's footprint |
+| `geom.hard_clearance` | `buildable.clearance` | refuse | no | no two **hard** clearance boxes lap, by a separating-axis test on the boxes' full `RelativeTransform`. Soft boxes may share space — that is how a machine stands on a foundation. A box flagged `ExcludeForSnapping` is still tested: the flag excludes it from *snapping*, not from clearance, and the finding says the flag was there |
+| `belt.capsule` | `project` | — | no | a belt's clearance chain — `Min = (-L/2, -79, -15)`, `Max = (L/2, 79, 15)` per segment, from `belt.clearance` — laps no other belt's and no hard box |
+| `belt.max_length` | `belt.max_length` | refuse | no | `spline_length` ≤ `mMaxSplineLength` (`limits.belt_max_spline_cm`), arc length, strict |
+| `belt.min_length` | `belt.min_length` | refuse | no | the **polyline** between stored points > `mMeshLength × 0.5001` (`limits.belt_min_length_cm`), strict |
+| `belt.incline` | `belt.incline` | refuse | no | per chord, <code>&#124;π/2 − acos(clamp(u.Z, −1, 1))&#124;</code> ≤ `mMaxIncline × 0.017453292`, with the game's `float` `π/2` and its `ZeroVector` for a chord of no length |
+| `belt.curvature` | `belt.curvature` | refuse | no | `step / acos(A·B)` ≥ `mBendRadius × 1.5 − 15` at every one of `RoundToInt(L × 0.02)` samples (see below) |
+| `ports.connected_once` | `project` | — | no | every belt end wired exactly once, no connection carrying two belts, nothing wired to a `snap_only` or `unknown` connection |
+| `ports.direction` | `project` | — | no | a link runs output → input, and meets a belt by the end `flow` names. `belt.snap_directions` is the *evidence* and not the rule enforced: its effect is `snap`, so the refusal is ours (see below) |
+| `ports.position` | `project` | — | no | a belt's ends sit within 1 cm of the ports they are wired to and leave within 0.01 rad of the port's facing |
+| `flow.capacity` | `project` | — | **yes** | a belt carries no more than its mark does, and every machine input is fed at the group's per-machine rate. The tier speed comes from the lab dataset through `spec.belt_tiers`, which is why a spec is needed |
+| `flow.balance` | `project` | — | **yes** | per item, rows produced + belted in ≥ rows consumed + sent out |
+| `spec.machines` | `project` | — | **yes** | classes, counts, recipes and clocks match the spec |
+| `slab.under_every_foot` | `project` | — | no | every machine's hard footprint is covered by foundation tops at its own `z` |
+| `power.wires` | `project` | — | no | every wire inside `wire_max_cm`, every connection inside `max_connections`, every machine on a pole |
+| `roundtrip` | `project` | — | no | `decode(emit(placement)) == placement`, with the templates `validate(..., library=...)` was given or the repo's own corpus |
+
+Two checks are in `skipped` on **every** run, each with an `INFO` finding that
+says what it could not cover: `geom.hard_clearance`, because
+`buildable.clearance` is `partial`, and `belt.capsule`, because `belt.clearance`
+leaves the `FFGClearanceData` flag bytes and
+`GetNextDistanceExceedingTolerance` unread. They still run and their findings
+still stand. `power.wires` joins them on a placement with no wires.
+
+### `ports.direction` names no rule, and why
+
+It would be easy to register it against `belt.snap_directions`, and wrong. That
+rule's effect is `snap`: the hologram does not turn a mismatched pair away, so a
+refusal citing it would be this project's judgement wearing the game's name, and
+`_may_refuse` in `validate.py` raises on exactly that. What the rule's
+instructions *do* show is that the assignment
+`mConnectionComponents[0]->mDirection = other->GetCompatibleSnapDirection()`
+cannot produce an output wired to an output — a belt's two directions are taken
+from the connection it met, never chosen. So the check cites the rule as
+evidence, declares the bound ours, and refuses to author a link the build gun
+never makes.
+
+### The module enforces its own discipline
+
+`_may_refuse(cid, rules)` runs whenever a check emits an `ERROR`: the check
+either names a rule whose `effect` is `refuse`, or declares `PROJECT`. Anything
+else raises `ValueError` rather than publishing the finding. A validator quietly
+weakening itself is worse than one that stops, and a test alone would only catch
+the drift after someone thought to look.
+
+`Severity` has two values, `ERROR` and `INFO`. There is no `WARNING`: nothing
+emits one, and a severity no finding carries is a promise the report does not
+keep.
 
 ### Why `belt.curvature` applies to every belt
 
@@ -109,19 +142,27 @@ for i in [0, n):
 Three details the instructions settle and prose would not:
 
 * **`RoundToInt` is UE's SSE form**, not a floor and not a C cast: double, add a
-  half, `cvtss2si` (which rounds half to **even** under the default `MXCSR`),
-  arithmetic-shift back. `_round_to_int` reproduces it with Python's own
-  half-to-even `round` and `>> 1`.
+  half, `cvtss2si`, arithmetic-shift back. `cvtss2si` rounds half to **even**
+  under the default `MXCSR`, and the doubling is what stops that showing — the
+  tie lands on `2n + 0.5` rather than on `n`, so the net result is
+  `floor(n + 0.5)`, half **up**. `_round_to_int` reproduces the instruction
+  sequence with Python's own half-to-even `round` and `>> 1`, rather than
+  paraphrasing its result.
 * **The radius is arc over angle**, `step / theta` — `xmm14` holds `step` and
   `xmm0` is `acos`'s answer. It is not a circumradius and not a discrete
   curvature; the numerator is the sample spacing, the same for every sample.
 * **A straight pair divides by zero and passes.** `theta == 0` gives `+inf` in
   hardware and `comiss/jb` does not take the branch. `validate.py` yields `inf`
   rather than skipping the sample, so the two agree.
-
-`GetSafeNormal2D` zeroes `Z` (the `1e-8` guard and reciprocal square root at
-`0xaa53d6..0xaa53e7`), so a climb is **not** curvature here — `belt.incline`
-judges that separately, on the chords rather than on the curve.
+* **A vertical tangent is refused by this rule.** `GetSafeNormal2D` zeroes `Z`
+  (the `1e-8` guard and reciprocal square root at `0xaa53d6..0xaa53e7`), so a
+  climb does not *count* as curvature — `belt.incline` judges the slope
+  separately, on the chords. But a tangent with no horizontal part at all is a
+  different matter: `0xaa53a4` tests the squared 2-D length and `0xaa53ab` loads
+  `FVector::ZeroVector`, which then goes into the dot product like any other
+  vector. The dot is 0, `acos(0)` is `π/2`, and the radius comes out
+  `step / (π/2)` — about 32 cm at the game's 50 cm sampling, far inside the
+  floor. A belt going straight up is **refused** here, not passed over.
 
 The sampling is by **arc length**, which a Hermite parameter is not, so
 `splines.tangent_at_distance` inverts the length with a dense walk.
@@ -136,7 +177,9 @@ never a bound — the bounds are all in `registry.json`'s `limits`:
 | constant | value | why it is ours |
 | --- | --- | --- |
 | `TOUCH_CM` | 1e-6 | two buildables that share a face lap by zero; floating point makes that ±1e-16 |
-| `BELT_CONNECTION_CM` | 5 | two belts joined end to end lap by a sliver where their tangents differ; the game's own tolerance is inside the unread `TestClearanceOverlap` |
+| `BELT_CONNECTION_CM` | 5 | two belts joined end to end lap by a sliver where their tangents differ; the game's own tolerance is inside the unread `TestClearanceOverlap`. It applies **only** to box pairs within one box length of the shared connection point — the same five centimetres ten metres down the belt is a belt through a belt |
+| `HALF_PI_F32` | 1.5707963705062866 | Unreal's `PI` is a `float`, so the `π/2` `ValidateIncline` subtracts `acos` from is 4.4e-8 rad off `math.pi / 2` — which is the whole elevation of a level chord |
+| `ZERO_NORMAL` | 1e-8 | the **squared** length below which `GetSafeNormal` hands back `ZeroVector`. Both callers then *use* that zero vector rather than stopping |
 | `PORT_CM` / `PORT_ANGLE_RAD` | 1 cm / 0.01 rad | the slack on M1b's stated assumption that a belt begins at its port and leaves along its facing |
 | `CAPSULE_SEGMENT_CM` | 50 | `belt.clearance` leaves `GetNextDistanceExceedingTolerance` unread, so the game's segment **lengths** cannot be reproduced; shorter boxes hug the spline more closely than the game's, never less |
 | `CURVATURE_SAMPLES` | 2048 | parameter steps used to invert arc length; a resolution, four orders below the 50 cm the rule samples at |
@@ -144,12 +187,26 @@ never a bound — the bounds are all in `registry.json`'s `limits`:
 
 ### Two places the validator is deliberately blind
 
-* **A belt is not tested against a buildable it is wired to** (`belt.capsule`).
-  Forced by the game's own numbers, not by convenience: a Constructor's
-  `Output0` sits at `(0, 300, 100)` inside a hard box that runs to `y = 500`, so
-  a belt that starts at its own port starts 200 cm inside the machine feeding
-  it. The game must exclude the snapped building somewhere inside
-  `TestClearanceOverlap`, which is unread.
+* **A belt is not tested against the one box a port it is wired to sits inside**
+  (`belt.capsule`). Forced by the game's own numbers, not by convenience: a
+  Constructor's `Output0` sits at `(0, 300, 100)` inside a hard box that runs to
+  `y = 500`, so a belt that starts at its own port starts 200 cm inside the
+  machine feeding it. The game must exclude the snapped building somewhere
+  inside `TestClearanceOverlap`, which is unread. Every *other* box of the same
+  buildable stays under test — an Assembler's upper box is not forgiven because
+  its lower one holds the port.
 * **`power.wires` stands aside on a placement with no wires**, because `emit`
   refuses to write one until Task 9 decodes the power-line trailer. It says so
   in an `INFO` finding rather than reporting a clean pass.
+
+### The broad phase
+
+Every box-against-box test goes through two world-axis rejects first: `_apart`
+compares the two boxes' own axis-aligned bounding boxes, and `_spans_miss` does
+the same over a whole *set* of boxes — two belts at opposite ends of a designer
+are settled in six comparisons rather than a hundred boxes against a hundred.
+A world axis that separates the AABBs separates the oriented boxes inside them,
+so a reject is a real answer and not an approximation. Measured over 40
+full-length (5599 cm, 112 boxes each) belts: **69.2 s → 0.13 s** where the runs
+are parallel and apart, and **70.4 s → 3.3 s** for a 20 × 20 crossing grid at
+one height where all 400 pairs really clash.

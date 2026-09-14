@@ -44,8 +44,9 @@ __all__ = [
     "FoundationObj",
     "Link",
     "MachineObj",
-    "Pose",
+    "Placed",
     "PoleObj",
+    "Pose",
     "SfyPlacement",
     "SplinePoint",
     "Vector",
@@ -82,6 +83,13 @@ class Pose:
     ``yaw_deg`` is a rotation about ``+Z``, which is the only rotation the build
     gun applies to a hologram (``buildable.rotation_step``); for a grid object it
     is one of 0, 90, 180 and -90.
+
+    All four numbers are held at 32-bit width.  ``x``, ``y`` and ``z`` because
+    that is what ``objects.write_toc`` writes an actor's translation at; the yaw
+    for the same reason one step removed -- it becomes an ``FQuat`` of four
+    ``f32``, and the angle that quaternion gives back is the ``f32`` yaw rather
+    than the ``f64`` one that built it.  Rounding here is what makes a fractional
+    yaw survive :func:`~flab2bp.sfy.layout.emit.decode`.
     """
 
     x: float
@@ -90,7 +98,7 @@ class Pose:
     yaw_deg: float
 
     def __post_init__(self) -> None:
-        for name in ("x", "y", "z"):
+        for name in ("x", "y", "z", "yaw_deg"):
             object.__setattr__(self, name, stored_float(getattr(self, name)))
 
     @property
@@ -255,6 +263,10 @@ class WireObj:
     link: Link
 
 
+Placed = MachineObj | AttachmentObj | BeltRun | PoleObj | WireObj | FoundationObj
+"""Anything a placement holds: everything with an id and a class name."""
+
+
 @dataclass(frozen=True, slots=True)
 class SfyPlacement:
     """A whole build, placed.
@@ -278,11 +290,12 @@ class SfyPlacement:
     links: tuple[Link, ...] = ()
     description: str = field(default="", compare=False)
     short_desc: str = field(default="", compare=False)
+    #: Lazily built by :meth:`by_id`, and outside equality, repr and ``__init__``
+    #: because it is a cache of the tuples above rather than part of the build.
+    _index: dict[int, Placed] | None = field(default=None, init=False, compare=False, repr=False)
 
     @property
-    def objects(
-        self,
-    ) -> tuple[MachineObj | AttachmentObj | BeltRun | PoleObj | WireObj | FoundationObj, ...]:
+    def objects(self) -> tuple[Placed, ...]:
         """Every placed object, in the order :func:`~flab2bp.sfy.layout.emit.emit`
         writes them."""
         return (
@@ -294,17 +307,25 @@ class SfyPlacement:
             *self.wires,
         )
 
-    def by_id(self, id: int) -> object:
+    def by_id(self, id: int) -> Placed:
         """The object with this id, whatever kind it is.
 
         Ids are the build's own numbering and are unique across every kind: they
         are what a :class:`Link` names and what the actor's name in the file
         carries.
+
+        The index behind it is built once and kept: a validator asks this
+        question per link and per wire, and a scan per question turns a report
+        over a designer-sized build quadratic in the number of objects.
         """
-        for placed in self.objects:
-            if placed.id == id:
-                return placed
-        raise KeyError(f"this placement has no object with id {id}")
+        index = self._index
+        if index is None:
+            index = {placed.id: placed for placed in self.objects}
+            object.__setattr__(self, "_index", index)
+        try:
+            return index[id]
+        except KeyError:
+            raise KeyError(f"this placement has no object with id {id}") from None
 
 
 def belt_ends(registry: Registry, class_name: str) -> tuple[str, str]:
