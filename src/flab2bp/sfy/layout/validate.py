@@ -155,7 +155,7 @@ and is why this is written out rather than computed."""
 ZERO_NORMAL = 1e-8
 """The SQUARED length below which ``FVector::GetSafeNormal`` hands back
 ``ZeroVector`` (``belt.incline`` ``0xaa576a``, ``belt.curvature``
-``0xaa53a1``/``0xaa53ab``).  It is squared, not a length, and the zero vector it
+``0xaa53a4``/``0xaa53ab``).  It is squared, not a length, and the zero vector it
 returns is USED by both callers rather than ending the comparison."""
 
 BELT_CLEARANCE_HALF_WIDTH_CM = 79.0
@@ -189,6 +189,11 @@ _CAPSULE_UNREAD = (
     "this project's own 50 cm instead. The exclusion of the box a wired port "
     "sits inside rests on the same unread AFGHologram::TestClearanceOverlap "
     "that keeps buildable.clearance partial."
+)
+_NO_BOUNDARY = (
+    "no belt in this placement flags an end as a boundary end, so this is a fragment "
+    "rather than a build whose external inputs and outputs are missing, and there is "
+    "nothing here to hold to a wall"
 )
 _NO_WIRES = (
     "the placement carries no wires, and emit refuses to write one until Task 9 "
@@ -1136,7 +1141,7 @@ def _flat(tangent: Vector) -> Vector:
     """``FVector::GetSafeNormal2D``: flatten ``Z`` away and normalise.
 
     The guard is the SQUARED horizontal length against ``1e-8``
-    (:data:`ZERO_NORMAL`, ``0xaa53a1``), and what it hands back is
+    (:data:`ZERO_NORMAL`, ``0xaa53a4`` ``comisd xmm1, xmm11``), and what it hands back is
     ``FVector::ZeroVector`` (``0xaa53ab``) rather than nothing at all.  That
     matters: the zero vector goes on into the dot product like any other, the
     dot is ``0``, ``acos(0)`` is ``pi/2``, and the radius comes out
@@ -1172,6 +1177,13 @@ def _connected_once(ctx: Context) -> Iterable[Finding]:
     refused too.  ``belt.snap_directions`` states it outright: ``FCD_SNAP_ONLY``
     hands out no direction at all, which is what a conveyor pole is, so a link
     there is one this project cannot say the meaning of.
+
+    The one loose end this project does author is a BOUNDARY end: a belt whose
+    ``boundary_start`` or ``boundary_end`` is set claims to stop on the designer
+    wall, where what it meets is outside the blueprint.  Such an end must be
+    wired ZERO times, and :func:`_boundary` holds it to the wall it claims --
+    the flag is the author saying which ends are meant to be open, not a way of
+    forgiving a belt that goes nowhere.
     """
     counts: Counter[tuple[int, str]] = Counter()
     for link in ctx.placement.links:
@@ -1204,15 +1216,25 @@ def _connected_once(ctx: Context) -> Iterable[Finding]:
             )
     for run in ctx.placement.belts:
         entry, exit_end = belt_ends(ctx.registry, run.class_name)
-        for end in (entry, exit_end):
-            if counts[(run.id, end)] != 1:
-                yield ctx.finding(
-                    "ports.connected_once",
-                    f"belt {run.id}'s {end} end is wired {counts[(run.id, end)]} times, not once",
-                    run.id,
-                    end=end,
-                    links=counts[(run.id, end)],
-                )
+        for end, open_by_design in ((entry, run.boundary_start), (exit_end, run.boundary_end)):
+            wanted = 0 if open_by_design else 1
+            found = counts[(run.id, end)]
+            if found == wanted:
+                continue
+            why = (
+                "it is flagged as a boundary end, which stops on the designer wall and "
+                "takes no link"
+                if open_by_design
+                else "one end of a belt is one connection"
+            )
+            yield ctx.finding(
+                "ports.connected_once",
+                f"belt {run.id}'s {end} end is wired {found} times, not {wanted}: {why}",
+                run.id,
+                end=end,
+                links=found,
+                boundary=open_by_design,
+            )
 
 
 @check("ports.direction")
@@ -1456,6 +1478,75 @@ def _balance(ctx: Context) -> Iterable[Finding]:
                 item=item,
                 supply=str(supply),
                 demand=str(demand),
+            )
+
+
+@check("flow.boundary")
+def _boundary(ctx: Context) -> Iterable[Finding]:
+    """A belt end left open on purpose stands on the designer wall it claims.
+
+    This project's own rule, and the counterpart of the exemption
+    ``ports.connected_once`` grants: a build takes its external inputs in at the
+    ``-Y`` wall and sends its outputs out at the ``+Y`` wall, and the belt that
+    carries one stops there with nothing wired to it, because what it meets is
+    outside the blueprint.  Nothing in the game refuses a belt for stopping in
+    mid-air -- a player builds one every time -- so the bound is ours: an open
+    end that is NOT on the wall it claims is a belt that silently goes nowhere,
+    and a build whose boundary belts are not the spec's external inputs and
+    outputs is not the build that was costed.
+
+    The wall is the designer's own ``half_cm`` and the slack is :data:`PORT_CM`,
+    the same centimetre ``ports.position`` allows a belt at its port.
+
+    A placement with no flagged end at all is a FRAGMENT -- one row, a pair of
+    machines -- rather than a build with its boundary missing, and this check
+    stands aside on it and says so, the way ``power.wires`` does on a placement
+    with no wires.  Without a spec the item halves cannot be compared either,
+    and the check says that too rather than passing in silence.
+    """
+    flagged = [run for run in ctx.placement.belts if run.boundary_start or run.boundary_end]
+    if not flagged:
+        yield ctx.skip("flow.boundary", _NO_BOUNDARY)
+        return
+    half = ctx.placement.designer.half_cm
+    entries: Counter[str] = Counter()
+    exits: Counter[str] = Counter()
+    for run in flagged:
+        for where, wall, carried in (
+            (run.start, -half, run.boundary_start),
+            (run.end, half, run.boundary_end),
+        ):
+            if not carried:
+                continue
+            (entries if wall < 0 else exits)[run.item_id] += 1
+            if abs(where[1] - wall) > PORT_CM:
+                yield ctx.finding(
+                    "flow.boundary",
+                    f"belt {run.id} is a boundary belt for {run.item_id!r} and its open end "
+                    f"is at y = {where[1]:.1f}, {abs(where[1] - wall):.1f} cm off the "
+                    f"y = {wall:.0f} wall",
+                    run.id,
+                    y_cm=round(where[1], 3),
+                    wall_cm=wall,
+                )
+    spec = ctx.spec
+    if spec is None:
+        yield ctx.skip(
+            "flow.boundary",
+            "the items on the boundary belts are the spec's external inputs and outputs, "
+            "and no spec was given, so only where the open ends stand was judged",
+        )
+        return
+    for got, wanted, what in (
+        (entries, set(spec.external_inputs), "enters at the -Y wall"),
+        (exits, set(spec.outputs) | set(spec.surplus_outputs), "leaves at the +Y wall"),
+    ):
+        if set(got) != wanted:
+            yield ctx.finding(
+                "flow.boundary",
+                f"the build {what} on {sorted(got)} and the spec says {sorted(wanted)}",
+                placed=sorted(got),
+                spec=sorted(wanted),
             )
 
 

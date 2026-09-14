@@ -169,3 +169,37 @@ def test_by_id_answers_from_an_index_rather_than_walking_every_object() -> None:
         for _ in range(10):
             placement.by_id(37)
     assert calls == 0, "the index was built on the first lookup and is kept"
+
+
+def test_links_are_held_in_one_canonical_order_whatever_order_they_were_written_in() -> None:
+    """Two placements that differ only in the sequence of ``links`` are one placement.
+
+    A blueprint records a connection on both actors and records no sequence at
+    all, so the order ``decode`` hands back is the order the connection
+    components stand in the file.  Comparing the tuple as written would make
+    ``decode(emit(p)) == p`` false for every build with more than one belt, over
+    a difference the file does not hold.
+    """
+    registry = load_registry()
+    entry, exit_end = belt_ends(registry, BELT)
+    first = Link((1, "Output0"), (5, entry))
+    second = Link((5, exit_end), (2, "Input0"))
+    written = SfyPlacement(designer=designer("mk1", registry), links=(first, second))
+    backwards = SfyPlacement(designer=designer("mk1", registry), links=(second, first))
+    assert written.links == backwards.links
+    assert written == backwards
+    assert set(written.links) == {first, second}
+
+
+def test_a_boundary_end_is_outside_equality_because_no_file_property_carries_it() -> None:
+    """The flag says an open end is intended; a blueprint has nowhere to say so.
+
+    ``decode`` hands a belt back unflagged, so a flag inside equality would make
+    the round trip a statement about this dataclass rather than about the file.
+    """
+    points = straight((0.0, -1600.0, 200.0), (0.0, 1.0, 0.0), 400.0)
+    flagged = BeltRun(2, BELT, points, "iron-ore", Fraction(1), boundary_start=True)
+    plain = BeltRun(2, BELT, points, "iron-ore", Fraction(1))
+    assert flagged == plain
+    assert flagged.boundary_start and not flagged.boundary_end
+    assert not plain.boundary_start

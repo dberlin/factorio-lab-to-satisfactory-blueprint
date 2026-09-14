@@ -245,8 +245,16 @@ def test_a_placement_that_is_right_passes_every_check_it_can_run() -> None:
     report = validate(_placement(), _spec(), _registry())
     assert report.ok, [f.message for f in report.errors]
     assert set(report.checks_run) | set(report.skipped) == set(CHECKS)
-    # The three that say what they could not cover stand aside; the rest ran.
-    assert set(report.skipped) == {"geom.hard_clearance", "belt.capsule", "power.wires"}
+    # The four that say what they could not cover stand aside; the rest ran.
+    # ``flow.boundary`` is among them because this placement is a fragment: no
+    # belt in it flags an end as a boundary end, so there is nothing to hold to
+    # the designer wall (Task 8's strategy is what flags them).
+    assert set(report.skipped) == {
+        "geom.hard_clearance",
+        "belt.capsule",
+        "power.wires",
+        "flow.boundary",
+    }
 
 
 def test_a_check_that_needs_a_spec_is_skipped_rather_than_silently_passing() -> None:
@@ -762,3 +770,89 @@ def test_validate_writes_the_round_trip_with_the_library_it_is_given() -> None:
         _placement(), None, _registry(), only={"roundtrip"}, library=TemplateLibrary({})
     )
     assert bare.skipped == ("roundtrip",)
+
+
+# --- the boundary ----------------------------------------------------------
+
+
+def _at_the_wall(
+    *, entry_y: float | None = None, item_in: str = "iron-ingot", item_out: str = "screw"
+) -> SfyPlacement:
+    """The spec's ingots in at the ``-Y`` wall and its screws out at the ``+Y``.
+
+    Two belts joined to each other where they meet, each with its far end open
+    on the wall it claims, because what a boundary belt meets there is outside
+    the blueprint.  ``entry_y`` moves the entry belt's open end off that wall,
+    which also opens a gap at the join -- ``ports.position``'s business, and
+    this fixture is never handed to it.
+    """
+    registry = _registry()
+    half = designer("mk1", registry).half_cm
+    entry, exit_end = belt_ends(registry, BELT)
+    arriving = BeltRun(
+        BELT_ID,
+        BELT,
+        straight((0.0, -half if entry_y is None else entry_y, 200.0), (0.0, 1.0, 0.0), 400.0),
+        item_in,
+        Fraction(1, 4),
+        boundary_start=True,
+    )
+    leaving = BeltRun(
+        BELT_ID + 1,
+        BELT,
+        straight((0.0, -half + 400.0, 200.0), (0.0, 1.0, 0.0), 2.0 * half - 400.0),
+        item_out,
+        Fraction(1, 4),
+        boundary_end=True,
+    )
+    return SfyPlacement(
+        designer=designer("mk1", registry),
+        belts=(arriving, leaving),
+        links=(Link((arriving.id, exit_end), (leaving.id, entry)),),
+    )
+
+
+def test_ports_connected_once_forgives_an_end_flagged_as_a_boundary_end() -> None:
+    """The flag is the author saying an end is meant to be open, and it is exact.
+
+    An unflagged loose end is still a belt that silently does not run, and a
+    flagged end that someone then wired to something is a contradiction: the
+    check wants zero links there, not "at most one".
+    """
+    open_ended = _at_the_wall()
+    assert _findings(open_ended, "ports.connected_once") == []
+    plain = replace(
+        open_ended,
+        belts=tuple(
+            replace(run, boundary_start=False, boundary_end=False) for run in open_ended.belts
+        ),
+    )
+    assert _findings(plain, "ports.connected_once") == ["ports.connected_once"]
+
+
+def test_flow_boundary_refuses_an_open_end_that_is_not_on_the_wall_it_claims() -> None:
+    assert _findings(_at_the_wall(), "flow.boundary", _spec()) == []
+    inland = _at_the_wall(entry_y=-1300.0)
+    report = validate(inland, _spec(), _registry(), only={"flow.boundary"})
+    assert [f.check for f in report.errors] == ["flow.boundary"]
+    assert "300.0 cm off the y = -1600 wall" in report.errors[0].message
+
+
+def test_flow_boundary_holds_the_items_at_the_wall_to_the_specs_own() -> None:
+    """A build that belts in something the spec never asked for is not that build."""
+    report = validate(
+        _at_the_wall(item_in="iron-plate"), _spec(), _registry(), only={"flow.boundary"}
+    )
+    messages = [f.message for f in report.errors]
+    assert messages == [
+        "the build enters at the -Y wall on ['iron-plate'] and the spec says ['iron-ingot']"
+    ]
+
+
+def test_flow_boundary_stands_aside_on_a_fragment_and_without_a_spec() -> None:
+    fragment = validate(_placement(), _spec(), _registry(), only={"flow.boundary"})
+    assert fragment.skipped == ("flow.boundary",)
+    assert "fragment" in fragment.by_check("flow.boundary")[0].message
+    unspecified = validate(_at_the_wall(), None, _registry(), only={"flow.boundary"})
+    assert unspecified.skipped == ("flow.boundary",)
+    assert "no spec was given" in unspecified.by_check("flow.boundary")[0].message

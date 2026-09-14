@@ -244,12 +244,10 @@ def _row(
 def _clean(row: RowGeometry, mark: str) -> None:
     """Every check but ``roundtrip`` passes, and every skip says why it stood aside.
 
-    ``roundtrip`` is left out here and pinned by
-    :func:`test_a_row_survives_the_blueprint_round_trip_but_for_the_link_order`
-    instead: ``SfyPlacement`` compares ``links`` as an ordered tuple, and the
-    ORDER a decoded placement comes back in is the order the connection
-    components stand in the file, which nothing an author writes can choose.
-    The row's links are the same links; only the sequence differs.
+    ``roundtrip`` is left out of this helper because it writes and reads a
+    blueprint per call, which is seconds rather than milliseconds;
+    :func:`test_a_row_survives_the_blueprint_round_trip` runs it once, on the
+    row that exercises the most of the builder.
     """
     report = validate(_placement(row, mark), None, REGISTRY, only=_GEOMETRY)
     assert [f.message for f in report.errors] == []
@@ -478,14 +476,15 @@ def test_a_row_refuses_a_recipe_with_more_inputs_than_the_machine_has_ports() ->
     assert str(caught.value).startswith("more input items than")
 
 
-def test_a_row_survives_the_blueprint_round_trip_but_for_the_link_order() -> None:
-    """What Task 6's ``roundtrip`` check faults on a row, and why it is not the row's.
+def test_a_row_survives_the_blueprint_round_trip() -> None:
+    """A row comes back out of a blueprint as the row that went in.
 
-    Every object comes back identical.  ``links`` comes back as the same set of
-    pairs in a different sequence, because a decoded placement lists them in the
-    order the connection components stand in the file and nothing an author
-    writes chooses that order.  ``SfyPlacement`` compares ``links`` as an
-    ordered tuple, so the check reports a difference that is not one.
+    It did not, when this row builder was written: ``links`` came back as the
+    same pairs in a different sequence, because a decoded placement lists them
+    in the order the connection components stand in the file and nothing an
+    author writes chooses that order.  Task 8 fixed it where it belonged, in the
+    model: ``SfyPlacement`` sorts ``links`` into a canonical order at
+    construction, so both sides of the round trip are in it.
     """
     row = _row(_rods(3))
     placement = _placement(row, "mk3")
@@ -509,9 +508,8 @@ def test_a_row_survives_the_blueprint_round_trip_but_for_the_link_order() -> Non
     assert again.attachments == placement.attachments
     assert again.belts == placement.belts
     assert again.foundations == placement.foundations
-    assert set(again.links) == set(placement.links)
-    assert len(again.links) == len(placement.links)
-    assert again.links != placement.links  # the sequence, and only the sequence
+    assert again.links == placement.links
+    assert again == placement
 
 
 def test_a_row_reports_the_band_it_occupies() -> None:

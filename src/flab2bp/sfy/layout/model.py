@@ -169,6 +169,16 @@ class BeltRun:
     blueprint has no property for either -- a belt in a file carries the items
     that happen to be sitting on it, not a contract -- so they are outside
     equality, as the module docstring explains.
+
+    ``boundary_start`` and ``boundary_end`` mark an end that sits on the
+    designer wall and is deliberately left unwired: the build's external inputs
+    arrive at the ``-Y`` wall and its outputs leave at the ``+Y`` wall, and what
+    they are joined to is outside the blueprint. They are the one thing in this
+    model that says an unwired end is intended, so ``ports.connected_once``
+    exempts a flagged end and ``flow.boundary`` holds it to the wall it claims.
+    Like the two rate fields they are outside equality: no property in the file
+    carries them, so :func:`~flab2bp.sfy.layout.emit.decode` hands a belt back
+    unflagged and the round trip is still a statement about the file.
     """
 
     id: int
@@ -176,6 +186,8 @@ class BeltRun:
     points: tuple[SplinePoint, ...]
     item_id: str = field(default="", compare=False)
     items_per_second: Fraction = field(default=Fraction(0), compare=False)
+    boundary_start: bool = field(default=False, compare=False)
+    boundary_end: bool = field(default=False, compare=False)
 
     def __post_init__(self) -> None:
         if len(self.points) < 2:
@@ -278,6 +290,15 @@ class SfyPlacement:
     blueprint carries -- a machine's clock is recorded there, because the
     blueprint itself has nowhere to put one -- so they are not part of what the
     ``.sbp`` round trip compares.
+
+    ``links`` is held in a canonical order -- sorted, and built once in
+    :meth:`__post_init__` -- rather than in the order the author wrote them.
+    A blueprint records a connection on both actors and nowhere records a
+    SEQUENCE, so the order :func:`~flab2bp.sfy.layout.emit.decode` hands back is
+    the order the connection components stand in the file, which no author
+    chooses. Comparing the tuple as written would make
+    ``decode(emit(placement)) == placement`` false for every build that has more
+    than one belt in it, over a difference the file does not hold.
     """
 
     designer: Designer
@@ -293,6 +314,9 @@ class SfyPlacement:
     #: Lazily built by :meth:`by_id`, and outside equality, repr and ``__init__``
     #: because it is a cache of the tuples above rather than part of the build.
     _index: dict[int, Placed] | None = field(default=None, init=False, compare=False, repr=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "links", tuple(sorted(self.links, key=_link_order)))
 
     @property
     def objects(self) -> tuple[Placed, ...]:
@@ -326,6 +350,17 @@ class SfyPlacement:
             return index[id]
         except KeyError:
             raise KeyError(f"this placement has no object with id {id}") from None
+
+
+def _link_order(link: Link) -> tuple[int, str, int, str]:
+    """The key :class:`SfyPlacement` sorts ``links`` by.
+
+    Object id then port name, upstream side first: a total order over links,
+    which is all a canonical form needs.  It is written out rather than left to
+    ``sorted``'s default so that the ordering is a stated property of the model
+    and not an accident of how a tuple of tuples compares.
+    """
+    return (link.a[0], link.a[1], link.b[0], link.b[1])
 
 
 def belt_ends(registry: Registry, class_name: str) -> tuple[str, str]:
