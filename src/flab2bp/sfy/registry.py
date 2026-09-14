@@ -27,6 +27,8 @@ __all__ = [
     "FLOW_NAME_SOURCES",
     "FLOW_SOURCES",
     "LIMIT_SOURCES",
+    "MAX_CONNECTIONS_SOURCES",
+    "MESH_BOUNDS_SOURCES",
     "PIPE_BEND_RADIUS_2D_CM",
     "PIPE_MAX_SPLINE_CM",
     "PIPE_MIN_BEND_RADIUS_CM",
@@ -98,6 +100,35 @@ LIMIT_SOURCES = (
 # something the game reads. A port whose direction is ``"unknown"`` is one no
 # caller may route to.
 PORT_DIRECTION_SOURCES = ("asset", "asset-inherited", "native", "unknown")
+
+# Where a power port's ``max_connections`` came from. The same four links as a
+# direction, for the same reason: ``mMaxNumConnectionLinks`` is a UPROPERTY on
+# ``UFGCircuitConnectionComponent``, a cooked asset omits it wherever it equals
+# the archetype's value, and the archetype at the end of the chain is that
+# class's C++ constructor.
+#
+# ``asset``            this buildable's own Blueprint states the count
+# ``asset-inherited``  a parent Blueprint's template of the same name states it
+# ``native``           none of the assets do, so it is the constructor's, read
+#                      out of the shipped DLL into ``data/native.json``
+# ``unknown``          the port has no such property at all, which is every belt
+#                      and pipe connection
+#
+# A port's name is not a source here either: a connection called ``PowerInput``
+# is not thereby a connection that takes one wire.
+MAX_CONNECTIONS_SOURCES = ("asset", "asset-inherited", "native", "unknown")
+
+# Where a buildable's ``mesh_bounds_cm`` came from. There is one entry, and it is
+# the cooked ``UStaticMesh``'s own ``RenderData.Bounds``:
+#
+# ``assets``  the mesh the class's ``mMesh`` (belt) or ``mMidMesh`` (lift)
+#             UPROPERTY points at, read through CUE4Parse;
+#             ``provenance["mesh_bounds"]`` names the property and the asset path
+#
+# A box measured off a blueprint is not a mesh bound, and Docs.json states no
+# mesh geometry at all -- only ``mMeshLength``/``mMeshHeight``, which are the
+# repeat pitch and not the cross-section.
+MESH_BOUNDS_SOURCES = ("assets",)
 
 # Where a conveyor's item-flow order was read. Both of a conveyor's connections
 # are ``FCD_ANY``, so ``mDirection`` does not say which end items enter by, and
@@ -188,11 +219,14 @@ class Port:
     a caller must refuse to route to it rather than assume one.
 
     ``max_connections`` is how many wires may end on a power connection, from
-    ``FGCircuitConnectionComponent::mMaxNumConnectionLinks``. It is ``None`` on
-    every belt and pipe port, which have no such property, and on a power port
-    whose Blueprint does not override the native default -- 53 of the 74 power
-    ports in the content, all of them machine power inputs. The three pole marks
-    say 4, 7 and 10, and their wall variants say the same.
+    ``FGCircuitConnectionComponent::mMaxNumConnectionLinks``, and
+    ``max_connections_source`` says where it was read -- see
+    :data:`MAX_CONNECTIONS_SOURCES`. It is ``None`` (source ``"unknown"``) on
+    every belt and pipe port, which have no such property. The three pole marks
+    state 4, 7 and 10 in their own Blueprints, and their wall variants the same;
+    a machine's power input states nothing anywhere in its asset chain and takes
+    the native constructor's **1**, which is the value the shipped game runs on
+    and not a number this project chose.
     """
 
     name: str
@@ -203,6 +237,7 @@ class Port:
     rotation: Vector
     clearance: float | None
     max_connections: int | None = None
+    max_connections_source: str = "unknown"  # one of MAX_CONNECTIONS_SOURCES
 
 
 @dataclass(frozen=True, slots=True)
@@ -249,8 +284,50 @@ class Buildable:
     height_cm: float | None
     designer_dims: tuple[int, int, int] | None
     max_potential: float | None
+    min_potential: float | None
+    # ``mPotentialShardSlots`` / ``mProductionShardSlotSize`` as the class default
+    # object states them, **which is not what the buildable runs on unless the
+    # matching ``*_override`` flag is true**: ``AFGBuildableFactory::BeginPlay``
+    # copies :attr:`Limits.potential_shard_slots_default` and
+    # :attr:`Limits.production_boost_slots_default` over them otherwise. Every
+    # shipped class leaves ``potential_shard_slots_override`` false, so the three
+    # overclock slots are the subsystem's; the somersloop slot size is overridden
+    # by the Assembler, the Foundry and the Manufacturer and nothing else. The
+    # ``factory.potential`` rule quotes the two branches.
     potential_shard_slots: int | None
     production_boost_slots: int | None
+    potential_shard_slots_override: bool | None
+    production_boost_slots_override: bool | None
+    # ``mBaseProductionBoost`` and ``mProductionShardBoostMultiplier``: the
+    # output multiplier with no somersloop in, and what one somersloop adds to
+    # it once :attr:`Limits.production_boost_per_slot` is scaled by it. See the
+    # ``manufacturer.production_boost`` rule.
+    base_production_boost: float | None
+    production_boost_multiplier: float | None
+    # ``mPowerConsumptionExponent`` and
+    # ``mProductionBoostPowerConsumptionExponent``, per class: the game states no
+    # global exponent, which is why neither is a limit. 1.321929 on every
+    # manufacturer and extractor and 1.6 on everything else; the boost exponent
+    # is 2.0 on all 62 classes that carry one. ``factory.potential`` quotes the
+    # ``powf`` both feed.
+    power_exponent: float | None
+    production_boost_power_exponent: float | None
+    # The local-space axis-aligned box of the static mesh a spline buildable
+    # repeats along itself, as ``(min, max)`` in centimetres:
+    # ``Origin - BoxExtent`` and ``Origin + BoxExtent`` of the cooked
+    # ``UStaticMesh``'s ``RenderData.Bounds``. ``None`` on every class whose
+    # class default object names no such mesh, which is everything but the belt
+    # and lift marks, the pipelines, the hypertube, the railway and the three
+    # foundation passthroughs. ``mesh_bounds_property`` names the UPROPERTY that
+    # was read (``mMesh`` on a belt, ``mMidMesh`` on a lift) and
+    # ``provenance["mesh_bounds"]`` carries the asset path per class.
+    #
+    # **This is the mesh, not the clearance.** What the game refuses a placement
+    # over is the box ``AFGBuildableConveyorBelt::CreateClearanceData`` lays
+    # along the spline, which the ``belt.clearance`` rule states and which is
+    # narrower than the Mk1 mesh.
+    mesh_bounds_cm: tuple[Vector, Vector] | None
+    mesh_bounds_property: str | None
     # This class's hologram overrides ``mGridSnapSize``; ``None`` means it uses
     # the global :attr:`Limits.hologram_grid_cm`. Only power poles, power towers
     # and street lights override it, all to 50.
@@ -306,6 +383,14 @@ class Limits:
     # :mod:`flab2bp.sfy.rules` as the bound.
     belt_bend_radius_cm: float | None = None
     belt_max_incline_deg: float | None = None
+    # The floor ``AFGConveyorBeltHologram::ValidateMinLength`` compares a belt's
+    # polyline against. It is not a constructor immediate: the instruction is
+    # ``mulss xmm7, 0.5001`` against the belt mark's own ``mMeshLength``
+    # (0xaa58b2), so this is that product -- source ``binary-derived``, the same
+    # standing as the three lift heights, with the multiplier, the mesh length
+    # and the instruction in ``provenance["limits"]["belt_min_length_cm"]``. The
+    # comparison is strict, so a belt of exactly this length is still too short.
+    belt_min_length_cm: float | None = None
     lift_step_cm: float | None = None
     lift_min_cm: float | None = None
     lift_max_cm: float | None = None
@@ -317,6 +402,20 @@ class Limits:
     wire_max_cm: dict[str, float] = field(default_factory=dict)
     hologram_grid_cm: float | None = None
     hologram_rotation_step_deg: float | None = None
+    # What one power shard in a potential slot unlocks, and what one somersloop
+    # in a production-boost slot is worth before the class's own
+    # :attr:`Buildable.production_boost_multiplier` scales it. Both are the
+    # shard descriptor's own ``mExtraPotential``/``mExtraProductionBoost``, which
+    # ``UFGPowerShardDescriptor::GetBoostValue`` returns and
+    # ``AFGBuildableFactory::GetCurrentMaxPotentialForType`` adds once per shard.
+    potential_per_shard: float | None = None
+    production_boost_per_slot: float | None = None
+    # What ``AFGBuildableFactory::BeginPlay`` puts on a buildable that does not
+    # override its own slot counts, from ``AFGBuildableSubsystem``. Every shipped
+    # class takes the potential one, so a machine has three overclock slots and
+    # a maximum potential of ``max_potential + 3 * potential_per_shard``.
+    potential_shard_slots_default: int | None = None
+    production_boost_slots_default: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -397,6 +496,11 @@ def _ports(raw: Iterable[Mapping[str, Any]]) -> tuple[Port, ...]:
     read, so a value outside :data:`PORT_DIRECTION_SOURCES` -- the ``"corpus"``
     and ``"name"`` a Milestone 1 registry carried, say -- is refused rather than
     loaded. So is a direction and a source that disagree about being unknown.
+
+    ``max_connections_source`` is the same claim about the wire count, checked
+    the same way against :data:`MAX_CONNECTIONS_SOURCES`: a count with no source
+    would be a number nothing stands behind, and a source with no count would
+    name a link that answered nothing.
     """
     ports = tuple(
         Port(
@@ -408,6 +512,7 @@ def _ports(raw: Iterable[Mapping[str, Any]]) -> tuple[Port, ...]:
             rotation=_vector(port["rotation"]),
             clearance=None if port.get("clearance") is None else float(port["clearance"]),
             max_connections=_opt_int(port.get("max_connections")),
+            max_connections_source=str(port.get("max_connections_source", "unknown")),
         )
         for port in raw
     )
@@ -419,6 +524,14 @@ def _ports(raw: Iterable[Mapping[str, Any]]) -> tuple[Port, ...]:
     ]
     if wrong:
         raise RegistryError(f"port directions come from no game source: {wrong}")
+    unbacked = [
+        f"{p.name}: max_connections {p.max_connections!r} from {p.max_connections_source!r}"
+        for p in ports
+        if p.max_connections_source not in MAX_CONNECTIONS_SOURCES
+        or (p.max_connections is None) != (p.max_connections_source == "unknown")
+    ]
+    if unbacked:
+        raise RegistryError(f"port connection counts come from no game source: {unbacked}")
     return ports
 
 
@@ -447,6 +560,32 @@ def _cost_segment(class_name: str, entry: Mapping[str, Any]) -> dict[str, Any]:
             f"{class_name} states a cost segment of {length}, which is not a length"
         )
     return {"length_per_cost_cm": length, "length_per_cost_source": source}
+
+
+def _mesh_bounds(class_name: str, entry: Mapping[str, Any]) -> dict[str, Any]:
+    """``mesh_bounds_cm`` and the UPROPERTY it was read from, or neither.
+
+    A box and the property that states it travel together for the same reason a
+    cost segment and its source do: a box with no property named would be
+    geometry nothing stands behind, and a property with no box would name a read
+    that produced nothing. The box has to be a box -- every ``min`` component at
+    or below its ``max`` -- because ``Origin +- BoxExtent`` cannot be otherwise
+    and a pair that is would mean the two were swapped on the way here.
+    """
+    raw = entry.get("mesh_bounds_cm")
+    prop = entry.get("mesh_bounds_property")
+    prop = None if prop is None else str(prop)
+    if (raw is None) != (prop is None):
+        raise RegistryError(
+            f"{class_name} states mesh bounds {raw!r} from {prop!r}: "
+            "a box and the property it was read from travel together"
+        )
+    if raw is None:
+        return {"mesh_bounds_cm": None, "mesh_bounds_property": None}
+    low, high = _vector(raw[0]), _vector(raw[1])
+    if any(a > b for a, b in zip(low, high, strict=True)):
+        raise RegistryError(f"{class_name}'s mesh bounds are inside out: {low} .. {high}")
+    return {"mesh_bounds_cm": (low, high), "mesh_bounds_property": prop}
 
 
 def _flow(raw: Mapping[str, Any] | None, ports: tuple[Port, ...]) -> ConveyorFlow | None:
@@ -499,8 +638,18 @@ def _buildables(raw: Mapping[str, Mapping[str, Any]]) -> dict[str, Buildable]:
                 height_cm=_opt_float(entry["height_cm"]),
                 designer_dims=None if dims is None else (int(dims[0]), int(dims[1]), int(dims[2])),
                 max_potential=_opt_float(entry["max_potential"]),
+                min_potential=_opt_float(entry["min_potential"]),
                 potential_shard_slots=_opt_int(entry["potential_shard_slots"]),
                 production_boost_slots=_opt_int(entry["production_boost_slots"]),
+                potential_shard_slots_override=_opt_bool(entry["potential_shard_slots_override"]),
+                production_boost_slots_override=_opt_bool(entry["production_boost_slots_override"]),
+                base_production_boost=_opt_float(entry["base_production_boost"]),
+                production_boost_multiplier=_opt_float(entry["production_boost_multiplier"]),
+                power_exponent=_opt_float(entry["power_exponent"]),
+                production_boost_power_exponent=_opt_float(
+                    entry["production_boost_power_exponent"]
+                ),
+                **_mesh_bounds(class_name, entry),
                 **_cost_segment(class_name, entry),
                 grid_snap_cm=_opt_float(entry.get("grid_snap_cm")),
                 ports=ports,
@@ -540,6 +689,10 @@ def _opt_float(value: Any) -> float | None:
 
 def _opt_int(value: Any) -> int | None:
     return None if value is None else int(value)
+
+
+def _opt_bool(value: Any) -> bool | None:
+    return None if value is None else bool(value)
 
 
 def _paths(raw: Mapping[str, Any], section: str) -> dict[str, str]:

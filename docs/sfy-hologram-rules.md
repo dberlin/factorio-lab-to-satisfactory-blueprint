@@ -14,10 +14,19 @@ comes from. Line numbers are into `CommunityResources/Headers.zip`, under
 `Source/FactoryGame/Public/`.
 
 Most of what is here is a *validation*: code that turns a placement away, or
-moves it. A few rules are the other kind — code that **works out** a value the
-game then writes, which this project has to reproduce rather than enforce when
-it authors a blueprint. Those carry the effect `compute`; `belt.cost`, `belt.straight_tangents` and
-`manufacturer.inventory_filters` are the three.
+moves it. A good half of the rules are the other kind — code that **works out** a
+value the game then writes, which this project has to reproduce rather than
+enforce when it authors a blueprint. Those carry the effect `compute`:
+`belt.cost`, `belt.straight_tangents`, `manufacturer.inventory_filters`,
+`buildable.rotation_step`, the two clearance builders `belt.clearance` and
+`lift.clearance`, and the two overclocking rules `factory.potential` and
+`manufacturer.production_boost`.
+
+Not every function here is a hologram's. Three of the rules are read out of the
+**buildable** instead — a belt's clearance boxes, a lift's, and what a power
+shard or a somersloop does to a machine — because that is where the game
+computes them; the file's name is about what it is for, which is deciding what
+this project may author.
 
 ## How a placement is refused
 
@@ -41,7 +50,7 @@ Neither can produce an illegal value, and neither has a disqualifier.
 | `ValidateIncline` | 103 | `mMaxIncline`, `mSplineData` | `belt.incline` |
 | `ValidateMinLength` | 104 | `mMeshLength`, `mSplineData` | `belt.min_length` |
 | `ValidateCurvature` | 105 | `mBendRadius`, `mSplineComponent` | `belt.curvature` |
-| `UpdateClearanceData` | 84 | `mMaxSplineLength`, `mSplineComponent`, `mSplineData` | `belt.clearance` |
+| `UpdateClearanceData` | 84 | `mMaxSplineLength`, `mSplineComponent`, `mSplineData` | `belt.clearance`, with `AFGBuildableConveyorBelt::CreateClearanceData` |
 | `SetupSnappedConnectionDirections` | 79 | `mConnectionComponents`, `mSnappedWallPassthrough` | `belt.snap_directions` |
 | `GenerateAndUpdateSpline` | 87 | `mUpgradedConveyorBelt` | construction |
 | `AutoRouteSpline` | 97 | `mBendRadius`, `mMaxSplineLength`, `mSplineData` | construction |
@@ -131,6 +140,39 @@ either — `ValidateConveyorBelt`'s four checks are length, minimum length,
 incline and curvature. So "a belt leaves a port along the port's facing" is this
 project's own authoring rule, and `flab2bp.sfy.geometry.port_forward` says so.
 
+### What a belt's clearance is — `belt.clearance`
+
+The hologram only supplies the inputs: `UpdateClearanceData` empties
+`mClearanceData` and hands the spline component, `mSplineData`, the root
+component's transform and `mMaxSplineLength` to
+`AFGBuildableConveyorBelt::CreateClearanceData` (`0x4d78c0`, four chained
+`.pdata` chunks, 1894 bytes). That function is where the boxes are, and it is
+now read whole, so the rule is `extracted` with the effect `compute` rather than
+the `partial`/`none` it used to be.
+
+It walks the spline, one segment per call to
+`UFGSplineMeshGenerationLibrary::GetNextDistanceExceedingTolerance` with the
+tolerances 0.5, 20.0 and 50.0, and stops once the distance reaches
+`mMaxSplineLength`. Each segment gets one `FFGClearanceData` (0xC0 bytes),
+appended to the array the hologram passed in:
+
+| | X | Y | Z |
+| --- | --- | --- | --- |
+| `Min` | `-length/2` | **-79** | **-15** |
+| `Max` | `+length/2` | **+79** | **+15** |
+
+in the segment's own frame, placed by that segment's transform relative to the
+belt's root (`TTransform<double>::GetRelativeTransform`). So a belt's clearance
+is **158 cm wide and 30 cm tall**, and it is *narrower* than the belt's own mesh
+— `registry.json`'s `mesh_bounds_cm` gives the Mk1 mesh 178.25 cm across. The
+two are different facts and the registry carries both; a placer that used the
+mesh box as the clearance would refuse placements the game accepts.
+
+What is still unread: the two flag bytes of `FFGClearanceData` (where a
+`CT_Soft` marking would live) and the tolerance arithmetic inside
+`GetNextDistanceExceedingTolerance`, so the *number* of boxes on a given spline
+cannot be reproduced from this rule.
+
 ### What a belt costs — `belt.cost`
 
 Not a hologram rule at all, and the only reason it is in this file is that it is
@@ -173,7 +215,7 @@ constructor stores its primary vtable `0xF79290` (`0x1b9ccf`), and the qword at
 | --- | --- | --- | --- |
 | `CheckValidPlacement` | 62 | `mActivePointIdx`, `mSnappedConnectionComponents`, `mUpgradedConveyorLift` | `lift.placement` |
 | `UpdateTopTransform` | 65 | `mStepHeight`, `mMinimumHeight`, `mMaximumHeight`, `mMinimumHeightWithVerticalConnection` | `lift.height_range`, `lift.step` |
-| `UpdateClearance` | 70 | `mMeshHeight`, `mSnappedPassthroughs` | `lift.clearance` |
+| `UpdateClearance` | 70 | `mMeshHeight`, `mSnappedPassthroughs` | `lift.clearance`, with `AFGBuildableConveyorLift::FitClearance` |
 | `GetClearanceData` | 38 | `mClearance` | hands out the one box |
 | `GetRotationStep` | 54 | `mActivePointIdx`, `mSnappedConnectionComponents`, `mSnappedBuilding` | corroborates `buildable.rotation_step` |
 | `IsValidHitResult` | 24 | `mActivePointIdx` | — |
@@ -193,6 +235,34 @@ nothing to refuse. Note what is **not** there: no instruction in that function
 rounds a free height to a multiple of `mStepHeight`, so "every legal height is a
 whole number of steps" is arithmetic on the `BeginPlay` values rather than a rule
 read from the binary. `lift.step` says so and stays `partial`.
+
+### What a lift's clearance is — `lift.clearance`
+
+`UpdateClearance` builds the three doubles `(-5, -5, -5)`, tests both
+`mSnappedPassthroughs` and hands the lift's height, `mMeshHeight`, a module
+global and that `-5` vector to `AFGBuildableConveyorLift::FitClearance`
+(`0x4e5dd0`, 375 bytes, `.pdata`). Both functions are now read whole, and the
+**span** between the lift's two ends comes out of them:
+
+```
+bottom = (|height| + mMeshHeight + 100 - P) / 2 - 30
+top    = (height  + mMeshHeight - 100 - P) / 2 + Q
+```
+
+with `P = 200` when the first passthrough flag is set and `Q = 50` when the
+second is. The box is then `centre ± extent`, where the centre is `top` scaled
+by a vector and the extent is that module global shrunk by 5 cm per axis.
+
+**The rule is still `partial`, and not because of a callee.** Both globals live
+in `.data`, and `sfy-native` refuses to quote a mutable global as a constant, so
+the box's half-width and its axis are not in the evidence. `FitClearance` reads
+exactly two doubles from the first, and the class declares one static
+two-component constant, `CLEARANCE_EXTENT_2D`
+(`Buildables/FGBuildableConveyorLift.h:211`) — a consistent reading, not a value
+the rule states. A placer must take a lift's footprint from the boxes
+`registry.json` carries, or from `mesh_bounds_cm`, and treat the width here as
+unknown. The effect is `compute`: nothing in either function turns a placement
+away.
 
 ## Pipelines — `Hologram/FGPipelineHologram.h`
 
@@ -305,6 +375,77 @@ the slot count belongs to the machine and never changes, and
 spare slot is written with the wildcard rather than left as it was, and an oil
 refinery keeps the slot a solid recipe does not fill.
 
+## What a power shard and a somersloop do — `factory.potential`, `manufacturer.production_boost`
+
+Two more `compute` rules, and the ones M2's rates code reproduces. Neither
+refuses anything: a potential the game does not like is not turned away, it is
+simply never offered.
+
+`AFGBuildableFactory::GetCurrentMaxPotential`
+(`Buildables/FGBuildableFactory.h:244`, `0x4ed7c0`) is a forward into
+`GetCurrentMaxPotentialForType(type, minValue, maxValue, perShardMultiplier)`
+(`0x4ed7f0`), which is the whole accumulator:
+
+```
+total = maxValue
+for each slot GetSlotsForPowerShardType(type) names:
+    stack = mInventoryPotential[slot]
+    if stack's class is a UFGPowerShardDescriptor of that type:
+        total += UFGPowerShardDescriptor::GetBoostValue(class)
+                 * stack.NumItems * perShardMultiplier
+return max(total, minValue)
+```
+
+`GetSlotsForPowerShardType` gives `PST_Overclock` the indices
+`[0, mPotentialShardSlots)` and `PST_ProductionBoost` the single index
+`mPotentialShardSlots`. **`mPotentialShardSlots` is not the class default**:
+`AFGBuildableFactory::BeginPlay` copies `AFGBuildableSubsystem`'s
+`mDefaultPotentialShardSlots` (and `mDefaultProductionShardSlotSize`) over it
+whenever the buildable's own `mOverridePotentialShardSlots` /
+`mOverrideProductionShardSlotSize` bit is clear (`0x4d40eb`, `0x4d40fc`). Docs.json
+dumps `mPotentialShardSlots = 0` on all 62 classes and *no* class sets the
+override, so every machine has the subsystem's **3** overclock slots and a
+maximum potential of `1.0 + 3 × 0.5 = 2.5`.
+
+What the potential then does, in both places, first rounds it to a whole percent
+(`RoundToInt(p × 100) × 0.01`, UE's SSE form):
+
+| | function | arithmetic |
+| --- | --- | --- |
+| cycle time | `AFGBuildableManufacturer::CalcProductionCycleTimeForPotential` | `duration / mManufacturingSpeed / p` |
+| power | `AFGBuildableFactory::CalcProducingPowerConsumptionForPotential` | `GetProducingPowerConsumption() × p ^ mPowerConsumptionExponent` |
+
+`mPowerConsumptionExponent` is **per class** — 1.321929 on every manufacturer and
+extractor, 1.6 on everything else — which is why `registry.json` carries it on
+each buildable and there is no global exponent in `limits`.
+
+The production-boost half is the same accumulator with different arguments.
+`GetCurrentMaxProductionBoost` (`0x4eda10`) passes `PST_ProductionBoost`,
+`mBaseProductionBoost` as both bounds and the class's own
+`mProductionShardBoostMultiplier` as the per-shard multiplier, so
+
+```
+boost = mBaseProductionBoost + N × mExtraProductionBoost × mProductionShardBoostMultiplier
+```
+
+for N somersloops in the one slot. `AFGBuildableManufacturer::SetCurrentProductionBoost`
+(`0x547800`) is what that multiplier *does*: for each of the recipe's products
+it takes `RoundToInt(amount × mCurrentProductionBoost)` and asks the output
+inventory whether a stack that size would fit. **A somersloop multiplies the
+product amounts, not the cycle time.**
+
+| machine | slot size | multiplier | full boost |
+| --- | --- | --- | --- |
+| Constructor, Smelter | 1 (the subsystem default) | 1.0 | 2.0 |
+| Assembler, Foundry | 2 (own override) | 0.5 | 2.0 |
+| Manufacturer | 4 (own override) | 0.25 | 2.0 |
+
+The two shard values are Docs.json class defaults on the descriptors themselves:
+`Desc_CrystalShard_C.mExtraPotential = 0.5` and
+`Desc_WAT1_C.mExtraProductionBoost = 1.0`
+(`Resources/FGPowerShardDescriptor.h:32` and `:36`). They are
+`limits.potential_per_shard` and `limits.production_boost_per_slot`.
+
 ## What each rule does with the number: `effect`
 
 A rule's `status` says how well it was read; its `effect` says what the hologram
@@ -323,15 +464,15 @@ anything. Five values:
 `flab2bp.sfy.rules.load_rules` refuses it on an `extracted` rule, because a
 branch that was read says what it does. `compute` is the opposite case and is
 allowed beside `extracted`: the code was read in full, and it does nothing to a
-placement because it is not a validator. The shipped twenty:
+placement because it is not a validator. The shipped twenty-two:
 
 | `effect` | rules |
 | --- | --- |
 | `refuse` | `belt.curvature`, `belt.incline`, `belt.min_length`, `belt.max_length`, `pipe.min_length`, `pipe.curvature`, `pipe.max_length`, `pipe.fluid_requirements`, `lift.placement`, `buildable.clearance` |
 | `clamp` | `lift.height_range` |
 | `snap` | `belt.snap_directions`, `buildable.grid_snap` |
-| `none` | `belt.clearance`, `lift.step`, `lift.clearance` |
-| `compute` | `belt.cost`, `belt.straight_tangents`, `buildable.rotation_step`, `manufacturer.inventory_filters` |
+| `none` | `lift.step` |
+| `compute` | `belt.cost`, `belt.clearance`, `lift.clearance`, `belt.straight_tangents`, `buildable.rotation_step`, `manufacturer.inventory_filters`, `factory.potential`, `manufacturer.production_boost` |
 
 Two of those deserve their own sentence. `buildable.clearance` is `partial` —
 the box-against-box test is in `AFGHologram::TestClearanceOverlap`, which was
@@ -358,19 +499,25 @@ multiple of it.
 
 ## What was extracted, and what was not
 
-`hologram_rules.json` carries twenty rules; fifteen are `extracted` and five
-`partial`. A `partial` rule is a **bound the placer must not assume it knows** —
-its `comparison` names where the comparison actually is, and its
+`hologram_rules.json` carries twenty-two rules; eighteen are `extracted` and
+four `partial`. A `partial` rule is a **bound the placer must not assume it
+knows** — its `comparison` names where the comparison actually is, and its
 `interpretation` is a lead for the next extraction, not a constraint.
 
-The two reasons a rule is only `partial`:
+The three reasons a rule is only `partial`:
 
-- **the comparison is in a callee** — `belt.clearance`
-  (`AFGBuildableConveyorBelt::CreateClearanceData`), `buildable.clearance`
+- **the comparison is in a callee** — `buildable.clearance`
   (`AFGHologram::TestClearanceOverlap`), `buildable.grid_snap`
-  (`FHologramHelpers::SnapToFloor`), `lift.clearance`;
+  (`FHologramHelpers::SnapToFloor`);
+- **a number is in `.data`** — `lift.clearance`, whose two functions were both
+  read whole and whose box half-extent is a mutable module global
+  `sfy-native` will not quote as a constant;
 - **the rule may not exist** — `lift.step`, where nothing in
   `UpdateTopTransform` quantises a height to `mStepHeight`.
+
+`belt.clearance` used to be in the first list and is not any more: its callee
+`AFGBuildableConveyorBelt::CreateClearanceData` was read whole, so the boxes it
+lays are `extracted`.
 
 **Where a function ends is now game data in every case** (Task 5). Three
 sources, in that order:

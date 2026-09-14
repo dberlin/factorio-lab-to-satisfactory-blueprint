@@ -242,8 +242,22 @@ Offsets are decimal, from the PDB's type stream; RVAs are into the DLL.
 | `pipe_bend_radius_2d_cm` | `AFGPipelineHologram` | `mBendRadius2D` | 2052 | 199.0 | constructor | `mov dword ptr [rbx+804h],43470000h @ 0x3551b6` |
 | `pipe_min_bend_radius_cm` | `AFGPipelineHologram` | `mMinBendRadius` | 2056 | 75.0 | constructor | `mov dword ptr [rbx+808h],42960000h @ 0x3551c0` |
 | `pipe_max_spline_cm` | `AFGPipelineHologram` | `mMaxSplineLength` | 2060 | 5600.1 | constructor | `mov dword ptr [rbx+80Ch],45AF00CDh @ 0x3551ca` |
+| `Port.max_connections` | `UFGCircuitConnectionComponent` | `mMaxNumConnectionLinks` | 640 | **1** | constructor | `mov dword ptr [rbx+280h],1 @ 0x6f41c1` |
+| `potential_shard_slots_default` | `AFGBuildableSubsystem` | `mDefaultPotentialShardSlots` | 848 | **3** | constructor | `mov dword ptr [rdi+350h],3 @ 0x667003` |
+| `production_boost_slots_default` | `AFGBuildableSubsystem` | `mDefaultProductionShardSlotSize` | 852 | 4 | constructor | `mov dword ptr [rdi+354h],4 @ 0x66700d` |
 
-The **bold** rows are the ones no other source has. `pipe_bend_radius_cm` is
+The **bold** rows are the ones no other source has. The last three are not
+hologram members, and they are here for the same reason the rest are: they are
+archetype defaults the cooked assets omit. A power connection's
+`mMaxNumConnectionLinks` is serialised only where a Blueprint overrides it, so
+every machine's power input would otherwise ship with an unknown wire count;
+`UFGPowerConnectionComponent`'s own constructor (0x8f1160, `.pdata`-bounded)
+writes nothing at offset 640, so the circuit connection's **1** is what a machine
+runs on. The two subsystem defaults are what `AFGBuildableFactory::BeginPlay`
+copies onto a buildable whose `mOverride*` bit is clear (0x4d40eb, 0x4d40fc);
+the cooked `BP_BuildableSubsystem_C` overrides the production one to 1, which
+`tools/sfy-extract` reads and the merge prefers, so only the **3** survives into
+`registry.json` as `binary`. `pipe_bend_radius_cm` is
 listed because `Holo_Pipeline_C` overrides the native 199 down to 100 and the
 asset wins; the binary is its fallback.
 

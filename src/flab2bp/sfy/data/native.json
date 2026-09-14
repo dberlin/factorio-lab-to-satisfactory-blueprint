@@ -40,6 +40,47 @@
         }
       }
     },
+    "AFGBuildableSubsystem": {
+      "size": 2384,
+      "base": "AFGSubsystem",
+      "chain": [
+        "AFGBuildableSubsystem",
+        "AFGSubsystem",
+        "AInfo",
+        "AActor",
+        "UObject",
+        "UObjectBaseUtility",
+        "UObjectBase"
+      ],
+      "ctor_rva": {
+        "AFGBuildableSubsystem::AFGBuildableSubsystem": [
+          "0x20b0b0",
+          "0x666f40"
+        ],
+        "AFGSubsystem::AFGSubsystem": [
+          "0x3db6e0",
+          "0x9d50f0"
+        ]
+      },
+      "members": {
+        "mDefaultPotentialShardSlots": {
+          "offset": 848,
+          "type": "int32",
+          "value": 3,
+          "set_in": "AFGBuildableSubsystem::AFGBuildableSubsystem",
+          "evidence": "mov dword ptr [rdi+350h],3 @ 0x667003",
+          "size_source": "pdata"
+        },
+        "mDefaultProductionShardSlotSize": {
+          "offset": 852,
+          "type": "int32",
+          "value": 4,
+          "set_in": "AFGBuildableSubsystem::AFGBuildableSubsystem",
+          "evidence": "mov dword ptr [rdi+354h],4 @ 0x66700d",
+          "size_source": "pdata"
+        }
+      }
+    },
     "AFGBuildableWire": {
       "size": 1672,
       "base": "AFGBuildable",
@@ -329,6 +370,39 @@
           "type": "float",
           "value": null,
           "reason": "mMaxLength is overwritten with a computed value by AFGWireHologram::BeginPlay -- mov dword ptr [rbx+770h],eax @ 0xaf5e14"
+        }
+      }
+    },
+    "UFGCircuitConnectionComponent": {
+      "size": 720,
+      "base": "UFGConnectionComponent",
+      "chain": [
+        "UFGCircuitConnectionComponent",
+        "UFGConnectionComponent",
+        "USceneComponent",
+        "UActorComponent",
+        "UObject",
+        "UObjectBaseUtility",
+        "UObjectBase"
+      ],
+      "ctor_rva": {
+        "UFGCircuitConnectionComponent::UFGCircuitConnectionComponent": [
+          "0x23fbd0",
+          "0x6f41a0"
+        ],
+        "UFGConnectionComponent::UFGConnectionComponent": [
+          "0x24c350",
+          "0x24c3a0"
+        ]
+      },
+      "members": {
+        "mMaxNumConnectionLinks": {
+          "offset": 640,
+          "type": "int32",
+          "value": 1,
+          "set_in": "UFGCircuitConnectionComponent::UFGCircuitConnectionComponent",
+          "evidence": "mov dword ptr [rbx+280h],1 @ 0x6f41c1",
+          "size_source": "pdata"
         }
       }
     }

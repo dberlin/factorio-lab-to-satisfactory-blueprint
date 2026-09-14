@@ -60,6 +60,20 @@ const DEFAULT_MEMBERS: &[(&str, &[&str])] = &[
     ("AFGBuildableHologram", &["mGridSnapSize"]),
     ("AFGWireHologram", &["mMaxLength"]),
     ("AFGBuildableWire", &["mMaxLength"]),
+    // How many wires may end on a circuit connection when the component's
+    // Blueprint does not say. A cooked asset omits the property wherever it
+    // equals the archetype's value, and the archetype is this constructor, so
+    // without this every machine's power input would ship as "unknown".
+    ("UFGCircuitConnectionComponent", &["mMaxNumConnectionLinks"]),
+    // What `AFGBuildableFactory::BeginPlay` copies onto a factory whose own
+    // `mOverridePotentialShardSlots` / `mOverrideProductionShardSlotSize` bit is
+    // clear (0x4d40eb and 0x4d40fc). The subsystem is not a buildable, so
+    // Docs.json does not dump it; the cooked Blueprint may still override either,
+    // and `tools/sfy-extract` reads that.
+    (
+        "AFGBuildableSubsystem",
+        &["mDefaultPotentialShardSlots", "mDefaultProductionShardSlotSize"],
+    ),
 ];
 
 // ---------------------------------------------------------------------------
