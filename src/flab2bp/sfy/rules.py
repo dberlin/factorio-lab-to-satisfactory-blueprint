@@ -23,6 +23,20 @@ header comment or from what a blueprint happens to contain:
 A ``partial`` rule is a bound the placer must not assume it knows. Treat its
 :attr:`HologramRule.interpretation` as the lead for the next extraction, never as
 a constraint to enforce.
+
+Every rule also says *what the hologram does* with the number --
+:attr:`HologramRule.effect`, one of :data:`RULE_EFFECTS`:
+
+``refuse``  a validation disqualifies the hologram, so the placement is rejected
+``clamp``   the value is forced into range and the placement goes ahead
+``snap``    the value is quantised or aligned and the placement goes ahead
+``none``    no enforcement was found in the instructions that were read
+
+The difference matters to a placer and to a validator: a ``clamp`` or a ``snap``
+never produces a refusal, so treating one as a bound refuses builds the game
+would accept, and treating a ``refuse`` as a clamp ships blueprints the game
+turns away. ``none`` is only allowed on a rule that is not ``extracted``: if the
+comparison and its branch were read, what the branch does is known.
 """
 
 from __future__ import annotations
@@ -35,6 +49,7 @@ from typing import Any
 
 __all__ = [
     "REQUIRED_RULE_IDS",
+    "RULE_EFFECTS",
     "RULE_STATUSES",
     "HologramRule",
     "RulesError",
@@ -67,6 +82,11 @@ REQUIRED_RULE_IDS = (
 
 RULE_STATUSES = ("extracted", "partial", "unextractable")
 
+# What the hologram does with the value, as the instructions show it. See the
+# module docstring: ``none`` says nothing was seen enforcing it, which a rule
+# whose branch was read cannot claim.
+RULE_EFFECTS = ("refuse", "clamp", "snap", "none")
+
 DATA_DIR = Path(__file__).resolve().parent / "data"
 RULES_PATH = DATA_DIR / "hologram_rules.json"
 
@@ -88,7 +108,10 @@ class HologramRule:
 
     ``comparison`` is the branch in the game's own terms; ``interpretation`` is
     what that means for a placer, and is the only field written by a human.
-    ``header`` is the declaration the rule belongs to, as ``file:line`` in
+    ``effect`` is what the hologram does with the value -- see
+    :data:`RULE_EFFECTS`; a consumer that reads a bound must read this beside
+    it, because only ``refuse`` turns a placement away. ``header`` is the
+    declaration the rule belongs to, as ``file:line`` in
     ``CommunityResources/Headers.zip``.
     """
 
@@ -97,6 +120,7 @@ class HologramRule:
     function: str
     rva: str
     status: str
+    effect: str
     reads: tuple[str, ...]
     constants: tuple[str, ...]
     calls: tuple[str, ...]
@@ -116,12 +140,21 @@ def _rule(raw: Mapping[str, Any]) -> HologramRule:
         status = str(raw["status"])
         if status not in RULE_STATUSES:
             raise RulesError(f"rule {rule_id!r} has an unknown status {status!r}")
+        effect = str(raw["effect"])
+        if effect not in RULE_EFFECTS:
+            raise RulesError(f"rule {rule_id!r} has an unknown effect {effect!r}")
+        if effect == "none" and status == "extracted":
+            raise RulesError(
+                f"rule {rule_id!r} is 'extracted' but its effect is 'none': a branch that "
+                "was read says what it does, so either the effect or the status is wrong"
+            )
         return HologramRule(
             id=rule_id,
             cls=str(raw["class"]),
             function=str(raw["function"]),
             rva=str(raw["rva"]),
             status=status,
+            effect=effect,
             reads=_strings(raw["reads"]),
             constants=_strings(raw["constants"]),
             calls=_strings(raw["calls"]),

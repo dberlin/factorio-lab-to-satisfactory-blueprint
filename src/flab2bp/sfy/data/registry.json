@@ -34679,67 +34679,100 @@
   },
   "limits": {
    "belt_bend_radius_cm": {
-    "enforced_by": "belt.curvature",
+    "governed_by": {
+     "effect": "refuse",
+     "rule": "belt.curvature"
+    },
     "is_a_proven_minimum": false,
     "note": "AFGConveyorBeltHologram::mBendRadius -- the radius the hologram lays its own arcs on when it auto-routes a belt. It is NOT the legality floor: ValidateCurvature rejects a horizontal radius below mBendRadius * 1.5 - 15, which is 283.5 cm here, and it only runs that check in the curve build mode. Take the bound from the belt.curvature rule, not from this number."
    },
    "belt_max_incline_deg": {
-    "enforced_by": "belt.incline"
+    "governed_by": {
+     "effect": "refuse",
+     "rule": "belt.incline"
+    }
    },
    "belt_max_spline_cm": {
-    "enforced_by": "belt.max_length"
+    "governed_by": {
+     "effect": "refuse",
+     "rule": "belt.max_length"
+    }
    },
    "hologram_grid_cm": {
-    "enforced_by": "buildable.grid_snap"
+    "governed_by": {
+     "effect": "snap",
+     "rule": "buildable.grid_snap"
+    }
    },
    "hologram_rotation_step_deg": {
-    "enforced_by": "buildable.rotation_step",
+    "governed_by": {
+     "effect": "snap",
+     "rule": "buildable.rotation_step"
+    },
     "reason": "the step the build gun rotates a hologram by. It is in no cooked asset, no shipped header and no constructor immediate tools/sfy-native found; 90 degrees is this project's constant, not a number read from the game."
    },
    "lift_max_cm": {
     "H": 200.0,
     "H_from": "Docs.json mMeshHeight on Build_ConveyorLiftMk1_C and its five siblings",
-    "enforced_by": "lift.height_range",
     "evaluated_in": "AFGConveyorLiftHologram::BeginPlay at 0xa64e70 (see native.json)",
-    "formula": "24 * H"
+    "formula": "24 * H",
+    "governed_by": {
+     "effect": "clamp",
+     "rule": "lift.height_range"
+    }
    },
    "lift_min_cm": {
     "H": 200.0,
     "H_from": "Docs.json mMeshHeight on Build_ConveyorLiftMk1_C and its five siblings",
-    "enforced_by": "lift.height_range",
     "evaluated_in": "AFGConveyorLiftHologram::BeginPlay at 0xa64e70 (see native.json)",
-    "formula": "2 * H"
+    "formula": "2 * H",
+    "governed_by": {
+     "effect": "clamp",
+     "rule": "lift.height_range"
+    }
    },
    "lift_min_vertical_cm": {
     "H": 200.0,
     "H_from": "Docs.json mMeshHeight on Build_ConveyorLiftMk1_C and its five siblings",
-    "enforced_by": "lift.height_range",
     "evaluated_in": "AFGConveyorLiftHologram::BeginPlay at 0xa64e70 (see native.json)",
-    "formula": "H - 50"
+    "formula": "H - 50",
+    "governed_by": {
+     "effect": "clamp",
+     "rule": "lift.height_range"
+    }
    },
    "lift_step_cm": {
-    "enforced_by": "lift.step"
+    "governed_by": {
+     "effect": "none",
+     "rule": "lift.step"
+    }
    },
    "pipe_bend_radius_2d_cm": {
-    "enforced_by": null,
-    "reason": "the same, for Auto2DRouteSpline's conveyor-like mode (0xaafef0 reads mBendRadius2D): a construction radius, not a limit."
+    "governed_by": null,
+    "ungoverned": "the same, for Auto2DRouteSpline's conveyor-like mode (0xaafef0 reads mBendRadius2D): a construction radius, not a limit."
    },
    "pipe_bend_radius_cm": {
-    "enforced_by": null,
-    "reason": "AFGPipelineHologram::mBendRadius is the radius AutoRouteSpline builds its bends on, not a bound anything compares against. The bound on a pipeline's curvature is mMinBendRadius, under the pipe.curvature rule."
+    "governed_by": null,
+    "ungoverned": "AFGPipelineHologram::mBendRadius is the radius AutoRouteSpline builds its bends on, not a bound anything compares against. The bound on a pipeline's curvature is mMinBendRadius, under the pipe.curvature rule."
    },
    "pipe_max_spline_cm": {
-    "enforced_by": "pipe.max_length"
+    "governed_by": {
+     "effect": "refuse",
+     "rule": "pipe.max_length"
+    }
    },
    "pipe_min_bend_radius_cm": {
-    "enforced_by": "pipe.curvature"
+    "governed_by": {
+     "effect": "refuse",
+     "rule": "pipe.curvature"
+    }
    },
    "wire_max_cm": {
-    "enforced_by": null,
-    "reason": "no rule was extracted for it. AFGBuildableWire::mMaxLength is a buildable's property rather than a hologram member, and AFGWireHologram was not disassembled; what refuses an over-long wire is still unread."
+    "governed_by": null,
+    "ungoverned": "no rule was extracted for it. AFGBuildableWire::mMaxLength is a buildable's property rather than a hologram member, and AFGWireHologram was not disassembled; what refuses an over-long wire is still unread."
    }
   },
-  "merged_at_commit": "ac9ebe75913cca5b28c55a5ec439a2f8cc919139",
+  "merged_at_commit": "0af1fb744d71fac41845a0e19f318eb563be1ff3",
   "native": {
    "dll": "FactoryGameEGS-FactoryGame-Win64-Shipping.dll",
    "dll_sha256": "65fc5a6bde6d44782da387976b144a41a6b94e4fa78ec6e1bc49c3dad2d47513",

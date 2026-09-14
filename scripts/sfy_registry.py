@@ -14,9 +14,11 @@ script, resolves the ports with.
 gun's hologram does with those numbers. This script joins the four and writes
 the registry that :func:`flab2bp.sfy.registry.load_registry` reads.
 
-**Every limit in the registry comes from game data, and says what turns it into
-a refusal.** ``provenance.limits[key].enforced_by`` names the hologram rule that
-enforces it, or is ``null`` with the reason none does.
+**Every limit in the registry comes from game data, and says what the game does
+with it.** ``provenance.limits[key].governed_by`` names the hologram rule that
+governs it and copies that rule's effect -- ``refuse``, ``clamp``, ``snap`` or
+``none`` -- or is ``null``, with ``ungoverned`` carrying the reason no rule does.
+Only a ``refuse`` turns a placement away; a clamp or a snap moves it.
 
 **Nothing here comes from a blueprint corpus, and nothing from a port's name.**
 A community blueprint can carry clipped geometry, a hacked save or an older game
@@ -39,6 +41,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from collections.abc import Mapping
 from dataclasses import fields
 from pathlib import Path
 from typing import Any
@@ -136,11 +139,21 @@ BINARY_NOTES: dict[str, str] = {
     ),
 }
 
-# Which hologram rule enforces each limit, or ``None`` with the reason nothing
-# does. Every key of :class:`Limits` is here, and ``_check_rules`` holds the
-# named ids against ``data/hologram_rules.json``, so a limit whose rule was
-# renamed or dropped fails the merge rather than shipping an empty claim.
-ENFORCED_BY: dict[str, str] = {
+# Which hologram rule governs each limit. **Governs, not enforces**: the rule
+# says what the hologram does with the number, and only some of them refuse.
+# ``provenance.limits[key].governed_by`` is ``{"rule": id, "effect": effect}``
+# with the effect copied from the rule itself, so a reader of the registry
+# cannot take a clamp or a snap for a refusal -- which is what the old
+# ``enforced_by`` invited: it named ``lift.height_range`` (a clamp),
+# ``buildable.grid_snap`` and ``buildable.rotation_step`` (snaps) and
+# ``lift.step`` (no enforcement found at all) as things that "turn the value
+# away".
+#
+# Every key of :class:`Limits` is in this table or in :data:`NOT_GOVERNED`, and
+# ``_check_rules`` holds the named ids and the copied effects against
+# ``data/hologram_rules.json``, so a limit whose rule was renamed, dropped or
+# re-read fails the merge rather than shipping a stale claim.
+GOVERNED_BY: dict[str, str] = {
     "belt_max_spline_cm": "belt.max_length",
     "belt_bend_radius_cm": "belt.curvature",
     "belt_max_incline_deg": "belt.incline",
@@ -154,7 +167,9 @@ ENFORCED_BY: dict[str, str] = {
     "hologram_rotation_step_deg": "buildable.rotation_step",
 }
 
-NOT_ENFORCED: dict[str, str] = {
+# The limits no hologram rule governs at all, with the reason. A number here is
+# still game data; what it is not is a bound the game applies to a placement.
+NOT_GOVERNED: dict[str, str] = {
     "pipe_bend_radius_cm": (
         "AFGPipelineHologram::mBendRadius is the radius AutoRouteSpline builds "
         "its bends on, not a bound anything compares against. The bound on a "
@@ -278,28 +293,39 @@ def _mesh_height(docs: dict[str, Any]) -> float:
     return float(distinct.pop())
 
 
-def _check_rules() -> None:
-    """Refuse to merge if :data:`ENFORCED_BY` names a rule that is not extracted.
+def _check_rules(entries: Mapping[str, Any]) -> None:
+    """Hold the governance the registry is about to claim to the rules themselves.
 
-    ``enforced_by`` is a claim that something in the game turns the number away,
-    so it has to point at a rule that exists. A game update that renames a
-    validator shows up here rather than as a registry that says a limit is
-    enforced by a function nobody can find.
+    Four checks, and nothing else: every governed rule id exists in
+    ``data/hologram_rules.json``; the effect copied beside it is that rule's own
+    effect; no limit is in both :data:`GOVERNED_BY` and :data:`NOT_GOVERNED`; and
+    every :class:`Limits` key is in exactly one of the two.
     """
     rules = load_rules()
-    unknown = sorted({rule_id for rule_id in ENFORCED_BY.values() if rule_id not in rules})
+    unknown = sorted({rule_id for rule_id in GOVERNED_BY.values() if rule_id not in rules})
     if unknown:
         raise SystemExit(
             f"registry limits name hologram rules that do not exist: {unknown}; "
             "re-run scripts/sfy_native_rules.py"
         )
-    both = sorted(set(ENFORCED_BY) & set(NOT_ENFORCED))
+    mismatched = sorted(
+        f"{key}: {governed['effect']!r} beside {governed['rule']}, "
+        f"which states {rules[governed['rule']].effect!r}"
+        for key, entry in entries.items()
+        if (governed := entry.get("governed_by"))
+        and governed["effect"] != rules[governed["rule"]].effect
+    )
+    if mismatched:
+        raise SystemExit(
+            "limits claim an effect their rule does not state:\n  " + "\n  ".join(mismatched)
+        )
+    both = sorted(set(GOVERNED_BY) & set(NOT_GOVERNED))
     if both:
-        raise SystemExit(f"limits are both enforced and not enforced: {both}")
+        raise SystemExit(f"limits are both governed and ungoverned: {both}")
     known = {f.name for f in fields(Limits)}
-    unplaced = sorted(known - set(ENFORCED_BY) - set(NOT_ENFORCED))
+    unplaced = sorted(known - set(GOVERNED_BY) - set(NOT_GOVERNED))
     if unplaced:
-        raise SystemExit(f"limits say nothing about what enforces them: {unplaced}")
+        raise SystemExit(f"limits say nothing about what governs them: {unplaced}")
 
 
 def _limits(
@@ -315,11 +341,11 @@ def _limits(
     project's own constants. A blueprint corpus is not among them and is not
     evidence for any of them.
 
-    Every limit also says which hologram rule turns it into a refusal -- or that
-    none does, and why. That is what makes a number in here a limit rather than
-    a value somebody found in the game's data.
+    Every limit also says which hologram rule governs it and what that rule
+    does with it -- refuse, clamp, snap or nothing -- or that no rule governs it
+    at all, and why. That is what makes a number in here a limit rather than a
+    value somebody found in the game's data.
     """
-    _check_rules()
     holograms = assets["holograms"]
     limits: dict[str, Any] = dict.fromkeys(f.name for f in fields(Limits))
     sources: dict[str, str] = {}
@@ -362,11 +388,21 @@ def _limits(
     _fill(limits, sources, {k: v for k, (v, _) in PROJECT_CONSTANTS.items()}, "constant")
     for key, (_, reason) in PROJECT_CONSTANTS.items():
         provenance[key] = {"reason": reason}
+    rules = load_rules()
     for key in sorted(f.name for f in fields(Limits)):
         entry = provenance.setdefault(key, {})
-        entry["enforced_by"] = ENFORCED_BY.get(key)
-        if key in NOT_ENFORCED:
-            entry["reason"] = NOT_ENFORCED[key]
+        rule_id = GOVERNED_BY.get(key)
+        # The effect is the rule's own, copied here; ``_check_rules`` holds the
+        # copy to the rule and reports a rule id that has gone missing.
+        rule = None if rule_id is None else rules.get(rule_id)
+        entry["governed_by"] = (
+            None
+            if rule_id is None
+            else {"rule": rule_id, "effect": None if rule is None else rule.effect}
+        )
+        if key in NOT_GOVERNED:
+            entry["ungoverned"] = NOT_GOVERNED[key]
+    _check_rules(provenance)
     return limits, sources, provenance
 
 

@@ -19,6 +19,8 @@ from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
+from flab2bp.sfy.rules import RULE_EFFECTS
+
 __all__ = [
     "BELT_MAX_SPLINE_CM",
     "LIMIT_SOURCES",
@@ -59,8 +61,9 @@ PIPE_MIN_BEND_RADIUS_CM = 75.0
 # community blueprint can carry clipped geometry, a hacked save or an older game
 # version, so what one holds is not a fact about the game: it is not a source,
 # not a cross-check and not evidence, here or anywhere else in the registry.
-# What the game *refuses* is in :mod:`flab2bp.sfy.rules`, and
-# ``provenance["limits"][key]["enforced_by"]`` names the rule for each limit.
+# What the game *does* with each number is in :mod:`flab2bp.sfy.rules`, and
+# ``provenance["limits"][key]["governed_by"]`` names the rule for each limit and
+# copies that rule's effect, so a clamp or a snap is never read as a refusal.
 LIMIT_SOURCES = (
     "assets",
     "binary",
@@ -448,23 +451,37 @@ def _limits_sources(raw: Mapping[str, Any], limits: Limits) -> dict[str, str]:
     return {str(k): str(v) for k, v in raw.items()}
 
 
-def _enforcement(provenance: Mapping[str, Any], limits: Limits) -> None:
-    """Check that every limit says what turns it away, or why nothing does.
+def _governance(provenance: Mapping[str, Any], limits: Limits) -> None:
+    """Check that every limit says which rule governs it, or why none does.
 
-    A number with no ``enforced_by`` is a value somebody found in the game's
-    data, not a limit. ``scripts/sfy_registry.py`` fills these from its
-    ``ENFORCED_BY`` and ``NOT_ENFORCED`` tables and holds the rule ids against
-    ``data/hologram_rules.json``; this is the same claim, checked on load.
+    A number with no ``governed_by`` and no ``ungoverned`` reason is a value
+    somebody found in the game's data, not a limit. ``governed_by`` is
+    ``{"rule": <id>, "effect": <effect>}`` with the effect copied from the rule,
+    and the effect has to be one :mod:`flab2bp.sfy.rules` knows -- a limit that
+    claimed to be ``enforced`` by a rule that only clamps or snaps would tell a
+    validator to refuse a placement the game accepts.
+    ``scripts/sfy_registry.py`` fills these from its ``GOVERNED_BY`` and
+    ``NOT_GOVERNED`` tables and holds both against ``data/hologram_rules.json``;
+    this re-checks the shape of the claim on load, without reading the rules.
     """
     entries = provenance.get("limits", {})
-    silent = sorted(
-        f.name
-        for f in fields(Limits)
-        if not (entry := entries.get(f.name, {})).get("enforced_by")
-        and not entry.get("reason")
-    )
+    silent, malformed = [], []
+    for f in fields(Limits):
+        entry = entries.get(f.name, {})
+        governed = entry.get("governed_by")
+        if bool(governed) == bool(entry.get("ungoverned")):
+            silent.append(f.name)
+        elif governed is not None and (
+            set(governed) != {"rule", "effect"} or governed["effect"] not in RULE_EFFECTS
+        ):
+            malformed.append(f"{f.name}: {governed}")
     if silent:
-        raise RegistryError(f"registry limits do not say what enforces them: {silent}")
+        raise RegistryError(
+            "registry limits must each name the rule that governs them or say why none "
+            f"does, and never both: {sorted(silent)}"
+        )
+    if malformed:
+        raise RegistryError(f"registry limits name a governing rule badly: {sorted(malformed)}")
 
 
 def load_registry(path: Path | None = None) -> Registry:
@@ -483,7 +500,7 @@ def load_registry(path: Path | None = None) -> Registry:
     limits = _limits(_require(data, "limits"))
     sources = _limits_sources(_require(data, "limits_sources"), limits)
     provenance = dict(_require(data, "provenance"))
-    _enforcement(provenance, limits)
+    _governance(provenance, limits)
     return Registry(
         provenance=provenance,
         buildables=_buildables(_require(data, "buildables")),

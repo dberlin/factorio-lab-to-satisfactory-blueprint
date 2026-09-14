@@ -166,7 +166,7 @@ def test_a_hologram_that_snaps_finer_carries_its_own_grid():
     assert reg.buildables["Build_ConstructorMk1_C"].grid_snap_cm is None
 
 
-def test_every_limit_names_the_rule_that_enforces_it():
+def test_every_limit_names_the_rule_that_governs_it_or_why_none_does():
     reg = load_registry()
     for key in (
         "belt_bend_radius_cm",
@@ -178,28 +178,71 @@ def test_every_limit_names_the_rule_that_enforces_it():
         "hologram_grid_cm",
     ):
         entry = reg.provenance["limits"][key]
-        assert "enforced_by" in entry, key
-        assert entry["enforced_by"] or entry.get("reason"), key
-    # And every one of them, not just the seven above.
+        assert entry["governed_by"], key
+        assert set(entry["governed_by"]) == {"rule", "effect"}, key
+    # And every one of them, not just the seven above: each is either governed
+    # by a rule or says why nothing governs it, never both and never neither.
     for field in fields(Limits):
         entry = reg.provenance["limits"][field.name]
-        assert entry["enforced_by"] or entry.get("reason"), field.name
+        assert bool(entry["governed_by"]) != bool(entry.get("ungoverned")), field.name
 
 
-def test_every_rule_a_limit_names_exists_and_is_about_that_limit():
-    """An ``enforced_by`` that names no rule would be a claim with nothing behind it."""
+def test_every_rule_a_limit_names_exists_and_states_the_copied_effect():
+    """A ``governed_by`` that names no rule would be a claim with nothing behind it."""
     reg = load_registry()
     rules = load_rules()
     named = {
-        key: entry["enforced_by"]
+        key: entry["governed_by"]
         for key, entry in reg.provenance["limits"].items()
-        if entry["enforced_by"]
+        if entry["governed_by"]
     }
     assert named
-    assert set(named.values()) <= set(rules)
-    assert named["belt_bend_radius_cm"] == "belt.curvature"
-    assert "mBendRadius" in rules[named["belt_bend_radius_cm"]].reads
-    assert "mMaxIncline" in rules[named["belt_max_incline_deg"]].reads
+    assert {g["rule"] for g in named.values()} <= set(rules)
+    # The effect beside a limit is the rule's own, copied at merge time.
+    for key, governed in named.items():
+        assert governed["effect"] == rules[governed["rule"]].effect, key
+    assert named["belt_bend_radius_cm"]["rule"] == "belt.curvature"
+    assert "mBendRadius" in rules[named["belt_bend_radius_cm"]["rule"]].reads
+    assert "mMaxIncline" in rules[named["belt_max_incline_deg"]["rule"]].reads
+
+
+def test_what_the_game_does_with_each_governed_limit():
+    """A limit's governance says which of refuse/clamp/snap/none the rule does.
+
+    ``enforced_by`` used to claim every one of these was turned away, which the
+    rules themselves contradict: a lift's height is clamped into range, the grid
+    and the rotation step are snapped to, and no instruction was seen quantising
+    a lift's height to ``mStepHeight`` at all.
+    """
+    governed = {
+        key: entry["governed_by"]["effect"]
+        for key, entry in load_registry().provenance["limits"].items()
+        if entry["governed_by"]
+    }
+    assert governed == {
+        "belt_max_spline_cm": "refuse",
+        "belt_bend_radius_cm": "refuse",
+        "belt_max_incline_deg": "refuse",
+        "lift_step_cm": "none",
+        "lift_min_cm": "clamp",
+        "lift_max_cm": "clamp",
+        "lift_min_vertical_cm": "clamp",
+        "pipe_max_spline_cm": "refuse",
+        "pipe_min_bend_radius_cm": "refuse",
+        "hologram_grid_cm": "snap",
+        "hologram_rotation_step_deg": "snap",
+    }
+
+
+def test_the_limits_no_rule_governs_say_why():
+    reg = load_registry()
+    ungoverned = {
+        key: entry["ungoverned"]
+        for key, entry in reg.provenance["limits"].items()
+        if not entry["governed_by"]
+    }
+    assert set(ungoverned) == {"pipe_bend_radius_cm", "pipe_bend_radius_2d_cm", "wire_max_cm"}
+    assert all(reason for reason in ungoverned.values())
 
 
 def test_nothing_in_the_registry_comes_from_the_blueprint_corpus():

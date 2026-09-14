@@ -29,6 +29,7 @@
     "0xf4de20 f32=0.0 f64=1.0",
     "0xf6dee8 f32=0.5 f64=7.673846642970894e+21"
    ],
+   "effect": "refuse",
    "evidence": [
     "0xaa529a: mov rcx,qword ptr [rcx+770h]  ; AFGSplineHologram::mSplineComponent @1904",
     "0xaa52d0: call qword ptr [0EEB7C8h]  ; -> ?GetSplineLength@USplineComponent@@QEBAMXZ",
@@ -103,6 +104,7 @@
     "0xf4de10 f32=0.017453292 f64=1.1920931644416004e-07",
     "0xf4de20 f32=0.0 f64=1.0"
    ],
+   "effect": "refuse",
    "evidence": [
     "0xaa556d: cmp dword ptr [rcx+780h],2",
     "0xaa5676: mov rax,qword ptr [rsi+778h]  ; AFGSplineHologram::mSplineData @1912",
@@ -158,6 +160,7 @@
     "0xf17f20 f32=1.0469338e-38 f64=7.566025234801022e-307",
     "0xf17f98 f32=1.7582386e+22 f64=1.9173949402568042e-09"
    ],
+   "effect": "refuse",
    "evidence": [
     "0xaa587d: cmp dword ptr [rcx+780h],2",
     "0xaa589b: movss xmm7,dword ptr [rsi+8A0h]  ; AFGConveyorBeltHologram::mMeshLength @2208",
@@ -222,6 +225,7 @@
     "0xee8888 f32=5.224246e-38 f64=1.28939187e-316",
     "0xeeb7c8 f32=5.187628e-38 f64=1.28616424e-316"
    ],
+   "effect": "refuse",
    "evidence": [
     "0xaa4e5a: cmp qword ptr [rcx+828h],0  ; AFGConveyorBeltHologram::mUpgradedConveyorBelt @2088",
     "0xaa4e65: jne 0000000000AA5272h",
@@ -276,6 +280,7 @@
    "constants": [
     "0xee7968 f32=5.259092e-38 f64=1.2924634e-316"
    ],
+   "effect": "none",
    "evidence": [
     "0xaa16c2: call 000000000013AB60h  ; -> AAIController::OnGameplayTaskActivated",
     "0xaa1714: mov rax,qword ptr [rbx+1C0h]  ; AActor::RootComponent @448",
@@ -312,6 +317,7 @@
     "0x132f050 f32=-3.2865942e-38 f64=3.1929320975e-314",
     "0xee78e0 f32=5.256913e-38 f64=1.2922713e-316"
    ],
+   "effect": "snap",
    "evidence": [
     "0xa8b96f: mov rax,qword ptr [rcx+810h]  ; AFGConveyorBeltHologram::mSnappedWallPassthrough @2064",
     "0xa8b994: cmp dword ptr [rcx+820h],edx  ; AFGConveyorBeltHologram::mSnappedWallPassthroughConnectionIndex @2080",
@@ -350,6 +356,7 @@
     "0xf17f98 f32=1.7582386e+22 f64=1.9173949402568042e-09",
     "0xf6dee8 f32=0.5 f64=7.673846642970894e+21"
    ],
+   "effect": "refuse",
    "evidence": [
     "0xae98ad: cmp dword ptr [rcx+780h],2",
     "0xae98cb: movss xmm7,dword ptr [rsi+8A0h]  ; AFGPipelineHologram::mMeshLength @2208",
@@ -394,6 +401,7 @@
     "0xf6dee8 f32=0.5 f64=7.673846642970894e+21",
     "0xf80674 f32=2.0 f64=1099511889920.0"
    ],
+   "effect": "refuse",
    "evidence": [
     "0xae939a: mov rcx,qword ptr [rcx+770h]  ; AFGSplineHologram::mSplineComponent @1904",
     "0xae93d0: call qword ptr [0EEB7C8h]  ; -> ?GetSplineLength@USplineComponent@@QEBAMXZ",
@@ -468,6 +476,7 @@
     "0xf17f20 f32=1.0469338e-38 f64=7.566025234801022e-307",
     "0xf17f98 f32=1.7582386e+22 f64=1.9173949402568042e-09"
    ],
+   "effect": "refuse",
    "evidence": [
     "0xae9a80: cmp qword ptr [rcx+7E8h],0  ; AFGPipelineHologram::mUpgradedPipeline @2024",
     "0xae9a8b: jne 0000000000AE9EE1h",
@@ -519,6 +528,7 @@
    "constants": [
     "0xee8610 f32=5.226898e-38 f64=1.28962566e-316"
    ],
+   "effect": "refuse",
    "evidence": [
     "0xae9698: lea rsi,[rcx+7D8h]  ; AFGPipelineHologram::mSnappedConnectionComponents @2008",
     "0xae969f: mov rax,qword ptr [rsi]",
@@ -596,6 +606,7 @@
     "0xf6dee8 f32=0.5 f64=7.673846642970894e+21",
     "0xfd7950 f32=-0.0 f64=-1.0609978955e-314"
    ],
+   "effect": "clamp",
    "evidence": [
     "0xaa46b8: movss xmm11,dword ptr [rcx+8ECh]  ; AFGConveyorLiftHologram::mMinimumHeightWithVerticalConnection @2284",
     "0xaa46cf: movss xmm12,dword ptr [rcx+8E4h]  ; AFGConveyorLiftHologram::mMinimumHeight @2276",
@@ -656,6 +667,7 @@
     "0xf6dee8 f32=0.5 f64=7.673846642970894e+21",
     "0xfd7950 f32=-0.0 f64=-1.0609978955e-314"
    ],
+   "effect": "none",
    "evidence": [
     "0xaa46e8: movss xmm7,dword ptr [rcx+8E0h]  ; AFGConveyorLiftHologram::mStepHeight @2272",
     "0xaa480f: movss xmm1,dword ptr [rbx+8E0h]  ; AFGConveyorLiftHologram::mStepHeight @2272",
@@ -699,6 +711,7 @@
     "0xee85e0 f32=5.2210766e-38 f64=1.28911253e-316",
     "0xee8888 f32=5.224246e-38 f64=1.28939187e-316"
    ],
+   "effect": "refuse",
    "evidence": [
     "0xa68189: call 0000000000AB8790h  ; -> AFGHologram::CheckValidPlacement",
     "0xa681c0: cmp dword ptr [rbx+984h],0  ; AFGConveyorLiftHologram::mActivePointIdx @2436",
@@ -745,6 +758,7 @@
     "0xf17f20 f32=1.0469338e-38 f64=7.566025234801022e-307",
     "0xf17f98 f32=1.7582386e+22 f64=1.9173949402568042e-09"
    ],
+   "effect": "none",
    "evidence": [
     "0xaa141d: movaps xmm0,xmmword ptr [132F930h]  ; const 0x132f930 f32=0.0 f64=-5.0",
     "0xaa1433: movsd xmm0,qword ptr [132F8C0h]  ; const 0x132f8c0 f32=0.0 f64=-5.0",
@@ -783,6 +797,7 @@
     "0xee8888 f32=5.224246e-38 f64=1.28939187e-316",
     "0xf6dee8 f32=0.5 f64=7.673846642970894e+21"
    ],
+   "effect": "snap",
    "evidence": [
     "0xa8f41d: movss xmm1,dword ptr [rsi+4ECh]  ; AFGBuildableHologram::mGridSnapSize @1260",
     "0xa8f428: mov rcx,rdi",
@@ -805,6 +820,7 @@
    "class": "AFGBuildableHologram",
    "comparison": "GetRotationStep is a leaf -- 0xa7c050 has no RUNTIME_FUNCTION, the neighbouring .pdata entries being 0xa7bfc0..0xa7c04a and 0xa7c0d0..0xa7c140 -- so its 77 bytes come from the PDB's procedure record rather than from .pdata, and all four returns decode. The ladder in order: `cmp byte ptr [rcx+6A0h], 0; jne 0xa7c097` on mDidSnapDuetoClearance (0xa7c050/0xa7c057) and the same test on the unnamed byte at [rcx+5D8h] (0xa7c059/0xa7c060) both land on `mov eax, 5Ah; ret` at 0xa7c097/0xa7c09c -- 90. Otherwise `cmp qword ptr [rcx+6B8h], 0; je 0xa7c07b` on mSnappedAttachmentPoint (0xa7c062/0xa7c06a) and `cmp byte ptr [rcx+378h], 0; je 0xa7c07b` on mSnapToGuideLines (0xa7c06c/0xa7c073); with both set, `mov eax, 0Ah; ret` at 0xa7c075/0xa7c07a -- 10. At 0xa7c07b, `cmp qword ptr [rcx+5E0h], 0; je 0xa7c094` on mSnappedBuilding (0xa7c07b/0xa7c083) reaches `xor eax, eax; ret` at 0xa7c094/0xa7c096 -- 0 -- when it is null; when it is not, `cmp byte ptr [rcx+4E8h], 0; je 0xa7c097` on mUseGradualFoundationRotations (0xa7c085/0xa7c08c) gives `mov eax, 2Dh; ret` at 0xa7c08e/0xa7c093 -- 45 -- or the 90 again.",
    "constants": [],
+   "effect": "snap",
    "evidence": [
     "0xa7c050: cmp byte ptr [rcx+6A0h],0  ; AFGBuildableHologram::mDidSnapDuetoClearance @1696",
     "0xa7c057: jne short 0000000000A7C097h",
@@ -905,6 +921,7 @@
     "0xf454d0 f32=55.0569 f64=5.6217103064924394e+175",
     "0xf45520 f32=4.6225697e+30 f64=2.172570005695177e-153"
    ],
+   "effect": "refuse",
    "evidence": [
     "0xab8012: call 0000000000B07A90h  ; -> FHologramHelpers::CreateSphereFromCombinedClearanceData",
     "0xab8242: call 0000000000245780h  ; -> ?Z_Construct_UClass_UFGClearanceInterface_NoRegister@@YAPEAVUClass@@XZ",

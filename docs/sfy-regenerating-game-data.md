@@ -182,8 +182,13 @@ uv run python scripts/sfy_registry.py
 Joins steps 1–5 into the file `flab2bp.sfy.registry.load_registry` reads. It
 prints where every limit came from, any it could not fill, how each port
 direction was resolved, and how many asset paths it kept. Every limit also gets
-`provenance.limits[key].enforced_by` — the hologram rule that turns it into a
-refusal, or `null` with the reason nothing does.
+`provenance.limits[key].governed_by` — `{"rule": <rule id>, "effect": <effect>}`
+for the hologram rule that governs it, with the effect copied from that rule, or
+`null` and an `ungoverned` sentence saying why no rule does. **Only the effect
+`refuse` turns a placement away**: `clamp` and `snap` move the hologram instead,
+and `none` says nothing was seen enforcing the number at all, so a validator that
+treats any of the three as a bound refuses builds the game accepts. The merge
+refuses to write when a limit's copied effect is not the one its rule states.
 
 It refuses to write when the sources contradict each other: a header against the
 binary, a port whose `direction_source` is not one of the four game sources, an

@@ -22,9 +22,9 @@ validator MSVC cut into pieces is read whole rather than to the end of its
 entry chunk.
 
 **What is written by hand and what is not.** :data:`INTERPRETATIONS` carries a
-status, a transcription of the comparison and what it means for a placer;
-:data:`EVIDENCE` carries the addresses those sentences were read at. Everything
-else is the tool's. The status obeys one rule:
+status, the effect, a transcription of the comparison and what it means for a
+placer; :data:`EVIDENCE` carries the addresses those sentences were read at.
+Everything else is the tool's. The status obeys one rule:
 
 ``extracted``      the comparison's operands and its branch -- or, for a rule
                    that answers with a number, the returned value -- are in
@@ -38,6 +38,11 @@ else is the tool's. The status obeys one rule:
 A number from a header comment is not evidence and a number from the corpus is
 not evidence. If a comparison cannot be read, the rule says ``partial`` and the
 placer treats the bound as unknown.
+
+The effect obeys a second rule: it is what the read instructions *do* --
+``refuse``, ``clamp``, ``snap`` -- and ``none`` when they do none of the three.
+``none`` cannot sit beside ``extracted``, and a rule is never downgraded to make
+an effect fit.
 """
 
 from __future__ import annotations
@@ -51,6 +56,7 @@ from pathlib import Path
 from typing import Any
 
 from flab2bp.sfy import docs
+from flab2bp.sfy.rules import RULE_EFFECTS
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "src" / "flab2bp" / "sfy" / "data"
@@ -252,12 +258,29 @@ EVIDENCE: dict[str, tuple[str, ...]] = {
     ),
 }
 
-# status, comparison, interpretation. The comparison is a transcription of the
-# evidence above and nothing else; the interpretation is what a placer should do
-# about it. Neither is ever filled in from a header comment or from the corpus.
-INTERPRETATIONS: dict[str, tuple[str, str, str]] = {
+# status, effect, comparison, interpretation. The comparison is a transcription
+# of the evidence above and nothing else; the interpretation is what a placer
+# should do about it. Neither is ever filled in from a header comment or from the
+# corpus.
+#
+# ``effect`` is what the instructions show the hologram *doing* with the value,
+# and it is the field a validator reads before it refuses anything:
+#
+# ``refuse``  the branch disqualifies the hologram (it adds a construct
+#             disqualifier, or returns the false that makes a caller add one)
+# ``clamp``   the value is forced into range and the placement goes ahead
+# ``snap``    the value is quantised or aligned and the placement goes ahead
+# ``none``    nothing in the instructions that were read enforces it at all
+#
+# ``none`` is only allowed beside a ``partial`` or ``unextractable`` status, and
+# :func:`flab2bp.sfy.rules.load_rules` refuses the pair: a branch that was read
+# says what it does. Where the instructions hand the value to a callee that was
+# not followed -- ``FHologramHelpers::SnapToFloor`` -- the effect is what the
+# call does with it, not what the callee's arithmetic turns out to be.
+INTERPRETATIONS: dict[str, tuple[str, str, str, str]] = {
     "belt.curvature": (
         "extracted",
+        "refuse",
         "n = FMath::RoundToInt(GetSplineLength() * 0.02) samples "
         "(0xaa52dd mulss 0.02, 0xaa52ea addss xmm2,xmm2, 0xaa52ee addss 0.5, "
         "0xaa52f6 cvtss2si, 0xaa52fa sar esi,1 -- UE's RoundToInt on SSE); "
@@ -287,6 +310,7 @@ INTERPRETATIONS: dict[str, tuple[str, str, str]] = {
     ),
     "belt.incline": (
         "extracted",
+        "refuse",
         "For i in [1, mSplineData.Num()): d = mSplineData[i].Location - "
         "mSplineData[i-1].Location (0xaa56fc/0xaa5709/0xaa5711 subsd on the "
         "three doubles), u = d.GetSafeNormal() (0xaa5744 == 1.0, 0xaa576a < "
@@ -308,6 +332,7 @@ INTERPRETATIONS: dict[str, tuple[str, str, str]] = {
     ),
     "belt.min_length": (
         "extracted",
+        "refuse",
         "total = sum over i in [1, mSplineData.Num()) of "
         "|mSplineData[i].Location - mSplineData[i-1].Location| "
         "(0xaa59ae..0xaa59d0 squared deltas, 0xaa59e0 sqrtsd, 0xaa59e4 addsd "
@@ -325,6 +350,7 @@ INTERPRETATIONS: dict[str, tuple[str, str, str]] = {
     ),
     "belt.max_length": (
         "extracted",
+        "refuse",
         "ValidateConveyorBelt is three .pdata chunks (0xaa4e50 +27, 0xaa4e6b "
         "+370, 0xaa4fdd +668) stitched back together through their chained "
         "UNWIND_INFO. An upgrade skips the validator outright: `cmp qword ptr "
@@ -356,6 +382,7 @@ INTERPRETATIONS: dict[str, tuple[str, str, str]] = {
     ),
     "belt.clearance": (
         "partial",
+        "none",
         "UpdateClearanceData empties mClearanceData and hands the spline "
         "component, mSplineData, the root component's transform and "
         "mMaxSplineLength to AFGBuildableConveyorBelt::CreateClearanceData "
@@ -368,6 +395,7 @@ INTERPRETATIONS: dict[str, tuple[str, str, str]] = {
     ),
     "belt.snap_directions": (
         "extracted",
+        "snap",
         "When snapped to a wall passthrough, `cmp byte ptr [rsi+258h], 3; je` "
         "at 0xa8b9d1/0xa8b9d8 leaves both ends alone if the other connection's "
         "mDirection is FCD_SNAP_ONLY (3); otherwise "
@@ -384,6 +412,7 @@ INTERPRETATIONS: dict[str, tuple[str, str, str]] = {
     ),
     "pipe.min_length": (
         "extracted",
+        "refuse",
         "The same shape as the belt's, with a different factor: total = sum of "
         "|mSplineData[i].Location - mSplineData[i-1].Location| (0xae9a10 "
         "sqrtsd, 0xae9a14 addsd); `comiss xmm8, xmm7; ja` at "
@@ -397,6 +426,7 @@ INTERPRETATIONS: dict[str, tuple[str, str, str]] = {
     ),
     "pipe.curvature": (
         "extracted",
+        "refuse",
         "n = FMath::RoundToInt(GetSplineLength() * (2.0 / mMinBendRadius)) "
         "(0xae93d6 movss 2.0, 0xae93e0 divss by mMinBendRadius, 0xae93ef mulss "
         "by the length, then the RoundToInt sequence at 0xae93f4..0xae9404); "
@@ -420,6 +450,7 @@ INTERPRETATIONS: dict[str, tuple[str, str, str]] = {
     ),
     "pipe.max_length": (
         "extracted",
+        "refuse",
         "The same shape as belt.max_length, in a function of five chained "
         ".pdata chunks (0xae9a70 +33, 0xae9a91 +17, 0xae9aa2 +244, 0xae9b96 "
         "+403, 0xae9d29 +450). An upgrade skips it: `cmp qword ptr [rcx+7E8h], "
@@ -447,6 +478,7 @@ INTERPRETATIONS: dict[str, tuple[str, str, str]] = {
     ),
     "pipe.fluid_requirements": (
         "extracted",
+        "refuse",
         "Four chained .pdata chunks (0xae9690 +155, 0xae972b +333, 0xae9878 "
         "+20, 0xae988c +10). The preconditions are all `return true`: both "
         "mSnappedConnectionComponents must exist (0xae969f/0xae96a5 and "
@@ -479,6 +511,7 @@ INTERPRETATIONS: dict[str, tuple[str, str, str]] = {
     ),
     "lift.height_range": (
         "extracted",
+        "clamp",
         "UpdateTopTransform saves mMinimumHeightWithVerticalConnection and "
         "mMinimumHeight on entry (0xaa46b8/0xaa46cf) and restores them on exit "
         "(0xaa4a6f/0xaa4a7d). The height it then writes is clamped, not "
@@ -502,6 +535,7 @@ INTERPRETATIONS: dict[str, tuple[str, str, str]] = {
     ),
     "lift.step": (
         "partial",
+        "none",
         "mStepHeight is read once, at 0xaa46e8, and every use of it in "
         "UpdateTopTransform is a comparison against the wanted height "
         "(0xaa48ca ucomiss, 0xaa48db and 0xaa4965 comiss) choosing the upward "
@@ -524,6 +558,7 @@ INTERPRETATIONS: dict[str, tuple[str, str, str]] = {
     ),
     "lift.placement": (
         "extracted",
+        "refuse",
         "After the base AFGHologram::CheckValidPlacement (0xa68189), and only "
         "once mActivePointIdx > 0 and no upgrade is in progress "
         "(0xa681c0/0xa681cd), each of the two mSnappedConnectionComponents is "
@@ -540,6 +575,7 @@ INTERPRETATIONS: dict[str, tuple[str, str, str]] = {
     ),
     "lift.clearance": (
         "partial",
+        "none",
         "UpdateClearance builds one FFGClearanceData from two -5.0 constants "
         "(0xaa141d/0xaa1433, the box's near corner) and the lift's own "
         "mMeshHeight (0xaa150d), with mSnappedPassthroughs deciding which end "
@@ -552,6 +588,7 @@ INTERPRETATIONS: dict[str, tuple[str, str, str]] = {
     ),
     "buildable.grid_snap": (
         "partial",
+        "snap",
         "SnapToFloor loads mGridSnapSize (0xa8f41d) and passes it as the float "
         "argument of FHologramHelpers::SnapToFloor (0xa8f42b); the rounding "
         "happens in that callee. SnapToWall and SnapToFoundationSide read the "
@@ -568,6 +605,7 @@ INTERPRETATIONS: dict[str, tuple[str, str, str]] = {
     ),
     "buildable.rotation_step": (
         "extracted",
+        "snap",
         "GetRotationStep is a leaf -- 0xa7c050 has no RUNTIME_FUNCTION, the "
         "neighbouring .pdata entries being 0xa7bfc0..0xa7c04a and "
         "0xa7c0d0..0xa7c140 -- so its 77 bytes come from the PDB's procedure "
@@ -610,6 +648,7 @@ INTERPRETATIONS: dict[str, tuple[str, str, str]] = {
     ),
     "buildable.clearance": (
         "partial",
+        "refuse",
         "CheckClearance builds a sphere over the combined clearance data "
         "(0xab8012 FHologramHelpers::CreateSphereFromCombinedClearanceData), "
         "sweeps it, asks each candidate for its own boxes through the "
@@ -682,7 +721,14 @@ def _line(instruction: dict[str, Any]) -> str:
 def _rule(rule_id: str, function: dict[str, Any]) -> dict[str, Any]:
     """Turn one disassembled function into the rule record, evidence and all."""
     cls, name, header = TARGETS[rule_id]
-    status, comparison, interpretation = INTERPRETATIONS[rule_id]
+    status, effect, comparison, interpretation = INTERPRETATIONS[rule_id]
+    if effect not in RULE_EFFECTS:
+        raise SystemExit(f"{rule_id}: {effect!r} is not one of {RULE_EFFECTS}")
+    if effect == "none" and status == "extracted":
+        raise SystemExit(
+            f"{rule_id}: an extracted rule cannot have the effect 'none' -- either the "
+            "branch that was read does something, or the status is not 'extracted'"
+        )
     by_rva = {i["rva"]: i for i in function["instructions"]}
     missing = [rva for rva in EVIDENCE[rule_id] if rva not in by_rva]
     if missing:
@@ -696,6 +742,7 @@ def _rule(rule_id: str, function: dict[str, Any]) -> dict[str, Any]:
         "function": name,
         "rva": function["rva"],
         "status": status,
+        "effect": effect,
         "reads": sorted({i["member"]["name"] for i in function["instructions"] if "member" in i}),
         "constants": sorted(
             {
@@ -741,9 +788,12 @@ def main(out: Path | None = None) -> int:
             found = [f for f in _disasm(dll, pdb, symbol, scratch) if f["symbol"] == symbol]
             if len(found) != 1:
                 raise SystemExit(f"{rule_id}: {symbol} matched {len(found)} symbols, wanted one")
-            rules.append(_rule(rule_id, found[0]))
-            status = INTERPRETATIONS[rule_id][0]
-            print(f"{rule_id:<26} {symbol} @ {found[0]['rva']}  {status}")
+            rule = _rule(rule_id, found[0])
+            rules.append(rule)
+            print(
+                f"{rule_id:<26} {symbol} @ {found[0]['rva']}  "
+                f"{rule['status']}, {rule['effect']}"
+            )
     finally:
         scratch.unlink(missing_ok=True)
 

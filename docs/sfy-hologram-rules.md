@@ -192,6 +192,46 @@ default for that case, and re-sourcing that limit is a separate change.
 `FGFactoryBuildingHologram.h` overrides `CheckValidPlacement` and
 `CheckValidFloor` for foundations and walls, which the placer does not use yet.
 
+## What each rule does with the number: `effect`
+
+A rule's `status` says how well it was read; its `effect` says what the hologram
+*does*, and that is the field a validator has to read before it refuses
+anything. Four values:
+
+| `effect` | what the instructions show | what a placer does |
+| --- | --- | --- |
+| `refuse` | a validation disqualifies the hologram | stay inside the bound, or the build gun says no |
+| `clamp` | the value is forced into range | any value is buildable; the game moves it |
+| `snap` | the value is quantised or aligned | any value is buildable; the game moves it |
+| `none` | nothing in the instructions read enforces it | treat the number as known-good practice, not a bound |
+
+`none` is only allowed beside a `partial` or `unextractable` status —
+`flab2bp.sfy.rules.load_rules` refuses it on an `extracted` rule, because a
+branch that was read says what it does. The shipped seventeen:
+
+| `effect` | rules |
+| --- | --- |
+| `refuse` | `belt.curvature`, `belt.incline`, `belt.min_length`, `belt.max_length`, `pipe.min_length`, `pipe.curvature`, `pipe.max_length`, `pipe.fluid_requirements`, `lift.placement`, `buildable.clearance` |
+| `clamp` | `lift.height_range` |
+| `snap` | `belt.snap_directions`, `buildable.grid_snap`, `buildable.rotation_step` |
+| `none` | `belt.clearance`, `lift.step`, `lift.clearance` |
+
+Two of those deserve their own sentence. `buildable.clearance` is `partial` —
+the box-against-box test is in `AFGHologram::TestClearanceOverlap`, which was
+not read — but what the function that *was* read does with the answer is
+`AddUnique` into `mConstructDisqualifiers`, so the effect is a refusal even
+though the geometry is not known. `buildable.grid_snap` is the mirror image: the
+rounding is in `FHologramHelpers::SnapToFloor` and the extraction only sees the
+member handed to it, so the amount is unknown while the effect — a snap, not a
+refusal — is not.
+
+`registry.json` copies this field: `provenance.limits[key].governed_by` is
+`{"rule": <id>, "effect": <effect>}`, and the merge refuses to write a copy that
+disagrees with the rule. That replaced an `enforced_by` field which claimed the
+grid, the rotation step, the lift heights and the lift step were all *enforced*,
+when the rules behind them clamp, snap, and — for `lift.step` — do nothing that
+has been found.
+
 ## What was extracted, and what was not
 
 `hologram_rules.json` carries seventeen rules; twelve are `extracted` and five

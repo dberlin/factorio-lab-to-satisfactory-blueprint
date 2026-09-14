@@ -6,7 +6,16 @@ that claims to be ``extracted`` has to carry the instructions it was read from,
 and one that could not be read has to say why.
 """
 
-from flab2bp.sfy.rules import REQUIRED_RULE_IDS, load_rules
+import json
+
+import pytest
+
+from flab2bp.sfy.rules import (
+    REQUIRED_RULE_IDS,
+    RULE_EFFECTS,
+    RulesError,
+    load_rules,
+)
 
 
 def test_every_required_rule_is_present_with_a_status_and_evidence():
@@ -19,6 +28,83 @@ def test_every_required_rule_is_present_with_a_status_and_evidence():
             assert r.evidence and r.rva, rule_id
         else:
             assert r.interpretation, rule_id
+
+
+def test_every_rule_says_what_the_hologram_does_with_the_number():
+    """``effect`` is the whole point of a rule: refuse, clamp, snap, or nothing."""
+    assert RULE_EFFECTS == ("refuse", "clamp", "snap", "none")
+    for rule in load_rules().values():
+        assert rule.effect in RULE_EFFECTS, rule.id
+
+
+def test_a_rule_that_was_extracted_cannot_have_no_effect():
+    """``none`` means "no enforcement was found", which contradicts ``extracted``.
+
+    A rule whose comparison and branch were read says what the branch *does*;
+    if it does nothing, the reading is not finished and the status is
+    ``partial``. :func:`load_rules` refuses the combination rather than let a
+    registry claim a limit is governed by a rule that governs nothing.
+    """
+    for rule in load_rules().values():
+        assert not (rule.status == "extracted" and rule.effect == "none"), rule.id
+
+
+def _payload(**overrides):
+    rule = {
+        "id": "belt.curvature",
+        "class": "AFGConveyorBeltHologram",
+        "function": "ValidateCurvature",
+        "rva": "0xaa5280",
+        "status": "extracted",
+        "effect": "refuse",
+        "reads": [],
+        "constants": [],
+        "calls": [],
+        "comparison": "",
+        "interpretation": "",
+        "evidence": [],
+        "header": "Hologram/FGConveyorBeltHologram.h:105",
+    }
+    rule.update(overrides)
+    return {"provenance": {}, "rules": [rule]}
+
+
+def test_load_rules_refuses_an_effect_outside_the_vocabulary(tmp_path):
+    path = tmp_path / "rules.json"
+    path.write_text(json.dumps(_payload(effect="warn")), encoding="utf-8")
+    with pytest.raises(RulesError, match="effect"):
+        load_rules(path)
+
+
+def test_load_rules_refuses_an_extracted_rule_that_enforces_nothing(tmp_path):
+    path = tmp_path / "rules.json"
+    path.write_text(json.dumps(_payload(effect="none")), encoding="utf-8")
+    with pytest.raises(RulesError, match="none"):
+        load_rules(path)
+
+
+def test_the_effects_the_shipped_rules_state():
+    """One assertion per rule, so a regenerated file cannot quietly change one."""
+    effects = {rule_id: rule.effect for rule_id, rule in load_rules().items()}
+    assert effects == {
+        "belt.curvature": "refuse",
+        "belt.incline": "refuse",
+        "belt.min_length": "refuse",
+        "belt.max_length": "refuse",
+        "belt.clearance": "none",
+        "belt.snap_directions": "snap",
+        "pipe.min_length": "refuse",
+        "pipe.curvature": "refuse",
+        "pipe.max_length": "refuse",
+        "pipe.fluid_requirements": "refuse",
+        "lift.height_range": "clamp",
+        "lift.step": "none",
+        "lift.placement": "refuse",
+        "lift.clearance": "none",
+        "buildable.grid_snap": "snap",
+        "buildable.rotation_step": "snap",
+        "buildable.clearance": "refuse",
+    }
 
 
 def test_belt_curvature_rule_reads_the_bend_radius():
