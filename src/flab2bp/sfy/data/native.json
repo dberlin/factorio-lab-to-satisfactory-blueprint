@@ -1,0 +1,321 @@
+{
+  "provenance": {
+    "dll": "FactoryGameEGS-FactoryGame-Win64-Shipping.dll",
+    "pdb": "FactoryGameEGS-FactoryGame-Win64-Shipping.pdb",
+    "pdb_guid": "A2691F7C-B45E-7947-65C6-535DE373BA04",
+    "pdb_age": 1,
+    "dll_sha256": "65fc5a6bde6d44782da387976b144a41a6b94e4fa78ec6e1bc49c3dad2d47513",
+    "tool": "sfy-native 0.1.0"
+  },
+  "classes": {
+    "AFGBuildableHologram": {
+      "size": 1904,
+      "base": "AFGHologram",
+      "chain": [
+        "AFGBuildableHologram",
+        "AFGHologram",
+        "AActor",
+        "UObject",
+        "UObjectBaseUtility",
+        "UObjectBase"
+      ],
+      "ctor_rva": {
+        "AFGBuildableHologram::AFGBuildableHologram": [
+          "0x1d4a00",
+          "0xa5f2a0"
+        ],
+        "AFGHologram::AFGHologram": [
+          "0x2e66c0",
+          "0xaab580"
+        ]
+      },
+      "members": {
+        "mGridSnapSize": {
+          "offset": 1260,
+          "type": "float",
+          "value": 100.0,
+          "set_in": "AFGBuildableHologram::AFGBuildableHologram",
+          "evidence": "mov dword ptr [rbx+4ECh],42C80000h @ 0xa5f2b0"
+        }
+      }
+    },
+    "AFGBuildableWire": {
+      "size": 1672,
+      "base": "AFGBuildable",
+      "chain": [
+        "AFGBuildableWire",
+        "AFGBuildable",
+        "AActor",
+        "UObject",
+        "UObjectBaseUtility",
+        "UObjectBase"
+      ],
+      "ctor_rva": {
+        "AFGBuildable::AFGBuildable": [
+          "0x1aa950",
+          "0x488930"
+        ],
+        "AFGBuildableWire::AFGBuildableWire": [
+          "0x210670",
+          "0x55bf00"
+        ]
+      },
+      "members": {
+        "mMaxLength": {
+          "offset": 1552,
+          "type": "float",
+          "value": 10000.0,
+          "set_in": "AFGBuildableWire::AFGBuildableWire",
+          "evidence": "mov dword ptr [rbx+610h],461C4000h @ 0x55bf1e"
+        }
+      }
+    },
+    "AFGConveyorBeltHologram": {
+      "size": 2224,
+      "base": "AFGSplineHologram",
+      "chain": [
+        "AFGConveyorBeltHologram",
+        "AFGSplineHologram",
+        "AFGBuildableHologram",
+        "AFGHologram",
+        "AActor",
+        "UObject",
+        "UObjectBaseUtility",
+        "UObjectBase"
+      ],
+      "ctor_rva": {
+        "AFGBuildableHologram::AFGBuildableHologram": [
+          "0x1d4a00",
+          "0xa5f2a0"
+        ],
+        "AFGConveyorBeltHologram::AFGConveyorBeltHologram": [
+          "0x259fc0",
+          "0xa5f860"
+        ],
+        "AFGHologram::AFGHologram": [
+          "0x2e66c0",
+          "0xaab580"
+        ],
+        "AFGSplineHologram::AFGSplineHologram": [
+          "0x3cd660",
+          "0xaefc30"
+        ]
+      },
+      "members": {
+        "mBendRadius": {
+          "offset": 2120,
+          "type": "float",
+          "value": 199.0,
+          "set_in": "AFGConveyorBeltHologram::AFGConveyorBeltHologram",
+          "evidence": "mov dword ptr [rbx+848h],43470000h @ 0xa5f940"
+        },
+        "mMaxIncline": {
+          "offset": 2128,
+          "type": "float",
+          "value": 35.0,
+          "set_in": "AFGConveyorBeltHologram::AFGConveyorBeltHologram",
+          "evidence": "mov dword ptr [rbx+850h],420C0000h @ 0xa5f954"
+        },
+        "mMaxSplineLength": {
+          "offset": 2124,
+          "type": "float",
+          "value": 5600.1,
+          "set_in": "AFGConveyorBeltHologram::AFGConveyorBeltHologram",
+          "evidence": "mov dword ptr [rbx+84Ch],45AF00CDh @ 0x25a0af"
+        }
+      }
+    },
+    "AFGConveyorLiftHologram": {
+      "size": 2448,
+      "base": "AFGBuildableHologram",
+      "chain": [
+        "AFGConveyorLiftHologram",
+        "AFGBuildableHologram",
+        "AFGHologram",
+        "AActor",
+        "UObject",
+        "UObjectBaseUtility",
+        "UObjectBase"
+      ],
+      "ctor_rva": {
+        "AFGBuildableHologram::AFGBuildableHologram": [
+          "0x1d4a00",
+          "0xa5f2a0"
+        ],
+        "AFGConveyorLiftHologram::AFGConveyorLiftHologram": [
+          "0x2629a0",
+          "0xa5f9c0"
+        ],
+        "AFGHologram::AFGHologram": [
+          "0x2e66c0",
+          "0xaab580"
+        ]
+      },
+      "members": {
+        "mMaximumHeight": {
+          "offset": 2280,
+          "type": "float",
+          "value": null,
+          "reason": "mMaximumHeight is overwritten with a computed value by AFGConveyorLiftHologram::BeginPlay -- movss dword ptr [rbx+8E8h],xmm1 @ 0xa64f31",
+          "also_set_in": [
+            {
+              "set_in": "AFGConveyorLiftHologram::AFGConveyorLiftHologram",
+              "value": 0.0,
+              "evidence": "xor eax,eax @ 0xa5f9fb ; mov qword ptr [rbx+8E8h],rax @ 0xa5fb12"
+            }
+          ]
+        },
+        "mMeshHeight": {
+          "offset": 2288,
+          "type": "float",
+          "value": null,
+          "reason": "mMeshHeight is overwritten with a computed value by AFGConveyorLiftHologram::BeginPlay -- movss dword ptr [rbx+8F0h],xmm1 @ 0xa64f00",
+          "also_set_in": [
+            {
+              "set_in": "AFGConveyorLiftHologram::AFGConveyorLiftHologram",
+              "value": 0.0,
+              "evidence": "xor eax,eax @ 0xa5f9fb ; mov dword ptr [rbx+8F0h],eax @ 0xa5fb19"
+            }
+          ]
+        },
+        "mMinimumHeight": {
+          "offset": 2276,
+          "type": "float",
+          "value": null,
+          "reason": "mMinimumHeight is overwritten with a computed value by AFGConveyorLiftHologram::BeginPlay -- movss dword ptr [rbx+8E4h],xmm0 @ 0xa64f39",
+          "also_set_in": [
+            {
+              "set_in": "AFGConveyorLiftHologram::AFGConveyorLiftHologram",
+              "value": 0.0,
+              "evidence": "xor eax,eax @ 0xa5f9fb ; mov qword ptr [rbx+8E0h],rax @ 0xa5fb0b"
+            }
+          ]
+        },
+        "mMinimumHeightWithVerticalConnection": {
+          "offset": 2284,
+          "type": "float",
+          "value": null,
+          "reason": "mMinimumHeightWithVerticalConnection is overwritten with a computed value by AFGConveyorLiftHologram::BeginPlay -- movss dword ptr [rbx+8ECh],xmm0 @ 0xa64f1a",
+          "also_set_in": [
+            {
+              "set_in": "AFGConveyorLiftHologram::AFGConveyorLiftHologram",
+              "value": 0.0,
+              "evidence": "xor eax,eax @ 0xa5f9fb ; mov qword ptr [rbx+8E8h],rax @ 0xa5fb12"
+            }
+          ]
+        },
+        "mStepHeight": {
+          "offset": 2272,
+          "type": "float",
+          "value": 100.0,
+          "set_in": "AFGConveyorLiftHologram::BeginPlay",
+          "evidence": "mov dword ptr [rbx+8E0h],42C80000h @ 0xa64f10",
+          "also_set_in": [
+            {
+              "set_in": "AFGConveyorLiftHologram::AFGConveyorLiftHologram",
+              "value": 0.0,
+              "evidence": "xor eax,eax @ 0xa5f9fb ; mov qword ptr [rbx+8E0h],rax @ 0xa5fb0b"
+            }
+          ]
+        }
+      }
+    },
+    "AFGPipelineHologram": {
+      "size": 2224,
+      "base": "AFGSplineHologram",
+      "chain": [
+        "AFGPipelineHologram",
+        "AFGSplineHologram",
+        "AFGBuildableHologram",
+        "AFGHologram",
+        "AActor",
+        "UObject",
+        "UObjectBaseUtility",
+        "UObjectBase"
+      ],
+      "ctor_rva": {
+        "AFGBuildableHologram::AFGBuildableHologram": [
+          "0x1d4a00",
+          "0xa5f2a0"
+        ],
+        "AFGHologram::AFGHologram": [
+          "0x2e66c0",
+          "0xaab580"
+        ],
+        "AFGPipelineHologram::AFGPipelineHologram": [
+          "0x3550c0",
+          "0xaac300"
+        ],
+        "AFGSplineHologram::AFGSplineHologram": [
+          "0x3cd660",
+          "0xaefc30"
+        ]
+      },
+      "members": {
+        "mBendRadius": {
+          "offset": 2048,
+          "type": "float",
+          "value": 199.0,
+          "set_in": "AFGPipelineHologram::AFGPipelineHologram",
+          "evidence": "mov dword ptr [rbx+800h],43470000h @ 0xaac409"
+        },
+        "mBendRadius2D": {
+          "offset": 2052,
+          "type": "float",
+          "value": 199.0,
+          "set_in": "AFGPipelineHologram::AFGPipelineHologram",
+          "evidence": "mov dword ptr [rbx+804h],43470000h @ 0x3551b6"
+        },
+        "mMaxSplineLength": {
+          "offset": 2060,
+          "type": "float",
+          "value": 5600.1,
+          "set_in": "AFGPipelineHologram::AFGPipelineHologram",
+          "evidence": "mov dword ptr [rbx+80Ch],45AF00CDh @ 0x3551ca"
+        },
+        "mMinBendRadius": {
+          "offset": 2056,
+          "type": "float",
+          "value": 75.0,
+          "set_in": "AFGPipelineHologram::AFGPipelineHologram",
+          "evidence": "mov dword ptr [rbx+808h],42960000h @ 0x3551c0"
+        }
+      }
+    },
+    "AFGWireHologram": {
+      "size": 2064,
+      "base": "AFGBuildableHologram",
+      "chain": [
+        "AFGWireHologram",
+        "AFGBuildableHologram",
+        "AFGHologram",
+        "AActor",
+        "UObject",
+        "UObjectBaseUtility",
+        "UObjectBase"
+      ],
+      "ctor_rva": {
+        "AFGBuildableHologram::AFGBuildableHologram": [
+          "0x1d4a00",
+          "0xa5f2a0"
+        ],
+        "AFGHologram::AFGHologram": [
+          "0x2e66c0",
+          "0xaab580"
+        ],
+        "AFGWireHologram::AFGWireHologram": [
+          "0x41f250",
+          "0xaf0a60"
+        ]
+      },
+      "members": {
+        "mMaxLength": {
+          "offset": 1904,
+          "type": "float",
+          "value": null,
+          "reason": "mMaxLength is overwritten with a computed value by AFGWireHologram::BeginPlay -- mov dword ptr [rbx+770h],eax @ 0xaf5e14"
+        }
+      }
+    }
+  }
+}
