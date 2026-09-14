@@ -42,6 +42,14 @@ def children(bp: Blueprint, actor_path: str) -> tuple[tuple[ObjectHeader, Object
 def spline_points(d: ObjectData) -> tuple[tuple[Vector, Vector, Vector], ...]:
     """``mSplineData`` as (location, arrive tangent, leave tangent) triples.
 
+    The locations are in the spline actor's own frame, not the world's: put them
+    through the actor's transform before comparing them with anything else.
+
+    A belt's two connection components name the two ends of this list, measured
+    over every belt-to-machine link in the fixture corpus (106 of 106 agree):
+    ``ConveyorAny0`` is the **first** point and ``ConveyorAny1`` is the **last**.
+    ``tests/sfy/test_port_crosscheck.py`` holds that mapping to the corpus.
+
     Empty for an object that has no spline, which is every object but a
     conveyor belt, a conveyor lift and a pipe, and empty as well for a spline
     whose points are not the three-vector ``SplinePointData`` shape.
