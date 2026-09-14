@@ -17,9 +17,12 @@ the registry that :func:`flab2bp.sfy.registry.load_registry` reads.
 **Every limit in the registry comes from game data, and says what the game does
 with it.** ``provenance.limits[key].governed_by`` names the hologram rule that
 governs it and copies that rule's effect -- ``refuse``, ``clamp``, ``snap``,
-``compute`` or ``none`` -- or is ``null``, with ``ungoverned`` carrying the
-reason no rule does. Only a ``refuse`` turns a placement away: a clamp or a snap
-moves the hologram, and a compute only works a number out.
+``compute`` or ``none`` -- and its status -- ``extracted``, ``partial`` or
+``unextractable`` -- or is ``null``, with ``ungoverned`` carrying the reason no
+rule does. Only a ``refuse`` turns a placement away: a clamp or a snap moves the
+hologram, and a compute only works a number out. A ``partial`` says the rule's
+function was not read to the end, so what it states about the limit is part of
+the account and not all of it.
 
 **Nothing here comes from a blueprint corpus, and nothing from a port's name.**
 A community blueprint can carry clipped geometry, a hacked save or an older game
@@ -40,8 +43,8 @@ game sources, or a limit naming a hologram rule that does not exist.
 
 from __future__ import annotations
 
+import hashlib
 import json
-import subprocess
 from collections.abc import Mapping
 from dataclasses import fields
 from pathlib import Path
@@ -175,10 +178,13 @@ BINARY_NOTES: dict[str, str] = {
 
 # Which hologram rule governs each limit. **Governs, not enforces**: the rule
 # says what the hologram does with the number, and only some of them refuse.
-# ``provenance.limits[key].governed_by`` is ``{"rule": id, "effect": effect}``
-# with the effect copied from the rule itself, so a reader of the registry
-# cannot take a clamp, a snap or a computation for a refusal -- which is what
-# the old ``enforced_by`` invited: it named ``lift.height_range`` (a clamp),
+# ``provenance.limits[key].governed_by`` is
+# ``{"rule": id, "effect": effect, "status": status}`` with both copied from the
+# rule itself, so a reader of the registry cannot take a clamp, a snap or a
+# computation for a refusal, and can see a ``partial`` rule -- one whose function
+# was not read to the end -- without opening the rules file. Taking a clamp for a
+# refusal is what the old ``enforced_by`` invited: it named
+# ``lift.height_range`` (a clamp),
 # ``buildable.grid_snap`` (a snap) and ``buildable.rotation_step`` (which
 # quantises nothing at all: it works a step out and returns it, effect
 # ``compute``) as things that "turn the value away". It also named
@@ -188,9 +194,9 @@ BINARY_NOTES: dict[str, str] = {
 # and it says the game never refuses over it.
 #
 # Every key of :class:`Limits` is in this table or in :data:`NOT_GOVERNED`, and
-# ``_check_rules`` holds the named ids and the copied effects against
-# ``data/hologram_rules.json``, so a limit whose rule was renamed, dropped or
-# re-read fails the merge rather than shipping a stale claim.
+# ``_check_rules`` holds the named ids, the copied effects and the copied
+# statuses against ``data/hologram_rules.json``, so a limit whose rule was
+# renamed, dropped or re-read fails the merge rather than shipping a stale claim.
 GOVERNED_BY: dict[str, str] = {
     "belt_max_spline_cm": "belt.max_length",
     "belt_bend_radius_cm": "belt.curvature",
@@ -339,9 +345,10 @@ def _check_rules(entries: Mapping[str, Any]) -> None:
     """Hold the governance the registry is about to claim to the rules themselves.
 
     Four checks, and nothing else: every governed rule id exists in
-    ``data/hologram_rules.json``; the effect copied beside it is that rule's own
-    effect; no limit is in both :data:`GOVERNED_BY` and :data:`NOT_GOVERNED`; and
-    every :class:`Limits` key is in exactly one of the two.
+    ``data/hologram_rules.json``; the effect *and the status* copied beside it
+    are that rule's own; no limit is in both :data:`GOVERNED_BY` and
+    :data:`NOT_GOVERNED`; and every :class:`Limits` key is in exactly one of the
+    two.
     """
     rules = load_rules()
     unknown = sorted({rule_id for rule_id in GOVERNED_BY.values() if rule_id not in rules})
@@ -351,15 +358,16 @@ def _check_rules(entries: Mapping[str, Any]) -> None:
             "re-run scripts/sfy_native_rules.py"
         )
     mismatched = sorted(
-        f"{key}: {governed['effect']!r} beside {governed['rule']}, "
-        f"which states {rules[governed['rule']].effect!r}"
+        f"{key}: {field} {governed[field]!r} beside {governed['rule']}, "
+        f"which states {getattr(rules[governed['rule']], field)!r}"
         for key, entry in entries.items()
         if (governed := entry.get("governed_by"))
-        and governed["effect"] != rules[governed["rule"]].effect
+        for field in ("effect", "status")
+        if governed[field] != getattr(rules[governed["rule"]], field)
     )
     if mismatched:
         raise SystemExit(
-            "limits claim an effect their rule does not state:\n  " + "\n  ".join(mismatched)
+            "limits claim something their rule does not state:\n  " + "\n  ".join(mismatched)
         )
     both = sorted(set(GOVERNED_BY) & set(NOT_GOVERNED))
     if both:
@@ -440,7 +448,15 @@ def _limits(
         entry["governed_by"] = (
             None
             if rule_id is None
-            else {"rule": rule_id, "effect": None if rule is None else rule.effect}
+            else {
+                "rule": rule_id,
+                "effect": None if rule is None else rule.effect,
+                # The rule's own status, copied for the same reason the effect
+                # is: a `partial` rule was not read to the end, so what it says
+                # about this limit is part of the story, and a reader of the
+                # registry should see that without opening the rules file.
+                "status": None if rule is None else rule.status,
+            }
         )
         if key in NOT_GOVERNED:
             entry["ungoverned"] = NOT_GOVERNED[key]
@@ -654,6 +670,34 @@ def _shipped_direction_counts(buildables: dict[str, Any]) -> dict[str, int]:
     return counts
 
 
+#: The five generated files the merge joins. Their digests go into the
+#: registry's provenance, so the file says which extraction it was built from.
+MERGE_INPUTS = (
+    "docs.json",
+    "assets.json",
+    "native.json",
+    "native_directions.json",
+    "hologram_rules.json",
+)
+
+
+def _inputs_sha256() -> dict[str, str]:
+    """The sha256 of each file the merge reads.
+
+    This replaced a ``merged_at_commit`` that recorded the repository's ``HEAD``.
+    A commit sha is stale the moment it is written -- the registry is committed
+    *in* the commit after the one it named, and any later commit that touches
+    nothing here makes it wrong again -- and it never answered the question
+    somebody reading the file has, which is which extraction produced it. These
+    digests do answer it, and they are stable: re-running the merge over the same
+    inputs writes the same bytes, which is what lets the drift test compare the
+    whole file rather than all of it but one key.
+    """
+    return {
+        name: hashlib.sha256((DATA / name).read_bytes()).hexdigest() for name in MERGE_INPUTS
+    }
+
+
 def main(out: Path | None = None) -> int:
     """Write the registry, by default over the committed ``data/registry.json``.
 
@@ -667,6 +711,7 @@ def main(out: Path | None = None) -> int:
     rules_provenance = json.loads(
         (DATA / "hologram_rules.json").read_text(encoding="utf-8")
     )["provenance"]
+    inputs = _inputs_sha256()
 
     extracted_counts = _check_directions(assets["ports"])
 
@@ -686,9 +731,6 @@ def main(out: Path | None = None) -> int:
     item_paths = _asset_paths(assets["class_paths"], _item_classes(docs), "item descriptor")
     recipe_paths = _asset_paths(assets["class_paths"], set(docs["recipes"]), "recipe")
 
-    sha = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True, check=True
-    ).stdout.strip()
     limits, sources, limit_provenance = _limits(docs, assets, native)
     registry = {
         "provenance": {
@@ -708,7 +750,7 @@ def main(out: Path | None = None) -> int:
                 "resolved_from": direction_counts,
                 "resolved_from_all_extracted": extracted_counts,
             },
-            "merged_at_commit": sha,
+            "inputs_sha256": inputs,
         },
         "buildables": docs["buildables"],
         "recipes": docs["recipes"],

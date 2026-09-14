@@ -239,16 +239,20 @@ asset paths it kept. Each belt and lift mark carries
 `flow: {"entry", "exit", "source"}` — the two port names items enter and leave
 by, from step 4 — and `provenance.conveyor_flow` carries the header line, the
 functions, their RVAs and the instructions behind it. Every limit also gets
-`provenance.limits[key].governed_by` — `{"rule": <rule id>, "effect": <effect>}`
-for the hologram rule that governs it, with the effect copied from that rule, or
-`null` and an `ungoverned` sentence saying why no rule does. **Only the effect
+`provenance.limits[key].governed_by` —
+`{"rule": <rule id>, "effect": <effect>, "status": <status>}` for the hologram
+rule that governs it, with the effect and the status copied from that rule, or
+`null` and an `ungoverned` sentence saying why no rule does. The copied status
+is how a `partial` rule — one whose function the tool could not read to the end —
+is visible on the limit without opening `hologram_rules.json`; `hologram_grid_cm`
+is the one in the shipped file. **Only the effect
 `refuse` turns a placement away**: `clamp` and `snap` move the hologram instead
 and `compute` only works a number out, so a validator that treats any of the
 three as a bound refuses builds the game accepts. A
 rule whose effect is `none` governs nothing and is never named here — the limit
 it was read beside is `ungoverned`, with the rule's id in the reason (this is
 `lift_step_cm` and `lift.step`). The merge refuses to write when a limit's
-copied effect is not the one its rule states.
+copied effect or copied status is not the one its rule states.
 
 It refuses to write when the sources contradict each other: a header against the
 binary, a port whose `direction_source` is not one of the four game sources, an

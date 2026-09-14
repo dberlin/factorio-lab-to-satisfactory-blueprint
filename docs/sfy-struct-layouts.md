@@ -99,10 +99,7 @@ rule from lines 338-342 applied (a `Null` provider means `INDEX_NONE`).
 `EOnlineServices` itself is an engine enum and is in none of the shipped
 headers, but `Null == 0` is pinned by this header twice — a default-constructed
 handle has `ServiceProvider{0}` and is the invalid one (line 281), and the
-legacy branch treats `ServiceProvider == Null` as invalid (line 339). The corpus
-agrees: every one of the 5,751 handles carries provider `6`, which counting from
-`Null = 0` is `Steam`, and only two index values ever appear (0 in 5,634 of
-them, 1 in 117).
+legacy branch treats `ServiceProvider == Null` as invalid (line 339).
 
 ## `FInventoryItem` — inside every `InventoryStack`
 

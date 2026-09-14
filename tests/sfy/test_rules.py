@@ -292,6 +292,31 @@ def test_a_rule_that_stays_partial_says_which_callee_hides_the_comparison():
         assert callee in r.comparison, rule_id
 
 
+def test_the_fourth_partial_rule_is_partial_for_a_different_reason():
+    """``lift.clearance`` names no callee: the function makes no decision at all.
+
+    The other three are ``partial`` because the comparison is inside something
+    they call. ``AFGConveyorLiftHologram::UpdateClearance`` was read to its end
+    and has no comparison in it to hide -- it builds one ``FFGClearanceData``
+    from two constants and the lift's own mesh height and stores it, and the
+    hologram that later tests an overlap is somewhere else. That is why the
+    effect is ``none`` (these instructions turn no placement away) while the
+    status stays ``partial`` (what the game does with the box is unread), and
+    why a validator must not read this rule as "a lift's clearance is not
+    checked".
+    """
+    r = load_rules()["lift.clearance"]
+    assert (r.status, r.effect) == ("partial", "none")
+    assert r.function == "UpdateClearance"
+    assert "no overlap decision is made here" in r.comparison
+    # The box it does build, out of the constants the evidence quotes.
+    assert "mMeshHeight" in r.comparison and "-5" in r.comparison
+    assert not any(
+        callee in r.comparison
+        for callee in ("SnapToFloor", "TestClearanceOverlap", "CreateClearanceData")
+    )
+
+
 def test_every_rules_evidence_is_in_address_order():
     for rule in load_rules().values():
         rvas = [int(line.split(":", 1)[0], 16) for line in rule.evidence]

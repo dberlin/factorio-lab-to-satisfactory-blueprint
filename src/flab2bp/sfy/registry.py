@@ -19,7 +19,7 @@ from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
-from flab2bp.sfy.rules import RULE_EFFECTS
+from flab2bp.sfy.rules import RULE_EFFECTS, RULE_STATUSES
 
 __all__ = [
     "BELT_MAX_SPLINE_CM",
@@ -583,10 +583,13 @@ def _governance(provenance: Mapping[str, Any], limits: Limits) -> None:
 
     A number with no ``governed_by`` and no ``ungoverned`` reason is a value
     somebody found in the game's data, not a limit. ``governed_by`` is
-    ``{"rule": <id>, "effect": <effect>}`` with the effect copied from the rule,
-    and the effect has to be one :mod:`flab2bp.sfy.rules` knows -- a limit that
-    claimed to be ``enforced`` by a rule that only clamps or snaps would tell a
-    validator to refuse a placement the game accepts.
+    ``{"rule": <id>, "effect": <effect>, "status": <status>}`` with both the
+    effect and the status copied from the rule, and each has to be one
+    :mod:`flab2bp.sfy.rules` knows -- a limit that claimed to be ``enforced`` by
+    a rule that only clamps or snaps would tell a validator to refuse a
+    placement the game accepts, and one whose rule is ``partial`` is a bound read
+    out of a function the tool could not finish, which the reader should see
+    without opening the rules file.
     ``scripts/sfy_registry.py`` fills these from its ``GOVERNED_BY`` and
     ``NOT_GOVERNED`` tables and holds both against ``data/hologram_rules.json``;
     this re-checks the shape of the claim on load, without reading the rules.
@@ -599,7 +602,9 @@ def _governance(provenance: Mapping[str, Any], limits: Limits) -> None:
         if bool(governed) == bool(entry.get("ungoverned")):
             silent.append(f.name)
         elif governed is not None and (
-            set(governed) != {"rule", "effect"} or governed["effect"] not in RULE_EFFECTS
+            set(governed) != {"rule", "effect", "status"}
+            or governed["effect"] not in RULE_EFFECTS
+            or governed["status"] not in RULE_STATUSES
         ):
             malformed.append(f"{f.name}: {governed}")
     if silent:
@@ -612,7 +617,12 @@ def _governance(provenance: Mapping[str, Any], limits: Limits) -> None:
 
 
 def load_registry(path: Path | None = None) -> Registry:
-    """Read the full registry from ``data/registry.json`` (written by Task 10).
+    """Read the full registry from ``data/registry.json``.
+
+    That file is generated, never hand-edited: ``scripts/sfy_registry.py`` merges
+    Docs.json, the cooked assets, the shipped binary and the hologram rules into
+    it, and ``docs/sfy-regenerating-game-data.md`` is the order the seven steps
+    behind it run in.
 
     Raises :class:`RegistryError` if the file is missing a top-level section or
     a malformed entry; the caller gets no half-built registry.

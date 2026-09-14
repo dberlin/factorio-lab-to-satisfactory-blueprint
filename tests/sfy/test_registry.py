@@ -4,6 +4,7 @@ These read ``data/registry.json`` as shipped, so they are the acceptance for the
 extractor in ``tools/sfy-extract`` and the merge in ``scripts/sfy_registry.py``.
 """
 
+import hashlib
 import json
 import sys
 from dataclasses import fields
@@ -20,7 +21,7 @@ from flab2bp.sfy.registry import (
     RegistryError,
     load_registry,
 )
-from flab2bp.sfy.rules import load_rules
+from flab2bp.sfy.rules import RULE_STATUSES, load_rules
 
 # The limits that are native C++ constructor immediates: no cooked asset and no
 # header initialiser carries them, so ``tools/sfy-native`` reads them out of the
@@ -181,7 +182,7 @@ def test_every_limit_names_the_rule_that_governs_it_or_why_none_does():
     ):
         entry = reg.provenance["limits"][key]
         assert entry["governed_by"], key
-        assert set(entry["governed_by"]) == {"rule", "effect"}, key
+        assert set(entry["governed_by"]) == {"rule", "effect", "status"}, key
     # And every one of them, not just the seven above: each is either governed
     # by a rule or says why nothing governs it, never both and never neither.
     for field in fields(Limits):
@@ -200,9 +201,11 @@ def test_every_rule_a_limit_names_exists_and_states_the_copied_effect():
     }
     assert named
     assert {g["rule"] for g in named.values()} <= set(rules)
-    # The effect beside a limit is the rule's own, copied at merge time.
+    # The effect and the status beside a limit are the rule's own, copied at
+    # merge time; the merge refuses to write when either has drifted.
     for key, governed in named.items():
         assert governed["effect"] == rules[governed["rule"]].effect, key
+        assert governed["status"] == rules[governed["rule"]].status, key
     assert named["belt_bend_radius_cm"]["rule"] == "belt.curvature"
     assert "mBendRadius" in rules[named["belt_bend_radius_cm"]["rule"]].reads
     assert "mMaxIncline" in rules[named["belt_max_incline_deg"]["rule"]].reads
@@ -234,6 +237,27 @@ def test_what_the_game_does_with_each_governed_limit():
         "hologram_grid_cm": "snap",
         "hologram_rotation_step_deg": "compute",
     }
+
+
+def test_a_limit_whose_rule_was_not_read_in_full_shows_it_without_the_rules_file():
+    """``governed_by.status`` is the rule's own, so a ``partial`` is visible here.
+
+    ``hologram_grid_cm`` is the one in the shipped registry: it is governed by
+    ``buildable.grid_snap``, which is ``partial`` -- the snap the hologram does
+    was read, and not every path through the function was. A reader who saw only
+    the ``snap`` effect would take the rule for a complete account of it.
+    """
+    rules = load_rules()
+    governed = {
+        key: entry["governed_by"]
+        for key, entry in load_registry().provenance["limits"].items()
+        if entry["governed_by"]
+    }
+    assert governed["hologram_grid_cm"]["status"] == "partial"
+    assert governed["hologram_grid_cm"]["rule"] == "buildable.grid_snap"
+    assert {g["status"] for g in governed.values()} <= set(RULE_STATUSES)
+    for key, entry in governed.items():
+        assert entry["status"] == rules[entry["rule"]].status, key
 
 
 def test_the_limits_no_rule_governs_say_why():
@@ -680,10 +704,14 @@ def test_a_rotated_clearance_box_keeps_its_rotation():
 def test_the_committed_registry_is_what_the_merge_produces(tmp_path, capsys):
     """Re-run the merge and diff it, so registry.json can never drift from its inputs.
 
-    Everything but ``merged_at_commit`` has to come out identical: if
-    ``docs.json``, ``assets.json``, ``native.json`` or ``hologram_rules.json``
-    has moved since the registry was written, or the merge itself has, this is
-    where it shows up rather than in whatever consumes the registry next.
+    **Every** key has to come out identical, this file included: if
+    ``docs.json``, ``assets.json``, ``native.json``, ``native_directions.json``
+    or ``hologram_rules.json`` has moved since the registry was written, or the
+    merge itself has, this is where it shows up rather than in whatever consumes
+    the registry next. Nothing is popped before the diff -- the provenance used
+    to carry the repository's ``HEAD``, which no re-run could reproduce, and it
+    now carries the sha256 of each input, which every re-run over the same
+    extraction does.
     """
     sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
     import sfy_registry
@@ -693,9 +721,19 @@ def test_the_committed_registry_is_what_the_merge_produces(tmp_path, capsys):
     capsys.readouterr()
     fresh = json.loads(out.read_text())
     committed = json.loads((Path(docs.__file__).parent / "data" / "registry.json").read_text())
-    for payload in (fresh, committed):
-        payload["provenance"].pop("merged_at_commit")
     assert fresh == committed
+
+
+def test_the_registry_says_which_extraction_it_was_merged_from():
+    """``provenance.inputs_sha256`` is the digest of each file the merge read."""
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+    import sfy_registry
+
+    data = Path(docs.__file__).parent / "data"
+    committed = json.loads((data / "registry.json").read_text())["provenance"]["inputs_sha256"]
+    assert set(committed) == set(sfy_registry.MERGE_INPUTS)
+    for name, digest in committed.items():
+        assert digest == hashlib.sha256((data / name).read_bytes()).hexdigest(), name
 
 
 def test_boxes_the_game_ignores_when_snapping_are_marked():

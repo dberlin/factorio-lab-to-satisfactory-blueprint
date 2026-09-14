@@ -35519,11 +35519,19 @@
    "pdb_guid": "A2691F7C-B45E-7947-65C6-535DE373BA04",
    "tool": "sfy-native 0.1.0"
   },
+  "inputs_sha256": {
+   "assets.json": "3213adf7592d6a2032bf2ac51a165bf88c9a7855d60d630ffd00bd4ffcdaba4a",
+   "docs.json": "c895b1a2956e891c215dceb043ea996070c20061fd3c6b2e472a171e1ae4042b",
+   "hologram_rules.json": "fef6a71a9bf8dabe061d1c1888663d225165a4b8bd055aa2a40e974958f463d5",
+   "native.json": "c9431be69482068012a287a9fd6b40b082b6e141e7defc0a0e5d912c89a2b346",
+   "native_directions.json": "4c6857ad39ce0b15fae789fabea4d6ff0e917e157d9eeb57a55ccd72d62e295c"
+  },
   "limits": {
    "belt_bend_radius_cm": {
     "governed_by": {
      "effect": "refuse",
-     "rule": "belt.curvature"
+     "rule": "belt.curvature",
+     "status": "extracted"
     },
     "is_a_proven_minimum": false,
     "note": "AFGConveyorBeltHologram::mBendRadius -- the radius the hologram lays its own arcs on when it auto-routes a belt. It is NOT the legality floor: ValidateCurvature rejects a horizontal radius below mBendRadius * 1.5 - 15, which is 283.5 cm here, and it only runs that check in the curve build mode. Take the bound from the belt.curvature rule, not from this number."
@@ -35531,25 +35539,29 @@
    "belt_max_incline_deg": {
     "governed_by": {
      "effect": "refuse",
-     "rule": "belt.incline"
+     "rule": "belt.incline",
+     "status": "extracted"
     }
    },
    "belt_max_spline_cm": {
     "governed_by": {
      "effect": "refuse",
-     "rule": "belt.max_length"
+     "rule": "belt.max_length",
+     "status": "extracted"
     }
    },
    "hologram_grid_cm": {
     "governed_by": {
      "effect": "snap",
-     "rule": "buildable.grid_snap"
+     "rule": "buildable.grid_snap",
+     "status": "partial"
     }
    },
    "hologram_rotation_step_deg": {
     "governed_by": {
      "effect": "compute",
-     "rule": "buildable.rotation_step"
+     "rule": "buildable.rotation_step",
+     "status": "extracted"
     },
     "reason": "the step the build gun rotates a hologram by. It is in no cooked asset, no shipped header and no constructor immediate tools/sfy-native found; 90 degrees is this project's constant, not a number read from the game."
    },
@@ -35560,7 +35572,8 @@
     "formula": "24 * H",
     "governed_by": {
      "effect": "clamp",
-     "rule": "lift.height_range"
+     "rule": "lift.height_range",
+     "status": "extracted"
     }
    },
    "lift_min_cm": {
@@ -35570,7 +35583,8 @@
     "formula": "2 * H",
     "governed_by": {
      "effect": "clamp",
-     "rule": "lift.height_range"
+     "rule": "lift.height_range",
+     "status": "extracted"
     }
    },
    "lift_min_vertical_cm": {
@@ -35580,7 +35594,8 @@
     "formula": "H - 50",
     "governed_by": {
      "effect": "clamp",
-     "rule": "lift.height_range"
+     "rule": "lift.height_range",
+     "status": "extracted"
     }
    },
    "lift_step_cm": {
@@ -35598,13 +35613,15 @@
    "pipe_max_spline_cm": {
     "governed_by": {
      "effect": "refuse",
-     "rule": "pipe.max_length"
+     "rule": "pipe.max_length",
+     "status": "extracted"
     }
    },
    "pipe_min_bend_radius_cm": {
     "governed_by": {
      "effect": "refuse",
-     "rule": "pipe.curvature"
+     "rule": "pipe.curvature",
+     "status": "extracted"
     }
    },
    "wire_max_cm": {
@@ -35612,7 +35629,6 @@
     "ungoverned": "no rule was extracted for it. AFGBuildableWire::mMaxLength is a buildable's property rather than a hologram member, and AFGWireHologram was not disassembled; what refuses an over-long wire is still unread."
    }
   },
-  "merged_at_commit": "0618d9b9ba5bfce323e5a91dd21fd5f7671a4b77",
   "native": {
    "dll": "FactoryGameEGS-FactoryGame-Win64-Shipping.dll",
    "dll_sha256": "65fc5a6bde6d44782da387976b144a41a6b94e4fa78ec6e1bc49c3dad2d47513",

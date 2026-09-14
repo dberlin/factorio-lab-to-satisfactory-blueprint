@@ -263,19 +263,38 @@ impl Pe {
     ///
     /// An unchained entry is its own primary, which is why every function has
     /// a `chunks` list even when nothing was split.
+    ///
+    /// A walk that stops at the depth cap, or on a cycle, has *not* found the
+    /// primary: the RVA it returns is a chunk partway up the chain, and the
+    /// chunks grouped under it are some of the function rather than all of it.
+    /// That is a malformed `.pdata`, so it says so on stderr rather than
+    /// quietly reporting a smaller function.
     fn primary_of(&self, entry: RuntimeFunction) -> u32 {
         let mut current = entry;
         let mut seen = Vec::new();
         for _ in 0..MAX_CHAIN_DEPTH {
             if seen.contains(&current.unwind) {
-                break; // a cycle: stop where we are rather than loop
+                eprintln!(
+                    "warning: the unwind chain from {:#x} loops back to {:#x} after {} links; \
+                     stopping at {:#x}, which may be part of a larger function",
+                    entry.begin,
+                    current.unwind,
+                    seen.len(),
+                    current.begin
+                );
+                return current.begin; // a cycle: stop where we are rather than loop
             }
             seen.push(current.unwind);
             match self.chained_parent(current.unwind) {
                 Some(parent) => current = parent,
-                None => break,
+                None => return current.begin,
             }
         }
+        eprintln!(
+            "warning: the unwind chain from {:#x} is longer than {MAX_CHAIN_DEPTH} links; \
+             stopping at {:#x}, which may be part of a larger function",
+            entry.begin, current.begin
+        );
         current.begin
     }
 

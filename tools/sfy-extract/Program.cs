@@ -30,6 +30,27 @@ var gameDir = args[0];
 var mode = args[1];
 var arg2 = args.Length > 2 ? args[2] : "";
 var arg3 = args.Length > 3 ? args[3] : "";
+// A mode this tool does not have used to fall through into `extract`, which
+// then wrote assets.json under whatever name arg2 happened to be. Every mode is
+// named here, and anything else is a usage error before any work is done.
+if (mode is not ("list" or "props" or "extract" or "structs"))
+{
+    Console.Error.WriteLine(
+        $"unknown mode {mode.Replace("\n", " ")}\n" +
+        "usage: dotnet run -- <SatisfactoryDir> <list|props|extract|structs> [filter|<out> <directions>|<names> <out>]");
+    return 2;
+}
+// `extract` needs both of its file arguments, and the check belongs here rather
+// than after the paks are mounted: a missing argument should cost a line of
+// output, not the minute the mount and the package scan take.
+if (mode == "extract" && arg3.Length == 0)
+{
+    Console.Error.WriteLine(
+        "usage: dotnet run -- <SatisfactoryDir> extract <out.json> <native_directions.json>\n" +
+        "  the second file is written by scripts/sfy_native_directions.py: without it no\n" +
+        "  port whose asset omits its direction could be resolved from the game at all.");
+    return 2;
+}
 var filter = mode is "extract" or "structs" ? "" : arg2;
 var paks = Path.Combine(gameDir, "FactoryGame", "Content", "Paks");
 var usmap = Path.Combine(gameDir, "CommunityResources", "FactoryGame.usmap");
@@ -89,15 +110,8 @@ if (mode is "list" or "props")
 
 // What a connection component carries when no asset in its chain says. Written
 // by `scripts/sfy_native_directions.py` out of the shipped DLL's constructors;
-// see `DirectionOf` for why an omitted property is not the enum's zero.
-if (arg3.Length == 0)
-{
-    Console.Error.WriteLine(
-        "usage: dotnet run -- <SatisfactoryDir> extract <out.json> <native_directions.json>\n" +
-        "  the second file is written by scripts/sfy_native_directions.py: without it no\n" +
-        "  port whose asset omits its direction could be resolved from the game at all.");
-    return 2;
-}
+// see `DirectionOf` for why an omitted property is not the enum's zero. That
+// both arguments are present was checked before the paks were mounted.
 var nativeDirectionsText = File.ReadAllText(arg3);
 var nativeDirections = JsonConvert.DeserializeObject<NativeDirections>(nativeDirectionsText)
     ?? throw new InvalidOperationException($"{arg3} is not a native-directions file");
@@ -180,14 +194,13 @@ var output = new
         // tools/sfy-native reads it out of the shipped DLL (100). The
         // per-hologram overrides that do exist (Holo_PowerPole, Holo_StreetLight,
         // both 50) are in `holograms`, and the merge puts them on the buildable.
+        //
+        // There is no rotation_step here. This file says what the cooked assets
+        // carry, and a 90 typed into this source would have said the assets
+        // carry a rotation step when they do not: the merge's own
+        // PROJECT_CONSTANTS is where that number lives, with the reason it is a
+        // constant rather than a game datum.
         ["mGridSnapSize"] = null,
-        // Not a game value, and not read from here: 90 degrees is the step the
-        // build gun rotates by, and it is in no asset, no header and no
-        // constructor immediate. The merge takes it from its own
-        // PROJECT_CONSTANTS, which carries the reason with it and tags it
-        // "constant" in registry.json's limits_sources. It stays in this file
-        // as the record of a value the assets were searched for and do not have.
-        ["rotation_step"] = 90,
     },
 };
 

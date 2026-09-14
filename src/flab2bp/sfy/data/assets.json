@@ -16234,7 +16234,6 @@
   },
   "descriptor_paths_ambiguous": [],
   "grid": {
-    "mGridSnapSize": null,
-    "rotation_step": 90
+    "mGridSnapSize": null
   }
 }
