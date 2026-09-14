@@ -23,6 +23,7 @@ from flab2bp.sfy.layout.splines import (
     segment_length,
     spline_length,
     straight,
+    tangent_at_distance,
     yaw_quaternion,
 )
 from flab2bp.sfy.objects import Transform
@@ -196,8 +197,8 @@ def _minimum_radius(points: tuple[SplinePoint, ...]) -> float:
     step = length / n
     smallest = math.inf
     for i in range(n):
-        a = _unit_2d(_tangent_at_distance(points, i * step))
-        b = _unit_2d(_tangent_at_distance(points, (i + 1) * step))
+        a = _unit_2d(tangent_at_distance(points, i * step))
+        b = _unit_2d(tangent_at_distance(points, (i + 1) * step))
         dot = min(1.0, max(-1.0, a[0] * b[0] + a[1] * b[1]))
         theta = math.acos(dot)
         if theta > 0.0:
@@ -209,25 +210,3 @@ def _unit_2d(v: Vector) -> Vector:
     """``FVector::GetSafeNormal2D``: the tangent flattened and normalised."""
     scale = math.hypot(v[0], v[1])
     return (v[0] / scale, v[1] / scale, 0.0)
-
-
-def _tangent_at_distance(points: tuple[SplinePoint, ...], distance: float) -> Vector:
-    """The tangent a given arc length along a one-segment run.
-
-    A dense walk, because the test wants the game's distance sampling and the
-    module deliberately offers only the parameter form.
-    """
-    (p0, _, t0), (p1, t1, _) = points
-    steps = 8192
-    walked = 0.0
-    previous = hermite(p0, t0, p1, t1, 0.0)
-    for i in range(1, steps + 1):
-        t = i / steps
-        current = hermite(p0, t0, p1, t1, t)
-        span = math.dist(previous, current)
-        if walked + span >= distance:
-            fraction = 0.0 if span == 0.0 else (distance - walked) / span
-            return hermite_tangent(p0, t0, p1, t1, (i - 1 + fraction) / steps)
-        walked += span
-        previous = current
-    return hermite_tangent(p0, t0, p1, t1, 1.0)

@@ -51,6 +51,7 @@ __all__ = [
     "segment_length",
     "spline_length",
     "straight",
+    "tangent_at_distance",
     "yaw_quaternion",
 ]
 
@@ -184,6 +185,67 @@ def spline_length(points: Sequence[SplinePoint]) -> float:
         segment_length(points[i][0], points[i][2], points[i + 1][0], points[i + 1][1])
         for i in range(len(points) - 1)
     )
+
+
+DISTANCE_SAMPLES = 8192
+"""Parameter steps per segment :func:`tangent_at_distance` walks to invert arc length.
+
+A resolution, not a bound: a finer walk only lands the sample closer to the
+distance asked for.  8192 puts the sample inside a millimetre of it on any belt
+the designer holds, which is four orders below the angles ``belt.curvature``
+measures.
+"""
+
+
+def tangent_at_distance(
+    points: Sequence[SplinePoint], distance: float, *, samples: int = DISTANCE_SAMPLES
+) -> Vector:
+    """``USplineComponent::GetTangentAtDistanceAlongSpline`` on a point list.
+
+    ``belt.curvature`` samples the curve by ARC LENGTH -- ``GetTangentAtDistance
+    AlongSpline(i * step)`` -- and a Hermite segment's parameter is not its arc
+    length, so the length has to be inverted.  The engine keeps a reparametrisa-
+    tion table; this walks the segment densely instead, which needs no state and
+    is exact to the walk's own step.
+
+    The vector is the curve's velocity and is NOT normalised, matching the
+    engine: every caller that compares directions normalises it itself
+    (``GetSafeNormal2D`` in the curvature rule's case).  A distance past the end
+    clamps to the last point, as the engine's own input-key lookup does.
+    """
+    if len(points) < 2:
+        raise ValueError("a spline needs at least two points to have a tangent")
+    remaining = max(0.0, distance)
+    last = len(points) - 2
+    for i in range(last + 1):
+        p0, _, leave = points[i]
+        p1, arrive, _ = points[i + 1]
+        length = segment_length(p0, leave, p1, arrive)
+        if remaining > length and i < last:
+            remaining -= length
+            continue
+        return _tangent_within(p0, leave, p1, arrive, remaining, samples)
+    raise AssertionError("unreachable: the loop always returns on the last segment")
+
+
+def _tangent_within(
+    p0: Vector, t0: Vector, p1: Vector, t1: Vector, distance: float, samples: int
+) -> Vector:
+    """The tangent ``distance`` along ONE segment, by walking its chords."""
+    if distance <= 0.0:
+        return hermite_tangent(p0, t0, p1, t1, 0.0)
+    walked = 0.0
+    previous = hermite(p0, t0, p1, t1, 0.0)
+    for i in range(1, samples + 1):
+        t = i / samples
+        current = hermite(p0, t0, p1, t1, t)
+        span = math.dist(previous, current)
+        if walked + span >= distance:
+            fraction = 0.0 if span == 0.0 else (distance - walked) / span
+            return hermite_tangent(p0, t0, p1, t1, (i - 1 + fraction) / samples)
+        walked += span
+        previous = current
+    return hermite_tangent(p0, t0, p1, t1, 1.0)
 
 
 def straight(start: Vector, direction: Vector, length: float) -> tuple[SplinePoint, ...]:
