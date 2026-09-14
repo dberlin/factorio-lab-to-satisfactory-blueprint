@@ -2397,6 +2397,155 @@ Hand `out/sfy/checkpoint1.sbp` and `out/sfy/checkpoint1.sbpcfg` to the user with
 
 ---
 
+### Task 13: Native constants from the shipped binary
+
+Added 2026-09-14 by user ruling: seven hologram limits (belt bend radius and max
+incline, the four lift heights, the hologram grid size) are C++ constructor
+immediates that exist in no asset, header or Docs.json. They are read from the
+shipped module DLL using its PDB. Blueprint measurements (Task 11) stay only as
+a cross-check. Rule for every game constant: Docs.json, then cooked assets, then
+headers, then the binary; never inferred from blueprints when extraction is
+possible.
+
+**Files:**
+- Create: `tools/sfy-native/Cargo.toml`, `tools/sfy-native/src/main.rs`, `tools/sfy-native/README.md`, `tools/sfy-native/.gitignore` (`target/`)
+- Create: `src/flab2bp/sfy/data/native.json`
+- Modify: `scripts/sfy_registry.py` (merge `native.json` before header defaults and measured values; source tag `"binary"`)
+- Modify: `src/flab2bp/sfy/data/registry.json` (regenerated)
+- Test: `tests/sfy/test_native.py`, update `tests/sfy/test_registry.py`
+
+**Facts (verified 2026-09-14):**
+- Module: `~/Satisfactory/FactoryGame/Binaries/Win64/FactoryGameEGS-FactoryGame-Win64-Shipping.dll` (27 MB, x86-64 PE, sections `.text` at RVA 0x1000, `.rdata` at 0xee6000). Its debug directory names `FactoryGameEGS-FactoryGame-Win64-Shipping.pdb` with GUID `A2691F7C-B45E-7947-65C6-535DE373BA04` age 1; the PDB (297 MB) sits beside it.
+- `cargo` 1.98 is installed. The Rust `pdb` crate (0.8) reads this PDB format (MSF 7, TPI, DBI, public and global symbols); Python `pdbparse` does not (DBI parse fails). `iced-x86` (Rust crate) decodes x86-64. `pelite` or `goblin` reads the PE sections.
+- MSVC constructor codegen for `member = 180.f;`: `movss xmmN, dword ptr [rip+K]` then `movss dword ptr [reg+disp], xmmN`, where `reg` is `this` (`rcx` or a copy such as `rbx`/`rdi`) and `disp` is the member offset; `0.f` is `xorps xmmN, xmmN` then the store; adjacent float members are often merged into one 16-byte `movups xmmword ptr [reg+disp], xmmN` from a `.rdata` constant, or an 8-byte `mov qword ptr [reg+disp], rax` from `mov rax, imm64`; integers use `mov dword ptr [reg+disp], imm32`. A member's value may be set in a base-class constructor (the derived constructor calls it first), so the tool walks the class chain from the TPI.
+- Built-in oracle: the headers already state `AFGConveyorBeltHologram::mMaxSplineLength = 5600.1f`, `AFGPipelineHologram::mBendRadius2D = 199.0`, `mMinBendRadius = 75.0`, `mMaxSplineLength = 5600.1f`. The tool must reproduce those four from the binary before any unknown value is trusted.
+
+**Interfaces:**
+- Produces: `tools/sfy-native` CLI: `cargo run --release -- <dll> <pdb> <out.json> [--class AFGConveyorBeltHologram --class ...]` writing
+```json
+{"provenance": {"dll": "...", "pdb_guid": "...", "pdb_age": 1, "dll_sha256": "...", "tool": "sfy-native 0.1.0"},
+ "classes": {"AFGConveyorBeltHologram": {"size": 1234, "base": "AFGSplineHologram",
+    "ctor_rva": "0x...", "members": {"mBendRadius": {"offset": 936, "type": "float", "value": 180.0, "set_in": "AFGConveyorBeltHologram", "evidence": "movss xmm0,[rip+0x..] ; movss [rbx+0x3a8],xmm0 @ 0x..."}}}}}
+```
+  For every requested member: `offset` (from TPI), `type`, and either `value` + `set_in` + `evidence` or `"value": null, "reason": "no store to this offset found in the constructor chain"`.
+- `scripts/sfy_registry.py` merges, per limit key, in this precedence: assets (`assets.json`), binary (`native.json`), header defaults, measured (`measured.json`); `limits_sources[key]` names the winner. The seven limits map to: `belt_bend_radius_cm` ← `AFGConveyorBeltHologram.mBendRadius`; `belt_max_incline_deg` ← `AFGConveyorBeltHologram.mMaxIncline`; `lift_step_cm` ← `AFGConveyorLiftHologram.mStepHeight`; `lift_min_cm` ← `mMinimumHeight`; `lift_max_cm` ← `mMaximumHeight`; `lift_min_vertical_cm` ← `mMinimumHeightWithVerticalConnection`; `hologram_grid_cm` ← the grid member the headers declare on `AFGHologram`/`AFGBuildableHologram`/`AFGFactoryHologram` (grep `Headers.zip` for `GridSnap`/`SnapSize`/`mGridSize`; record the member you chose in the README, or `null` with the reason if no such member exists).
+
+- [ ] **Step 1: Write the failing tests**
+
+`tests/sfy/test_native.py`:
+```python
+import json
+from pathlib import Path
+
+import pytest
+
+from flab2bp.sfy import docs
+
+NATIVE = Path(docs.__file__).parent / "data" / "native.json"
+
+
+def _native():
+    return json.loads(NATIVE.read_text())
+
+
+def test_oracle_values_reproduced_from_binary():
+    """Members whose values the public headers state must come back exactly."""
+    c = _native()["classes"]
+    assert c["AFGConveyorBeltHologram"]["members"]["mMaxSplineLength"]["value"] == pytest.approx(5600.1, abs=1e-3)
+    assert c["AFGPipelineHologram"]["members"]["mMaxSplineLength"]["value"] == pytest.approx(5600.1, abs=1e-3)
+    assert c["AFGPipelineHologram"]["members"]["mBendRadius2D"]["value"] == pytest.approx(199.0)
+    assert c["AFGPipelineHologram"]["members"]["mMinBendRadius"]["value"] == pytest.approx(75.0)
+
+
+def test_unknown_limits_are_present_with_evidence():
+    c = _native()["classes"]
+    for cls, member in [
+        ("AFGConveyorBeltHologram", "mBendRadius"),
+        ("AFGConveyorBeltHologram", "mMaxIncline"),
+        ("AFGConveyorLiftHologram", "mStepHeight"),
+        ("AFGConveyorLiftHologram", "mMinimumHeight"),
+        ("AFGConveyorLiftHologram", "mMaximumHeight"),
+        ("AFGConveyorLiftHologram", "mMinimumHeightWithVerticalConnection"),
+    ]:
+        m = c[cls]["members"][member]
+        assert m["value"] is not None and m["value"] > 0, (cls, member, m)
+        assert m["evidence"] and m["set_in"]
+        assert isinstance(m["offset"], int) and m["offset"] > 0
+
+
+def test_provenance_names_the_matching_pdb():
+    p = _native()["provenance"]
+    assert p["pdb_guid"].upper().replace("-", "") == "A2691F7CB45E794765C6535DE373BA04"
+    assert p["pdb_age"] == 1
+```
+Add to `tests/sfy/test_registry.py`:
+```python
+def test_seven_limits_come_from_the_binary():
+    reg = load_registry()
+    binary = {"belt_bend_radius_cm", "belt_max_incline_deg", "lift_step_cm", "lift_min_cm", "lift_max_cm", "lift_min_vertical_cm"}
+    for key in binary:
+        assert reg.limits_sources[key] == "binary", key
+        assert getattr(reg.limits, key) > 0
+    assert reg.limits.lift_min_cm <= reg.limits.lift_min_vertical_cm <= reg.limits.lift_max_cm
+    assert reg.limits.lift_step_cm > 0 and (reg.limits.lift_max_cm - reg.limits.lift_min_cm) % reg.limits.lift_step_cm == pytest.approx(0, abs=1e-6)
+
+
+def test_measured_envelope_lies_inside_binary_limits():
+    """Task 11's corpus measurements can never be wider than the game's constants."""
+    from flab2bp.sfy import docs
+    measured = json.loads((Path(docs.__file__).parent / "data" / "measured.json").read_text())
+    reg = load_registry()
+    assert measured["belt_bend_radius_cm"]["value"] >= reg.limits.belt_bend_radius_cm - 1.0
+    assert measured["belt_max_incline_deg"]["value"] <= reg.limits.belt_max_incline_deg + 0.5
+    assert measured["lift_min_cm"]["value"] >= reg.limits.lift_min_cm - 1.0
+    assert measured["lift_max_cm"]["value"] <= reg.limits.lift_max_cm + 1.0
+```
+(`hologram_grid_cm` is asserted as `"binary"` only if the grid member exists; otherwise the test asserts its source is `"measured"` and the README explains.)
+
+- [ ] **Step 2: Run to verify failure**
+
+Run: `uv run pytest tests/sfy/test_native.py -q`
+Expected: non-zero exit, `native.json` missing.
+
+- [ ] **Step 3: Write the Rust tool**
+
+`tools/sfy-native/Cargo.toml`: package `sfy-native` 0.1.0, edition 2021, dependencies `pdb = "0.8"`, `iced-x86 = { version = "1", features = ["decoder", "intel"] }`, `pelite = "0.10"` (or `goblin = "0.9"`), `serde`/`serde_json` (derive), `sha2 = "0.10"`, `anyhow = "1"`.
+
+`src/main.rs` in this order, each a function with a unit test where noted:
+1. `load_pe(path) -> Pe`: sections (name, rva, raw offset, size), the debug directory's CodeView GUID/age, `rva_to_bytes(rva, n)`.
+2. `open_pdb(path) -> PdbIndex`: verify the PDB GUID/age equal the PE's (`pdb::PDBInformation`), else exit non-zero naming both; build `class layouts` from the TPI (`pdb::TypeData::Class` with `fields` → `FieldList` → `Member{name, offset, field_type}`; resolve forward references to the defining record; record `base_class` from `BaseClass` fields); build `ctor RVAs` from public symbols whose name demangles to `Class::Class(...)` (undecorated public symbols start with `??0Class@@`; use `pdb::SymbolData::Public` and `symbol.offset.to_rva(&address_map)`).
+3. `disassemble_ctor(pe, rva) -> Vec<Instr>`: decode with iced until the first `ret` after the epilogue (stop on `ret`; do not follow calls; cap at 64 KiB).
+4. `trace_stores(instrs, pe) -> BTreeMap<u32 /*offset*/, Vec<u8>>`: track `this` aliases (start `{rcx}`; add `dst` on `mov dst, src` when `src` is an alias; drop on other writes), track the last constant loaded into each register (`movss/movsd/movups/movaps xmmN, [rip+K]` → bytes from `.rdata` at `K`; `xorps xmmN, xmmN` → zeros; `mov r64, imm64`; `mov r32, imm32`); on a store `mov*/movss/movsd/movups/movaps [alias+disp], src` record the bytes (4/8/16) at `disp`; on `mov dword [alias+disp], imm32` record the immediate bytes. Unit-test with a hand-assembled byte sequence for each pattern.
+5. `resolve(members, stores by class chain)`: for each requested member, walk the class chain from the most derived to the base; the first constructor whose store map covers `[offset, offset+size)` wins (`set_in`); decode by TPI type (`float` → f32, `double`, `int32`, `uint8`/bool). Emit `evidence` as the two instructions (load and store) with RVAs.
+6. `main`: args, JSON output with provenance (`dll_sha256`), exit non-zero if any oracle member disagrees with the header value (pass the oracle table on the command line as `--expect AFGConveyorBeltHologram.mMaxSplineLength=5600.1`).
+
+Requested classes and members by default: `AFGConveyorBeltHologram` (`mBendRadius`, `mMaxSplineLength`, `mMaxIncline`), `AFGConveyorLiftHologram` (`mStepHeight`, `mMinimumHeight`, `mMaximumHeight`, `mMinimumHeightWithVerticalConnection`, `mMeshHeight`), `AFGPipelineHologram` (`mBendRadius`, `mBendRadius2D`, `mMinBendRadius`, `mMaxSplineLength`), `AFGBuildableWire`/`AFGWireHologram` (`mMaxLength`), plus the grid member found in Step 3's header grep.
+
+- [ ] **Step 4: Run the tool and inspect**
+
+Run: `cd tools/sfy-native && cargo build --release && cargo run --release -- ~/Satisfactory/FactoryGame/Binaries/Win64/FactoryGameEGS-FactoryGame-Win64-Shipping.dll ~/Satisfactory/FactoryGame/Binaries/Win64/FactoryGameEGS-FactoryGame-Win64-Shipping.pdb ../../src/flab2bp/sfy/data/native.json --expect AFGConveyorBeltHologram.mMaxSplineLength=5600.1 --expect AFGPipelineHologram.mBendRadius2D=199 --expect AFGPipelineHologram.mMinBendRadius=75 --expect AFGPipelineHologram.mMaxSplineLength=5600.1`
+Expected: exit 0; every requested member has a value or a stated reason. If an oracle member is `null`, the store tracer misses a codegen pattern: dump the constructor disassembly to a scratch file, find the store to that offset by hand, and add the pattern (the usual misses are the 16-byte merged store and a `this` copy in `rdi`/`rsi`). If a value is set through a call (`CreateDefaultSubobject` style) rather than a store, say so in the reason.
+
+- [ ] **Step 5: Merge and regenerate**
+
+Extend `scripts/sfy_registry.py` with the binary source between assets and header defaults, regenerate `registry.json`, and confirm `limits still None: []` with every one of the seven keys sourced `"binary"` (the grid key may be `"measured"` with the README reason).
+
+- [ ] **Step 6: Run the tests, write the README, commit**
+
+Run: `uv run pytest tests/sfy -q`
+Expected: exit code 0.
+
+README: prerequisites (cargo, the game install), the command, the oracle, the codegen patterns handled, the per-limit table (member, class that sets it, value, evidence RVA), and the reproduction rule (re-run per game update; `native.json` is committed).
+
+```bash
+git add tools/sfy-native scripts/sfy_registry.py src/flab2bp/sfy/data/native.json src/flab2bp/sfy/data/registry.json tests/sfy/test_native.py tests/sfy/test_registry.py
+git commit -m "Read the hologram limits from the shipped binary through its PDB"
+```
+
+**Review batch E: Task 13 (reviewed with Task 12 if both land together).**
+
+---
+
 ## Self-review
 
 **Spec coverage.** Spec §3 (game sources) → Tasks 9-10. §4.1 container → Tasks 3-5; §4.1 object data → Tasks 6-7; §4.2 record → Task 3; §4.3 guarantees → Tasks 5, 7 (identity), 12 (decode of emitted). §5.1 Docs.json → Task 9; extractor → Task 10; header-only rules → `HEADER_DEFAULTS` in Task 10 with citations. §5.2 registry shape → Tasks 9-10. §5.3 cross-checks → Task 11 (ports) and Task 9 (`build_recipes`, clearance parse). §12 checkpoint 1 → Task 12. Fixtures → Task 1. Not in this milestone by design: `lab` game parameter, rates, layout, validator, web (M2+).
