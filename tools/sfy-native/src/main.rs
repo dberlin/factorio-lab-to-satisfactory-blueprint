@@ -969,6 +969,12 @@ struct Regs {
     aliases: HashSet<Register>,
     loaded: HashMap<Register, Loaded>,
     reloaded: HashMap<Register, (u32, usize)>,
+    /// Registers holding a pointer *into* the object rather than at it:
+    /// `lea rdx,[rbx+40h]` off an alias. The value is the offset the pointer
+    /// stands at, or `None` when a run-time index went into it. These are not
+    /// aliases -- nothing is read through them -- but a store through one lands
+    /// on a member, and the tracer has to veto it rather than miss it.
+    derived: HashMap<Register, Option<u32>>,
     info_factory: InstructionInfoFactory,
 }
 
@@ -986,6 +992,7 @@ impl Regs {
             aliases: this.into_iter().collect(),
             loaded: HashMap::new(),
             reloaded: HashMap::new(),
+            derived: HashMap::new(),
             info_factory: InstructionInfoFactory::new(),
         }
     }
@@ -994,24 +1001,34 @@ impl Regs {
     fn step(&mut self, instr: &Instr, pe: &Pe) {
         let i = &instr.instruction;
 
-        // A new alias, a new constant, a reload -- or none of the three.
-        let kept = match register_effect(instr, pe, &self.aliases) {
+        // A new alias, a new constant, a reload, a derived pointer -- or none.
+        let kept = match register_effect(instr, pe, &self.aliases, &self.derived) {
             Some(Effect::Alias(register)) => {
                 self.aliases.insert(register);
                 self.loaded.remove(&register);
                 self.reloaded.remove(&register);
+                self.derived.remove(&register);
                 Some(register)
             }
             Some(Effect::Constant(register, value)) => {
                 self.aliases.remove(&register);
                 self.reloaded.remove(&register);
+                self.derived.remove(&register);
                 self.loaded.insert(register, value);
                 Some(register)
             }
             Some(Effect::Reload(register, offset, size)) => {
                 self.aliases.remove(&register);
                 self.loaded.remove(&register);
+                self.derived.remove(&register);
                 self.reloaded.insert(register, (offset, size));
+                Some(register)
+            }
+            Some(Effect::Derived(register, at)) => {
+                self.aliases.remove(&register);
+                self.loaded.remove(&register);
+                self.reloaded.remove(&register);
+                self.derived.insert(register, at);
                 Some(register)
             }
             None => None,
@@ -1022,6 +1039,7 @@ impl Regs {
                 self.aliases.remove(register);
                 self.loaded.remove(register);
                 self.reloaded.remove(register);
+                self.derived.remove(register);
             }
             return;
         }
@@ -1044,6 +1062,7 @@ impl Regs {
             self.aliases.remove(&register);
             self.loaded.remove(&register);
             self.reloaded.remove(&register);
+            self.derived.remove(&register);
         }
     }
 }
@@ -1054,12 +1073,45 @@ impl Regs {
 /// before calling the base constructor, so the alias set grows on
 /// `mov reg, alias` and shrinks whenever a register is written otherwise. A
 /// store through any alias is recorded at its displacement.
+///
+/// **The walk is a straight line through the instructions in RVA order**, not a
+/// walk of the control-flow graph: the last store on any branch wins, and the
+/// register state at the top of a chained chunk is whatever fell out of the
+/// chunk before it. `tools/sfy-native/README.md` lists what that costs and what
+/// catches it. Every store it cannot read as a constant is a veto rather than a
+/// silence -- including, through [`derived_store`], the two shapes that write
+/// the object without naming an offset off an alias.
 fn trace_stores(instrs: &[Instr], pe: &Pe) -> Stores {
     let mut stores = Stores::default();
     let mut regs = Regs::new();
 
     for instr in instrs {
         let i = &instr.instruction;
+
+        // A store into the object the tracer cannot read as a constant, and
+        // cannot always place either. It is a veto of whatever it could have
+        // hit -- see `derived_store`.
+        if let Some(reach) = derived_store(i, &regs) {
+            let here = format!("{} @ {:#x}", instr.text, instr.rva);
+            match reach {
+                Reach::At(offset, size) => {
+                    for n in 0..size as u32 {
+                        stores.bytes.remove(&(offset + n));
+                    }
+                    stores.computed.insert(offset, (size, here));
+                }
+                // It could have landed on any byte this function has recorded a
+                // constant for, so every one of them is vetoed where it stands.
+                // What the function never tracked it cannot veto: see the
+                // README's blind-spot list.
+                Reach::Anywhere => {
+                    for offset in stores.bytes.keys().copied().collect::<Vec<_>>() {
+                        stores.bytes.remove(&offset);
+                        stores.computed.insert(offset, (1, here.clone()));
+                    }
+                }
+            }
+        }
 
         // A store through `this` is the only thing worth recording.
         if let Some((offset, size)) = store_target(i, &regs.aliases) {
@@ -1137,6 +1189,61 @@ fn full_register(register: Register) -> Register {
     }
 }
 
+/// Where a store the tracer cannot read as a constant could have landed.
+#[derive(Debug, PartialEq, Eq)]
+enum Reach {
+    /// Exactly `[offset, offset + size)`.
+    At(u32, usize),
+    /// Somewhere in the object; the tracer cannot say where.
+    Anywhere,
+}
+
+/// A store into the tracked object that [`store_target`] does not see.
+///
+/// Two shapes, both writing through a register that points at the object:
+///
+/// * an **indexed** store off a `this` alias -- `mov [rbx+rax*4+10h],eax`. The
+///   index is a run-time value, so which member it lands on is not in the
+///   instruction.
+/// * a store through a pointer **`lea`'d off** an alias -- `lea rdx,[rbx+40h]`
+///   … `mov [rdx],eax`. `rdx` is not an alias, so `store_target` ignores it; it
+///   still writes a member, and here it is placed when the `lea`'s offset is a
+///   constant and vetoed wholesale when it is not.
+///
+/// Both are vetoes rather than values: nothing here can be read as a constant,
+/// and a store that overwrites a constant means the constant is not the answer.
+/// A store off a base that is neither an alias nor derived from one is ignored,
+/// as it always was -- it is not known to touch this object at all.
+fn derived_store(i: &Instruction, regs: &Regs) -> Option<Reach> {
+    if i.op0_kind() != OpKind::Memory || !is_move(i.mnemonic()) {
+        return None;
+    }
+    let base = i.memory_base();
+    let indexed = i.memory_index() != Register::None;
+    if regs.aliases.contains(&base) {
+        // An unindexed store off an alias is `store_target`'s business.
+        return indexed.then_some(Reach::Anywhere);
+    }
+    // A register the object was `lea`'d into. `None` there is a pointer whose
+    // offset a run-time index went into: it still writes a member.
+    let standing = regs.derived.get(&base).copied()?;
+    let size = i.memory_size().size();
+    let (Some(standing), false) = (standing, indexed) else {
+        return Some(Reach::Anywhere);
+    };
+    if size == 0 {
+        return Some(Reach::Anywhere);
+    }
+    // The displacement arrives sign-extended: `mov [rbx-10h],rsi` off a pointer
+    // standing at 0x810 writes 0x800, and reading that as an unsigned 64-bit
+    // number would throw the offset away.
+    let at = standing as i64 + i.memory_displacement64() as i64;
+    match u32::try_from(at) {
+        Ok(offset) => Some(Reach::At(offset, size)),
+        Err(_) => Some(Reach::Anywhere),
+    }
+}
+
 /// `(displacement, size)` if this instruction stores through a `this` alias.
 fn store_target(i: &Instruction, aliases: &HashSet<Register>) -> Option<(u32, usize)> {
     if i.op0_kind() != OpKind::Memory || i.memory_index() != Register::None {
@@ -1186,9 +1293,17 @@ enum Effect {
     Alias(Register),
     Constant(Register, Loaded),
     Reload(Register, u32, usize),
+    /// A pointer *into* the object: `lea rdx,[rbx+40h]`. The offset, or `None`
+    /// when a run-time index went into the address.
+    Derived(Register, Option<u32>),
 }
 
-fn register_effect(instr: &Instr, pe: &Pe, aliases: &HashSet<Register>) -> Option<Effect> {
+fn register_effect(
+    instr: &Instr,
+    pe: &Pe,
+    aliases: &HashSet<Register>,
+    derived: &HashMap<Register, Option<u32>>,
+) -> Option<Effect> {
     let i = &instr.instruction;
     if i.op0_kind() != OpKind::Register {
         return None;
@@ -1252,6 +1367,27 @@ fn register_effect(instr: &Instr, pe: &Pe, aliases: &HashSet<Register>) -> Optio
                     text,
                 },
             ))
+        }
+        // `lea rdx,[rbx+40h]` off an alias, or off another such pointer, makes
+        // a pointer into the object without making an alias of it: nothing is
+        // read through it, but a store through it lands on a member. Tracking
+        // where it stands is what lets `derived_store` veto that store instead
+        // of never seeing it.
+        OpKind::Memory if i.mnemonic() == Mnemonic::Lea && i.op0_register().is_gpr64() => {
+            let base = i.memory_base();
+            let standing = if aliases.contains(&base) {
+                Some(0)
+            } else {
+                *derived.get(&base)?
+            };
+            let displacement = i.memory_displacement64();
+            let at = match (standing, i.memory_index() == Register::None) {
+                (Some(standing), true) if displacement <= u32::MAX as u64 => {
+                    standing.checked_add(displacement as u32)
+                }
+                _ => None,
+            };
+            Some(Effect::Derived(destination, at))
         }
         // A read back of a member: `movss xmm11, [rcx+0x8ec]`.
         OpKind::Memory
@@ -2640,6 +2776,114 @@ mod tests {
             "the constant outlived the store"
         );
         assert!(stores.computed_over(0x70, 4).is_some());
+    }
+
+    /// `mov [rbx+rax*4],x` writes a member the instruction does not name.
+    ///
+    /// The index is a run-time value, so the tracer cannot say which member the
+    /// store lands on -- only that it lands on one. Every constant the function
+    /// has recorded could be the one it overwrote, so all of them are vetoed.
+    /// The same shape off a register that is not a `this` alias says nothing
+    /// about this object and is ignored, as it always was.
+    #[test]
+    fn an_indexed_store_through_this_vetoes_the_constants_the_function_recorded() {
+        // mov dword ptr [rcx+60h],2 ; mov dword ptr [rcx+70h],1
+        // ; mov qword ptr [rcx+rax*8+80h],rdx
+        let code = [
+            0xc7, 0x41, 0x60, 0x02, 0x00, 0x00, 0x00, //
+            0xc7, 0x41, 0x70, 0x01, 0x00, 0x00, 0x00, //
+            0x48, 0x89, 0x94, 0xc1, 0x80, 0x00, 0x00, 0x00,
+        ];
+        assert_eq!(
+            text_of(&code),
+            [
+                "mov dword ptr [rcx+60h],2",
+                "mov dword ptr [rcx+70h],1",
+                "mov qword ptr [rcx+rax*8+80h],rdx"
+            ]
+        );
+        let stores = trace_stores(&decode(&code), &fake_pe(&[]));
+        for offset in [0x60, 0x70] {
+            assert!(
+                stores.read(offset, 4).is_none(),
+                "{offset:#x} outlived a store that could have hit it"
+            );
+            assert_eq!(
+                stores.computed_over(offset, 4),
+                Some("mov qword ptr [rcx+rax*8+80h],rdx @ 0x100e")
+            );
+        }
+
+        // The same store off a base that is not `this` touches nothing here.
+        // mov dword ptr [rcx+70h],1 ; mov qword ptr [rdx+rax*8+80h],rsi
+        let elsewhere = [
+            0xc7, 0x41, 0x70, 0x01, 0x00, 0x00, 0x00, //
+            0x48, 0x89, 0xb4, 0xc2, 0x80, 0x00, 0x00, 0x00,
+        ];
+        assert_eq!(text_of(&elsewhere)[1], "mov qword ptr [rdx+rax*8+80h],rsi");
+        let stores = trace_stores(&decode(&elsewhere), &fake_pe(&[]));
+        assert_eq!(
+            stores.read(0x70, 4).map(|(bytes, _)| bytes),
+            Some(vec![1, 0, 0, 0])
+        );
+        assert_eq!(stores.computed_over(0x70, 4), None);
+    }
+
+    /// `lea rbx,[rcx+80h]` … `mov [rbx-10h],rsi` writes the object too.
+    ///
+    /// `rbx` is not an alias of `this` -- nothing is read through it -- so
+    /// `store_target` never saw the store. It still overwrites a member, at an
+    /// offset the `lea` and the displacement between them state exactly; the
+    /// displacement is signed, and reading it unsigned would lose the offset.
+    /// `AFGConveyorBeltHologram::ConfigureComponents` is the real one: it fills
+    /// `mSnappedConnectionComponents` at 0x800 through a pointer `lea`'d to
+    /// 0x810.
+    #[test]
+    fn a_store_through_a_pointer_leaed_off_this_is_vetoed_where_the_lea_stands() {
+        // mov dword ptr [rcx+60h],2 ; mov dword ptr [rcx+70h],1
+        // ; lea rbx,[rcx+80h] ; mov qword ptr [rbx-10h],rsi
+        let code = [
+            0xc7, 0x41, 0x60, 0x02, 0x00, 0x00, 0x00, //
+            0xc7, 0x41, 0x70, 0x01, 0x00, 0x00, 0x00, //
+            0x48, 0x8d, 0x99, 0x80, 0x00, 0x00, 0x00, //
+            0x48, 0x89, 0x73, 0xf0,
+        ];
+        assert_eq!(
+            text_of(&code)[2..],
+            ["lea rbx,[rcx+80h]", "mov qword ptr [rbx-10h],rsi"]
+        );
+        let stores = trace_stores(&decode(&code), &fake_pe(&[]));
+        assert!(stores.read(0x70, 4).is_none(), "0x80 - 0x10 is 0x70");
+        assert_eq!(
+            stores.computed_over(0x70, 4),
+            Some("mov qword ptr [rbx-10h],rsi @ 0x1015")
+        );
+        // Placed, not wholesale: the constant it could not have reached stands.
+        assert_eq!(
+            stores.read(0x60, 4).map(|(bytes, _)| bytes),
+            Some(vec![2, 0, 0, 0])
+        );
+        assert_eq!(stores.computed_over(0x60, 4), None);
+
+        // A pointer with a run-time index in it cannot be placed, so it vetoes
+        // every constant the function recorded instead.
+        // mov dword ptr [rcx+60h],2 ; lea rbx,[rcx+rax*4+80h]
+        // ; mov qword ptr [rbx],rsi
+        let indexed = [
+            0xc7, 0x41, 0x60, 0x02, 0x00, 0x00, 0x00, //
+            0x48, 0x8d, 0x9c, 0x81, 0x80, 0x00, 0x00, 0x00, //
+            0x48, 0x89, 0x33,
+        ];
+        assert_eq!(
+            text_of(&indexed)[1..],
+            ["lea rbx,[rcx+rax*4+80h]", "mov qword ptr [rbx],rsi"]
+        );
+        let stores = trace_stores(&decode(&indexed), &fake_pe(&[]));
+        assert!(stores.read(0x60, 4).is_none());
+        assert_eq!(
+            stores.computed_over(0x60, 4),
+            Some("mov qword ptr [rbx],rsi @ 0x100f")
+        );
     }
 
     #[test]

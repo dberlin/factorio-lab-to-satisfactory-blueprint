@@ -317,8 +317,59 @@ Three things it deliberately refuses to treat as a constant:
   `movss xmm11,[rcx+8ECh]` … `movss [rcx+8ECh],xmm11` around a callee-saved
   spill; counting that as a write would veto a member nothing overwrites.
 
+Two more store shapes write the object without naming an offset off an alias,
+and both are vetoes rather than silences:
+
+- **An indexed store off a `this` alias** — `mov [rdi+rax*8+860h],rsi`, which is
+  `AFGConveyorLiftHologram::SetHologramLocationAndRotation` writing an array
+  element. The index is a run-time value, so *which* member it lands on is not
+  in the instruction; every constant the function has recorded could be the one
+  it overwrote, so all of them are vetoed. The same shape off a register that is
+  not a `this` alias is ignored: it says nothing about this object.
+- **A store through a pointer `lea`'d off an alias** —
+  `lea rbx,[r14+810h]` … `mov [rbx-10h],rsi`, which is
+  `AFGConveyorBeltHologram::ConfigureComponents` filling
+  `mSnappedConnectionComponents` at 0x800. `rbx` is not an alias (nothing is
+  read through it), so the store used to be invisible. The `lea`'s offset and
+  the store's signed displacement place it exactly; a `lea` with a run-time
+  index in it cannot be placed and vetoes every recorded constant instead.
+
 The conservative direction is always `null` with a reason: the tool never
 guesses a value, and the tests hold it to the oracle.
+
+### What the tracer cannot see, and what catches it
+
+The tracer walks a function's chunks **in RVA order as a straight line**. It is
+not a walk of the control-flow graph, and that costs four things. None of them
+is a bug to be fixed by reading the disassembly harder; each is a limit of what
+a linear trace can state.
+
+1. **The last store on any branch wins.** Two arms of an `if` that store
+   different constants at one offset are read as the second one overwriting the
+   first, and a store inside a branch that never runs for a class default is
+   read as if it always runs. Where two *functions* disagree the tool says so
+   (`is given two different constants`); inside one function it does not.
+2. **A chained chunk's entry state is assumed to fall through.** The alias set
+   and the loaded constants at the top of a chunk MSVC split off are whatever
+   the previous chunk in RVA order left behind, which is right for a function
+   laid out in one straight line and a guess for a chunk jumped to from
+   elsewhere. A stale alias here could attribute a store to the wrong object.
+3. **An indexed store's target is a run-time value.** The veto above is over the
+   constants the function itself recorded; a constant some *other* function of
+   the chain recorded is not vetoed, because this function never tracked those
+   bytes. `mov [rdi+rax*8+860h],rsi` could in principle reach `mStepHeight` at
+   0x8E0, and nothing here would say so.
+4. **A read-modify-write is not a move**, so `add dword ptr [rbx+8],1` and its
+   kin are neither a value nor a veto.
+
+What catches a misattribution is the **oracle**: `--expect Class.member=value`
+compares what was traced against the value the public headers or Docs.json state
+for the same member, and a disagreement fails the run *before* anything is
+written. The committed regeneration command in
+`docs/sfy-regenerating-game-data.md` carries five of them, and they are what
+stands between a straight-line trace and a wrong number in the registry. Keep
+them on every run; add one whenever a member's value is stated anywhere outside
+the binary.
 
 One limit worth knowing: a member is resolved against its own class chain, which
 walks *up* through the base classes. A value a **derived** class overrode
