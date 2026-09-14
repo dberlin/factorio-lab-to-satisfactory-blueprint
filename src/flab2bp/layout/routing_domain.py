@@ -6205,6 +6205,85 @@ def _band_route_bounds(
     return limited if limited[0] <= limited[2] and limited[1] <= limited[3] else None
 
 
+@dataclass(slots=True)
+class _RouteAllRun:
+    """The mutable state one `_route_all` call rebinds while it runs.
+
+    Every field here was a `nonlocal` name. A field write is visible to every
+    sibling closure immediately, which is exactly what the `nonlocal` write it
+    replaced did; that is the semantics being preserved, not changed. Nothing
+    that is bound once and only read belongs in this class yet.
+
+    The eight fields carrying `field(init=False)` have NO default on purpose.
+    Their initialiser runs LATER than construction -- at the top of `_search`,
+    `_ends` or `_search_route`, or inside `_repair`'s rebuild loop -- and each
+    of those resets is still written out at the line that held it, so it still
+    happens once per call of the owning closure. A default here would turn a
+    per-call reset into a once-per-run initialisation; unset, a read before the
+    owner has bound it raises `AttributeError` at exactly the point where the
+    old code raised `UnboundLocalError`.
+
+    `budget` is the caller's ledger, held BY REFERENCE. Copying or replacing it
+    would break the carve sites that spend against it.
+    """
+
+    budget: budget_module.WorkBudget
+    deadline: float | None
+    work: int = 0
+    contextual_seen: bool = False
+    proposal_used: bool = False
+    commit_attempt: _CommittedAttempt | None = None
+    geometry_world: projection_world.ClearanceOracle | None = None
+    geometry_screen: FlatScreen | None = None
+    #: True only while the relaxed cluster run is searching.  It relaxes ONE
+    #: refusal in `_can_junction` -- the conditional-guard one -- because that
+    #: refusal reads `planned_taps`, and run 2 has to start with an empty tap
+    #: table (see `_relaxed_cluster_result`).  Set and cleared in that closure's
+    #: `try`/`finally`, so it cannot survive the run even on an exception.
+    relaxed_junctions: bool = False
+    #: The blockers the latest `_can_junction` ask blamed, so a replayed source
+    #: walk (`_SourceWalk`) can restore that side effect without asking again.
+    last_junction_blame: tuple[int, ...] = ()
+    last_mile_seconds: float = 0.0
+    last_mile_done: bool = False
+    #: One work allowance for the whole pass, shared by both runs.  Set once at
+    #: pass entry so run 2 cannot re-derive a fresh quarter of whatever run 1
+    #: left behind.
+    last_mile_floor: int = 0
+    proved_round: int = -1
+    relation_strips: tuple[int, ...] = ()
+    relation_evidence: str = ""
+    #: `_search`'s own work tally and its ordinary-probe state, reset together
+    #: at the top of every `_search` call.
+    total_work: int = field(init=False)
+    capped_ordinary: _PathSearchResult | None = field(init=False)
+    ordinary_remaining: int = field(init=False)
+    #: One neighborhood per frontier, built lazily by `_ends`; a replayed walk
+    #: shares the owner of the walk it replays.
+    neighborhood: JunctionNeighborhood | None = field(init=False)
+    #: The source family `_search_route`'s proposal admitted, and the future
+    #: offers that admission proved, reset at the top of every call.
+    admitted_path: tuple[Cell, ...] | None = field(init=False)
+    admitted_future: dict[Cell, Cell] | None = field(init=False)
+    #: `_repair`'s mirror of `guard_claims` on its open grid, and whether the
+    #: victim-cap policy turned a tap away during the current rebuild.
+    repair_guards: set[Cell] = field(init=False)
+    policy_restricted: bool = field(init=False)
+
+    @property
+    def left(self) -> int:
+        """The pass ledger, narrowed once for every reader.
+
+        `WorkBudget.left` is `int | None`; a routing pass is always entered
+        with a ledger (`_route_all` defaults the argument at its top and
+        asserts it). mypy cannot carry that narrowing into a nested function,
+        which is why six closures re-asserted it.
+        """
+        left = self.budget.left
+        assert left is not None, "a routing pass needs a ledger"
+        return left
+
+
 def _route_all(
     canvas: _Canvas,
     nets: list[_Net],
