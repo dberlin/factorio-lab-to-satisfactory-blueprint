@@ -31,7 +31,7 @@ Neither can produce an illegal value, and neither has a disqualifier.
 | Declaration | Line | Reads | Rule |
 | --- | --- | --- | --- |
 | `CheckValidPlacement` | 67 | — | entry point; tail-jumps to `ValidateConveyorBelt` |
-| `ValidateConveyorBelt` | 72 | `mMaxSplineLength`, `mSnappedConnectionComponents` | `belt.max_length` |
+| `ValidateConveyorBelt` | 72 | `mMaxSplineLength`, `mSplineComponent`, `mBuildModeCurve`, `mSnappedConnectionComponents`, `mUpgradedConveyorBelt` | `belt.max_length` |
 | `ValidateIncline` | 103 | `mMaxIncline`, `mSplineData` | `belt.incline` |
 | `ValidateMinLength` | 104 | `mMeshLength`, `mSplineData` | `belt.min_length` |
 | `ValidateCurvature` | 105 | `mBendRadius`, `mSplineComponent` | `belt.curvature` |
@@ -118,7 +118,7 @@ read from the binary. `lift.step` says so and stays `partial`.
 | Declaration | Line | Reads | Rule |
 | --- | --- | --- | --- |
 | `CheckValidPlacement` | 66 | — | entry point; tail-jumps to `ValidatePipeline` |
-| `ValidatePipeline` | 70 | `mMaxSplineLength`, `mUpgradedPipeline` | `pipe.max_length` |
+| `ValidatePipeline` | 70 | `mMaxSplineLength`, `mSplineComponent`, `mBuildStep`, `mUpgradedPipeline` | `pipe.max_length` |
 | `ValidateMinLength` | 137 | `mMeshLength`, `mSplineData` | `pipe.min_length` |
 | `ValidateCurvatureAndReturnFaultyPosition` | 145 | `mMinBendRadius`, `mSplineComponent` | `pipe.curvature` |
 | `ValidateFluidRequirements` | 151 | `mSnappedConnectionComponents` | `pipe.fluid_requirements` |
@@ -138,7 +138,12 @@ is no separate incline rule for pipes.
 
 `ValidatePipeline` runs length, minimum length, fluid requirements and curvature,
 with `UFGCDPipeTooLong`, `UFGCDPipeTooShort`, `UFGCDPipeFluidTypeMismatch` and
-`UFGCDPipeInvalidShape`. The header also declares two constants nothing else
+`UFGCDPipeInvalidShape`; the curvature check only once `mBuildStep` is non-zero.
+`ValidateFluidRequirements` is now read to its end: it compares the two ends'
+`GetFluidDescriptor()` classes for **identity** and returns "legal" whenever
+either end has no fluid committed, is not a `UFGPipeConnectionComponent`, or is
+`FCD_SNAP_ONLY`. So a pipe from a carrying network into an empty one is legal;
+two different fluids are not. The header also declares two constants nothing else
 mentions: `MINIMUM_PIPE_CLEARANCE` and `MINIMUM_HOLOGRAM_LENGTH` (154–155), both
 off `FHologramPathingGrid::PATH_GRID_CELL_SIZE`, which is 100
 (`Hologram/HologramHelpers.h:464`).
@@ -174,7 +179,7 @@ default, and re-sourcing that limit is a separate change.
 
 ## What was extracted, and what was not
 
-`hologram_rules.json` carries seventeen rules; eight are `extracted` and nine
+`hologram_rules.json` carries seventeen rules; eleven are `extracted` and six
 `partial`. A `partial` rule is a **bound the placer must not assume it knows** —
 its `comparison` names where the comparison actually is, and its
 `interpretation` is a lead for the next extraction, not a constraint.
@@ -185,11 +190,24 @@ The three reasons a rule is only `partial`:
   (`AFGBuildableConveyorBelt::CreateClearanceData`), `buildable.clearance`
   (`AFGHologram::TestClearanceOverlap`), `buildable.grid_snap`
   (`FHologramHelpers::SnapToFloor`), `lift.clearance`;
-- **the comparison is in a `.pdata` chunk `sfy-native disasm` cannot reach** —
-  `belt.max_length`, `pipe.max_length`, `pipe.fluid_requirements`,
-  `buildable.rotation_step`. MSVC split these functions, the tool resolves a
-  symbol to the `RUNTIME_FUNCTION` covering its entry and stops at the end of
-  that chunk, so `ValidateConveyorBelt`'s 1065 bytes come back as 27. Following
-  a function's whole chunk chain would make three of these `extracted`;
+- **the function has no `.pdata` entry, so the tool stops at its first `ret`** —
+  `buildable.rotation_step` alone. `AFGBuildableHologram::GetRotationStep`
+  at `0xa7c050` is a leaf and MSVC emitted no `RUNTIME_FUNCTION` for it; the
+  neighbouring entries are `0xa7bfc0..0xa7c04a` and `0xa7c0d0..0xa7c140` and
+  neither covers it, so there is no chunk chain to follow either. Its 90°, 45°
+  and 0° returns are past the `ret` at `0xa7c07a` and stay unquoted;
 - **the rule may not exist** — `lift.step`, where nothing in
   `UpdateTopTransform` quantises a height to `mStepHeight`.
+
+**What chunk chaining bought.** MSVC splits a function into several `.pdata`
+entries and chains each chunk's `UNWIND_INFO` back to the primary one.
+`sfy-native disasm` follows those chains (Task 5), so `ValidateConveyorBelt`
+comes back as all 1065 bytes across three chunks instead of the 27 of its
+entry, `ValidatePipeline` as 1147 across five and `ValidateFluidRequirements`
+as 518 across four. That moved `belt.max_length`, `pipe.max_length` and
+`pipe.fluid_requirements` from `partial` to `extracted`. The tool also resolves
+`call qword ptr [rip+K]` through the import directory now, so the evidence
+lines name `USplineComponent::GetSplineLength` and
+`GetTangentAtDistanceAlongSpline` where they used to show only an IAT address —
+the interpretations that already used those names are reproducible from the
+tool's own output.

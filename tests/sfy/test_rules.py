@@ -25,3 +25,41 @@ def test_belt_curvature_rule_reads_the_bend_radius():
     r = load_rules()["belt.curvature"]
     assert r.status in ("extracted", "partial")
     assert "mBendRadius" in r.reads
+
+
+def test_the_split_functions_are_extracted_past_their_entry_chunk():
+    """MSVC cut these three into chained .pdata chunks; the tool stitches them back."""
+    rules = load_rules()
+    for rule_id in ("belt.max_length", "pipe.max_length"):
+        r = rules[rule_id]
+        assert r.status == "extracted", (rule_id, r.status)
+        assert "mMaxSplineLength" in r.reads, rule_id
+        # The comparison lives past the entry chunk, so the evidence must too.
+        assert any("comiss" in line and "mMaxSplineLength" in line for line in r.evidence), rule_id
+
+    fluid = rules["pipe.fluid_requirements"]
+    assert fluid.status == "extracted"
+    assert any("GetFluidDescriptor" in line for line in fluid.evidence)
+    assert any("cmp rbx,rdi" in line for line in fluid.evidence)
+
+
+def test_an_indirect_call_is_named_in_the_evidence_not_left_as_an_address():
+    """A rule that names a callee must be reproducible from the tool's own output."""
+    r = load_rules()["belt.curvature"]
+    named = [line for line in r.evidence if "GetSplineLength" in line]
+    assert named, r.evidence
+    assert any("call qword ptr" in line for line in named)
+    assert "?GetSplineLength@USplineComponent@@QEBAMXZ" in r.calls
+
+
+def test_a_rule_that_stays_partial_names_what_still_blocks_it():
+    r = load_rules()["buildable.rotation_step"]
+    assert r.status == "partial"
+    # Not chunk chaining: this function has no .pdata entry at all.
+    assert ".pdata" in r.comparison and "ret" in r.comparison
+
+
+def test_every_rules_evidence_is_in_address_order():
+    for rule in load_rules().values():
+        rvas = [int(line.split(":", 1)[0], 16) for line in rule.evidence]
+        assert rvas == sorted(rvas), rule.id

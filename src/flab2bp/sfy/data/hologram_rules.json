@@ -11,6 +11,8 @@
  "rules": [
   {
    "calls": [
+    "?GetSplineLength@USplineComponent@@QEBAMXZ",
+    "?GetTangentAtDistanceAlongSpline@USplineComponent@@QEBA?AU?$TVector@N@Math@UE@@MW4Type@ESplineCoordinateSpace@@@Z",
     "acos"
    ],
    "class": "AFGConveyorBeltHologram",
@@ -29,7 +31,7 @@
    ],
    "evidence": [
     "0xaa529a: mov rcx,qword ptr [rcx+770h]  ; AFGSplineHologram::mSplineComponent @1904",
-    "0xaa52d0: call qword ptr [0EEB7C8h]  ; const 0xeeb7c8 f32=5.187628e-38 f64=1.28616424e-316",
+    "0xaa52d0: call qword ptr [0EEB7C8h]  ; -> ?GetSplineLength@USplineComponent@@QEBAMXZ",
     "0xaa52dd: mulss xmm2,dword ptr [12B8E6Ch]  ; const 0x12b8e6c f32=0.02 f64=7.105428962728437e-15",
     "0xaa52ea: addss xmm2,xmm2",
     "0xaa52ee: addss xmm2,dword ptr [0F6DEE8h]  ; const 0xf6dee8 f32=0.5 f64=7.673846642970894e+21",
@@ -41,13 +43,13 @@
     "0xaa5307: jle 0000000000AA5503h",
     "0xaa5340: mov rcx,qword ptr [rdi+770h]  ; AFGSplineHologram::mSplineComponent @1904",
     "0xaa5356: mulss xmm2,xmm12",
-    "0xaa535b: call qword ptr [0EEB7D8h]  ; const 0xeeb7d8 f32=5.18772e-38 f64=1.28617234e-316",
+    "0xaa535b: call qword ptr [0EEB7D8h]  ; -> ?GetTangentAtDistanceAlongSpline@USplineComponent@@QEBA?AU?$TVector@N@Math@UE@@MW4Type@ESplineCoordinateSpace@@@Z",
     "0xaa53d6: sqrtsd xmm1,xmm1",
     "0xaa53df: divsd xmm3,xmm1",
     "0xaa53e3: mulsd xmm6,xmm3",
     "0xaa53e7: mulsd xmm7,xmm3",
     "0xaa540a: mulss xmm2,xmm12",
-    "0xaa540f: call qword ptr [0EEB7D8h]  ; const 0xeeb7d8 f32=5.18772e-38 f64=1.28617234e-316",
+    "0xaa540f: call qword ptr [0EEB7D8h]  ; -> ?GetTangentAtDistanceAlongSpline@USplineComponent@@QEBA?AU?$TVector@N@Math@UE@@MW4Type@ESplineCoordinateSpace@@@Z",
     "0xaa54a3: mulsd xmm2,xmm6",
     "0xaa54a7: mulsd xmm1,xmm7",
     "0xaa54ab: mulsd xmm3,xmm8",
@@ -83,6 +85,7 @@
   },
   {
    "calls": [
+    "?CheckVerifyFailedImpl2@FDebug@@SA_NPEBD0HPEB_WZZ",
     "acos"
    ],
    "class": "AFGConveyorBeltHologram",
@@ -143,7 +146,9 @@
    "status": "extracted"
   },
   {
-   "calls": [],
+   "calls": [
+    "?CheckVerifyFailedImpl2@FDebug@@SA_NPEBD0HPEB_WZZ"
+   ],
    "class": "AFGConveyorBeltHologram",
    "comparison": "total = sum over i in [1, mSplineData.Num()) of |mSplineData[i].Location - mSplineData[i-1].Location| (0xaa59ae..0xaa59d0 squared deltas, 0xaa59e0 sqrtsd, 0xaa59e4 addsd into the running total); `comiss xmm8, xmm7; ja` at 0xaa59ed/0xaa59f1 returns true as soon as total > mMeshLength * 0.5001 (0xaa589b mMeshLength, 0xaa58b2 mulss 0.5001); falling out of the loop returns false (0xaa5a07 xor al,al).",
    "constants": [
@@ -190,26 +195,74 @@
    "status": "extracted"
   },
   {
-   "calls": [],
+   "calls": [
+    "?GetSplineLength@USplineComponent@@QEBAMXZ",
+    "?MarkAsReachable@GC@UE@@YAXPEBVUObject@@@Z",
+    "?Z_Construct_UClass_UFGFactoryConnectionComponent_NoRegister@@YAPEAVUClass@@XZ",
+    "AFGBuildableWallPassthrough::GetConnection",
+    "AFGConveyorBeltHologram::ValidateCurvature",
+    "AFGConveyorBeltHologram::ValidateIncline",
+    "AFGConveyorBeltHologram::ValidateMinLength",
+    "AFGHologram::AddConstructDisqualifier",
+    "AFGHologram::IsCurrentBuildMode",
+    "AFGHologram::IsDisabled",
+    "UFGCDBeltConnectionMismatch::StaticClass",
+    "UFGCDBeltMustSnap::StaticClass",
+    "UFGCDConveyorInvalidShape::StaticClass",
+    "UFGCDConveyorTooLong::StaticClass",
+    "UFGCDConveyorTooShort::StaticClass",
+    "UFGCDConveyorTooSteep::StaticClass",
+    "UFGCDInvalidPlacement::StaticClass",
+    "UFGFactoryConnectionComponent::CanConnectTo"
+   ],
    "class": "AFGConveyorBeltHologram",
-   "comparison": "The comparison is in AFGConveyorBeltHologram::ValidateConveyorBelt, which the linker split into three .pdata chunks (0xaa4e50..0xaa4e6b, 0xaa4e6b..0xaa4fdd, 0xaa4fdd..0xaa5279). `sfy-native disasm` resolves the symbol to the 27-byte entry chunk and stops there, so the instructions at 0xaa50a3 (call USplineComponent::GetSplineLength), 0xaa50a9 (comiss against mMaxSplineLength) and 0xaa50b0 (jbe past the UFGCDConveyorTooLong disqualifier at 0xaa50b2) cannot be quoted from the tool and are not claimed as evidence here.",
-   "constants": [],
+   "comparison": "ValidateConveyorBelt is three .pdata chunks (0xaa4e50 +27, 0xaa4e6b +370, 0xaa4fdd +668) stitched back together through their chained UNWIND_INFO. An upgrade skips the validator outright: `cmp qword ptr [rcx+828h], 0; jne` at 0xaa4e5a/0xaa4e65 on mUpgradedConveyorBelt. Otherwise 0xaa5097 loads mSplineComponent, 0xaa50a1 `je` skips a null one, 0xaa50a3 `call qword ptr [0EEB7C8h]` calls it -- the import slot for USplineComponent::GetSplineLength, which the tool reports as the IAT constant rather than a resolved call -- and `comiss xmm0, dword ptr [rbx+84Ch]; jbe` at 0xaa50a9/0xaa50b0 adds UFGCDConveyorTooLong (0xaa50b2 StaticClass, 0xaa50dc AFGHologram::AddConstructDisqualifier) when that float is strictly greater than mMaxSplineLength. The other three bounds follow in order: ValidateMinLength at 0xaa50e4 -> UFGCDConveyorTooShort (0xaa50eb jne, 0xaa50ed), ValidateIncline at 0xaa511f -> UFGCDConveyorTooSteep (0xaa5126 jne, 0xaa5128), and -- only when AFGHologram::IsCurrentBuildMode(mBuildModeCurve) is true (0xaa515e, 0xaa5180, 0xaa5187 je) -- ValidateCurvature at 0xaa518c -> UFGCDConveyorInvalidShape (0xaa5193 jne, 0xaa5195).",
+   "constants": [
+    "0xee85e0 f32=5.2210766e-38 f64=1.28911253e-316",
+    "0xee8888 f32=5.224246e-38 f64=1.28939187e-316",
+    "0xeeb7c8 f32=5.187628e-38 f64=1.28616424e-316"
+   ],
    "evidence": [
-    "0xaa4e50: push rbp",
-    "0xaa4e56: sub rsp,78h",
     "0xaa4e5a: cmp qword ptr [rcx+828h],0  ; AFGConveyorBeltHologram::mUpgradedConveyorBelt @2088",
-    "0xaa4e62: mov rbx,rcx",
-    "0xaa4e65: jne 0000000000AA5272h"
+    "0xaa4e65: jne 0000000000AA5272h",
+    "0xaa5097: mov rcx,qword ptr [rbx+770h]  ; AFGSplineHologram::mSplineComponent @1904",
+    "0xaa509e: test rcx,rcx",
+    "0xaa50a1: je short 0000000000AA50E1h",
+    "0xaa50a3: call qword ptr [0EEB7C8h]  ; -> ?GetSplineLength@USplineComponent@@QEBAMXZ",
+    "0xaa50a9: comiss xmm0,dword ptr [rbx+84Ch]  ; AFGConveyorBeltHologram::mMaxSplineLength @2124",
+    "0xaa50b0: jbe short 0000000000AA50E1h",
+    "0xaa50b2: call 00000000002483E0h  ; -> UFGCDConveyorTooLong::StaticClass",
+    "0xaa50dc: call 0000000000AAEA30h  ; -> AFGHologram::AddConstructDisqualifier",
+    "0xaa50e4: call 0000000000AA5870h  ; -> AFGConveyorBeltHologram::ValidateMinLength",
+    "0xaa50eb: jne short 0000000000AA511Ch",
+    "0xaa50ed: call 0000000000248400h  ; -> UFGCDConveyorTooShort::StaticClass",
+    "0xaa511f: call 0000000000AA5560h  ; -> AFGConveyorBeltHologram::ValidateIncline",
+    "0xaa5126: jne short 0000000000AA5157h",
+    "0xaa5128: call 0000000000248410h  ; -> UFGCDConveyorTooSteep::StaticClass",
+    "0xaa515e: mov rcx,qword ptr [rbx+860h]  ; AFGConveyorBeltHologram::mBuildModeCurve @2144",
+    "0xaa5180: call 0000000000AC6800h  ; -> AFGHologram::IsCurrentBuildMode",
+    "0xaa5187: je short 0000000000AA51C4h",
+    "0xaa518c: call 0000000000AA5280h  ; -> AFGConveyorBeltHologram::ValidateCurvature",
+    "0xaa5193: jne short 0000000000AA51C4h",
+    "0xaa5195: call 0000000000248420h  ; -> UFGCDConveyorInvalidShape::StaticClass"
    ],
    "function": "ValidateConveyorBelt",
    "header": "Hologram/FGConveyorBeltHologram.h:72",
    "id": "belt.max_length",
-   "interpretation": "ValidateConveyorBelt runs the belt's four bounds in order -- spline length against mMaxSplineLength (UFGCDConveyorTooLong), ValidateMinLength (UFGCDConveyorTooShort), ValidateIncline (UFGCDConveyorTooSteep) and, in curve build mode only, ValidateCurvature (UFGCDConveyorInvalidShape). The maximum is mMaxSplineLength, 5600.1 cm, measured as the spline component's arc length rather than as the distance between the poles. Treat that as a lead, not as an extracted rule: reading the branch needs a disassembler that follows a function's whole .pdata chunk chain.",
+   "interpretation": "A belt is too long exactly when its spline component's arc length exceeds mMaxSplineLength -- 5600.1 cm in the shipped build (a constructor immediate, data/native.json). Three things follow. The measure is arc length along the spline, not the distance between the two poles, so a curve reaches the bound before its endpoints suggest. The branch is a strict `ja`-equivalent (`jbe` past the disqualifier), so exactly 5600.1 is legal. And the belt is refused, not clipped: UFGCDConveyorTooLong is a construct disqualifier. This function is also where the belt's four bounds are ordered and where belt.curvature is gated behind the curve build mode, so a placer that never uses that mode is never curvature-checked by the game.",
    "reads": [
+    "mBuildModeCurve",
+    "mBuildStep",
+    "mChildWallPoleHologram",
+    "mMaxSplineLength",
+    "mSnappedConnectionComponents",
+    "mSnappedWallPassthrough",
+    "mSnappedWallPassthroughConnectionIndex",
+    "mSplineComponent",
     "mUpgradedConveyorBelt"
    ],
    "rva": "0xaa4e50",
-   "status": "partial"
+   "status": "extracted"
   },
   {
    "calls": [
@@ -248,6 +301,7 @@
   },
   {
    "calls": [
+    "?BasicLog@Private@Logging@UE@@YAXAEBUFLogCategoryBase@@PEBUFStaticBasicLogRecord@123@ZZ",
     "?Z_Construct_UClass_UFGFactoryConnectionComponent_NoRegister@@YAPEAVUClass@@XZ",
     "AFGBuildableWallPassthrough::GetConnection",
     "UFGFactoryConnectionComponent::GetCompatibleSnapDirection"
@@ -284,7 +338,9 @@
    "status": "extracted"
   },
   {
-   "calls": [],
+   "calls": [
+    "?CheckVerifyFailedImpl2@FDebug@@SA_NPEBD0HPEB_WZZ"
+   ],
    "class": "AFGPipelineHologram",
    "comparison": "The same shape as the belt's, with a different factor: total = sum of |mSplineData[i].Location - mSplineData[i-1].Location| (0xae9a10 sqrtsd, 0xae9a14 addsd); `comiss xmm8, xmm7; ja` at 0xae9a1d/0xae9a21 returns true when total > mMeshLength * 0.5 (0xae98cb mMeshLength, 0xae98e2 mulss 0.5), and falling out returns false (0xae9a37).",
    "constants": [
@@ -320,6 +376,8 @@
   },
   {
    "calls": [
+    "?GetSplineLength@USplineComponent@@QEBAMXZ",
+    "?GetTangentAtDistanceAlongSpline@USplineComponent@@QEBA?AU?$TVector@N@Math@UE@@MW4Type@ESplineCoordinateSpace@@@Z",
     "acos"
    ],
    "class": "AFGPipelineHologram",
@@ -338,7 +396,7 @@
    ],
    "evidence": [
     "0xae939a: mov rcx,qword ptr [rcx+770h]  ; AFGSplineHologram::mSplineComponent @1904",
-    "0xae93d0: call qword ptr [0EEB7C8h]  ; const 0xeeb7c8 f32=5.187628e-38 f64=1.28616424e-316",
+    "0xae93d0: call qword ptr [0EEB7C8h]  ; -> ?GetSplineLength@USplineComponent@@QEBAMXZ",
     "0xae93d6: movss xmm2,dword ptr [0F80674h]  ; const 0xf80674 f32=2.0 f64=1099511889920.0",
     "0xae93e0: divss xmm2,dword ptr [rdi+808h]  ; AFGPipelineHologram::mMinBendRadius @2056",
     "0xae93ef: mulss xmm2,xmm12",
@@ -383,33 +441,81 @@
    "status": "extracted"
   },
   {
-   "calls": [],
+   "calls": [
+    "??$AddUniqueImpl@AEBV?$TSubclassOf@VUFGConstructDisqualifier@@@@@?$TArray@V?$TSubclassOf@VUFGConstructDisqualifier@@@@V?$TSizedDefaultAllocator@$0CA@@@@@AEAAHAEBV?$TSubclassOf@VUFGConstructDisqualifier@@@@@Z",
+    "?CheckVerifyFailedImpl2@FDebug@@SA_NPEBD0HPEB_WZZ",
+    "?GetSplineLength@USplineComponent@@QEBAMXZ",
+    "?MarkAsReachable@GC@UE@@YAXPEBVUObject@@@Z",
+    "AFGPipelineHologram::ValidateCurvatureAndReturnFaultyPosition",
+    "AFGPipelineHologram::ValidateFluidRequirements",
+    "AFGPipelineHologram::ValidateMinLength",
+    "UFGCDInvalidPlacement::StaticClass",
+    "UFGCDPipeFluidTypeMismatch::StaticClass",
+    "UFGCDPipeInvalidShape::StaticClass",
+    "UFGCDPipeMustSnap::StaticClass",
+    "UFGCDPipeTooLong::StaticClass",
+    "UFGCDPipeTooShort::StaticClass",
+    "UFGPipeConnectionComponentBase::IsConnected"
+   ],
    "class": "AFGPipelineHologram",
-   "comparison": "As for belt.max_length: AFGPipelineHologram::ValidatePipeline is split into .pdata chunks and `sfy-native disasm` reaches only the 33-byte entry (0xae9a70..0xae9a91). The branch -- 0xae9c4d call USplineComponent::GetSplineLength, 0xae9c53 comiss against mMaxSplineLength, 0xae9c5a jbe past the UFGCDPipeTooLong disqualifier -- is in a later chunk and is not claimed as evidence here.",
-   "constants": [],
+   "comparison": "The same shape as belt.max_length, in a function of five chained .pdata chunks (0xae9a70 +33, 0xae9a91 +17, 0xae9aa2 +244, 0xae9b96 +403, 0xae9d29 +450). An upgrade skips it: `cmp qword ptr [rcx+7E8h], 0; jne` at 0xae9a80/0xae9a8b on mUpgradedPipeline. Otherwise 0xae9c46 loads mSplineComponent, 0xae9c4d calls [0EEB7C8h] (USplineComponent::GetSplineLength's import slot) and `comiss xmm0, dword ptr [rbx+80Ch]; jbe` at 0xae9c53/0xae9c5a adds UFGCDPipeTooLong (0xae9c5c StaticClass, 0xae9c8d AddUnique into mConstructDisqualifiers) when the length is strictly greater than mMaxSplineLength. Then ValidateMinLength at 0xae9c9e -> UFGCDPipeTooShort (0xae9ca8 jne, 0xae9caa), ValidateFluidRequirements at 0xae9cdc -> UFGCDPipeFluidTypeMismatch (0xae9ce3 jne, 0xae9ce5) and, once mBuildStep is non-zero (0xae9d29/0xae9d30), ValidateCurvatureAndReturnFaultyPosition at 0xae9d35 with `comiss xmm0, 0.0; jbe` at 0xae9d3d/0xae9d40 -> UFGCDPipeInvalidShape (0xae9d42).",
+   "constants": [
+    "0xee6e40 f32=5.256258e-38 f64=1.2922136e-316",
+    "0xee85e0 f32=5.2210766e-38 f64=1.28911253e-316",
+    "0xee8888 f32=5.224246e-38 f64=1.28939187e-316",
+    "0xeeb7c8 f32=5.187628e-38 f64=1.28616424e-316",
+    "0xf17b30 f32=55.0569 f64=5.6217103064924394e+175",
+    "0xf17f20 f32=1.0469338e-38 f64=7.566025234801022e-307",
+    "0xf17f98 f32=1.7582386e+22 f64=1.9173949402568042e-09"
+   ],
    "evidence": [
-    "0xae9a70: mov rax,rsp",
-    "0xae9a79: sub rsp,98h",
     "0xae9a80: cmp qword ptr [rcx+7E8h],0  ; AFGPipelineHologram::mUpgradedPipeline @2024",
-    "0xae9a88: mov rbx,rcx",
-    "0xae9a8b: jne 0000000000AE9EE1h"
+    "0xae9a8b: jne 0000000000AE9EE1h",
+    "0xae9c46: mov rcx,qword ptr [rbx+770h]  ; AFGSplineHologram::mSplineComponent @1904",
+    "0xae9c4d: call qword ptr [0EEB7C8h]  ; -> ?GetSplineLength@USplineComponent@@QEBAMXZ",
+    "0xae9c53: comiss xmm0,dword ptr [rbx+80Ch]  ; AFGPipelineHologram::mMaxSplineLength @2060",
+    "0xae9c5a: jbe short 0000000000AE9C94h",
+    "0xae9c5c: call 00000000002465B0h  ; -> UFGCDPipeTooLong::StaticClass",
+    "0xae9c8d: call 00000000004C3AA0h  ; -> ??$AddUniqueImpl@AEBV?$TSubclassOf@VUFGConstructDisqualifier@@@@@?$TArray@V?$TSubclassOf@VUFGConstructDisqualifier@@@@V?$TSizedDefaultAllocator@$0CA@@@@@AEAAHAEBV?$TSubclassOf@VUFGConstructDisqualifier@@@@@Z",
+    "0xae9c9e: call 0000000000AE98A0h  ; -> AFGPipelineHologram::ValidateMinLength",
+    "0xae9ca8: jne short 0000000000AE9CD9h",
+    "0xae9caa: call 00000000002465A0h  ; -> UFGCDPipeTooShort::StaticClass",
+    "0xae9cdc: call 0000000000AE9690h  ; -> AFGPipelineHologram::ValidateFluidRequirements",
+    "0xae9ce3: jne short 0000000000AE9D14h",
+    "0xae9ce5: call 00000000002465E0h  ; -> UFGCDPipeFluidTypeMismatch::StaticClass",
+    "0xae9d29: cmp byte ptr [rbx+788h],0  ; AFGSplineHologram::mBuildStep @1928",
+    "0xae9d30: je short 0000000000AE9D75h",
+    "0xae9d35: call 0000000000AE9380h  ; -> AFGPipelineHologram::ValidateCurvatureAndReturnFaultyPosition",
+    "0xae9d3d: comiss xmm0,xmm1",
+    "0xae9d40: jbe short 0000000000AE9D75h",
+    "0xae9d42: call 00000000002465F0h  ; -> UFGCDPipeInvalidShape::StaticClass"
    ],
    "function": "ValidatePipeline",
    "header": "Hologram/FGPipelineHologram.h:70",
    "id": "pipe.max_length",
-   "interpretation": "ValidatePipeline runs spline length against mMaxSplineLength (UFGCDPipeTooLong), ValidateMinLength (UFGCDPipeTooShort), ValidateFluidRequirements (UFGCDPipeFluidTypeMismatch) and ValidateCurvatureAndReturnFaultyPosition > 0 (UFGCDPipeInvalidShape). The maximum is mMaxSplineLength, 5600.1 cm, the same number the belt uses. A lead, not an extracted rule.",
+   "interpretation": "A pipeline is too long exactly when its spline's arc length exceeds mMaxSplineLength -- 5600.1 cm, the same number the belt uses (a constructor immediate, data/native.json), and again strict, so exactly 5600.1 is legal. The four pipe bounds run in this order: length, minimum length, fluid requirements, curvature -- and the curvature check only once the second placement step has begun, because a positive faulty-distance return is what raises UFGCDPipeInvalidShape.",
    "reads": [
+    "mBuildStep",
+    "mChildWallPoleHologram",
+    "mConstructDisqualifiers",
+    "mMaxSplineLength",
+    "mSnappedConnectionComponents",
+    "mSnappedPassthroughs",
+    "mSplineComponent",
     "mUpgradedPipeline"
    ],
    "rva": "0xae9a70",
-   "status": "partial"
+   "status": "extracted"
   },
   {
    "calls": [
-    "?Z_Construct_UClass_UFGPipeConnectionComponent_NoRegister@@YAPEAVUClass@@XZ"
+    "?IsA@FObjectPtr@@QEBA_NPEBVUClass@@@Z",
+    "?Z_Construct_UClass_UFGItemDescriptor_NoRegister@@YAPEAVUClass@@XZ",
+    "?Z_Construct_UClass_UFGPipeConnectionComponent_NoRegister@@YAPEAVUClass@@XZ",
+    "UFGPipeConnectionComponent::GetFluidDescriptor"
    ],
    "class": "AFGPipelineHologram",
-   "comparison": "The reachable entry chunk establishes the preconditions only: both mSnappedConnectionComponents must exist (0xae969f/0xae96b2), neither may have mDirection 3 (0xae96be/0xae96cb), and both must be a UFGPipeConnectionComponent (0xae96d8 and 0xae96fc construct the class for the cast). Everything past 0xae972b, where the fluid types are actually compared, is in a .pdata chunk the tool does not reach by symbol.",
+   "comparison": "Four chained .pdata chunks (0xae9690 +155, 0xae972b +333, 0xae9878 +20, 0xae988c +10). The preconditions are all `return true`: both mSnappedConnectionComponents must exist (0xae969f/0xae96a5 and 0xae96b2/0xae96b8), neither may have mDirection 3 (0xae96be/0xae96c5 and 0xae96cb/0xae96d2), and both must pass FObjectPtr::IsA(UFGPipeConnectionComponent) (0xae96d8/0xae96e3 and 0xae96fc/0xae9707, then 0xae9719/0xae971c and 0xae9722/0xae9725) -- every failure jumps to 0xae988c `mov al, 1`. UFGPipeConnectionComponent::GetFluidDescriptor is then called on each end (0xae973d, 0xae9792) and an end with no fluid is also legal: 0xae9748/0xae974b and 0xae979d/0xae97a0 on the returned class, 0xae9781/0xae9784 and 0xae97d6/0xae97d9 on the TSubclassOf slot, all jump to 0xae9878 `mov al, 1`. With a fluid at both ends the two descriptors are fetched once more -- 0xae97e7 into rdi (via 0xae97f2/0xae9818/0xae981d) and 0xae9828 into rbx (via 0xae9833/0xae985c) -- and `cmp rbx, rdi; je 0xae9878` at 0xae985f/0xae9862 returns true when they are the same class; falling through returns false at 0xae9869 `xor al, al`.",
    "constants": [
     "0xee8610 f32=5.226898e-38 f64=1.28962566e-316"
    ],
@@ -418,25 +524,57 @@
     "0xae969f: mov rax,qword ptr [rsi]",
     "0xae96a5: je 0000000000AE988Ch",
     "0xae96ab: lea rdi,[rcx+7E0h]  ; AFGPipelineHologram::mSnappedConnectionComponents @2008",
+    "0xae96b2: mov rcx,qword ptr [rdi]",
     "0xae96b8: je 0000000000AE988Ch",
     "0xae96be: cmp byte ptr [rax+258h],3",
     "0xae96c5: je 0000000000AE988Ch",
     "0xae96cb: cmp byte ptr [rcx+258h],3",
     "0xae96d2: je 0000000000AE988Ch",
-    "0xae96d8: call 0000000000354790h  ; -> ?Z_Construct_UClass_UFGPipeConnectionComponent_NoRegister@@YAPEAVUClass@@XZ"
+    "0xae96d8: call 0000000000354790h  ; -> ?Z_Construct_UClass_UFGPipeConnectionComponent_NoRegister@@YAPEAVUClass@@XZ",
+    "0xae96e3: call qword ptr [0EE8610h]  ; -> ?IsA@FObjectPtr@@QEBA_NPEBVUClass@@@Z",
+    "0xae96fc: call 0000000000354790h  ; -> ?Z_Construct_UClass_UFGPipeConnectionComponent_NoRegister@@YAPEAVUClass@@XZ",
+    "0xae9707: call qword ptr [0EE8610h]  ; -> ?IsA@FObjectPtr@@QEBA_NPEBVUClass@@@Z",
+    "0xae9719: test rsi,rsi",
+    "0xae971c: je 0000000000AE988Ch",
+    "0xae9722: test rdi,rdi",
+    "0xae9725: je 0000000000AE988Ch",
+    "0xae973d: call 00000000008C3B70h  ; -> UFGPipeConnectionComponent::GetFluidDescriptor",
+    "0xae9748: test rbp,rbp",
+    "0xae974b: je 0000000000AE9878h",
+    "0xae9781: cmp qword ptr [r14],rbx",
+    "0xae9784: je 0000000000AE9878h",
+    "0xae9792: call 00000000008C3B70h  ; -> UFGPipeConnectionComponent::GetFluidDescriptor",
+    "0xae979d: test rbp,rbp",
+    "0xae97a0: je 0000000000AE9878h",
+    "0xae97d6: cmp qword ptr [r14],rbx",
+    "0xae97d9: je 0000000000AE9878h",
+    "0xae97e7: call 00000000008C3B70h  ; -> UFGPipeConnectionComponent::GetFluidDescriptor",
+    "0xae97f2: test rdi,rdi",
+    "0xae9818: mov rdi,qword ptr [r14]",
+    "0xae981d: mov rdi,rbx",
+    "0xae9828: call 00000000008C3B70h  ; -> UFGPipeConnectionComponent::GetFluidDescriptor",
+    "0xae9833: test rsi,rsi",
+    "0xae985c: mov rbx,qword ptr [r14]",
+    "0xae985f: cmp rbx,rdi",
+    "0xae9862: je short 0000000000AE9878h",
+    "0xae9869: xor al,al",
+    "0xae987d: mov al,1",
+    "0xae988c: mov al,1"
    ],
    "function": "ValidateFluidRequirements",
    "header": "Hologram/FGPipelineHologram.h:151",
    "id": "pipe.fluid_requirements",
-   "interpretation": "The rule compares the fluid already committed to the two networks the pipe would join, and ValidatePipeline turns a false into UFGCDPipeFluidTypeMismatch. A placer must not mix two fluids through one pipe network, but the exact test -- which of the two ends wins when one network is empty, and what an integrant does -- was not read.",
+   "interpretation": "Two pipes may be joined only when the fluids already committed to both ends are the *same* item descriptor class: the test is identity, `cmp rbx, rdi`, with no notion of a compatible pair, and ValidatePipeline turns a false into UFGCDPipeFluidTypeMismatch. An end with nothing committed is not a conflict -- every path where either GetFluidDescriptor comes back null returns true -- so joining a carrying network to an empty one is legal, as is a pipe whose ends are not both UFGPipeConnectionComponents or where either is FCD_SNAP_ONLY (3). What GetFluidDescriptor itself reads, and so how a network's committed fluid is decided and what an empty network takes on, is in that callee and was not read here.",
    "reads": [
     "mSnappedConnectionComponents"
    ],
    "rva": "0xae9690",
-   "status": "partial"
+   "status": "extracted"
   },
   {
    "calls": [
+    "?CheckVerifyFailedImpl2@FDebug@@SA_NPEBD0HPEB_WZZ",
+    "?Quaternion@?$TRotator@N@Math@UE@@QEBA?AU?$TQuat@N@23@XZ",
     "FHologramHelpers::CalcPoleHeight",
     "UFGFactoryConnectionComponent::GetConnectorNormal"
    ],
@@ -495,6 +633,8 @@
   },
   {
    "calls": [
+    "?CheckVerifyFailedImpl2@FDebug@@SA_NPEBD0HPEB_WZZ",
+    "?Quaternion@?$TRotator@N@Math@UE@@QEBA?AU?$TQuat@N@23@XZ",
     "FHologramHelpers::CalcPoleHeight",
     "UFGFactoryConnectionComponent::GetConnectorNormal"
    ],
@@ -518,16 +658,16 @@
    ],
    "evidence": [
     "0xaa46e8: movss xmm7,dword ptr [rcx+8E0h]  ; AFGConveyorLiftHologram::mStepHeight @2272",
-    "0xaa48ca: ucomiss xmm6,xmm7",
-    "0xaa48db: comiss xmm6,xmm7",
-    "0xaa4965: comiss xmm6,xmm7",
     "0xaa480f: movss xmm1,dword ptr [rbx+8E0h]  ; AFGConveyorLiftHologram::mStepHeight @2272",
     "0xaa482c: addss xmm2,xmm1",
     "0xaa4830: cvttss2si edi,xmm2",
     "0xaa4843: sub edi,eax",
     "0xaa4859: movss dword ptr [rbx+8ECh],xmm2  ; AFGConveyorLiftHologram::mMinimumHeightWithVerticalConnection @2284",
     "0xaa4863: addss xmm1,xmm2",
-    "0xaa4867: movss dword ptr [rbx+8ECh],xmm1  ; AFGConveyorLiftHologram::mMinimumHeightWithVerticalConnection @2284"
+    "0xaa4867: movss dword ptr [rbx+8ECh],xmm1  ; AFGConveyorLiftHologram::mMinimumHeightWithVerticalConnection @2284",
+    "0xaa48ca: ucomiss xmm6,xmm7",
+    "0xaa48db: comiss xmm6,xmm7",
+    "0xaa4965: comiss xmm6,xmm7"
    ],
    "function": "UpdateTopTransform",
    "header": "Hologram/FGConveyorLiftHologram.h:107",
@@ -548,6 +688,7 @@
   },
   {
    "calls": [
+    "?MarkAsReachable@GC@UE@@YAXPEBVUObject@@@Z",
     "AFGHologram::AddConstructDisqualifier",
     "AFGHologram::CheckValidPlacement",
     "UFGCDInvalidPlacement::StaticClass"
@@ -591,6 +732,7 @@
   },
   {
    "calls": [
+    "?CheckVerifyFailedImpl2@FDebug@@SA_NPEBD0HPEB_WZZ",
     "AFGBuildableConveyorLift::FitClearance"
    ],
    "class": "AFGConveyorLiftHologram",
@@ -623,7 +765,9 @@
   {
    "calls": [
     "?MakeFromZX@?$TRotationMatrix@N@Math@UE@@SA?AU?$TMatrix@N@23@AEBU?$TVector@N@23@0@Z",
+    "?MarkAsReachable@GC@UE@@YAXPEBVUObject@@@Z",
     "?RotateAngleAxis@?$TVector@N@Math@UE@@QEBA?AU123@NAEBU123@@Z",
+    "?Rotator@?$TMatrix@N@Math@UE@@QEBA?AU?$TRotator@N@23@XZ",
     "AFGBeamHologram::StaticClass",
     "AFGHologram::ApplyScrollRotationTo",
     "FHologramHelpers::SnapToFloor",
@@ -659,7 +803,7 @@
   {
    "calls": [],
    "class": "AFGBuildableHologram",
-   "comparison": "GetRotationStep returns 10 degrees when the hologram is on an attachment point with guide-line snapping on (0xa7c062 mSnappedAttachmentPoint, 0xa7c06c mSnapToGuideLines, 0xa7c075 `mov eax, 0Ah`). The other three returns are past the first `ret` at 0xa7c07a, which is where `sfy-native disasm` stops for a symbol with no .pdata entry, so they are not quoted here.",
+   "comparison": "GetRotationStep returns 10 degrees when the hologram is on an attachment point with guide-line snapping on (0xa7c062 mSnappedAttachmentPoint, 0xa7c06c mSnapToGuideLines, 0xa7c075 `mov eax, 0Ah`). The other three returns are past the first `ret` at 0xa7c07a, which is where `sfy-native disasm` stops for a symbol with no .pdata entry, so they are not quoted here. Chained .pdata chunks do not reach them either: 0xa7c050 has no RUNTIME_FUNCTION at all -- the neighbouring entries are 0xa7bfc0..0xa7c04a and 0xa7c0d0..0xa7c140 -- so there is no chain to follow, only the `ret` bound.",
    "constants": [],
    "evidence": [
     "0xa7c050: cmp byte ptr [rcx+6A0h],0  ; AFGBuildableHologram::mDidSnapDuetoClearance @1696",
@@ -694,9 +838,23 @@
     "??$GenerateKeyArray@V?$TSizedDefaultAllocator@$0CA@@@@?$TMapBase@U?$TObjectPtr@VAActor@@@@W4EClearanceOverlapResult@@VFDefaultSetAllocator@@U?$TDefaultMapHashableKeyFuncs@U?$TObjectPtr@VAActor@@@@W4EClearanceOverlapResult@@$0A@@@@@QEBAXAEAV?$TArray@U?$TObjectPtr@VAActor@@@@V?$TSizedDefaultAllocator@$0CA@@@@@@Z",
     "??$ParallelForInternal@V?$TFunctionRef@$$A6AXH@Z@@V<lambda_1>@?1??ParallelFor@@YAXHV1@W4EParallelForFlags@@@Z@$$T@ParallelForImpl@@YAXPEB_WHHV?$TFunctionRef@$$A6AXH@Z@@V<lambda_1>@?1??ParallelFor@@YAXH1W4EParallelForFlags@@@Z@2AEBV?$TArrayView@$$TH@@@Z",
     "??$ReallocGrow1_DoAlloc_Tiny@$02VForAnyElementType@?$TSizedHeapAllocator@$0CA@UFMemory@@@@@Private@Core@UE@@YAHGAEAVForAnyElementType@?$TSizedHeapAllocator@$0CA@UFMemory@@@@AEAH@Z",
+    "??0FInstanceHandle@@QEAA@XZ",
     "??1?$TSparseArray@V?$TSetElement@PEAUFInstanceToTemporaryBuildable@@@@V?$TSparseArrayAllocator@V?$TSizedDefaultAllocator@$0CA@@@VFDefaultBitArrayAllocator@@@@@@QEAA@XZ",
+    "??1FInstanceHandle@@QEAA@XZ",
+    "??4FActorInstanceHandle@@QEAAAEAU0@PEAVAActor@@@Z",
+    "?CheckVerifyFailedImpl2@FDebug@@SA_NPEBD0HPEB_WZZ",
+    "?FetchActor@FActorInstanceHandle@@QEBAPEAVAActor@@XZ",
+    "?Free@FMemory@@SAXPEAX@Z",
+    "?Get@FWeakObjectPtr@@QEBAPEAVUObject@@XZ",
+    "?GetInstanceManager@AAbstractInstanceManager@@SAPEAV1@PEAVUObject@@@Z",
+    "?GetWorld@AActor@@UEBAPEAVUWorld@@XZ",
+    "?ImplementsInterface@UClass@@QEBA_NPEBV1@@Z",
+    "?MarkAsReachable@GC@UE@@YAXPEBVUObject@@@Z",
+    "?OverlapMultiByProfile@UWorld@@QEBA_NAEAV?$TArray@UFOverlapResult@@V?$TSizedDefaultAllocator@$0CA@@@@@AEBU?$TVector@N@Math@UE@@AEBU?$TQuat@N@45@VFName@@AEBUFCollisionShape@@AEBUFCollisionQueryParams@@@Z",
     "?Remove@?$TSet@U?$TTuple@U?$TObjectPtr@$$CBVUFoliageType@@@@H@@U?$TDefaultMapHashableKeyFuncs@U?$TObjectPtr@$$CBVUFoliageType@@@@H$0A@@@VFDefaultSetAllocator@@@@QEAAHU?$TObjectPtr@$$CBVUFoliageType@@@@@Z",
+    "?ResolveOverlap@AAbstractInstanceManager@@QEAA_NAEBUFOverlapResult@@AEAUFInstanceHandle@@@Z",
     "?TransformBy@?$TBox@N@Math@UE@@QEBA?AU123@AEBU?$TTransform@N@23@@Z",
+    "?Z_Construct_UClass_AAbstractInstanceManager_NoRegister@@YAPEAVUClass@@XZ",
     "?Z_Construct_UClass_UFGClearanceInterface_NoRegister@@YAPEAVUClass@@XZ",
     "FCollisionQueryParams::FCollisionQueryParams",
     "FHologramHelpers::CreateSphereFromCombinedClearanceData",

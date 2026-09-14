@@ -16,7 +16,10 @@ drives ``sfy-native disasm`` once per rule: for
 the function's entry RVA, the ``this``-relative members it reads, the ``.rdata``
 constants its operands point at and the call targets that resolved to a symbol
 -- all four straight from the tool -- and copies the instructions listed in
-:data:`EVIDENCE` out of the same output, verbatim.
+:data:`EVIDENCE` out of the same output, verbatim. Since Task 5 the tool
+stitches a split function's chained ``.pdata`` chunks back together, so a
+validator MSVC cut into pieces is read whole rather than to the end of its
+entry chunk.
 
 **What is written by hand and what is not.** :data:`INTERPRETATIONS` carries a
 status, a transcription of the comparison and what it means for a placer;
@@ -25,8 +28,8 @@ else is the tool's. The status obeys one rule:
 
 ``extracted``      the comparison's operands and its branch are in the evidence
 ``partial``        the members are seen being read, but the comparison is in a
-                   callee this did not follow, or in a ``.pdata`` chunk
-                   ``sfy-native disasm`` cannot reach by symbol -- the
+                   callee this did not follow, or past the end of what
+                   ``sfy-native disasm`` can prove is the function -- the
                    ``comparison`` text says which, and names it
 ``unextractable``  nothing was read, and ``interpretation`` says why
 
@@ -147,9 +150,11 @@ TARGETS: dict[str, tuple[str, str, str]] = {
     ),
 }
 
-# The instructions each rule was read at, in the order they run. Every one is
-# copied out of the tool's output by address, so a rule whose function moved in
-# a game update fails the run here rather than shipping a stale quotation.
+# The instructions each rule was read at. Every one is copied out of the tool's
+# output by address, so a rule whose function moved in a game update fails the
+# run here rather than shipping a stale quotation. Order here is for reading;
+# ``_rule`` sorts the evidence it writes by RVA, so the file is always in
+# address order whatever order a branch actually runs in.
 EVIDENCE: dict[str, tuple[str, ...]] = {
     "belt.curvature": (
         "0xaa529a", "0xaa52d0", "0xaa52dd", "0xaa52ea", "0xaa52ee", "0xaa52f6",
@@ -174,7 +179,10 @@ EVIDENCE: dict[str, tuple[str, ...]] = {
         "0xaa59e8", "0xaa59ed", "0xaa59f1", "0xaa5a07", "0xaa5a35",
     ),
     "belt.max_length": (
-        "0xaa4e50", "0xaa4e56", "0xaa4e5a", "0xaa4e62", "0xaa4e65",
+        "0xaa4e5a", "0xaa4e65", "0xaa5097", "0xaa509e", "0xaa50a1", "0xaa50a3",
+        "0xaa50a9", "0xaa50b0", "0xaa50b2", "0xaa50dc", "0xaa50e4", "0xaa50eb",
+        "0xaa50ed", "0xaa511f", "0xaa5126", "0xaa5128", "0xaa515e", "0xaa5180",
+        "0xaa5187", "0xaa518c", "0xaa5193", "0xaa5195",
     ),
     "belt.clearance": (
         "0xaa16c2", "0xaa1714", "0xaa171b", "0xaa1736", "0xaa173d", "0xaa1747",
@@ -197,11 +205,19 @@ EVIDENCE: dict[str, tuple[str, ...]] = {
         "0xae961e", "0xae966f", "0xae9678",
     ),
     "pipe.max_length": (
-        "0xae9a70", "0xae9a79", "0xae9a80", "0xae9a88", "0xae9a8b",
+        "0xae9a80", "0xae9a8b", "0xae9c46", "0xae9c4d", "0xae9c53", "0xae9c5a",
+        "0xae9c5c", "0xae9c8d", "0xae9c9e", "0xae9ca8", "0xae9caa", "0xae9cdc",
+        "0xae9ce3", "0xae9ce5", "0xae9d29", "0xae9d30", "0xae9d35", "0xae9d3d",
+        "0xae9d40", "0xae9d42",
     ),
     "pipe.fluid_requirements": (
-        "0xae9698", "0xae969f", "0xae96a5", "0xae96ab", "0xae96b8", "0xae96be",
-        "0xae96c5", "0xae96cb", "0xae96d2", "0xae96d8",
+        "0xae9698", "0xae969f", "0xae96a5", "0xae96ab", "0xae96b2", "0xae96b8",
+        "0xae96be", "0xae96c5", "0xae96cb", "0xae96d2", "0xae96d8", "0xae96e3",
+        "0xae96fc", "0xae9707", "0xae9719", "0xae971c", "0xae9722", "0xae9725",
+        "0xae973d", "0xae9748", "0xae974b", "0xae9781", "0xae9784", "0xae9792",
+        "0xae979d", "0xae97a0", "0xae97d6", "0xae97d9", "0xae97e7", "0xae97f2",
+        "0xae9818", "0xae981d", "0xae9828", "0xae9833", "0xae985c", "0xae985f",
+        "0xae9862", "0xae9869", "0xae987d", "0xae988c",
     ),
     "lift.height_range": (
         "0xaa46b8", "0xaa46cf", "0xaa46e8", "0xaa4946", "0xaa494d", "0xaa4953",
@@ -304,25 +320,35 @@ INTERPRETATIONS: dict[str, tuple[str, str, str]] = {
         "strict, so a belt exactly half a mesh long is too short.",
     ),
     "belt.max_length": (
-        "partial",
-        "The comparison is in AFGConveyorBeltHologram::ValidateConveyorBelt, "
-        "which the linker split into three .pdata chunks "
-        "(0xaa4e50..0xaa4e6b, 0xaa4e6b..0xaa4fdd, 0xaa4fdd..0xaa5279). "
-        "`sfy-native disasm` resolves the symbol to the 27-byte entry chunk and "
-        "stops there, so the instructions at 0xaa50a3 (call "
-        "USplineComponent::GetSplineLength), 0xaa50a9 (comiss against "
-        "mMaxSplineLength) and 0xaa50b0 (jbe past the "
-        "UFGCDConveyorTooLong disqualifier at 0xaa50b2) cannot be quoted from "
-        "the tool and are not claimed as evidence here.",
-        "ValidateConveyorBelt runs the belt's four bounds in order -- spline "
-        "length against mMaxSplineLength (UFGCDConveyorTooLong), "
-        "ValidateMinLength (UFGCDConveyorTooShort), ValidateIncline "
-        "(UFGCDConveyorTooSteep) and, in curve build mode only, "
-        "ValidateCurvature (UFGCDConveyorInvalidShape). The maximum is "
-        "mMaxSplineLength, 5600.1 cm, measured as the spline component's arc "
-        "length rather than as the distance between the poles. Treat that as a "
-        "lead, not as an extracted rule: reading the branch needs a "
-        "disassembler that follows a function's whole .pdata chunk chain.",
+        "extracted",
+        "ValidateConveyorBelt is three .pdata chunks (0xaa4e50 +27, 0xaa4e6b "
+        "+370, 0xaa4fdd +668) stitched back together through their chained "
+        "UNWIND_INFO. An upgrade skips the validator outright: `cmp qword ptr "
+        "[rcx+828h], 0; jne` at 0xaa4e5a/0xaa4e65 on mUpgradedConveyorBelt. "
+        "Otherwise 0xaa5097 loads mSplineComponent, 0xaa50a1 `je` skips a null "
+        "one, 0xaa50a3 `call qword ptr [0EEB7C8h]` calls it -- the import slot "
+        "for USplineComponent::GetSplineLength, which the tool reports as the "
+        "IAT constant rather than a resolved call -- and `comiss xmm0, dword "
+        "ptr [rbx+84Ch]; jbe` at 0xaa50a9/0xaa50b0 adds UFGCDConveyorTooLong "
+        "(0xaa50b2 StaticClass, 0xaa50dc AFGHologram::AddConstructDisqualifier) "
+        "when that float is strictly greater than mMaxSplineLength. The other "
+        "three bounds follow in order: ValidateMinLength at 0xaa50e4 -> "
+        "UFGCDConveyorTooShort (0xaa50eb jne, 0xaa50ed), ValidateIncline at "
+        "0xaa511f -> UFGCDConveyorTooSteep (0xaa5126 jne, 0xaa5128), and -- "
+        "only when AFGHologram::IsCurrentBuildMode(mBuildModeCurve) is true "
+        "(0xaa515e, 0xaa5180, 0xaa5187 je) -- ValidateCurvature at 0xaa518c -> "
+        "UFGCDConveyorInvalidShape (0xaa5193 jne, 0xaa5195).",
+        "A belt is too long exactly when its spline component's arc length "
+        "exceeds mMaxSplineLength -- 5600.1 cm in the shipped build (a "
+        "constructor immediate, data/native.json). Three things follow. The "
+        "measure is arc length along the spline, not the distance between the "
+        "two poles, so a curve reaches the bound before its endpoints suggest. "
+        "The branch is a strict `ja`-equivalent (`jbe` past the disqualifier), "
+        "so exactly 5600.1 is legal. And the belt is refused, not clipped: "
+        "UFGCDConveyorTooLong is a construct disqualifier. This function is "
+        "also where the belt's four bounds are ordered and where "
+        "belt.curvature is gated behind the curve build mode, so a placer that "
+        "never uses that mode is never curvature-checked by the game.",
     ),
     "belt.clearance": (
         "partial",
@@ -389,35 +415,63 @@ INTERPRETATIONS: dict[str, tuple[str, str, str]] = {
         "UFGCDPipeInvalidShape.",
     ),
     "pipe.max_length": (
-        "partial",
-        "As for belt.max_length: AFGPipelineHologram::ValidatePipeline is split "
-        "into .pdata chunks and `sfy-native disasm` reaches only the 33-byte "
-        "entry (0xae9a70..0xae9a91). The branch -- 0xae9c4d call "
-        "USplineComponent::GetSplineLength, 0xae9c53 comiss against "
-        "mMaxSplineLength, 0xae9c5a jbe past the UFGCDPipeTooLong disqualifier "
-        "-- is in a later chunk and is not claimed as evidence here.",
-        "ValidatePipeline runs spline length against mMaxSplineLength "
-        "(UFGCDPipeTooLong), ValidateMinLength (UFGCDPipeTooShort), "
-        "ValidateFluidRequirements (UFGCDPipeFluidTypeMismatch) and "
-        "ValidateCurvatureAndReturnFaultyPosition > 0 "
-        "(UFGCDPipeInvalidShape). The maximum is mMaxSplineLength, 5600.1 cm, "
-        "the same number the belt uses. A lead, not an extracted rule.",
+        "extracted",
+        "The same shape as belt.max_length, in a function of five chained "
+        ".pdata chunks (0xae9a70 +33, 0xae9a91 +17, 0xae9aa2 +244, 0xae9b96 "
+        "+403, 0xae9d29 +450). An upgrade skips it: `cmp qword ptr [rcx+7E8h], "
+        "0; jne` at 0xae9a80/0xae9a8b on mUpgradedPipeline. Otherwise 0xae9c46 "
+        "loads mSplineComponent, 0xae9c4d calls [0EEB7C8h] "
+        "(USplineComponent::GetSplineLength's import slot) and `comiss xmm0, "
+        "dword ptr [rbx+80Ch]; jbe` at 0xae9c53/0xae9c5a adds UFGCDPipeTooLong "
+        "(0xae9c5c StaticClass, 0xae9c8d AddUnique into mConstructDisqualifiers) "
+        "when the length is strictly greater than mMaxSplineLength. Then "
+        "ValidateMinLength at 0xae9c9e -> UFGCDPipeTooShort (0xae9ca8 jne, "
+        "0xae9caa), ValidateFluidRequirements at 0xae9cdc -> "
+        "UFGCDPipeFluidTypeMismatch (0xae9ce3 jne, 0xae9ce5) and, once "
+        "mBuildStep is non-zero (0xae9d29/0xae9d30), "
+        "ValidateCurvatureAndReturnFaultyPosition at 0xae9d35 with `comiss "
+        "xmm0, 0.0; jbe` at 0xae9d3d/0xae9d40 -> UFGCDPipeInvalidShape "
+        "(0xae9d42).",
+        "A pipeline is too long exactly when its spline's arc length exceeds "
+        "mMaxSplineLength -- 5600.1 cm, the same number the belt uses (a "
+        "constructor immediate, data/native.json), and again strict, so "
+        "exactly 5600.1 is legal. The four pipe bounds run in this order: "
+        "length, minimum length, fluid requirements, curvature -- and the "
+        "curvature check only once the second placement step has begun, "
+        "because a positive faulty-distance return is what raises "
+        "UFGCDPipeInvalidShape.",
     ),
     "pipe.fluid_requirements": (
-        "partial",
-        "The reachable entry chunk establishes the preconditions only: both "
-        "mSnappedConnectionComponents must exist (0xae969f/0xae96b2), neither "
-        "may have mDirection 3 (0xae96be/0xae96cb), and both must be a "
-        "UFGPipeConnectionComponent (0xae96d8 and 0xae96fc construct the class "
-        "for the cast). Everything past 0xae972b, where the fluid types are "
-        "actually compared, is in a .pdata chunk the tool does not reach by "
-        "symbol.",
-        "The rule compares the fluid already committed to the two networks the "
-        "pipe would join, and ValidatePipeline turns a false into "
-        "UFGCDPipeFluidTypeMismatch. A placer must not mix two fluids through "
-        "one pipe network, but the exact test -- which of the two ends wins "
-        "when one network is empty, and what an integrant does -- was not "
-        "read.",
+        "extracted",
+        "Four chained .pdata chunks (0xae9690 +155, 0xae972b +333, 0xae9878 "
+        "+20, 0xae988c +10). The preconditions are all `return true`: both "
+        "mSnappedConnectionComponents must exist (0xae969f/0xae96a5 and "
+        "0xae96b2/0xae96b8), neither may have mDirection 3 "
+        "(0xae96be/0xae96c5 and 0xae96cb/0xae96d2), and both must pass "
+        "FObjectPtr::IsA(UFGPipeConnectionComponent) (0xae96d8/0xae96e3 and "
+        "0xae96fc/0xae9707, then 0xae9719/0xae971c and 0xae9722/0xae9725) -- "
+        "every failure jumps to 0xae988c `mov al, 1`. "
+        "UFGPipeConnectionComponent::GetFluidDescriptor is then called on each "
+        "end (0xae973d, 0xae9792) and an end with no fluid is also legal: "
+        "0xae9748/0xae974b and 0xae979d/0xae97a0 on the returned class, "
+        "0xae9781/0xae9784 and 0xae97d6/0xae97d9 on the TSubclassOf slot, all "
+        "jump to 0xae9878 `mov al, 1`. With a fluid at both ends the two "
+        "descriptors are fetched once more -- 0xae97e7 into rdi (via "
+        "0xae97f2/0xae9818/0xae981d) and 0xae9828 into rbx (via "
+        "0xae9833/0xae985c) -- and `cmp rbx, rdi; je 0xae9878` at "
+        "0xae985f/0xae9862 returns true when they are the same class; falling "
+        "through returns false at 0xae9869 `xor al, al`.",
+        "Two pipes may be joined only when the fluids already committed to "
+        "both ends are the *same* item descriptor class: the test is identity, "
+        "`cmp rbx, rdi`, with no notion of a compatible pair, and "
+        "ValidatePipeline turns a false into UFGCDPipeFluidTypeMismatch. An "
+        "end with nothing committed is not a conflict -- every path where "
+        "either GetFluidDescriptor comes back null returns true -- so joining "
+        "a carrying network to an empty one is legal, as is a pipe whose ends "
+        "are not both UFGPipeConnectionComponents or where either is "
+        "FCD_SNAP_ONLY (3). What GetFluidDescriptor itself reads, and so how a "
+        "network's committed fluid is decided and what an empty network takes "
+        "on, is in that callee and was not read here.",
     ),
     "lift.height_range": (
         "extracted",
@@ -515,7 +569,11 @@ INTERPRETATIONS: dict[str, tuple[str, str, str]] = {
         "(0xa7c062 mSnappedAttachmentPoint, 0xa7c06c mSnapToGuideLines, "
         "0xa7c075 `mov eax, 0Ah`). The other three returns are past the first "
         "`ret` at 0xa7c07a, which is where `sfy-native disasm` stops for a "
-        "symbol with no .pdata entry, so they are not quoted here.",
+        "symbol with no .pdata entry, so they are not quoted here. Chained "
+        ".pdata chunks do not reach them either: 0xa7c050 has no "
+        "RUNTIME_FUNCTION at all -- the neighbouring entries are "
+        "0xa7bfc0..0xa7c04a and 0xa7c0d0..0xa7c140 -- so there is no chain to "
+        "follow, only the `ret` bound.",
         "The build gun's rotation step is not one number. The reachable branch "
         "gives 10 degrees on an attachment point; the tail of the same "
         "function returns 90 by default, 45 under one further flag and 0 "
@@ -572,12 +630,22 @@ def _disasm(dll: Path, pdb: Path, symbol: str, out: Path) -> list[dict[str, Any]
     return json.loads(out.read_text(encoding="utf-8"))
 
 
+def _rva(text: str) -> int:
+    """``"0xaa5280"`` as a number, so evidence sorts by address and not by text."""
+    return int(text, 16)
+
+
 def _line(instruction: dict[str, Any]) -> str:
     """One evidence line: the tool's own text, plus whatever it annotated."""
     text = f"{instruction['rva']}: {instruction['text']}"
     member = instruction.get("member")
     if member:
         return f"{text}  ; {member['class']}::{member['name']} @{member['offset']}"
+    imported = instruction.get("import")
+    if imported:
+        # An indirect call through an import address table slot: the slot's
+        # `constant` is a pointer, so the name is the useful half.
+        return f"{text}  ; -> {imported}"
     constant = instruction.get("constant")
     if constant:
         shown = [f"{key}={constant[key]}" for key in ("f32", "f64") if constant[key] is not None]
@@ -613,10 +681,13 @@ def _rule(rule_id: str, function: dict[str, Any]) -> dict[str, Any]:
                 if "constant" in i
             }
         ),
-        "calls": sorted({i["call"] for i in function["instructions"] if "call" in i}),
+        "calls": sorted(
+            {i["call"] for i in function["instructions"] if "call" in i}
+            | {i["import"] for i in function["instructions"] if "import" in i}
+        ),
         "comparison": comparison,
         "interpretation": interpretation,
-        "evidence": [_line(by_rva[rva]) for rva in EVIDENCE[rule_id]],
+        "evidence": [_line(by_rva[rva]) for rva in sorted(EVIDENCE[rule_id], key=_rva)],
         "header": header,
     }
 
