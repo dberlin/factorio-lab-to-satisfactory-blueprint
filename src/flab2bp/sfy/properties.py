@@ -175,8 +175,9 @@ The enum is the engine's, so it is in no header the game ships, but
 ``PlayerInfoCache.h`` pins the value twice over: ``FPlayerInfoHandle``'s
 default-constructed ``ServiceProvider`` is ``0`` and is meant to be the invalid
 handle (line 281), and the legacy branch treats ``ServiceProvider == Null`` as
-exactly that (line 339). Every handle in the corpus says ``6``, which is
-``Steam`` counting from ``Null = 0``."""
+exactly that (line 339). Any other value is a provider id from the engine's
+enum, which the game ships no header for; the decoder carries it through
+unchanged and never interprets it."""
 
 TAG_HAS_ARRAY_INDEX = 0x01
 TAG_HAS_PROPERTY_GUID = 0x02

@@ -28,6 +28,11 @@ namespace SfyExtract;
 /// </summary>
 public static class StructSchemas
 {
+    // mappingsPath is the in-memory-patched usmap (UsmapCompat.Patch) the
+    // schemas are read from; usmapPath is the game's original file, whose name
+    // and sha256 go into the provenance so a reader can tie the output to the
+    // shipped data rather than to a temporary patched copy. The two differ on
+    // purpose.
     public static int Write(string mappingsPath, string usmapPath, string namesPath, string outPath)
     {
         var forGame = new FileUsmapTypeMappingsProvider(mappingsPath).MappingsForGame

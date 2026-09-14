@@ -295,8 +295,10 @@ may not invent one in its place. The first consequence is concrete —
   boxes.
 - Belt clearance capsules (built from the spline like the game's
   `CreateClearanceData`) never intersect other belts or hard boxes, except
-  within a small tolerance (target 5 cm, tuned against fixtures) at the belt's
-  own connection points. Belts through belts are refused.
+  within a small tolerance (5 cm) at the belt's own connection points. That
+  tolerance is ours, covering float error where a belt end sits exactly on a
+  port; it is not a game rule and is not derived from the corpus. Belts
+  through belts are refused.
 - Per belt run: length <= max spline length, incline <= max incline, and
   horizontal radius of curvature >= the `belt.curvature` floor (not
   `mBendRadius`). Per lift: height within min/max and the vertical-connection

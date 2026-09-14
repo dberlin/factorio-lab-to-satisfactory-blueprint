@@ -59,8 +59,6 @@ def tag_names(properties: tuple[Property, ...]) -> Iterator[str]:
     for p in properties:
         if p.tag.struct_name:
             yield p.tag.struct_name
-        if p.tag.inner_type == "StructProperty" and p.tag.struct_name:
-            yield p.tag.struct_name
         if isinstance(p.value, Struct):
             yield from tag_names(p.value.fields)
 
