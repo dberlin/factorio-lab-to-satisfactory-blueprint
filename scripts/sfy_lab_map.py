@@ -37,14 +37,15 @@ The three tables:
      carries the name instead -- so a machine, belt or pipe item is matched on
      ``registry.buildables[registry.descriptors[desc]].display_name``.
 
-   Matching is case-insensitive and tolerates one side's trailing ``s`` when the
-   other side has none, only after the exact name has found nothing. **No row
-   needs that licence today** -- the run prints the count, so a version of the
-   game or the lab that starts leaning on it says so -- and the two lab names
-   that still miss are in :data:`ITEM_OVERRIDES` with both names on the line.
-   Eight lab ids have no game class at all and are in :data:`ITEMS_NOT_IN_GAME`
-   with the reason; every other lab item must land in exactly one class or the
-   run fails.
+   Names must be **equal**, up to case and runs of whitespace and nothing else.
+   An earlier version also tolerated a trailing ``s`` on one side, and that
+   licence turned out to match no row at all: the lab calls the item "Screws"
+   exactly as the game does, and it is only the lab *recipe* that says "Screw".
+   The two lab names that genuinely differ are in :data:`ITEM_OVERRIDES` with
+   both names on the line, which is where a difference belongs -- written down
+   and checked -- rather than absorbed by a rule nothing exercises. Eight lab
+   ids have no game class at all and are in :data:`ITEMS_NOT_IN_GAME` with the
+   reason; every other lab item must land in exactly one class or the run fails.
 
 3. **Recipes.** By exact signature over *mapped* classes:
    ``(producer Build_*_C, duration, sorted (Desc_*_C, amount) ingredients,
@@ -74,7 +75,6 @@ import hashlib
 import json
 from collections import defaultdict
 from collections.abc import Mapping
-from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
 from typing import Any
@@ -204,21 +204,18 @@ def _sha256(path: Path) -> str:
 
 
 def _normalise(name: str) -> str:
-    return " ".join(name.split()).casefold()
+    """A display name reduced to what two sources have to agree on.
 
-
-def _name_keys(name: str) -> tuple[str, str]:
-    """The normalised name, then its one-``s`` plural or singular counterpart.
-
-    The lab writes ``Screw`` where the game writes ``Screws``, and ``Alien
-    Protein`` where the game writes ``Alien Protein``: tolerating a trailing
-    ``s`` on one side when the other has none -- never stripping or adding one
-    on both, and only after the exact name has found nothing -- is the whole of
-    the licence taken here. The run reports how many rows needed it.
+    Case and runs of whitespace, and nothing else. There is deliberately no
+    plural licence and no punctuation licence: an earlier version tolerated a
+    trailing ``s`` on one side, and it turned out to match **no** row -- the lab
+    calls the item "Screws" exactly as the game does, and it is only the lab
+    *recipe* that says "Screw". A leniency that carries nothing is not a
+    convenience, it is an untested path that could quietly pair the wrong two
+    names after a rename, so names must now be equal or the id goes to
+    :data:`ITEM_OVERRIDES` with both names written out.
     """
-    key = _normalise(name)
-    other = key[:-1] if key.endswith("s") else key + "s"
-    return (key, other)
+    return " ".join(name.split()).casefold()
 
 
 def _display_names(registry: Registry) -> dict[str, str]:
@@ -305,15 +302,14 @@ def _check_machines(
         )
 
 
-def _items(dataset: Dataset, registry: Registry) -> tuple[dict[str, str], tuple[str, ...]]:
-    """The item table, and the lab ids that needed the trailing-``s`` licence."""
+def _items(dataset: Dataset, registry: Registry) -> dict[str, str]:
+    """The item table: one lab id to one ``Desc_*_C``, on equal display names."""
     pool = _display_names(registry)
     by_name: dict[str, set[str]] = defaultdict(set)
     for class_name, name in pool.items():
         by_name[_normalise(name)].add(class_name)
 
     items: dict[str, str] = {}
-    plural_matched: list[str] = []
     unresolved: list[str] = []
     for item in dataset.items:
         if item.id in ITEM_OVERRIDES:
@@ -333,15 +329,9 @@ def _items(dataset: Dataset, registry: Registry) -> tuple[dict[str, str], tuple[
             continue
         if item.id in ITEMS_NOT_IN_GAME:
             continue
-        exact, plural = _name_keys(item.name)
-        candidates = by_name.get(exact, set())
-        by_licence = not candidates
-        if by_licence:
-            candidates = by_name.get(plural, set())
+        candidates = by_name.get(_normalise(item.name), set())
         if len(candidates) == 1:
             items[item.id] = next(iter(candidates))
-            if by_licence:
-                plural_matched.append(item.id)
         else:
             unresolved.append(f"{item.id!r} ({item.name!r}) -> {sorted(candidates)}")
     if unresolved:
@@ -354,7 +344,7 @@ def _items(dataset: Dataset, registry: Registry) -> tuple[dict[str, str], tuple[
     stale += sorted(k for k in ITEMS_NOT_IN_GAME if k not in {i.id for i in dataset.items})
     if stale:
         raise DerivationError(f"these item entries name lab ids the dataset no longer has: {stale}")
-    return items, tuple(plural_matched)
+    return items
 
 
 def _fluids(dataset: Dataset) -> frozenset[str]:
@@ -577,14 +567,6 @@ def _refresh_names() -> int:
     return 0
 
 
-@dataclass(frozen=True, slots=True)
-class Derived:
-    """The map, and what the run wants to say about how it got there."""
-
-    payload: dict[str, Any]
-    plural_matched: tuple[str, ...]
-
-
 def _check_item_names_are_current() -> str:
     """Refuse a names file taken from a different Docs.json than ``docs.json``.
 
@@ -603,13 +585,13 @@ def _check_item_names_are_current() -> str:
     return str(names)
 
 
-def derive() -> Derived:
+def derive() -> dict[str, Any]:
     """The whole map, ready to write."""
     docs_sha256 = _check_item_names_are_current()
     registry = load_registry()
     dataset = load_vendored(Game.SFY)
     machines = _machines(registry)
-    items, plural_matched = _items(dataset, registry)
+    items = _items(dataset, registry)
     _check_machines(machines, items, dataset, registry)
     recipes, unmapped = _recipes(dataset, registry, items, machines)
 
@@ -624,21 +606,18 @@ def derive() -> Derived:
     if stray:
         raise DerivationError(f"these recipe classes are not in registry.recipes: {stray}")
 
-    return Derived(
-        payload={
-            "items": dict(sorted(items.items())),
-            "machines": dict(sorted(machines.items())),
-            "provenance": {
-                "derived": dt.date.today().isoformat(),
-                "item_names_docs_sha256": docs_sha256,
-                "lab_dataset_sha256": _sha256(LAB_DATASET_PATH),
-                "registry_inputs_sha256": registry.provenance["inputs_sha256"],
-            },
-            "recipes": dict(sorted(recipes.items())),
-            "unmapped_recipes": dict(sorted(unmapped.items())),
+    return {
+        "items": dict(sorted(items.items())),
+        "machines": dict(sorted(machines.items())),
+        "provenance": {
+            "derived": dt.date.today().isoformat(),
+            "item_names_docs_sha256": docs_sha256,
+            "lab_dataset_sha256": _sha256(LAB_DATASET_PATH),
+            "registry_inputs_sha256": registry.provenance["inputs_sha256"],
         },
-        plural_matched=plural_matched,
-    )
+        "recipes": dict(sorted(recipes.items())),
+        "unmapped_recipes": dict(sorted(unmapped.items())),
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -653,14 +632,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.refresh_names:
         return _refresh_names()
 
-    derived = derive()
-    payload = derived.payload
+    payload = derive()
     target = LAB_MAP_PATH if args.out is None else Path(args.out)
     target.write_text(json.dumps(payload, indent=1, sort_keys=True) + "\n", encoding="utf-8")
     print(
         f"items: {len(payload['items'])} mapped, {len(ITEMS_NOT_IN_GAME)} with no game class "
-        f"({len(ITEM_OVERRIDES)} overrides, "
-        f"{len(derived.plural_matched)} through the trailing-'s' licence)"
+        f"({len(ITEM_OVERRIDES)} overrides)"
     )
     print(
         f"recipes: {len(payload['recipes'])} mapped "

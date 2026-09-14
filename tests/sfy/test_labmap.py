@@ -42,9 +42,9 @@ def script() -> ModuleType:
     spec = importlib.util.spec_from_file_location("sfy_lab_map", SCRIPT)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
-    # Registered before it runs because ``@dataclass`` resolves a field's
-    # annotation through ``sys.modules[cls.__module__]``, which is None for a
-    # module that was only ever exec'd.
+    # Registered before it runs so that anything in it which resolves through
+    # ``sys.modules[cls.__module__]`` -- a ``@dataclass`` field annotation, a
+    # pickle, a ``typing.get_type_hints`` -- finds the module rather than None.
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
@@ -188,7 +188,7 @@ def test_a_machine_row_the_game_data_contradicts_is_refused(
     script: ModuleType, registry: Registry, patch: pytest.MonkeyPatch
 ) -> None:
     dataset = load_vendored(Game.SFY)
-    items, _ = script._items(dataset, registry)
+    items = script._items(dataset, registry)
     machines = {**script.MACHINES, "refinery": "Build_AssemblerMk1_C"}
     with pytest.raises(SystemExit) as caught:
         script._check_machines(machines, items, dataset, registry)
@@ -201,7 +201,7 @@ def test_a_machine_row_for_a_lab_id_the_dataset_dropped_is_refused(
     script: ModuleType, registry: Registry
 ) -> None:
     dataset = load_vendored(Game.SFY)
-    items, _ = script._items(dataset, registry)
+    items = script._items(dataset, registry)
     machines = {**script.MACHINES, "quantum-constructor": "Build_ConstructorMk1_C"}
     with pytest.raises(SystemExit, match="quantum-constructor"):
         script._check_machines(machines, items, dataset, registry)
