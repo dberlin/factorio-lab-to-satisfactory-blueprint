@@ -2857,13 +2857,20 @@ class _Canvas:
         """
         return 0 <= z <= self.belt_rules.max_z and (x, y, z) not in self.world_taken
 
-    def free(self, cell: tuple[int, int, int], *, belt: bool = True) -> bool:
-        """Whether a belt may stand here.
+    def _free_outside_the_guard(self, cell: Cell, *, belt: bool) -> bool:
+        """Every refusal the two ``free`` gates share, in the order they check them.
 
-        ``belt=False`` asks the narrower question a caller placing something
-        that is NOT a belt has -- a power tower, say.  It drops exactly one
-        refusal, ``belt_keepout``, whose whole content is the belt probe's
-        verdict; everything else this gate holds denies the cell to any object.
+        :meth:`free` and :meth:`free_owned_guard` differ in exactly one clause --
+        whether a junction ``guard`` on ``cell`` refuses it or is the point --
+        and in whether a non-belt caller may ignore ``belt_keepout``.
+        Everything below was copied from one gate into the other.
+
+        Every container this reads is a plain one with a pure lookup -- ``blocked``
+        and ``belt_ban`` and ``belt_keepout`` are ``dict``s, ``keep_out`` and
+        ``guard`` are ``set``s, ``limit`` is a tuple, ``routing_ports`` a
+        ``frozenset``, and ``PortReservations.get`` forwards to a private
+        ``dict.get`` without touching its ``version``.  That is what lets each
+        caller test ``guard`` on whichever side of this it prefers.
         """
         x, y, z = cell
         if not 0 <= z < self.levels:
@@ -2873,11 +2880,12 @@ class _Canvas:
         # game's to sell.  `_make_grid` must agree, and does.
         if cell in self.blocked or (x, y) in self.keep_out:
             return False
-        # Two independent refusals, added by two branches to the same gate and
-        # kept both: `belt_ban` is the height a belt owes whatever it crosses
-        # (a Spray Coater wants 1.8975), `guard` is a junction's own collider.
-        # Either one alone would let the other's case through.
-        if z in self.belt_ban.get((x, y), ()) or cell in self.guard:
+        # `belt_ban` and the caller's own `guard` clause are two independent
+        # refusals, added by two branches to the same gate and kept both:
+        # `belt_ban` is the height a belt owes whatever it crosses (a Spray
+        # Coater wants 1.8975), `guard` is a junction's own collider.  Either
+        # one alone would let the other's case through.
+        if z in self.belt_ban.get((x, y), ()):
             return False
         if belt and z in self.belt_keepout.get((x, y), ()):
             return False
@@ -2887,6 +2895,16 @@ class _Canvas:
                 return False
         port = self.reserved.get(cell)
         return port is None or port in self.routing_ports
+
+    def free(self, cell: tuple[int, int, int], *, belt: bool = True) -> bool:
+        """Whether a belt may stand here.
+
+        ``belt=False`` asks the narrower question a caller placing something
+        that is NOT a belt has -- a power tower, say.  It drops exactly one
+        refusal, ``belt_keepout``, whose whole content is the belt probe's
+        verdict; everything else this gate holds denies the cell to any object.
+        """
+        return cell not in self.guard and self._free_outside_the_guard(cell, belt=belt)
 
     def fits(self, x: int, y: int, width: int, height: int) -> bool:
         """Is EVERY tile of the footprint anchored at ``(x, y)`` free ground?
@@ -2925,19 +2943,7 @@ class _Canvas:
         guard remains a wall.  Keep this separate from :meth:`free` so ordinary
         routing can never accidentally weaken junction collision protection.
         """
-        x, y, z = cell
-        if not 0 <= z < self.levels:
-            return False
-        if cell not in self.guard or cell in self.blocked or (x, y) in self.keep_out:
-            return False
-        if z in self.belt_ban.get((x, y), ()) or z in self.belt_keepout.get((x, y), ()):
-            return False
-        if self.limit is not None:
-            min_x, min_y, max_x, max_y = self.limit
-            if not (min_x <= x <= max_x and min_y <= y <= max_y):
-                return False
-        port = self.reserved.get(cell)
-        return port is None or port in self.routing_ports
+        return cell in self.guard and self._free_outside_the_guard(cell, belt=True)
 
     def clone(self) -> _Canvas:
         """A disposable copy for proving a commit without touching this canvas.
