@@ -209,7 +209,11 @@ _CAPSULE_UNREAD = (
     "What is still unread is where along its axis the game puts that box: "
     "FitClearance scales the centre by a third vector reached through a pointer "
     "nothing names, so the box here is centred between the lift's two ends, "
-    "which is this project's reading of the span the rule does state."
+    "which is this project's reading of the span the rule does state. A "
+    "registry that carries no lift_clearance_half_extent_cm at all falls back "
+    "to the M2 reading -- the connector clearance registry.json puts on the "
+    "lift's two ports, 200 cm, taken as the box's full width -- which is a "
+    "number the game keeps about a lift's CONNECTIONS and not about its box."
 )
 _NO_BOUNDARY = (
     "no belt in this placement flags an end as a boundary end, so this is a fragment "
@@ -926,7 +930,8 @@ def _capsule(ctx: Context) -> Iterable[Finding]:
 
     A LIFT is judged here too, with one box rather than a chain -- see
     :func:`_lift_box`, and the third paragraph of :data:`_CAPSULE_UNREAD` for
-    the half-extent that was never read.  Two conveyors WIRED to each other are
+    what about that box is the game's and what is not.  Two conveyors WIRED to
+    each other are
     not tested against each other at all when one of them is a lift's neighbour:
     a lift's box spans the lift itself, so whatever meets it meets it inside its
     own box, and the centimetre-level forgiveness two belts get end to end
