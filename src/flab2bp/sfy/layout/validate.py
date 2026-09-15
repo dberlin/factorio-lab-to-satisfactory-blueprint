@@ -199,14 +199,17 @@ _CAPSULE_UNREAD = (
     "this project's own 50 cm instead. The exclusion of the box a wired port "
     "sits inside rests on the same unread AFGHologram::TestClearanceOverlap "
     "that keeps buildable.clearance partial. A conveyor lift's box is here "
-    "too, and lift.clearance is partial for a third reason: the half-extent "
-    "AFGBuildableConveyorLift::FitClearance builds the box from is a mutable "
-    "module global at 0x19B8118 that sfy-native will not quote, so how WIDE "
-    "the game's own box is was never read and this check uses the connector "
-    "clearance registry.json carries on the lift's two ports instead, which is "
-    "this project's reading and not the game's number. What the rule does "
-    "state -- that a lift has ONE box spanning it rather than a chain -- is "
-    "what the box here is."
+    "too, and lift.clearance is partial for a third reason -- but no longer "
+    "for its width: the half-extent AFGBuildableConveyorLift::FitClearance "
+    "builds the box from is the module global at 0x19B8118, the static "
+    "AFGBuildableConveyorLift::CLEARANCE_EXTENT_2D, which sfy-native now quotes "
+    "by its PDB symbol, so the 95 cm each way this check uses is the game's own "
+    "number (registry.json's lift_clearance_half_extent_cm) and not a reading "
+    "of ours. It is an INITIALISER, what the image holds before the game runs. "
+    "What is still unread is where along its axis the game puts that box: "
+    "FitClearance scales the centre by a third vector reached through a pointer "
+    "nothing names, so the box here is centred between the lift's two ends, "
+    "which is this project's reading of the span the rule does state."
 )
 _NO_BOUNDARY = (
     "no belt in this placement flags an end as a boundary end, so this is a fragment "
@@ -493,23 +496,22 @@ def _lift_box(lift: LiftObj, registry: Registry) -> WorldBox:
     the rule states, and it is the shape used here: the box runs from one end of
     the lift to the other, about the axis the two ends are strung along.
 
-    **How wide it is was not read**, and this is where this check stops being
-    the game's.  ``FitClearance`` takes the half-extent from a mutable module
-    global at ``0x19B8118`` which ``sfy-native`` refuses to quote as a constant,
-    so ``lift.clearance`` is ``partial`` and states no width at all.  What is
-    used instead is the connector clearance ``registry.json`` carries on the
-    lift's own two ports -- ``UFGFactoryConnectionComponent``'s ``mClearance``,
-    200 cm, which the six lift marks are the only classes in the registry to
-    carry -- as the box's full width and depth.  That is this project's reading
-    of a number the game does keep about a lift's connections, and
-    :data:`_CAPSULE_UNREAD` says so; it is not the game's own box.
+    **How wide it is is read too**, and out of the same rule.  ``FitClearance``
+    takes the half-extent from the module global at ``0x19B8118``, which is the
+    static ``AFGBuildableConveyorLift::CLEARANCE_EXTENT_2D``; that is in
+    ``.data``, which ``sfy-native``'s operand annotation will not quote as a
+    constant, so the tool reads it the other way instead -- by its PDB symbol,
+    through ``sfy-native data`` -- and the rule carries the bytes, the
+    ``(100.0, 100.0)`` they hold and the ``(95.0, 95.0)`` left after the ``-5``
+    shrink.  :func:`_lift_half_width` takes that from
+    :attr:`Limits.lift_clearance_half_extent_cm`, so both of this box's
+    dimensions are the game's.
 
-    Reading the image at ``0x19B8118`` by hand gives ``(100.0, 100.0)`` -- 95 cm
-    each way after ``FitClearance``'s ``-5`` shrink -- which is the same 2 m
-    square this arrives at from the other direction.  That is recorded in the
-    ``lift.clearance`` rule as what a reader will see and is **not** what this
-    width rests on: the tool will not quote a mutable global, so nothing here
-    may be justified by it until it comes out of ``sfy-native``'s own output.
+    What is still unread is where along the axis the box *sits*: ``FitClearance``
+    scales the centre by a third vector reached through a pointer nothing names,
+    which is why ``lift.clearance`` is still ``partial``.  The box here is
+    centred between the lift's two ends, which is this module's reading of the
+    span the rule does state, and :data:`_CAPSULE_UNREAD` says so.
     """
     geometry = lift_geometry(registry, lift.class_name)
     bottom, _ = lift.bottom_end(geometry)
@@ -530,20 +532,35 @@ def _lift_box(lift: LiftObj, registry: Registry) -> WorldBox:
 
 
 def _lift_half_width(lift: LiftObj, registry: Registry) -> float:
-    """Half the width :func:`_lift_box` gives a lift, from the registry's ports.
+    """Half the width :func:`_lift_box` gives a lift: the game's, where it is read.
 
-    A lift class with no connector clearance on its ports is refused rather than
-    given a number: an invented width would be this module inventing geometry,
-    which is the one thing it may not do.
+    :attr:`Limits.lift_clearance_half_extent_cm` is what
+    ``AFGBuildableConveyorLift::FitClearance`` builds the box from -- the two
+    doubles of ``AFGBuildableConveyorLift::CLEARANCE_EXTENT_2D``, read out of
+    the shipped image by its PDB symbol, less the ``-5`` the function adds to
+    each -- so where the registry carries it, this is the game's own half-extent
+    and not a reading of ours.
+
+    The fallback behind it is the M2 reading, for a registry built before that
+    limit was filled: the connector clearance the lift's own two ports carry
+    (``UFGFactoryConnectionComponent``'s ``mClearance``, 200 cm) taken as the
+    box's full width. That is this project's reading of a number the game keeps
+    about a lift's *connections* rather than about its box, and
+    :data:`_CAPSULE_UNREAD` says which of the two this check used. A lift class
+    with neither is refused rather than given a number: an invented width would
+    be this module inventing geometry, which is the one thing it may not do.
     """
+    half_extent = registry.limits.lift_clearance_half_extent_cm
+    if half_extent is not None:
+        return half_extent
     buildable = registry.buildables.get(lift.class_name)
     clearances = [
         p.clearance for p in (buildable.ports if buildable else ()) if p.clearance is not None
     ]
     if not clearances:
         raise ValueError(
-            f"the registry gives {lift.class_name} no connector clearance on either port, so "
-            "there is no width to give its clearance box and lift.clearance states none"
+            f"the registry gives {lift.class_name} no connector clearance on either port and "
+            "no lift_clearance_half_extent_cm, so there is no width to give its clearance box"
         )
     return max(clearances) / 2.0
 
