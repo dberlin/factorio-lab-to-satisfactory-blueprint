@@ -33,11 +33,12 @@ from flab2bp.sfy.layout.grid_nets import (
 )
 from flab2bp.sfy.layout.lattice import GROUND_LEVEL, Lattice, Node, Occupancy, occupancy_for
 from flab2bp.sfy.layout.manifold import SPLITTER_CLASS
-from flab2bp.sfy.layout.model import BeltRun, MachineObj, Pose, SfyPlacement
+from flab2bp.sfy.layout.model import BeltRun, MachineObj, Pose, SfyPlacement, Vector
 from flab2bp.sfy.layout.realise import Terminal
 from flab2bp.sfy.layout.router import BudgetCause, RouteFailureKind
 from flab2bp.sfy.layout.rrr import (
     RRR_MAX,
+    RoutedTree,
     RoutingOutcome,
     _Branch,
     _flows,
@@ -378,16 +379,18 @@ def test_a_net_blocked_by_another_rips_it_up_and_both_route() -> None:
 # --- a corner the realiser will not build ----------------------------------
 
 
-def _wall_line(lattice: Lattice) -> tuple[Terminal, ...]:
-    """The whole ``+Y`` wall as one stream's worth of terminals -- R-M3-5.
+def _wall_line(lattice: Lattice, *, inward: bool = False) -> tuple[Terminal, ...]:
+    """A whole designer wall as one stream's worth of terminals -- R-M3-5.
 
-    The same set :func:`~flab2bp.sfy.layout.grid_nets.nets_for` builds for an
-    output: a node on the innermost line a belt may stand on, with the belt's
-    end out ON the wall, and a facing that points into the designer.
+    The same set :func:`~flab2bp.sfy.layout.grid_nets.nets_for` builds: a node on
+    the innermost line a belt may stand on, with the belt's end out ON the wall,
+    and a facing that points into the designer either way -- the ``-Y`` wall
+    (``inward``) feeds the build and the ``+Y`` wall drains it.
     """
     lines = lattice.open_lines
-    row = lines.stop - 1
+    row = lines.start if inward else lines.stop - 1
     half = lattice.designer.half_cm
+    facing: Vector = (0.0, 1.0, 0.0) if inward else (0.0, -1.0, 0.0)
     out: list[Terminal] = []
     for i in lines:
         node = (i, row, GROUND_LEVEL)
@@ -395,8 +398,8 @@ def _wall_line(lattice: Lattice) -> tuple[Terminal, ...]:
         out.append(
             Terminal(
                 node=node,
-                world=(here[0], half, here[2]),
-                facing=(0.0, -1.0, 0.0),
+                world=(here[0], -half if inward else half, here[2]),
+                facing=facing,
                 port=None,
                 kind="wall",
             )
@@ -851,3 +854,119 @@ def test_a_stranded_net_names_the_belt_in_its_doorway_and_no_machine() -> None:
 
     assert (16, 14, GROUND_LEVEL) in named, "the belt on the one node of floor is named"
     assert named <= _shadow_of(across), "and nothing that net 2 is not holding or shadowing"
+
+
+# --- a wall that hands the same item over more than once --------------------
+
+
+def _wall_fed(y: float) -> tuple[tuple[MachineObj, ...], tuple[GridNet, ...], Fraction]:
+    """Three machines fed from the ``-Y`` wall, standing ``y`` from the middle.
+
+    Every port faces the wall, so how much trunk there is to tap is exactly how
+    far the row stands off it -- which is the whole question here, and it is the
+    packer's answer in a real build.
+    """
+    eaters = tuple(
+        _machine(101 + index, CONSTRUCTOR, x, y, 0.0, ROD)
+        for index, x in enumerate((-900.0, 0.0, 900.0))
+    )
+    share = Fraction(1, 8)
+    sinks = tuple(_terminal(eater, "Input0") for eater in eaters)
+    wall = _wall_line(_lattice(), inward=True)
+    net = GridNet(
+        id=1,
+        item_id=ITEM,
+        sources=wall,
+        sinks=sinks,
+        rate=share * len(sinks),
+        per_sink=(share,) * len(sinks),
+        per_source=(share * len(sinks),) * len(wall),
+    )
+    return (eaters, (net,), share)
+
+
+def _entries(tree: RoutedTree, lattice: Lattice) -> tuple[Node, ...]:
+    """Where a tree crosses the wall, as the tree itself records it."""
+    for index, node in tree.boundaries:
+        assert node in (tree.paths[index][0], tree.paths[index][-1])
+        assert node[1] in (lattice.open_lines.start, lattice.open_lines.stop - 1)
+    return tuple(node for _index, node in tree.boundaries)
+
+
+def test_a_wall_fed_net_whose_trunk_has_no_tap_takes_another_entry() -> None:
+    """R-M3-5, and the ruling on it: the boundary may hand the item over twice.
+
+    The packer stands a wall-fed port as close to the wall as its apron allows,
+    so the first belt in is a few nodes long and there is no interior of a
+    straight run to tap: a tap needs ``clear`` straight nodes on either side of
+    it.  The second sink then has nowhere to start -- unless it starts where the
+    first one did.  What is outside the designer can hand the same item over at
+    two places as easily as at one, so it does, and each entry is its own belt
+    carrying its own sink's share.
+    """
+    machines, nets, share = _wall_fed(-1000.0)
+    lattice = _lattice()
+    outcome = _route(nets, _occupancy(*machines))
+
+    assert outcome.stranded == ()
+    tree = outcome.trees[0]
+    assert len(tree.paths) == len(nets[0].sinks)
+    entries = _entries(tree, lattice)
+    assert len(entries) >= 2, "the trunk was too short to tap, so the wall was asked again"
+    assert len(set(entries)) == len(entries), "and no two belts enter at one node"
+    assert all(path[0] in entries for path in tree.paths)
+
+    belts = [belt for laid in outcome.realised for belt in laid.belts]
+    half = lattice.designer.half_cm
+    at_wall = [belt for belt in belts if belt.start[1] == -half]
+    assert len(at_wall) == len(entries)
+    assert [belt.items_per_second for belt in at_wall] == [share] * len(entries)
+    _judge(outcome, *machines)
+
+
+def _wall_tapped() -> tuple[tuple[MachineObj, ...], tuple[GridNet, ...], Fraction]:
+    """A wall-fed pair with room: a long trunk, and a second sink off to one side.
+
+    The first sink stands far enough off the wall for the belt in to have an
+    interior to cut open, and the second stands far enough round that the branch
+    from the tap has a run into its corner and a run out of it -- the four grid
+    steps Task 6 measured a turn needs.
+    """
+    near = _machine(101, CONSTRUCTOR, 0.0, 900.0, 0.0, ROD)
+    far = _machine(102, CONSTRUCTOR, 1200.0, 0.0, 0.0, ROD)
+    share = Fraction(1, 8)
+    sinks = (_terminal(near, "Input0"), _terminal(far, "Input0"))
+    wall = _wall_line(_lattice(), inward=True)
+    net = GridNet(
+        id=1,
+        item_id=ITEM,
+        sources=wall,
+        sinks=sinks,
+        rate=share * len(sinks),
+        per_sink=(share,) * len(sinks),
+        per_source=(share * len(sinks),) * len(wall),
+    )
+    return ((near, far), (net,), share)
+
+
+def test_a_wall_fed_net_taps_its_own_trunk_where_there_is_room() -> None:
+    """And a tap is preferred where there is one: it is one belt fewer.
+
+    The wall is the fallback and not the first answer, so a tree with somewhere
+    to be cut open is cut open: one belt crosses the boundary and the second
+    sink hangs off it.
+    """
+    machines, nets, share = _wall_tapped()
+    outcome = _route(nets, _occupancy(*machines))
+
+    assert outcome.stranded == ()
+    tree = outcome.trees[0]
+    assert len(tree.paths) == len(nets[0].sinks)
+    assert len(_entries(tree, _lattice())) == 1
+    assert len(tree.taps) == len(nets[0].sinks) - 1
+
+    belts = [belt for laid in outcome.realised for belt in laid.belts]
+    half = _lattice().designer.half_cm
+    at_wall = [belt for belt in belts if belt.start[1] == -half]
+    assert [belt.items_per_second for belt in at_wall] == [share * len(nets[0].sinks)]
+    _judge(outcome, *machines)

@@ -74,6 +74,21 @@ branch leaves by the side port that faces it.  Nothing in
 :class:`~...realise.Terminal` of kind ``"tap"`` is a port on an attachment and
 is laid to exactly like a port on a machine.
 
+**The designer wall may hand the same item over twice** (R-M3-5, and the
+controller's ruling of 2026-09-15).  A machine port is one place one belt
+starts, and using it spends it; the boundary is not.  What is outside the
+designer can hand the item over at two places as easily as at one, so a sink
+with no tap to start from -- which is every later sink of a wall-fed net whose
+first belt in is too short to cut open, and the packer stands a wall-fed port as
+close to the wall as its apron allows -- takes an entry of its own.  A tap is
+still asked FIRST, because it is one belt fewer; the wall is the fallback, and
+:attr:`RoutedTree.boundaries` records every crossing so a build's description
+can say how many belts to bring to it and where.  A source that cannot merge
+into the exit tree gets its own way out for the same reason.  Each crossing is
+its own belt carrying its own branch's rate, which the tiers follow from
+:func:`_flows` without a special case: a branch that starts at the wall has no
+parent to draw from.
+
 **Tiers come after the tree, from what each PIECE carries** (R-M3-7).  A trunk
 above a tap carries its own sink's draw plus everything the tap feeds, so the
 belt classes cannot be chosen until the whole tree is known; ``belt_class_for``
@@ -197,11 +212,20 @@ class RoutedTree:
     ``paths`` is one path per sink and one more per source that had to merge in;
     ``taps`` is ``(the node an attachment stands on, the index in ``paths`` of
     the path it stands on)``, one per branch that starts or ends at one.
+
+    ``boundaries`` is where this tree really crosses the designer wall:
+    ``(the index in ``paths``, the node it crosses at)``, one entry per branch
+    END that stands on a wall line.  There is usually one, and there is more
+    than one where a later sink had no tap to start from and took an entry of
+    its own (R-M3-5) -- which is a thing a build's description has to be able to
+    say, because a reader who pastes the blueprint has to know how many belts to
+    bring to it and where.
     """
 
     net: GridNet
     paths: tuple[tuple[Node, ...], ...]
     taps: tuple[tuple[Node, int], ...]
+    boundaries: tuple[tuple[int, Node], ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -238,13 +262,22 @@ class RoutingOutcome:
 class _Endpoint:
     """One place a net's flow really starts or ends, and what it moves there.
 
-    A machine port is one endpoint.  A designer wall is ALSO one endpoint, with
-    one terminal per node of the wall line: R-M3-5 lets the stream cross at any
-    ``X``, so the whole line is one choice rather than N places to belt to.
+    A machine port is one endpoint and one belt leaves it.  A designer wall is
+    ALSO one endpoint, with one terminal per node of the wall line -- R-M3-5
+    lets the stream cross at any ``X`` -- but it is one a net may use more than
+    once: the boundary is where the build meets what is outside it, and what is
+    outside it can hand the same item over at two places as easily as at one.
+    :attr:`wall` is which kind this is, and it is the one thing that decides
+    whether using an endpoint spends it.
     """
 
     terminals: tuple[Terminal, ...]
     rate: Fraction
+
+    @property
+    def wall(self) -> bool:
+        """Whether this is the designer boundary rather than one machine's port."""
+        return bool(self.terminals) and self.terminals[0].kind == "wall"
 
     @property
     def nodes(self) -> tuple[Node, ...]:
@@ -731,6 +764,30 @@ def _shut_shafts(run: _Run, net: GridNet) -> tuple[Node, ...]:
     return tuple(out)
 
 
+def _wall_end(endpoint: _Endpoint | None, node: Node) -> Terminal:
+    """The wall terminal a branch that took its own exit really ends on.
+
+    A guard rather than a lookup: a branch only reaches here having been routed
+    to the wall line, so the endpoint is there; an endpoint that is not is a
+    branch routed to a boundary this net does not have, which is a fault in this
+    module and not a build that cannot be laid.
+    """
+    if endpoint is None:
+        raise NetError("data", "a branch was routed to a designer wall this net does not use")
+    return endpoint.at(node)
+
+
+def _fell_short(routed: Routed | None) -> bool:
+    """Whether a query is worth asking again another way.
+
+    No query at all, or one the GEOMETRY refused.  A bound is different: a
+    budget or a deadline stop proves nothing about where a belt could go, and
+    asking the same net a second question on a ledger that has just run out
+    spends what is left of it to be told so again.
+    """
+    return routed is None or (routed.path is None and routed.kind is not RouteFailureKind.BUDGET)
+
+
 def _in_the_shadow(walked: Sequence[Node], sides: Collection[Node]) -> tuple[Node, ...]:
     """Tap sides a path STOOD on rather than started or ended at.
 
@@ -814,7 +871,9 @@ def _attempt(run: _Run, net: GridNet, closed: Collection[Node]) -> _Try:
     sources = _endpoints(net.sources, net.per_source)
     sinks = _endpoints(net.sinks, net.per_sink)
     branches: list[_Branch] = []
-    unused = list(range(len(sources)))
+    unused = [index for index, source in enumerate(sources) if not source.wall]
+    from_wall = next((index for index, source in enumerate(sources) if source.wall), None)
+    to_wall = next((sink for sink in sinks if sink.wall), None)
     routed: Routed | None = None
     for sink in sinks:
         taps = run.tap_sites(branches, net)
@@ -827,9 +886,16 @@ def _attempt(run: _Run, net: GridNet, closed: Collection[Node]) -> _Try:
         for side, tap in taps.items():
             starts[side] = tap
             opened.add(side)
-        if not starts:
+        routed = run.query(starts, sink.nodes, opened, closed) if starts else None
+        if _fell_short(routed) and from_wall is not None:
+            # Another entry of its own.  A tap is preferred because it is one
+            # belt fewer, so the wall is asked second and only where the tree
+            # had no tap to offer or no way from one to here.
+            starts = dict.fromkeys(sources[from_wall].nodes, from_wall)
+            opened = set(sink.opened)
+            routed = run.query(starts, sink.nodes, opened, closed)
+        if routed is None:
             return _Try(failure="route", routed=_nowhere_to_start())
-        routed = run.query(starts, sink.nodes, opened, closed)
         if routed.path is None:
             return _Try(failure="route", routed=routed)
         path = _cut_loops(routed.path)
@@ -859,14 +925,22 @@ def _attempt(run: _Run, net: GridNet, closed: Collection[Node]) -> _Try:
                     merging=False,
                 )
             )
-            unused.remove(head)
+            if not sources[head].wall:
+                unused.remove(head)
         run.stake(net.id, path)
     for index in tuple(unused):
         taps = run.tap_sites(branches, net)
-        if not taps:
-            return _Try(failure="route", routed=_nowhere_to_go())
         opened = set(sources[index].opened) | set(taps)
-        routed = run.query(sources[index].nodes, tuple(taps), opened, closed)
+        routed = run.query(sources[index].nodes, tuple(taps), opened, closed) if taps else None
+        merged = routed is not None and routed.path is not None
+        if _fell_short(routed) and to_wall is not None:
+            # An exit of its own, for the same reason and in the same order: a
+            # merger into the tree is one belt fewer than a second way out.
+            opened = set(sources[index].opened) | set(to_wall.opened)
+            routed = run.query(sources[index].nodes, to_wall.nodes, opened, closed)
+            merged = False
+        if routed is None:
+            return _Try(failure="route", routed=_nowhere_to_go())
         if routed.path is None:
             return _Try(failure="route", routed=routed)
         path = _cut_loops(routed.path)
@@ -877,10 +951,10 @@ def _attempt(run: _Run, net: GridNet, closed: Collection[Node]) -> _Try:
             _Branch(
                 path=path,
                 source=sources[index].at(path[0]),
-                sink=None,
+                sink=None if merged else _wall_end(to_wall, path[-1]),
                 pinned=sources[index].rate,
-                tap=taps[path[-1]],
-                merging=True,
+                tap=taps[path[-1]] if merged else None,
+                merging=merged,
             )
         )
         unused.remove(index)
@@ -928,6 +1002,7 @@ def _build(run: _Run, net: GridNet, branches: Sequence[_Branch], routed: Routed 
                 for branch in branches
                 if branch.tap is not None
             ),
+            boundaries=_boundaries(branches),
         ),
         realised=realised,
         columns=columns,
@@ -1244,6 +1319,22 @@ def _shut_column(lattice: Lattice, ends: Sequence[Node]) -> tuple[Node, ...]:
     if (low[0], low[1]) != (high[0], high[1]):
         return tuple(ends)
     return (*ends, *((low[0], low[1], level) for level in range(low[2] + 1, lattice.n + 1)))
+
+
+def _boundaries(branches: Sequence[_Branch]) -> tuple[tuple[int, Node], ...]:
+    """Every branch end that stands on the designer wall, in branch order.
+
+    One entry per crossing rather than per branch: a branch that came in at the
+    wall and went out at it again would be two, which is what a description
+    counting belts at the boundary wants.
+    """
+    out: list[tuple[int, Node]] = []
+    for index, branch in enumerate(branches):
+        if branch.source is not None and branch.source.kind == "wall":
+            out.append((index, branch.path[0]))
+        if branch.sink is not None and branch.sink.kind == "wall":
+            out.append((index, branch.path[-1]))
+    return tuple(out)
 
 
 def _column(low: Node, high: Node) -> tuple[Node, ...]:
