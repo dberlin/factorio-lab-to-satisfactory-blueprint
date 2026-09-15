@@ -360,6 +360,60 @@ def test_the_satisfactory_pipeline_alone_loads_no_dsp_module() -> None:
     )
 
 
+def test_a_whole_satisfactory_build_through_the_cli_loads_no_dsp_module(tmp_path: Path) -> None:
+    """The real end-to-end claim: `flab2bp <sfy url> ...` costs no DSP module.
+
+    The two probes above are about IMPORTS. This one runs `cli.main` to
+    completion in a fresh interpreter -- URL, flow, rates, layout, validator,
+    emit, both files written -- and then asks what is loaded. `flab2bp.cli`
+    builds one argparse parser for both games, so every vocabulary argparse
+    needs at construction time (`--strategy`, `--band`, `--machine-rank`,
+    `--candidate-policy`, `--power-tower`) has to be reachable without the
+    Dyson Sphere Program layers that act on it; `flab2bp.pipeline`,
+    `flab2bp.layout.markers` and `flab2bp.web.trace` are imported inside the DSP
+    branch instead. A failure here names the door that reopened.
+    """
+    url = _flow_url("iron-plate-60")
+    probe = """
+import json, sys
+from flab2bp import cli
+before = sorted(m for m in sys.modules if m.startswith("flab2bp.dsp"))
+code = cli.main([sys.argv[1], "--flow", sys.argv[2], "--designer", "mk3", "-o", sys.argv[3]])
+print(json.dumps({
+    "exit": code,
+    "on_import": before,
+    "after_build": sorted(m for m in sys.modules if m.startswith("flab2bp.dsp")),
+}))
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", probe, url, str(FLOWS / "iron-plate-60.csv"), str(tmp_path)],
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=REPO_ROOT,
+    )
+    parsed = json.loads(result.stdout.strip().splitlines()[-1])
+    assert parsed["exit"] == 0, result.stderr
+    assert sorted(p.name for p in tmp_path.iterdir()) == [
+        "iron-plate-mk3.sbp",
+        "iron-plate-mk3.sbpcfg",
+    ]
+    assert parsed["on_import"] == [], (
+        "importing flab2bp.cli loaded DSP modules; every name argparse needs at "
+        "parser-construction time must come from a leaf module "
+        f"(flab2bp.strategy_names, flab2bp.build_choices, flab2bp.layout.band_names): {parsed}"
+    )
+    assert parsed["after_build"] == [], (
+        "a whole Satisfactory build through the CLI loaded DSP modules; the sfy "
+        f"arm must reach nothing under flab2bp.dsp: {parsed}"
+    )
+
+
+def _flow_url(name: str) -> str:
+    """The URL a committed export was generated from: its own line 1."""
+    return (FLOWS / f"{name}.csv").read_text(encoding="utf-8").splitlines()[0].strip().strip('"')
+
+
 def _dsp_modules_after_importing_all_of_sfy() -> tuple[list[str], dict[str, str], list[str]]:
     """Import every `flab2bp.sfy` submodule in a fresh interpreter.
 

@@ -18,6 +18,7 @@ from fractions import Fraction
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast, overload
 
+from flab2bp import build_choices
 from flab2bp.dsp import catalog, codec
 from flab2bp.lab.capture import UrlValidator, capture_flow_csv
 from flab2bp.lab.data import load_vendored
@@ -59,31 +60,28 @@ from flab2bp.rates.machine_choice import MachineRank
 from flab2bp.rates.solve import InfeasibleError, UnsupportedObjectiveError, supplied_rates
 from flab2bp.spec import BuildSpec, BuildSpecSet
 
+# Re-exported deliberately (the `as` spelling is what marks it explicit for
+# mypy): the strategy NAMES live in a leaf module so that `flab2bp.cli` can
+# describe `--strategy` for a Satisfactory build without loading this one, and
+# every caller that reads `pipeline.STRATEGY_CHOICES` keeps working.
+from flab2bp.strategy_names import PRODUCTION_STRATEGIES as PRODUCTION_STRATEGIES
+from flab2bp.strategy_names import PRODUCTION_STRATEGY_COUNT as PRODUCTION_STRATEGY_COUNT
+from flab2bp.strategy_names import STRATEGY_CHOICES as STRATEGY_CHOICES
+from flab2bp.strategy_names import ExplicitStrategyName as ExplicitStrategyName
+from flab2bp.strategy_names import StrategyName as StrategyName
+
 if TYPE_CHECKING:
     from flab2bp.layout.freeform import FreeformLayout
     from flab2bp.layout.hierarchy import HierarchicalLayout
     from flab2bp.layout.sequence_solver import SequencePairLayout
     from flab2bp.layout.transport_routing.strategy import TransportRoutingLayout
 
-ExplicitStrategyName = Literal["freeform", "sequence-pair", "hierarchical", "transport-routing"]
-StrategyName = Literal["best", "freeform", "sequence-pair", "hierarchical", "transport-routing"]
-
-STRATEGY_CHOICES: tuple[StrategyName, ...] = (
-    "best",
-    "freeform",
-    "sequence-pair",
-    "hierarchical",
-    "transport-routing",
-)
-#: Explicit strategies competing for the smallest valid result under ``best``.
-PRODUCTION_STRATEGIES: tuple[ExplicitStrategyName, ...] = (
-    "freeform",
-    "sequence-pair",
-    "transport-routing",
-    "hierarchical",
-)
-PRODUCTION_STRATEGY_COUNT = len(PRODUCTION_STRATEGIES)
-POWER_TOWER_CHOICES = catalog.POWER_TOWER_CHOICES
+#: Re-exported from :mod:`flab2bp.strategy_names` and
+#: :mod:`flab2bp.build_choices`, which are leaf modules so that the command line
+#: can describe ``--strategy`` and ``--power-tower`` without loading this one.
+#: ``pipeline.STRATEGY_CHOICES`` and ``pipeline.POWER_TOWER_CHOICES`` therefore
+#: still mean exactly what they always meant.
+POWER_TOWER_CHOICES = build_choices.POWER_TOWER_CHOICES
 
 #: Default aggregate solver-worker budget for one build. More logical CPUs do
 #: not improve these time-limited searches enough to justify making every

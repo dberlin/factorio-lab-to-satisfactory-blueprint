@@ -21,23 +21,36 @@ import threading
 import time
 from collections import Counter, deque
 from pathlib import Path
-from typing import TextIO
+from typing import TYPE_CHECKING, TextIO
 
-from flab2bp import pipeline
+from flab2bp.build_choices import (
+    DEFAULT_CANDIDATE_POLICIES,
+    POWER_TOWER_CHOICES,
+    CandidatePolicy,
+    MachineRank,
+)
 from flab2bp.lab.games import Game
 from flab2bp.lab.url import parse_url
-from flab2bp.layout import markers
-from flab2bp.layout.band_policy import BAND_SELECTIONS, BandPolicy
+from flab2bp.layout.band_names import BAND_SELECTIONS, canonical_selection
 from flab2bp.layout.base import NoValidLayout, SpecInfeasible
 from flab2bp.layout.observe import (
     TRACE_SAMPLE_INTERVAL_S,
     SampledObserver,
     SearchEvent,
 )
-from flab2bp.rates import DEFAULT_CANDIDATE_POLICIES, CandidatePolicy
-from flab2bp.rates.machine_choice import MachineRank
 from flab2bp.sfy import pipeline as sfy_pipeline
-from flab2bp.web.trace import TRACE_DRAIN_INTERVAL_S, frame_json
+from flab2bp.strategy_names import STRATEGY_CHOICES
+
+if TYPE_CHECKING:
+    from flab2bp import pipeline
+
+#: Every module named below loads the Dyson Sphere Program layers behind it --
+#: `flab2bp.pipeline` alone brings in eighteen of them -- so none of them is
+#: imported until a DSP build is actually happening.  A Satisfactory build runs
+#: `flab2bp.sfy.pipeline`, which loads no DSP module at all, and
+#: `tests/sfy/test_rates.py` holds this file to that in a fresh interpreter.
+#: The vocabularies argparse needs at parser-construction time come from the
+#: leaf modules above instead, which the heavy ones import and re-export.
 
 #: The Blueprint Designer a Satisfactory build is laid out in when ``--designer``
 #: is not given -- the pipeline's own default, not a second copy of it.  The
@@ -118,6 +131,8 @@ class _CliTraceWriter:
         # outside the lock, and nothing else holds a reference to it.
         with self._lock:
             pending, self._pending = self._pending, deque()
+        from flab2bp.web.trace import frame_json
+
         for event in pending:
             frame = frame_json(self._seq, round(event.monotonic_s - self._started_at, 3), event)
             self._seq += 1
@@ -142,6 +157,8 @@ class _CliTraceWriter:
                 return
 
     def _run(self) -> None:
+        from flab2bp.web.trace import TRACE_DRAIN_INTERVAL_S
+
         while not self._stop.is_set():
             self._drain_once()
             self._stop.wait(TRACE_DRAIN_INTERVAL_S)
@@ -175,6 +192,8 @@ def _report(build: pipeline.Build, *, verbose: bool = False, out: TextIO | None 
     would keep pointing at whatever object existed at import time and silently
     stop being captured.
     """
+    from flab2bp.layout import markers
+
     if out is None:
         out = sys.stderr
     frame = build.placement.frame
@@ -400,10 +419,18 @@ def _sfy_report(build: sfy_pipeline.SfyBuild, *, out: TextIO | None = None) -> N
 
 
 def _band_selection(value: str) -> str:
-    try:
-        return BandPolicy.parse(value).selection
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError(str(exc)) from exc
+    """``--band``'s own canonicalization, the same one ``BandPolicy`` applies.
+
+    Deliberately `canonical_selection` rather than `BandPolicy.parse`: argparse
+    runs this on the DEFAULT as well as on a given value, so calling into
+    `band_policy` here would load DSP's planet geometry on every Satisfactory
+    build. `BandPolicy.__post_init__` calls the same function and raises the
+    same message, and the DSP arm still builds a real `BandPolicy` from it.
+    """
+    canonical = canonical_selection(value)
+    if canonical is None:
+        raise argparse.ArgumentTypeError(f"unknown latitude band {value!r}")
+    return canonical
 
 
 def add_candidate_policy_argument(ap: argparse.ArgumentParser) -> None:
@@ -461,7 +488,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("url", help="a factoriolab.github.io/dsp/... or /sfy/... URL")
     ap.add_argument(
         "--strategy",
-        choices=pipeline.STRATEGY_CHOICES,
+        choices=STRATEGY_CHOICES,
         default="best",
         help="layout backend; best runs freeform, sequence-pair, transport-routing "
         "and hierarchical and keeps the smallest valid result (default). "
@@ -537,7 +564,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ap.add_argument(
         "--power-tower",
-        choices=tuple(pipeline.POWER_TOWER_CHOICES),
+        choices=tuple(POWER_TOWER_CHOICES),
         default=None,
         help="power building (default: first power tower in the URL's machine "
         "rank, otherwise Tesla Tower)",
@@ -632,6 +659,9 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
+
+    # The DSP branch, and the first place this process needs the DSP layers.
+    from flab2bp import pipeline
 
     candidate_policies = candidate_policies_from_args(ap, args)
     if args.sequence_islands is not None and args.strategy not in (

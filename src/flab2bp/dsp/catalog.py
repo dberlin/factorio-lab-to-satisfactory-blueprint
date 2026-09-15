@@ -56,6 +56,7 @@ from functools import cache, lru_cache
 from pathlib import Path
 from typing import Final, Protocol, TypedDict, TypeGuard
 
+from flab2bp import build_choices
 from flab2bp.dsp import quaternion
 from flab2bp.dsp.rules import WORLD_UNITS_PER_LEVEL, PowerNode
 
@@ -229,19 +230,12 @@ SPRAY_COATER_ID = 2313
 FRACTIONATOR_ID = 2314
 TESLA_TOWER_ID = 2201
 
-#: The power buildings a build may choose between, keyed by the name the CLI,
-#: the web UI and ``BuildSpec`` use.  The values are FactorioLab ids, resolved
-#: through :func:`get_item_id` like every other id the spec carries.
-POWER_TOWER_CHOICES: dict[str, str] = {
-    "tesla": "tesla-tower",
-    "substation": "satellite-substation",
-    "wireless": "wireless-power-tower",
-}
-
-#: The choice a build gets when nothing says otherwise.  Keeping this the Tesla
-#: Tower is what makes the default arm byte-identical to the era before the
-#: choice existed.
-DEFAULT_POWER_TOWER: str = "tesla-tower"
+#: Re-exported from :mod:`flab2bp.build_choices`, where the NAME a caller types
+#: lives so that the command line can describe ``--power-tower`` without loading
+#: this module.  Every number about a power tower, and the resolution of these
+#: ids through :func:`get_item_id`, is still here.
+POWER_TOWER_CHOICES = build_choices.POWER_TOWER_CHOICES
+DEFAULT_POWER_TOWER = build_choices.DEFAULT_POWER_TOWER
 
 MATRIX_LAB_IDS = (2901, 2902)
 STORAGE_STACK_IDS = (2020, 2101, 2102, 2106)
