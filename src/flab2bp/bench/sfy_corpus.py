@@ -33,10 +33,10 @@ Fifteen of the corpus's refusals are ``rows exceed the designer width`` and a
 reader should not take them for a designer that is simply too small.  M2 lays
 each recipe group out as ONE unbroken row, so a group wide enough to overrun the
 mark refuses even where the same machines would fit the floor perfectly well
-split across two rows.  Splitting a row is spec 9.1 and a follow-up task; until
-it lands, a width refusal says "M2 has no shape for this yet", not "no Blueprint
-Designer holds this".  The depth refusals are the real ceiling (R10, one level
-of rows); the width ones are a feature that has not been written.
+split across two rows.  Splitting a row is spec 9.1, on the M2 plan as Task 8c;
+until it lands, a width refusal says "M2 has no shape for this yet", not "no
+Blueprint Designer holds this".  The depth refusals are the real ceiling (R10,
+one level of rows); the width ones are a feature that has not been written.
 
 Tier is orientation, not a budget
 ---------------------------------
