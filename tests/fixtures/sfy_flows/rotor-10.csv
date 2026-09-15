@@ -1,0 +1,7 @@
+"https://factoriolab.github.io/sfy/list?o=rotor*10&v=11"
+Item,Items,Inputs,Outputs,Targets,Belts,Belt,Wagons,Wagon,Recipe,Machines,Machine,Modules,Power
+rotor,=10,"iron-rod:4/9,screw:1","rotor:1","",=1/6,conveyor-belt-mk1,=1/320,freight-car,rotor,=2.5,assembler,"2 ",=45000
+screw,=250,"iron-rod:5/9","screw:1","rotor:1",=25/6,conveyor-belt-mk1,=1/64,freight-car,screw,=6.25,constructor-id,"1 ",=28000
+iron-rod,=112.5,"iron-ingot:1","iron-rod:1","rotor:4/9,screw:5/9",=1.875,conveyor-belt-mk1,=9/512,freight-car,iron-rod,=7.5,constructor-id,"1 ",=32000
+iron-ingot,=112.5,"iron-ore:1","iron-ingot:1","iron-rod:1",=1.875,conveyor-belt-mk1,=9/256,freight-car,iron-ingot,=3.75,smelter,"1 ",=16000
+iron-ore,=112.5,,"iron-ore:1","iron-ingot:1",=1.875,conveyor-belt-mk1,=9/256,freight-car,iron-ore,=1.875,miner-mk1,"1 purity-1",=10000

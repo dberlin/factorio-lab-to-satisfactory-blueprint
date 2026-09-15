@@ -1,0 +1,6 @@
+"https://factoriolab.github.io/sfy/list?o=steel-beam*20&v=11"
+Item,Items,Inputs,Outputs,Targets,Belts,Belt,Wagons,Wagon,Recipe,Machines,Machine,Modules,Power
+steel-beam,=20,"steel-ingot:1","steel-beam:1","",=1/3,conveyor-belt-mk1,=1/320,freight-car,steel-beam,=4/3,constructor-id,"1 ",=8000
+steel-ingot,=80,"iron-ore:1,coal:1","steel-ingot:1","steel-beam:1",=4/3,conveyor-belt-mk1,=0.025,freight-car,steel-ingot,=16/9,foundry,"2 ",=32000
+iron-ore,=80,,"iron-ore:1","steel-ingot:1",=4/3,conveyor-belt-mk1,=0.025,freight-car,iron-ore,=4/3,miner-mk1,"1 purity-1",=10000
+coal,=80,,"coal:1","steel-ingot:1",=4/3,conveyor-belt-mk1,=0.025,freight-car,coal,=4/3,miner-mk1,"1 purity-1",=10000

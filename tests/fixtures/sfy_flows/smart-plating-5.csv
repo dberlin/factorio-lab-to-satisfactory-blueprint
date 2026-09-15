@@ -1,0 +1,10 @@
+"https://factoriolab.github.io/sfy/list?o=smart-plating*5&v=11"
+Item,Items,Inputs,Outputs,Targets,Belts,Belt,Wagons,Wagon,Recipe,Machines,Machine,Modules,Power
+smart-plating,=5,"reinforced-iron-plate:1,rotor:1","smart-plating:1","",=1/12,conveyor-belt-mk1,=1/320,freight-car,smart-plating,=2.5,assembler,"2 ",=45000
+reinforced-iron-plate,=5,"iron-plate:1,screw:12/37","reinforced-iron-plate:1","smart-plating:1",=1/12,conveyor-belt-mk1,=1/640,freight-car,reinforced-iron-plate,=1,assembler,"2 ",=15000
+iron-plate,=30,"iron-ingot:12/31","iron-plate:1","reinforced-iron-plate:1",=0.5,conveyor-belt-mk1,=3/640,freight-car,iron-plate,=1.5,constructor-id,"1 ",=8000
+rotor,=5,"iron-rod:20/57,screw:25/37","rotor:1","smart-plating:1",=1/12,conveyor-belt-mk1,=1/640,freight-car,rotor,=1.25,assembler,"2 ",=30000
+screw,=185,"iron-rod:37/57","screw:1","reinforced-iron-plate:12/37,rotor:25/37",=37/12,conveyor-belt-mk1,=37/3200,freight-car,screw,=4.625,constructor-id,"1 ",=20000
+iron-rod,=71.25,"iron-ingot:19/31","iron-rod:1","rotor:20/57,screw:37/57",=19/16,conveyor-belt-mk1,=57/5120,freight-car,iron-rod,=4.75,constructor-id,"1 ",=20000
+iron-ingot,=116.25,"iron-ore:1","iron-ingot:1","iron-plate:12/31,iron-rod:19/31",=31/16,conveyor-belt-mk1,=93/2560,freight-car,iron-ingot,=3.875,smelter,"1 ",=16000
+iron-ore,=116.25,,"iron-ore:1","iron-ingot:1",=31/16,conveyor-belt-mk1,=93/2560,freight-car,iron-ore,=31/16,miner-mk1,"1 purity-1",=10000

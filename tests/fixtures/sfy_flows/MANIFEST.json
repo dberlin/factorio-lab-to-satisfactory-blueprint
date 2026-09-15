@@ -64,6 +64,96 @@
    "note": "an explicit belt floor above the dataset default",
    "sha256": "fe759115c49be549db3c70965cca994610499b9e3544cc30f3947fc60c199d22",
    "bytes": 576
+  },
+  {
+   "file": "iron-rod-60.csv",
+   "requested_url": "https://factoriolab.github.io/sfy/list?v=11&o=iron-rod*60",
+   "exported_url": "https://factoriolab.github.io/sfy/list?o=iron-rod*60&v=11",
+   "captured": "2026-09-14",
+   "note": "corpus: a two-row chain, smelter then constructor",
+   "sha256": "f40ebbd093ef996f7f37c0ed969537ae5f01bd7c72be5592898d6a22c1b291a5",
+   "bytes": 534
+  },
+  {
+   "file": "screw-120.csv",
+   "requested_url": "https://factoriolab.github.io/sfy/list?v=11&o=screw*120",
+   "exported_url": "https://factoriolab.github.io/sfy/list?o=screw*120&v=11",
+   "captured": "2026-09-14",
+   "note": "corpus: a three-row chain at a higher rate",
+   "sha256": "69f98a953f4cbef6af2048d7266094f4bc0bac5481897a8f7608f22b98e0c482",
+   "bytes": 660
+  },
+  {
+   "file": "wire-120-cable-60.csv",
+   "requested_url": "https://factoriolab.github.io/sfy/list?v=11&o=wire*120&o=cable*60",
+   "exported_url": "https://factoriolab.github.io/sfy/list?o=wire*120&o=cable*60&v=11",
+   "captured": "2026-09-14",
+   "note": "corpus: two objectives, one feeding the other",
+   "sha256": "d57de214793ba385d8e5e88abf871221b5745d774040f47e1cd5113c1d4bef4c",
+   "bytes": 666
+  },
+  {
+   "file": "concrete-60.csv",
+   "requested_url": "https://factoriolab.github.io/sfy/list?v=11&o=concrete*60",
+   "exported_url": "https://factoriolab.github.io/sfy/list?o=concrete*60&v=11",
+   "captured": "2026-09-14",
+   "note": "corpus: limestone to concrete, a single constructor row",
+   "sha256": "915f5128509d8d7451a467c2a754773d784bfba4d90bc66544531fd1c146ef05",
+   "bytes": 406
+  },
+  {
+   "file": "modular-frame-5.csv",
+   "requested_url": "https://factoriolab.github.io/sfy/list?v=11&o=modular-frame*5",
+   "exported_url": "https://factoriolab.github.io/sfy/list?o=modular-frame*5&v=11",
+   "captured": "2026-09-14",
+   "note": "corpus: an Assembler fed by two sub-chains",
+   "sha256": "23f10d6716472795f3f539f68e2d8e06e5b6879759812391c6bd78a12fffbca0",
+   "bytes": 1257
+  },
+  {
+   "file": "rotor-10.csv",
+   "requested_url": "https://factoriolab.github.io/sfy/list?v=11&o=rotor*10",
+   "exported_url": "https://factoriolab.github.io/sfy/list?o=rotor*10&v=11",
+   "captured": "2026-09-14",
+   "note": "corpus: rod and screw converging on an Assembler",
+   "sha256": "947ffd701b81de44df6840f89efb81ea8e1b8189ca493550509b038dcd10d6da",
+   "bytes": 832
+  },
+  {
+   "file": "steel-beam-20.csv",
+   "requested_url": "https://factoriolab.github.io/sfy/list?v=11&o=steel-beam*20",
+   "exported_url": "https://factoriolab.github.io/sfy/list?o=steel-beam*20&v=11",
+   "captured": "2026-09-14",
+   "note": "corpus: the Foundry, steel ingot from ore and coal",
+   "sha256": "2b534286cdb7cd060351c0a25e3a647ffa8e38f1d5022a2f964f93099a62ad2a",
+   "bytes": 688
+  },
+  {
+   "file": "smart-plating-5.csv",
+   "requested_url": "https://factoriolab.github.io/sfy/list?v=11&o=smart-plating*5",
+   "exported_url": "https://factoriolab.github.io/sfy/list?o=smart-plating*5&v=11",
+   "captured": "2026-09-14",
+   "note": "corpus: a project-part Assembler product over rotor and plate",
+   "sha256": "8abb774fb8c08f060f878749e79105e3a87eaeb3873fdb6b6a3b7680af9ade8e",
+   "bytes": 1443
+  },
+  {
+   "file": "heavy-modular-frame-2.csv",
+   "requested_url": "https://factoriolab.github.io/sfy/list?v=11&o=heavy-modular-frame*2",
+   "exported_url": "https://factoriolab.github.io/sfy/list?o=heavy-modular-frame*2&v=11",
+   "captured": "2026-09-14",
+   "note": "corpus: the Manufacturer, a four-input machine",
+   "sha256": "e2b1909ab389d93b046b4294c86598e24dabdaacd9a6414c9e717dcea14b955d",
+   "bytes": 2607
+  },
+  {
+   "file": "plastic-20.csv",
+   "requested_url": "https://factoriolab.github.io/sfy/list?v=11&o=plastic*20",
+   "exported_url": "https://factoriolab.github.io/sfy/list?o=plastic*20&v=11",
+   "captured": "2026-09-14",
+   "note": "corpus: a fluid chain, expected to refuse under R4",
+   "sha256": "fb9a4629884ff4892c0d35653e3e48f390274f9f3860c4d06be28869a8b9968c",
+   "bytes": 502
   }
  ]
 }

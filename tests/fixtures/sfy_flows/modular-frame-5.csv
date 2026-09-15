@@ -1,0 +1,9 @@
+"https://factoriolab.github.io/sfy/list?o=modular-frame*5&v=11"
+Item,Items,Inputs,Outputs,Targets,Belts,Belt,Wagons,Wagon,Recipe,Machines,Machine,Modules,Power
+modular-frame,=5,"reinforced-iron-plate:1,iron-rod:4/7","modular-frame:1","",=1/12,conveyor-belt-mk1,=1/320,freight-car,modular-frame,=2.5,assembler,"2 ",=45000
+reinforced-iron-plate,=7.5,"iron-plate:1,screw:1","reinforced-iron-plate:1","modular-frame:1",=0.125,conveyor-belt-mk1,=3/1280,freight-car,reinforced-iron-plate,=1.5,assembler,"2 ",=30000
+screw,=90,"iron-rod:3/7","screw:1","reinforced-iron-plate:1",=1.5,conveyor-belt-mk1,=9/1600,freight-car,screw,=2.25,constructor-id,"1 ",=12000
+iron-plate,=45,"iron-ingot:9/16","iron-plate:1","reinforced-iron-plate:1",=0.75,conveyor-belt-mk1,=9/1280,freight-car,iron-plate,=2.25,constructor-id,"1 ",=12000
+iron-rod,=52.5,"iron-ingot:7/16","iron-rod:1","modular-frame:4/7,screw:3/7",=0.875,conveyor-belt-mk1,=21/2560,freight-car,iron-rod,=3.5,constructor-id,"1 ",=16000
+iron-ingot,=120,"iron-ore:1","iron-ingot:1","iron-rod:7/16,iron-plate:9/16",=2,conveyor-belt-mk1,=3/80,freight-car,iron-ingot,=4,smelter,"1 ",=16000
+iron-ore,=120,,"iron-ore:1","iron-ingot:1",=2,conveyor-belt-mk1,=3/80,freight-car,iron-ore,=2,miner-mk1,"1 purity-1",=10000

@@ -1,0 +1,6 @@
+"https://factoriolab.github.io/sfy/list?o=wire*120&o=cable*60&v=11"
+Item,Items,Inputs,Outputs,Targets,Belts,Belt,Wagons,Wagon,Recipe,Machines,Machine,Modules,Power
+wire,=240,"copper-ingot:1","wire:1","cable:0.5",=4,conveyor-belt-mk1,=0.015,freight-car,wire,=8,constructor-id,"1 ",=32000
+copper-ingot,=120,"copper-ore:1","copper-ingot:1","wire:1",=2,conveyor-belt-mk1,=3/80,freight-car,copper-ingot,=4,smelter,"1 ",=16000
+copper-ore,=120,,"copper-ore:1","copper-ingot:1",=2,conveyor-belt-mk1,=3/80,freight-car,copper-ore,=2,miner-mk1,"1 purity-1",=10000
+cable,=60,"wire:0.5","cable:1","",=1,conveyor-belt-mk1,=3/320,freight-car,cable,=2,constructor-id,"1 ",=8000

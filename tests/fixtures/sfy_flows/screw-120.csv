@@ -1,0 +1,6 @@
+"https://factoriolab.github.io/sfy/list?o=screw*120&v=11"
+Item,Items,Inputs,Outputs,Targets,Belts,Belt,Wagons,Wagon,Recipe,Machines,Machine,Modules,Power
+screw,=120,"iron-rod:1","screw:1","",=2,conveyor-belt-mk1,=3/400,freight-car,screw,=3,constructor-id,"1 ",=12000
+iron-rod,=30,"iron-ingot:1","iron-rod:1","screw:1",=0.5,conveyor-belt-mk1,=3/640,freight-car,iron-rod,=2,constructor-id,"1 ",=8000
+iron-ingot,=30,"iron-ore:1","iron-ingot:1","iron-rod:1",=0.5,conveyor-belt-mk1,=3/320,freight-car,iron-ingot,=1,smelter,"1 ",=4000
+iron-ore,=30,,"iron-ore:1","iron-ingot:1",=0.5,conveyor-belt-mk1,=3/320,freight-car,iron-ore,=0.5,miner-mk1,"1 purity-1",=5000
