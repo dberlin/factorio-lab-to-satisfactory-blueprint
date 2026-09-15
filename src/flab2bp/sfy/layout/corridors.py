@@ -33,24 +33,44 @@ from dataclasses import dataclass, field
 from fractions import Fraction
 
 from flab2bp.layout.budget import WorkBudget
-from flab2bp.sfy.layout.manifold import crossing_gap_cm, grid_ceil
-from flab2bp.sfy.layout.model import BeltRun, Link, SplinePoint, Vector, belt_ends
+from flab2bp.sfy.geometry import port_forward
+from flab2bp.sfy.layout.manifold import SPLITTER_CLASS, crossing_gap_cm, grid_ceil
+from flab2bp.sfy.layout.model import (
+    AttachmentObj,
+    BeltRun,
+    Link,
+    Pose,
+    SplinePoint,
+    Vector,
+    belt_ends,
+)
 from flab2bp.sfy.layout.splines import concat, incline, quarter_turn, spline_length, straight
 from flab2bp.sfy.layout.validate import BELT_CLEARANCE_HALF_WIDTH_CM
-from flab2bp.sfy.registry import Registry
+from flab2bp.sfy.registry import Port, Registry
 
 __all__ = [
+    "ARC",
+    "ATTACHMENT",
     "BRIDGE_CLEARANCE_BOXES",
+    "COLUMN_LANE_CM",
     "Assignment",
     "ColumnRequest",
     "CorridorError",
     "Interval",
     "LaidPath",
+    "Measures",
     "Route",
+    "Turn",
+    "TurnStop",
+    "arc_turn",
     "assign_columns",
+    "attachment_box_cm",
     "attachment_pitch_cm",
+    "attachment_reach_cm",
+    "attachment_turn",
     "belt_pitch_cm",
     "bridge_z_cm",
+    "choose_turn",
     "descent_run_cm",
     "lay_path",
     "turn_radius_cm",
@@ -64,6 +84,15 @@ Ours.  ``belt.clearance`` gives a belt 79 cm to each side of its centreline, so
 the crossed column's lane and the bridge's own lane are clear of each other once
 their centrelines are two half-widths apart -- and only then may the bridge give
 up any of the crossing gap it climbed for.
+"""
+
+COLUMN_LANE_CM = BELT_CLEARANCE_HALF_WIDTH_CM + 1.0
+"""The closest a corridor column may stand outside the rows' own band.
+
+``belt.clearance`` puts a belt's box 79 cm to each side of its centreline, so a
+column whose centreline is exactly 79 cm out shares a face with the band -- and
+``belt.capsule`` reports a shared face as a lap of 0.0 cm.  One centimetre more
+is the closest it may stand, and it is the narrowest corridor there can be.
 """
 
 _EPS = 1e-9
@@ -159,7 +188,7 @@ def attachment_pitch_cm(registry: Registry) -> float:
 
 def _through_port_offset(registry: Registry) -> float:
     """How far out a conveyor attachment's through ports sit, from the registry."""
-    splitter = registry.buildables["Build_ConveyorAttachmentSplitter_C"]
+    splitter = registry.buildables[SPLITTER_CLASS]
     return max(abs(port.translation[0]) for port in splitter.ports if port.kind == "belt")
 
 
@@ -188,6 +217,30 @@ def descent_run_cm(rise: float, registry: Registry) -> float:
     return grid_ceil(abs(rise) / math.tan(math.radians(limit)), _grid(registry))
 
 
+def attachment_reach_cm(registry: Registry) -> float:
+    """How far out of a conveyor attachment its through ports sit.
+
+    Which is how far a turn made by an attachment takes hold along each of the
+    two headings: the belt into it ends on a port one reach back from where the
+    attachment stands, and the belt out of it starts one reach the other way.
+    """
+    return _through_port_offset(registry)
+
+
+def attachment_box_cm(registry: Registry) -> float:
+    """How far a conveyor attachment's own clearance box reaches from its centre.
+
+    The box is SOFT -- belts and other attachments may pass through it -- so this
+    is not a bound on anything.  It is what a turn made by an attachment is
+    charged for when it is weighed against an arc: the attachment is a thing
+    standing on the floor and the arc is not.
+    """
+    boxes = registry.buildables[SPLITTER_CLASS].clearance
+    if not boxes:
+        raise CorridorError("data", f"{SPLITTER_CLASS} has no clearance box")
+    return max(max(abs(box.min[axis]), abs(box.max[axis])) for box in boxes for axis in (0, 1))
+
+
 @dataclass(frozen=True, slots=True)
 class Measures:
     """Every number a manifold build is laid out against, read once.
@@ -211,10 +264,103 @@ class Measures:
     node_pitch: float
     #: The shortest run between a corridor attachment's port and a turn or another.
     lead: float
-    #: How far a belt runs flat out of a port before it starts to climb.
+    #: How far a belt runs flat out of a port before it starts to climb, which is
+    #: also the shortest belt the game allows.
     lead_in: float
     #: Half the designer's own side, which is where its walls are.
     half: float
+    #: How far out of a conveyor attachment its through ports sit.
+    reach: float
+    #: How far a conveyor attachment's own soft box reaches from its centre.
+    box: float
+
+
+# --- how a corridor turns a belt -------------------------------------------
+
+ARC = "arc"
+"""A quarter circle of the corridor's own radius, built by ``quarter_turn``."""
+
+ATTACHMENT = "attachment"
+"""A conveyor attachment standing on the corner with one input and one output
+wired, which is a right angle in the space the attachment already occupies."""
+
+
+@dataclass(frozen=True, slots=True)
+class Turn:
+    """How one right-angle turn is made, and what it costs where it stands.
+
+    :attr:`reach` is how far from the corner the turn takes hold along each of
+    the two headings: an arc leaves the incoming straight one radius before the
+    corner and rejoins the outgoing one a radius after it, and an attachment
+    stands ON the corner with its ports one reach out along each.
+
+    :attr:`cost` is a different number, and it is the one the choice is made on:
+    what the turn spends of the run into and out of the corner, which nothing
+    else may then use.  An arc spends its radius, because that whole piece of
+    both straights is the curve.  An attachment spends the half of its own box
+    that reaches back down each straight plus the shortest belt the game allows,
+    because a belt has to run from the port to whatever is next and it may not be
+    shorter than that.
+    """
+
+    kind: str
+    reach: float
+    cost: float
+
+    @property
+    def is_attachment(self) -> bool:
+        return self.kind == ATTACHMENT
+
+
+def arc_turn(measures: Measures) -> Turn:
+    """The turn ``quarter_turn`` builds: a quarter circle of the corridor's radius."""
+    return Turn(kind=ARC, reach=measures.radius, cost=measures.radius)
+
+
+def attachment_turn(measures: Measures) -> Turn:
+    """The turn a conveyor attachment makes by standing on the corner."""
+    return Turn(kind=ATTACHMENT, reach=measures.reach, cost=measures.box + measures.lead_in)
+
+
+def choose_turn(measures: Measures, along: float, across: float) -> Turn:
+    """Which way to turn a belt that has ``along`` cm coming in and ``across`` out.
+
+    The two ways are not better or worse in the abstract and this does not treat
+    them as if they were: an arc is one belt and no object, an attachment is an
+    object and two belts, and a build made of either is a build a player would
+    recognise.  What separates them is space, and only space.
+
+    A turn that fits is preferred to one that does not, and where both fit the
+    cheaper one wins -- with the registry the game ships that is the attachment,
+    because a 400 cm bend radius buys a 400 cm quarter circle where an attachment
+    turns inside its own 200 cm box plus one 101 cm belt.  With a tighter radius
+    the arc wins, which is what makes this worth asking rather than deciding
+    once: nothing here knows what the next game version's bend radius is.
+
+    Where NEITHER fits, the cheaper is returned rather than a refusal.  This
+    function is about which turn to try; whether the belt it makes can actually
+    be drawn is the drawing's business, and it refuses with the centimetres.
+    """
+    options = (arc_turn(measures), attachment_turn(measures))
+    fits = [turn for turn in options if turn.cost <= along + _EPS and turn.cost <= across + _EPS]
+    return min(fits or options, key=lambda turn: turn.cost)
+
+
+@dataclass(frozen=True, slots=True)
+class TurnStop:
+    """A conveyor attachment standing where a path turns, and how it is met.
+
+    ``after`` is how many of the route's legs are walked before the stop, which
+    is where :func:`lay_path` cuts one path into two.  The belt before ends on
+    the attachment's input port and the belt after starts from one of its side
+    outputs; which ports those are is read off the registry by facing, never by
+    name.
+    """
+
+    after: int
+    arrive: Vector
+    heading_in: Vector
+    heading_out: Vector
 
 
 # --- which column a belt takes ---------------------------------------------
@@ -436,6 +582,8 @@ class Route:
     point: Vector
     heading: Vector
     legs: list[tuple[SplinePoint, ...]] = field(default_factory=list)
+    #: Where the path hands over to a conveyor attachment instead of bending.
+    stops: list[TurnStop] = field(default_factory=list)
 
     def go(self, distance: float, rise: float = 0.0) -> None:
         """Run ``distance`` along the current heading, climbing ``rise`` over it.
@@ -458,12 +606,53 @@ class Route:
         self.legs.append(leg)
         self.point = leg[-1][0]
 
-    def turn(self, left: bool, radius: float) -> None:
-        """A horizontal quarter circle onto the heading ``left`` points at."""
-        leg = quarter_turn(self.point, self.heading, left, radius)
+    def turn(self, left: bool, turn: Turn) -> None:
+        """A right angle onto the heading ``left`` points at, made ``turn``'s way.
+
+        An arc is one more leg of this path.  An attachment is not: the path
+        stops at the attachment's input port, the attachment makes the angle, and
+        the rest of the path starts again from its side output.  The cursor lands
+        on that output either way, so a caller that only wants to know where the
+        belt goes next need not care which was chosen.
+        """
+        if turn.is_attachment:
+            heading_out = _left_of(self.heading) if left else _right_of(self.heading)
+            self.stops.append(
+                TurnStop(
+                    after=len(self.legs),
+                    arrive=self.point,
+                    heading_in=self.heading,
+                    heading_out=heading_out,
+                )
+            )
+            corner = _step(self.point, self.heading, turn.reach)
+            self.point = _step(corner, heading_out, turn.reach)
+            self.heading = heading_out
+            return
+        leg = quarter_turn(self.point, self.heading, left, turn.reach)
         self.legs.append(leg)
         self.point = leg[-1][0]
         self.heading = leg[-1][2]
+
+
+def _unit(vector: Vector) -> Vector:
+    span = math.hypot(vector[0], vector[1])
+    return (vector[0] / span, vector[1] / span, 0.0)
+
+
+def _left_of(heading: Vector) -> Vector:
+    unit = _unit(heading)
+    return (-unit[1], unit[0], 0.0)
+
+
+def _right_of(heading: Vector) -> Vector:
+    unit = _unit(heading)
+    return (unit[1], -unit[0], 0.0)
+
+
+def _step(point: Vector, heading: Vector, distance: float) -> Vector:
+    unit = _unit(heading)
+    return (point[0] + unit[0] * distance, point[1] + unit[1] * distance, point[2])
 
 
 def _is_straight(leg: tuple[SplinePoint, ...]) -> bool:
@@ -542,10 +731,11 @@ def _split(leg: tuple[SplinePoint, ...], limit: float) -> list[tuple[SplinePoint
 
 @dataclass(frozen=True, slots=True)
 class LaidPath:
-    """One corridor path as conveyors: the belts and the links that wire them."""
+    """One corridor path as conveyors: the belts, their links, and any turn it stands."""
 
     belts: tuple[BeltRun, ...]
     links: tuple[Link, ...]
+    attachments: tuple[AttachmentObj, ...] = ()
 
 
 def lay_path(
@@ -559,7 +749,101 @@ def lay_path(
     upstream: tuple[int, str] | None,
     downstream: tuple[int, str] | None,
 ) -> LaidPath:
-    """Cut ``route`` into belts, wire them end to end, and wire the two ends.
+    """Turn ``route`` into conveyors: the belts, the turns they stop at, the links.
+
+    A route with no :class:`TurnStop` is one run of belt from end to end and is
+    laid by :func:`_lay_legs`.  Each stop cuts it: the belt before the stop ends
+    on the attachment's input port, the attachment makes the right angle, and the
+    belt after it starts from the side output that faces the way the path leaves.
+    """
+    if not route.stops:
+        return _lay_legs(
+            route.legs,
+            registry=registry,
+            class_name=class_name,
+            item_id=item_id,
+            rate=rate,
+            ids=ids,
+            upstream=upstream,
+            downstream=downstream,
+        )
+    attachments: list[AttachmentObj] = []
+    ports: list[tuple[tuple[int, str], tuple[int, str]]] = []
+    for stop in route.stops:
+        obj, arrive, leave = _turn_attachment(registry, stop, ids)
+        attachments.append(obj)
+        ports.append(((obj.id, arrive.name), (obj.id, leave.name)))
+    groups: list[list[tuple[SplinePoint, ...]]] = []
+    cut = 0
+    for stop in route.stops:
+        groups.append(route.legs[cut : stop.after])
+        cut = stop.after
+    groups.append(route.legs[cut:])
+    belts: list[BeltRun] = []
+    links: list[Link] = []
+    for index, legs in enumerate(groups):
+        piece = _lay_legs(
+            legs,
+            registry=registry,
+            class_name=class_name,
+            item_id=item_id,
+            rate=rate,
+            ids=ids,
+            upstream=upstream if index == 0 else ports[index - 1][1],
+            downstream=downstream if index == len(groups) - 1 else ports[index][0],
+        )
+        belts.extend(piece.belts)
+        links.extend(piece.links)
+    return LaidPath(tuple(belts), tuple(links), tuple(attachments))
+
+
+def _turn_attachment(
+    registry: Registry, stop: TurnStop, ids: Iterator[int]
+) -> tuple[AttachmentObj, Port, Port]:
+    """The attachment that makes one turn, and the two ports the belts wire to.
+
+    A splitter, and it could as well be a merger: what a turn needs is one port
+    on the attachment's through axis and one at right angles to it, and each
+    class has exactly one such pair -- the splitter's single INPUT is the through
+    one, the merger's single OUTPUT is.  The splitter is named because a corridor
+    turn is met head on and left sideways, which is the way round the splitter
+    already faces; the other two of its outputs are simply not wired, which
+    ``ports.connected_once`` allows on an attachment.
+
+    Both ports are read off the registry's own table -- the through one by
+    position, the side one by the facing it has once the attachment is turned --
+    and never by name.
+    """
+    buildable = registry.buildables[SPLITTER_CLASS]
+    belt_ports = [port for port in buildable.ports if port.kind == "belt"]
+    through = [port for port in belt_ports if abs(port.translation[0]) > abs(port.translation[1])]
+    arrive = next(port for port in through if port.direction == "input")
+    centre = _step(stop.arrive, stop.heading_in, abs(arrive.translation[0]))
+    yaw = math.degrees(math.atan2(stop.heading_in[1], stop.heading_in[0])) % 360.0
+    pose = Pose(centre[0], centre[1], centre[2], yaw)
+    transform = pose.transform()
+    unit = _unit(stop.heading_out)
+    leave = next(
+        port
+        for port in belt_ports
+        if port.direction == "output"
+        and sum(port_forward(transform, port)[i] * unit[i] for i in range(2)) > 0.5
+    )
+    return (AttachmentObj(id=next(ids), class_name=SPLITTER_CLASS, pose=pose), arrive, leave)
+
+
+def _lay_legs(
+    legs: Sequence[tuple[SplinePoint, ...]],
+    *,
+    registry: Registry,
+    class_name: str,
+    item_id: str,
+    rate: Fraction,
+    ids: Iterator[int],
+    upstream: tuple[int, str] | None,
+    downstream: tuple[int, str] | None,
+) -> LaidPath:
+    """Cut one unbroken run of legs into belts, wire them end to end and at both ends.
 
     A path longer than ``belt_max_spline_cm`` is more than one conveyor, because
     that is the bound ``belt.max_length`` holds every belt to; the cut falls at a
@@ -567,7 +851,7 @@ def lay_path(
     exactly and ``ports.position`` has nothing to report.  A single leg longer
     than the limit is cut inside itself first, by :func:`_split`.
 
-    ``upstream`` and ``downstream`` are the ports the path starts and ends on;
+    ``upstream`` and ``downstream`` are the ports the run starts and ends on;
     ``None`` means the designer wall, and the belt that end belongs to is flagged
     as a boundary end so that ``ports.connected_once`` expects no link there and
     ``flow.boundary`` holds it to the wall.
@@ -578,7 +862,7 @@ def lay_path(
     limit = registry.limits.belt_max_spline_cm
     chunks: list[list[tuple[SplinePoint, ...]]] = []
     walked = 0.0
-    for long in route.legs:
+    for long in legs:
         for leg in _split(long, limit):
             length = spline_length(leg)
             if chunks and walked + length > limit:

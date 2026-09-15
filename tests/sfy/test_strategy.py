@@ -32,7 +32,13 @@ from flab2bp.sfy.layout.rows import _Row
 from flab2bp.sfy.layout.strategy import ManifoldRows
 from flab2bp.sfy.layout.validate import validate
 from flab2bp.sfy.registry import Registry
-from flab2bp.sfy.spec import FOUNDATION_CLASS, SfyBuildSpec, SfyMachineGroup, designer
+from flab2bp.sfy.spec import (
+    FOUNDATION_CLASS,
+    SfyBuildSpec,
+    SfyMachineGroup,
+    designer,
+    direct_pairs,
+)
 from flab2bp.sfy.templates import TemplateLibrary
 from tests.sfy.conftest import fixture_paths, flow_spec, sfy_registry
 
@@ -139,18 +145,46 @@ def test_iron_plate_at_sixty_lays_out_and_validates_clean() -> None:
     }
 
 
-def test_iron_plate_at_sixty_does_not_fit_the_two_smaller_designers() -> None:
-    """Two rows of 16 m, and neither smaller designer is deep enough for them.
+def test_iron_plate_at_sixty_fits_a_mk1_designer_with_room_to_spare() -> None:
+    """The user's ruling, measured: three smelters and three constructors fit 32 m.
 
-    The brief expected this build in an mk1, and the measurement says otherwise:
-    the two rows are 32 m of band before anything is between them, and 42 m with
-    the gap a trunk needs to turn out of one row and into the next and the room a
-    belt needs to turn in at each wall.  mk1 is 32 m deep and mk2 is 40.  The
-    refusal names the depth and says what it wanted, for both.
+    It used to want 42 m of band and so a Mk3.  What the four levers of Task 8d
+    bought, in order: feeders at the shortest belt the game allows rather than the
+    shortest grid step (40 cm a row); the two groups laid FACING each other,
+    because the spec's own rates pair their machines one for one, so there is no
+    merger chain, no splitter chain and no trunk between them; turns made by a
+    conveyor attachment inside its own 200 cm box rather than by a 400 cm arc;
+    and a margin at each wall that is what the turn there actually costs.
+
+    2763 cm of band against the Mk1's 3200, and the build is clean.
     """
     spec = _spec("iron-plate-60")
+    placement = _lay_out(spec, "mk1")
+    _assert_clean(placement, spec)
+    assert len(placement.machines) == spec.machine_count == 6
+    band = next(
+        float(line.split(",")[-1].strip().removesuffix(" cm of band"))
+        for line in placement.description.splitlines()
+        if "cm of band" in line
+    )
+    assert band == 2763.0
+    assert band < 3200.0, "which is what a mk1 designer is deep"
+
+
+def test_a_two_row_chain_the_rates_do_not_pair_still_wants_a_bigger_designer() -> None:
+    """``iron-rod*60`` is two rows of three and the manifold is what serves it.
+
+    Its smelters make 1/2 an ingot each and its constructors eat 1/4, so no belt
+    joins one machine to one machine: the rates have to be merged and split
+    again, which is a chain pair, a trunk and a corridor -- and that is still
+    more band than either smaller designer has.  The pairing is a property of the
+    SPEC, and a spec that does not have it does not get it.
+    """
+    spec = _spec("iron-rod-60")
+    assert direct_pairs(spec) == ()
     assert _refusal(spec, "mk1") == "rows exceed the designer depth"
     assert _refusal(spec, "mk2") == "rows exceed the designer depth"
+    _assert_clean(_lay_out(spec, "mk3"), spec)
 
 
 def test_ten_reinforced_plates_a_minute_needs_five_rows_and_no_designer_holds_them() -> None:
@@ -297,10 +331,66 @@ def test_a_trunk_that_must_cross_an_occupied_column_rides_over_it() -> None:
         for run in placement.belts
         if {round(point[2]) for point, _, _ in run.points} == {200, round(200 + gap)}
     ]
-    assert [run.item_id for run in bridged] == ["iron-ingot"]
+    assert {run.item_id for run in bridged} == {"iron-ingot"}
     # It is over the crossing before it turns, and down again inside its column.
-    over = next(iter(bridged))
-    assert over.start[2] == 200.0 and over.end[2] == 200.0
+    # The corner itself is a conveyor attachment, so the climb and the descent are
+    # two belts that meet on its ports rather than one belt that bends -- and the
+    # pair still starts and ends on the corridor's own height.
+    assert {(run.start[2], run.end[2]) for run in bridged} == {
+        (200.0, 200.0 + gap),
+        (200.0 + gap, 200.0),
+    }
+
+
+def test_a_paired_build_runs_three_straight_belts_and_nothing_between_the_rows() -> None:
+    """Machine to machine, because the spec's own rates already balance them.
+
+    Three smelters each make half an ingot a second and three constructors each
+    eat half: FactorioLab has already solved that, and merging six half-rates
+    into one trunk and splitting them back out again moves the same items over
+    more floor.  So the two lines stand facing each other with one straight belt
+    between each pair -- and NO attachment stands between them at all.
+    """
+    spec = _spec("iron-plate-60")
+    (pair,) = direct_pairs(spec)
+    assert pair.item == "iron-ingot"
+    placement = _lay_out(spec, "mk1")
+    smelters = [m for m in placement.machines if m.class_name == "Build_SmelterMk1_C"]
+    constructors = [m for m in placement.machines if m.class_name == "Build_ConstructorMk1_C"]
+    # Each pair faces the other across one belt, at the same X.
+    assert sorted(m.pose.x for m in smelters) == sorted(m.pose.x for m in constructors)
+    wired = {m.id for m in smelters} | {m.id for m in constructors}
+    joining = [
+        run
+        for run in placement.belts
+        if run.item_id == pair.item
+        and {link.a[0] for link in placement.links if link.b[0] == run.id} <= wired
+        and {link.b[0] for link in placement.links if link.a[0] == run.id} <= wired
+    ]
+    assert len(joining) == 3, "one straight belt per pair of machines"
+    for run in joining:
+        assert len(run.points) == 2, "and it is straight"
+        assert run.start[0] == pytest.approx(run.end[0], abs=1.0)
+        assert run.start[1] < run.end[1], "and it runs from the maker to the eater"
+    # Nothing stands between the two lines.
+    between = [
+        obj
+        for obj in placement.attachments
+        if min(m.pose.y for m in constructors) > obj.pose.y > max(m.pose.y for m in smelters)
+    ]
+    assert between == [], "no chain pair and no trunk between a paired row's two lines"
+    assert "paired on iron-ingot" in placement.description
+
+
+def test_every_corner_the_corridor_turns_is_recorded_in_the_description() -> None:
+    """How a corner was made is not measurable off a blueprint, so it is written.
+
+    With the bend radius the game ships, an attachment turn is the cheaper of the
+    two everywhere, so this build's two corners are both attachments.
+    """
+    placement = _lay_out(_spec("iron-plate-60"), "mk1")
+    turns = next(line for line in placement.description.splitlines() if line.startswith("turns:"))
+    assert turns == "turns: 2 attachment"
 
 
 # --- refusals --------------------------------------------------------------

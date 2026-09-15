@@ -20,8 +20,8 @@ from flab2bp.layout.budget import WorkBudget
 from flab2bp.sfy.labmap import load_lab_map
 from flab2bp.sfy.layout import strategy
 from flab2bp.sfy.layout.manifold import hard_footprint_cm, machine_pitch_cm
-from flab2bp.sfy.layout.rows import RowPlanner, _split_group
-from flab2bp.sfy.spec import SfyBuildSpec, SfyMachineGroup, designer
+from flab2bp.sfy.layout.rows import RowPlanner, _split_group, _Unit
+from flab2bp.sfy.spec import SfyBuildSpec, SfyMachineGroup, designer, direct_pairs
 from tests.sfy.conftest import flow_spec, sfy_registry
 
 #: The designer the numbers below are read against; see ``test_strategy.py``.
@@ -95,17 +95,41 @@ def test_how_many_rows_a_group_is_laid_as_is_what_the_floor_holds() -> None:
     """``per_row`` is the floor between the corridors over the machine pitch, and
     a row of ``n`` is ``n - 1`` pitches plus one machine's own footprint."""
     planner = _planner(flow_spec("iron-plate-60"))
-    order = [_group(flow_spec("iron-plate-60"), "iron-plate").model_copy(update={"count": 7})]
-    machine = sfy_registry().buildables[order[0].machine_class]
+    group = _group(flow_spec("iron-plate-60"), "iron-plate").model_copy(update={"count": 7})
+    units = [_Unit(groups=(group,))]
+    machine = sfy_registry().buildables[group.machine_class]
     pitch = machine_pitch_cm(machine, sfy_registry().limits)
     x0, _, x1, _ = hard_footprint_cm(machine)
     # An allowance that leaves exactly four pitches' worth of floor.
     usable = 3.0 * pitch + (x1 - x0)
     allowance = planner.measures.half - usable / 2.0
-    assert planner._splits(order, [1], allowance) == [2]
+    assert planner._splits(units, [1], allowance) == [2]
     # One machine wider than the floor is the refusal that remains, and it says
     # which class could not be stood.
     with pytest.raises(NoValidLayout) as caught:
-        planner._splits(order, [1], planner.measures.half - (x1 - x0) / 2.0 + 100.0)
+        planner._splits(units, [1], planner.measures.half - (x1 - x0) / 2.0 + 100.0)
     assert caught.value.reason == "rows exceed the designer width"
-    assert order[0].machine_class in caught.value.attempt_reasons[0]
+    assert group.machine_class in caught.value.attempt_reasons[0]
+
+
+def test_a_pair_is_measured_at_the_wider_of_its_two_machines() -> None:
+    """Its two lines share one pitch, so that machine ``i`` faces machine ``i``.
+
+    A Smelter's box is 500 cm across and a Constructor's 800, so the paired unit
+    is laid at the Constructor's 900 cm pitch on both lines: a floor that holds
+    three Smelters is not the floor this pair needs.
+    """
+    spec = flow_spec("iron-plate-60")
+    (pair,) = direct_pairs(spec)
+    planner = _planner(spec)
+    units = [_Unit(groups=(pair.producer, pair.consumer), pair=pair)]
+    registry = sfy_registry()
+    constructor = registry.buildables[pair.consumer.machine_class]
+    pitch = machine_pitch_cm(constructor, registry.limits)
+    x0, _, x1, _ = hard_footprint_cm(constructor)
+    # Exactly three Constructors' worth of floor: the pair is one row.
+    allowance = planner.measures.half - (2.0 * pitch + (x1 - x0)) / 2.0
+    assert planner._splits(units, [1], allowance) == [1]
+    # A centimetre less and it is two, which is the point at which the pairing is
+    # given up -- ``_plan_rows`` never lays half a pair.
+    assert planner._splits(units, [1], allowance + 1.0) == [2]

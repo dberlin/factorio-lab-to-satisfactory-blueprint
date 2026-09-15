@@ -24,6 +24,8 @@ rows cannot be fed refuses through the one refusal builder
 
 from __future__ import annotations
 
+import math
+from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from fractions import Fraction
@@ -32,13 +34,15 @@ from flab2bp.layout.base import NoValidLayout
 from flab2bp.layout.budget import WorkBudget
 from flab2bp.sfy.geometry import port_forward
 from flab2bp.sfy.layout.corridors import (
+    COLUMN_LANE_CM,
     Assignment,
     ColumnRequest,
     CorridorError,
     Measures,
     assign_columns,
+    choose_turn,
 )
-from flab2bp.sfy.layout.manifold import MERGER_CLASS, SPLITTER_CLASS, ChainEnd, grid_ceil
+from flab2bp.sfy.layout.manifold import MERGER_CLASS, SPLITTER_CLASS, ChainEnd
 from flab2bp.sfy.layout.model import Pose, Vector
 from flab2bp.sfy.layout.rows import _Row
 from flab2bp.sfy.layout.validate import BELT_CLEARANCE_HALF_WIDTH_CM
@@ -138,7 +142,7 @@ class NetPlanner:
         that against the designer is ``_plan_rows``'s last step.
         """
         nets = self._nets(rows)
-        offset = self._column_offset(rows, x_edge)
+        offset = self._column_offset(rows, x_edge, nets)
         # The two corridors are two sets of columns and share nothing: a belt on
         # one side of the rows cannot be in the way of a belt on the other, so
         # each side is assigned on its own.
@@ -170,12 +174,23 @@ class NetPlanner:
             reach_cm=offset + _outermost_column(spine) * self.measures.pitch,
         )
 
-    def _column_offset(self, rows: Sequence[_Row], x_edge: float) -> float:
+    def _column_offset(self, rows: Sequence[_Row], x_edge: float, nets: Sequence[_Net]) -> float:
         """How far out of the rows the innermost corridor column stands.
 
-        Far enough that a belt turning into a row has the turn's own radius and a
-        legal straight to land on, and at least one column pitch, so that its lane
-        clears the rows' own band.
+        Far enough that a belt turning into a row has the turn's own cost and a
+        legal straight to land on, and never closer than a belt's own half width
+        plus a centimetre, so that the column's lane is clear of the rows' band
+        rather than sharing a face with it -- which ``belt.capsule`` calls a lap.
+
+        **A corridor with one trunk in it gets the close floor and a corridor
+        with two gets a column pitch.**  A crossing is what needs the room: a
+        transverse that has to ride over an occupied column climbs a crossing gap
+        before it and comes down after it, and both slopes have to happen between
+        the row and the column.  Where a side carries ONE trunk nothing is ever
+        crossed, so that room is a metre and a half of designer floor per side
+        that nothing can stand in -- and a Mk1 is 3200 cm across where a
+        three-machine Constructor row is 2600, which is exactly the margin a
+        build lives or dies by.
         """
         inset = min(
             (
@@ -185,11 +200,16 @@ class NetPlanner:
             ),
             default=0.0,
         )
-        floor = self.registry.limits.belt_min_length_cm or 0.0
-        return max(
-            self.measures.pitch,
-            grid_ceil(max(0.0, self.measures.radius + floor - inset), self.measures.grid),
+        crowded = Counter(net.side for net in nets)
+        lane = (
+            self.measures.pitch if any(count > 1 for count in crowded.values()) else COLUMN_LANE_CM
         )
+        # What the turn into a row needs OUT OF THE TRANSVERSE is where it takes
+        # hold plus the shortest belt from there into the chain end -- an arc's
+        # whole radius, an attachment's one port offset -- and what the row's own
+        # band already holds beyond its chain ends pays for part of it.
+        turn = choose_turn(self.measures, math.inf, math.inf)
+        return max(lane, float(math.ceil(max(0.0, turn.reach + self.measures.lead_in - inset))))
 
     def _nets(self, rows: Sequence[_Row]) -> list[_Net]:
         """Every item's sources and sinks, split by the corridor they face."""

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import itertools
 from collections.abc import Sequence
+from dataclasses import replace
 from fractions import Fraction
 from functools import cache
 
@@ -19,16 +20,25 @@ import pytest
 
 from flab2bp.layout.budget import WorkBudget, WorkLimits
 from flab2bp.sfy.layout.corridors import (
+    ARC,
+    ATTACHMENT,
     Assignment,
     ColumnRequest,
     CorridorError,
     Interval,
     LaidPath,
+    Measures,
     Route,
+    Turn,
+    arc_turn,
     assign_columns,
+    attachment_box_cm,
     attachment_pitch_cm,
+    attachment_reach_cm,
+    attachment_turn,
     belt_pitch_cm,
     bridge_z_cm,
+    choose_turn,
     lay_path,
     turn_radius_cm,
 )
@@ -302,11 +312,104 @@ def test_a_curved_leg_too_long_to_be_a_belt_is_refused_by_its_own_cause() -> Non
     limit = registry.limits.belt_max_spline_cm
     assert limit is not None
     route = Route(point=(0.0, 0.0, 200.0), heading=(0.0, 1.0, 0.0))
-    route.turn(True, limit)  # a quarter circle of the whole spline limit
+    route.turn(True, Turn(kind=ARC, reach=limit, cost=limit))  # a quarter circle of the limit
     with pytest.raises(CorridorError) as caught:
         _laid(route, registry)
     assert caught.value.cause == "curve"
     assert "guess at the tangents" in caught.value.detail
+
+
+# --- which way a corner is turned -------------------------------------------
+
+
+def _measures(registry: Registry, *, radius: float | None = None) -> Measures:
+    """The corridor's numbers, with the bend radius open to be asked about.
+
+    Every field but ``radius`` is read; ``radius`` is a parameter because the
+    whole point of :func:`choose_turn` is that it does not know which way the
+    answer comes out for a radius it has not been given.
+    """
+    from flab2bp.sfy.layout.strategy import _measure
+    from flab2bp.sfy.spec import designer
+
+    read = _measure(registry, designer("mk3", registry))
+    return read if radius is None else replace(read, radius=radius)
+
+
+def test_an_arc_costs_its_radius_and_an_attachment_costs_its_box_and_a_belt() -> None:
+    """Both numbers are read, and they are what the choice is made on."""
+    registry = _registry()
+    measures = _measures(registry)
+    assert arc_turn(measures).cost == turn_radius_cm(registry) == 400.0
+    assert attachment_turn(measures).cost == attachment_box_cm(registry) + 101.0 == 301.0
+    # And an attachment takes hold one through-port offset from the corner, which
+    # is where the belt into it ends and the belt out of it starts.
+    assert attachment_turn(measures).reach == attachment_reach_cm(registry) == 100.0
+
+
+def test_the_shipped_bend_radius_makes_the_attachment_the_cheaper_turn() -> None:
+    """400 cm of quarter circle against a 200 cm box and a 101 cm belt."""
+    measures = _measures(_registry())
+    assert choose_turn(measures, along=5000.0, across=5000.0).kind == ATTACHMENT
+
+
+def test_a_tight_enough_bend_radius_makes_the_arc_the_cheaper_turn() -> None:
+    """Which is why the choice is asked rather than decided once.
+
+    Nothing here knows what the next game version's ``mBendRadius`` is, and a
+    build gun that would bend a belt inside a metre makes the arc the smaller of
+    the two -- an arc stands no object on the floor at all.
+    """
+    measures = _measures(_registry(), radius=100.0)
+    assert choose_turn(measures, along=5000.0, across=5000.0).kind == ARC
+
+
+def test_a_turn_that_fits_beats_a_cheaper_one_that_does_not() -> None:
+    """Cheapness only decides between turns that both have their room."""
+    measures = _measures(_registry(), radius=100.0)
+    assert choose_turn(measures, along=150.0, across=5000.0).kind == ARC
+    # 100 cm of arc does not fit 50, and 301 of attachment does not either; the
+    # cheaper of the two is handed back and the drawing refuses with the numbers.
+    assert choose_turn(measures, along=50.0, across=50.0).kind == ARC
+
+
+def test_an_attachment_turn_is_one_input_and_one_output_with_a_straight_leg_each() -> None:
+    """The turn the corridor actually draws, pinned on its own.
+
+    A splitter stands on the corner: the belt in ends on its through INPUT, the
+    belt out starts from the side OUTPUT that faces the way the path leaves, the
+    other two outputs are simply not wired, and both legs are straight.
+    """
+    registry = _registry()
+    measures = _measures(registry)
+    turn = attachment_turn(measures)
+    route = Route(point=(0.0, 0.0, 200.0), heading=(0.0, 1.0, 0.0))
+    route.go(500.0)
+    route.turn(True, turn)  # onto -X
+    route.go(500.0)
+    path = lay_path(
+        route,
+        registry=registry,
+        class_name="Build_ConveyorBeltMk1_C",
+        item_id="iron-ore",
+        rate=Fraction(1),
+        ids=itertools.count(1),
+        upstream=None,
+        downstream=None,
+    )
+    assert len(path.attachments) == 1
+    stood = path.attachments[0]
+    assert stood.class_name == "Build_ConveyorAttachmentSplitter_C"
+    # One reach past where the first belt ends, and the second starts one reach on.
+    assert stood.pose.x == 0.0 and stood.pose.y == 500.0 + turn.reach
+    assert len(path.belts) == 2
+    assert path.belts[0].end == (0.0, 500.0, 200.0)
+    assert path.belts[1].start == (-turn.reach, 500.0 + turn.reach, 200.0)
+    wired = {link.b for link in path.links} | {link.a for link in path.links}
+    on_the_turn = sorted(name for obj, name in wired if obj == stood.id)
+    assert len(on_the_turn) == 2, "one input and one output, and nothing else"
+    ports = {port.name: port for port in registry.buildables[stood.class_name].ports}
+    assert [ports[name].direction for name in on_the_turn] == ["input", "output"]
 
 
 def test_a_path_with_no_length_at_all_is_refused_as_a_path() -> None:

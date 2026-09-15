@@ -343,11 +343,14 @@ to be at and says nothing, so ours is 0.
 | bridge height | belt height + the row builder's crossing gap (**ours**, twice a belt box's height) | 300 cm |
 | attachment pitch | `grid_ceil(2 × through-port offset + belt_min_length_cm)`. The brief asked for one grid step; the game's own port offsets make that a belt of −100 cm | 400 cm |
 | climb run | `grid_ceil(rise / tan(belt_max_incline_deg))` | 200 cm per 100 |
-| flat lead out of a port | `grid_ceil(belt_min_length_cm)`, **ours**, because `ports.position` holds a belt to its port's own (horizontal) facing | 200 cm |
-| room at each wall | turn radius + one grid step, less what the row's band already covers. **Ours**: a belt's clearance box is square to the belt, so a box on a turning piece that began ON the wall reaches 4.8 cm outside it and `geom.bounds` refuses the build | 300 cm |
-| gap between two rows | whatever the two turns of a trunk still want after the rows' own overhangs, never less than a grid step. **Ours** | 400 cm |
+| shortest belt | the first whole centimetre above `belt_min_length_cm`, which `AFGConveyorBeltHologram::ValidateMinLength` compares strictly. **Not** rounded to the grid: the grid is where a hologram snaps and a belt is a spline between two ports | 101 cm |
+| flat lead out of a port | the shortest belt, **ours**, because `ports.position` holds a belt to its port's own (horizontal) facing | 101 cm |
+| what a turn costs | an arc spends its radius of both straights; an attachment spends its own soft box plus one shortest belt, and no radius. `corridors.choose_turn` picks the cheaper of the two that fits, per turn | arc 400, attachment 301 cm |
+| room at each wall | what the turn there costs, less what the row's band already covers -- and nothing at all where the chain end already faces the wall. An ARC asks one grid step more, because a belt's clearance box is square to the belt and a box on a turning piece that began ON the wall reaches 4.8 cm outside it; an attachment turn has no such piece | 101 cm |
+| gap between two rows | whatever the two turns of a trunk still want after the rows' own overhangs, never less than a grid step. **Ours** | 202 cm |
 | gap between two rows of ONE group | a grid step: no trunk turns between them, because the spine reaches into each across the corridor. **Ours** | 100 cm |
-| machines per row | `floor((floor between the corridors − one machine's hard footprint) / pitch) + 1` | mk2: 3 Constructors |
+| machines per row | `floor((floor between the corridors − the widest machine's hard footprint) / pitch) + 1`; a PAIRED row is measured at the wider of its two machines, because its two lines share one pitch | mk1: 3 Constructors |
+| closest a column may stand | one belt half width and a centimetre outside the rows' band, so the two do not share a face -- which `belt.capsule` reports as a lap of 0.0 cm. A corridor carrying TWO trunks gets a whole column pitch instead, because a crossing needs room to climb | 80 cm, or 300 |
 | floor | a full field of the shipped foundation at half its own box's thickness | 8 m tiles at z 50 |
 
 ### The refusals
@@ -377,17 +380,47 @@ refusal's name. An input no row makes and the spec does not belt in is not in th
 list at all: `SfyBuildSpec`'s own validator refuses that spec at construction, so
 one reaching the layout stage is a bug in this package and is raised as one.
 
-**What fits.** Two rows and the room their trunks need to turn between them is
-42 m of band. The mk1 designer is 32 m deep and the mk2 is 40, so a two-row build
-is an mk3 one; `iron-plate-60` refuses both smaller marks on depth.
-`reinforced-iron-plate-10` is five rows and 110 m of band, which no designer
-holds, and it refuses for every mark the game ships.
+**What fits.** A row's own band is 15.6 m and two rows plus the gap their trunks
+turn in plus a margin at each wall is 35 m, which is more than a mk1's 32 and less
+than a mk2's 40. `reinforced-iron-plate-10` is five rows and 110 m of band, which
+no designer holds, and it refuses for every mark the game ships.
 
-Splitting a wide group pays for width in depth — a row is 16 m of band — so the
-corpus after Task 8c has **no width refusals left and 28 depth ones**: a build
-that was too wide by a machine is now too deep by a row. The exception is a group
-whose split rows still fit, which is `concrete-60` in an mk2: four Constructors as
-two rows of one recipe.
+**A paired build is smaller than that.** Where the spec's own rates say one group
+makes exactly what another eats — the same machine count, the same rate per
+machine, the same fraction on the odd last machine, and nothing else touching the
+item — `flab2bp.sfy.spec.direct_pairs` reports the pair and the two groups are
+laid as ONE row facing itself: producers along one line, consumers along another,
+one straight belt from each machine to its partner, and no merger chain, no
+splitter chain and no trunk between them. `iron-plate-60` is the corpus's own:
+2763 cm of band against a mk1's 3200, where the manifold wanted 4200. Nothing is
+re-solved to find one — every comparison is an exact `Fraction` out of the spec —
+and the placement's description says which rows were paired and on what.
+
+Splitting a wide group pays for width in depth — a row is 15.6 m of band — so the
+corpus has **no width refusals left and 28 depth ones**: a build that was too wide
+by a machine is now too deep by a row. The exception is a group whose split rows
+still fit, which is `concrete-60` in an mk2: four Constructors as two rows of one
+recipe.
+
+### How a corridor turns a belt
+
+Two ways, and `corridors.choose_turn` is a pure function of the room at that
+corner that picks between them. An **arc** is `quarter_turn`'s quarter circle of
+the corridor's radius: one belt, no object, and it spends that radius of both
+straights. An **attachment turn** stands a conveyor splitter on the corner with
+exactly one input and one output wired — the through input faces the way the belt
+arrives and one side output the way it leaves, both read off the registry by
+facing — so the path becomes two straight belts meeting on its ports, and it
+spends its own 200 cm soft box plus one shortest belt rather than a radius.
+
+With the registry the game ships the attachment is the cheaper everywhere (301
+against 400), and it is what makes a mk1 build possible: an arc's radius is spent
+at every wall and between every pair of rows. A tighter `mBendRadius` would make
+the arc cheaper, which is why the choice is asked per turn rather than decided
+once. A belt may not meet or leave an attachment's port on a slope
+(`ports.position`) and may not be sloped at the designer wall either (a sloped
+belt's clearance box has a corner outside it, which `geom.bounds` refuses), so a
+climb in a column is held one shortest belt clear of both.
 
 ### One clearance box, placed in one place
 

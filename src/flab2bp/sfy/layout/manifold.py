@@ -57,7 +57,7 @@ from flab2bp.sfy.layout.validate import (
     BELT_CLEARANCE_HALF_WIDTH_CM,
 )
 from flab2bp.sfy.registry import Buildable, ClearanceBox, Limits, Port, Registry
-from flab2bp.sfy.spec import FOUNDATION_CLASS, Designer, SfyMachineGroup
+from flab2bp.sfy.spec import FOUNDATION_CLASS, Designer, DirectPair, SfyMachineGroup
 from flab2bp.spec import BeltTier
 
 __all__ = [
@@ -66,6 +66,7 @@ __all__ = [
     "ChainEnd",
     "RowError",
     "RowGeometry",
+    "build_pair",
     "build_row",
     "crossing_gap_cm",
     "grid_ceil",
@@ -342,9 +343,7 @@ def build_row(
     ids = itertools.count(1) if next_id is None else next_id
     grid = _grid(limits)
 
-    machine = registry.buildables.get(group.machine_class)
-    if machine is None:
-        raise RowError(f"the registry has no buildable called {group.machine_class!r}")
+    machine = _buildable(registry, group.machine_class)
     tiers = tuple(sorted(belt_tiers, key=lambda tier: tier.items_per_second))
     if not tiers:
         raise RowError("this spec names no belt, so a row has nothing to carry items on")
@@ -425,13 +424,7 @@ def build_row(
 
     low, high = _extents(registry, machines, tuple(attachments), tuple(belts))
     _fits(low, high, designer)
-    x0, y0, x1, y1 = hard_footprint_cm(machine)
-    feet = (
-        min(m.pose.x for m in machines) + x0,
-        y0,
-        max(m.pose.x for m in machines) + x1,
-        y1,
-    )
+    feet = _footprint(registry, machines)
     return RowGeometry(
         machine_class=group.machine_class,
         pitch_cm=pitch,
@@ -448,6 +441,209 @@ def build_row(
         y_min_cm=low[1],
         x_max_cm=high[0],
         y_max_cm=high[1],
+    )
+
+
+def build_pair(
+    pair: DirectPair,
+    registry: Registry,
+    *,
+    designer: Designer,
+    belt_tiers: Sequence[BeltTier],
+    flip: bool = False,
+    next_id: Iterator[int] | None = None,
+    limits: Limits | None = None,
+    lab_map: LabMap | None = None,
+) -> RowGeometry:
+    """Two groups whose machines match one for one, laid as one row facing itself.
+
+    :func:`~flab2bp.sfy.spec.direct_pairs` has already found, from the rates
+    alone, that each producer machine makes exactly what one consumer machine
+    eats.  So the two lines stand facing each other and one straight belt joins
+    each pair of machines: no merger chain draining the producers, no splitter
+    chain feeding the consumers, and no trunk up a corridor between them.  That
+    is three attachments and three belts where a manifold wants twelve
+    attachments, eleven belts, two turns and a column -- and, because the ends of
+    a row are what a designer's depth is spent on, it is most of a Blueprint
+    Designer.
+
+    **Nothing is re-solved.**  The belts carry the rates the spec already states,
+    machine for machine, the odd last machine included.
+
+    The two lines share ONE pitch, the wider of the two machines', so that
+    machine *i* of each stands at the same ``X`` and the belt between them is
+    straight.  How far apart the lines stand is the smallest whole centimetre
+    that leaves the belt at least its shortest legal length AND keeps the two
+    hard clearance boxes off each other, and it is usually the boxes that decide.
+
+    What comes back is ONE :class:`RowGeometry`: the producers' own input chains
+    are its ``chain_in`` and the consumers' merger chain is its ``chain_out``, so
+    every stage above this one composes it exactly as it composes a single row.
+    """
+    limits = registry.limits if limits is None else limits
+    lab_map = load_lab_map() if lab_map is None else lab_map
+    ids = itertools.count(1) if next_id is None else next_id
+    grid = _grid(limits)
+    tiers = tuple(sorted(belt_tiers, key=lambda tier: tier.items_per_second))
+    if not tiers:
+        raise RowError("this spec names no belt, so a row has nothing to carry items on")
+
+    maker = _buildable(registry, pair.producer.machine_class)
+    eater = _buildable(registry, pair.consumer.machine_class)
+    maker_inputs, maker_out = _ports_for(pair.producer, maker)
+    eater_inputs, eater_out = _ports_for(pair.consumer, eater)
+    eater_in = dict(eater_inputs)[pair.item]
+
+    pitch = max(machine_pitch_cm(maker, limits), machine_pitch_cm(eater, limits))
+    stand = slab_top_cm(registry)
+    gap = crossing_gap_cm(registry)
+    sign = -1.0 if flip else 1.0
+    yaw = 180.0 if flip else 0.0
+    line = _pair_line_cm(maker, eater, maker_out, eater_in, limits)
+
+    machines = tuple(
+        MachineObj(
+            id=next(ids),
+            class_name=group.machine_class,
+            pose=Pose(sign * index * pitch, y, stand, 0.0),
+            recipe_class=group.recipe_class,
+            clock=group.clock if index < group.count - 1 else group.last_clock,
+            somersloops=group.somersloops,
+        )
+        for group, y in ((pair.producer, 0.0), (pair.consumer, line))
+        for index in range(group.count)
+    )
+    makers = machines[: pair.producer.count]
+    eaters = machines[pair.producer.count :]
+    belt_z = stand + maker_inputs[0][1].translation[2]
+
+    attachments: list[AttachmentObj] = []
+    belts: list[BeltRun] = []
+    links: list[Link] = []
+    chain_in: list[ChainEnd] = []
+    placed: list[tuple[float, float]] = []
+    for depth, (item_id, port) in enumerate(maker_inputs):
+        chain_in.append(
+            _lay_input_chain(
+                registry,
+                lab_map,
+                limits,
+                pair.producer,
+                item_id,
+                port,
+                depth=depth,
+                gap=gap,
+                grid=grid,
+                belt_z=belt_z,
+                bands=_hard_bands(maker, makers[0].pose),
+                placed=placed,
+                designer=designer,
+                machines=makers,
+                tiers=tiers,
+                yaw=yaw,
+                ids=ids,
+                attachments=attachments,
+                belts=belts,
+                links=links,
+            )
+        )
+    chain_out = _lay_output_chain(
+        registry,
+        lab_map,
+        limits,
+        pair.consumer,
+        eater_out,
+        grid=grid,
+        belt_z=belt_z,
+        bands=_hard_bands(eater, eaters[0].pose),
+        machines=eaters,
+        tiers=tiers,
+        yaw=yaw,
+        ids=ids,
+        attachments=attachments,
+        belts=belts,
+        links=links,
+        line_y=line,
+    )
+    per_machine = _per_machine(pair.producer.outputs_per_machine[pair.item], pair.producer)
+    for index, (from_machine, to_machine) in enumerate(zip(makers, eaters, strict=True)):
+        _run(
+            registry,
+            lab_map,
+            _port_at(from_machine, maker_out),
+            _port_at(to_machine, eater_in),
+            item_id=pair.item,
+            rate=per_machine[index],
+            tiers=tiers,
+            what=f"the pairing belt from machine {index} to machine {index}",
+            ids=ids,
+            belts=belts,
+            links=links,
+            upstream=(from_machine.id, maker_out.name),
+            downstream=(to_machine.id, eater_in.name),
+        )
+
+    low, high = _extents(registry, machines, tuple(attachments), tuple(belts))
+    _fits(low, high, designer)
+    feet = _footprint(registry, machines)
+    return RowGeometry(
+        machine_class=pair.producer.machine_class,
+        pitch_cm=pitch,
+        belt_z_cm=belt_z,
+        crossing_gap_cm=gap,
+        chain_in=tuple(chain_in),
+        chain_out=chain_out,
+        machines=machines,
+        attachments=tuple(attachments),
+        belts=tuple(belts),
+        links=tuple(links),
+        machine_footprint_cm=feet,
+        x_min_cm=low[0],
+        y_min_cm=low[1],
+        x_max_cm=high[0],
+        y_max_cm=high[1],
+    )
+
+
+def _pair_line_cm(
+    maker: Buildable, eater: Buildable, out_port: Port, in_port: Port, limits: Limits
+) -> float:
+    """How far the consumer line stands from the producer line, in whole centimetres.
+
+    Two bounds and the larger wins.  The belt between the two ports may not be
+    shorter than :func:`shortest_belt_cm`, and the two machines' HARD clearance
+    boxes may not reach each other -- ``geom.hard_clearance`` is what the build
+    gun refuses on, and two boxes that share a face share it by 0.0 cm, which
+    counts.  With the machines the game ships it is always the boxes: a Smelter's
+    box reaches 500 cm past its own centre and its output port only 200.
+    """
+    maker_y1 = hard_footprint_cm(maker)[3]
+    eater_y0 = hard_footprint_cm(eater)[1]
+    belt = out_port.translation[1] - in_port.translation[1] + shortest_belt_cm(limits)
+    boxes = maker_y1 - eater_y0 + 1.0
+    return float(math.ceil(max(belt, boxes)))
+
+
+def _buildable(registry: Registry, class_name: str) -> Buildable:
+    machine = registry.buildables.get(class_name)
+    if machine is None:
+        raise RowError(f"the registry has no buildable called {class_name!r}")
+    return machine
+
+
+def _footprint(
+    registry: Registry, machines: Sequence[MachineObj]
+) -> tuple[float, float, float, float]:
+    """What every machine in a row covers on the ground, together."""
+    spans = [
+        (machine.pose.x, machine.pose.y, hard_footprint_cm(registry.buildables[machine.class_name]))
+        for machine in machines
+    ]
+    return (
+        min(x + box[0] for x, _, box in spans),
+        min(y + box[1] for _, y, box in spans),
+        max(x + box[2] for x, _, box in spans),
+        max(y + box[3] for _, y, box in spans),
     )
 
 
@@ -510,11 +706,12 @@ def _lay_input_chain(
     attachments: list[AttachmentObj],
     belts: list[BeltRun],
     links: list[Link],
+    line_y: float = 0.0,
 ) -> ChainEnd:
     """One splitter chain and its feeders, at the shallowest depth that works."""
     splitter = registry.buildables[SPLITTER_CLASS]
     through_in, through_out, side = _attachment_ports(splitter, "output", flip=yaw != 0.0)
-    port_y = port.translation[1]
+    port_y = line_y + port.translation[1]
     chain_z = belt_z + depth * gap
 
     drop = _descent_run(depth * gap, limits, grid)
@@ -633,12 +830,13 @@ def _lay_output_chain(
     attachments: list[AttachmentObj],
     belts: list[BeltRun],
     links: list[Link],
+    line_y: float = 0.0,
 ) -> ChainEnd:
     """The merger chain every machine's output drains into."""
     merger = registry.buildables[MERGER_CLASS]
     through_in, through_out, side = _attachment_ports(merger, "input", flip=yaw != 0.0)
     item_id = sorted(group.outputs_per_machine)[0]
-    port_y = port.translation[1]
+    port_y = line_y + port.translation[1]
 
     # The mirror of the input chain's: the machine's output port drains into the
     # merger's side port, one ``side`` out of it towards the machines, over the

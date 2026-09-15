@@ -244,10 +244,14 @@ def test_iron_plate_60_in_an_mk3_validates_clean_with_power_wires_run() -> None:
 
 
 def test_the_strategy_says_where_it_stood_each_rows_pole_line() -> None:
+    """One line per ROW, and ``iron-plate*60`` is one row: its two groups are
+    paired, so smelters and constructors stand in the same row and share it."""
     placement = _laid_out()
     lines = [line for line in placement.description.splitlines() if line.startswith("power:")]
-    assert len(lines) == 2
+    assert len(lines) == 1
     assert all(power.POLE_CLASS in line and "merger chain" in line for line in lines)
+    wired = {end[0] for wire in placement.wires for end in (wire.link.a, wire.link.b)}
+    assert {machine.id for machine in placement.machines} <= wired
 
 
 @cache
@@ -334,7 +338,8 @@ def test_both_connection_components_list_the_wire_the_way_the_game_does() -> Non
 
 
 def test_a_two_row_build_refuses_rather_than_authoring_a_wire_it_cannot_reach() -> None:
-    spec = _spec("iron-plate-60")
+    """``iron-rod*60``, which the rates do not pair, so it really is two rows."""
+    spec = _spec("iron-rod-60")
     short = replace(
         _registry(),
         limits=replace(_registry().limits, wire_max_cm={power.WIRE_CLASS: 50.0}),

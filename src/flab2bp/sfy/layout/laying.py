@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from fractions import Fraction
 
 from flab2bp.layout.budget import WorkBudget
@@ -37,7 +37,9 @@ from flab2bp.sfy.layout.corridors import (
     CorridorError,
     Measures,
     Route,
+    Turn,
     bridge_z_cm,
+    choose_turn,
     descent_run_cm,
     lay_path,
 )
@@ -79,6 +81,9 @@ class CorridorLayer:
     ids: Iterator[int]
     row_plan: RowPlan
     corridor_plan: CorridorPlan
+    #: One entry per turn drawn, naming how it was made.  The placement's
+    #: description carries the tally.
+    turns: list[str] = field(default_factory=list)
 
     def _lay_corridors(self) -> tuple[list[AttachmentObj], list[BeltRun], list[Link]]:
         attachments: list[AttachmentObj] = []
@@ -89,10 +94,23 @@ class CorridorLayer:
             x = self._column_x(net.side, self.corridor_plan.spine[net.label].column)
             stood = [self._stand(node, x) for node in net.nodes]
             attachments.extend(obj for obj, _ in stood)
-            self._lay_spine(net, x, stood, belts, links)
+            self._lay_spine(net, x, stood, belts, links, attachments)
             for index, (obj, ports) in enumerate(stood):
-                self._lay_tap(net, index, obj, ports, belts, links)
+                self._lay_tap(net, index, obj, ports, belts, links, attachments)
         return attachments, belts, links
+
+    def _turn(self, along: float, across: float) -> Turn:
+        """Which way to turn here, and a note of what was chosen.
+
+        The choice itself is :func:`~flab2bp.sfy.layout.corridors.choose_turn`,
+        which is arithmetic on two distances and knows nothing about this build.
+        All this adds is the tally the placement's description carries, so that a
+        reader of a blueprint can see how its corners were made without measuring
+        them.
+        """
+        turn = choose_turn(self.measures, along, across)
+        self.turns.append(turn.kind)
+        return turn
 
     def _column_x(self, side: int, column: int) -> float:
         return side * (
@@ -121,6 +139,7 @@ class CorridorLayer:
         stood: Sequence[tuple[AttachmentObj, tuple[Port, Port, Port]]],
         belts: list[BeltRun],
         links: list[Link],
+        attachments: list[AttachmentObj],
     ) -> None:
         """The column itself: the first source up to the last sink, node by node."""
         assignment = self.corridor_plan.spine[net.label]
@@ -136,12 +155,20 @@ class CorridorLayer:
                 carried,
                 belts,
                 links,
+                attachments,
                 assignment,
             )
             carried = _carried(net, index + 1)
             start = (world_port(transform, through_out), _UP, (obj.id, through_out.name))
         self._lay(
-            net, start, self._arrive(net.sinks[-1], x, net.side), carried, belts, links, assignment
+            net,
+            start,
+            self._arrive(net.sinks[-1], x, net.side),
+            carried,
+            belts,
+            links,
+            attachments,
+            assignment,
         )
 
     def _lay_tap(
@@ -152,6 +179,7 @@ class CorridorLayer:
         ports: tuple[Port, Port, Port],
         belts: list[BeltRun],
         links: list[Link],
+        attachments: list[AttachmentObj],
     ) -> None:
         """The straight belt between a node and the row it joins the spine for.
 
@@ -184,6 +212,7 @@ class CorridorLayer:
         )
         belts.extend(path.belts)
         links.extend(path.links)
+        attachments.extend(path.attachments)
 
     def _tap_route(self, net: _Net, start: Vector, end: Vector, crossed: tuple[int, ...]) -> Route:
         """One transverse, over what it crosses and down to where it ends."""
@@ -228,6 +257,7 @@ class CorridorLayer:
         rate: Fraction,
         belts: list[BeltRun],
         links: list[Link],
+        attachments: list[AttachmentObj],
         assignment: Assignment,
         x: float | None = None,
     ) -> None:
@@ -247,6 +277,7 @@ class CorridorLayer:
         )
         belts.extend(path.belts)
         links.extend(path.links)
+        attachments.extend(path.attachments)
 
     def _route(
         self, net: _Net, start: _Anchor, finish: _Anchor, x: float, assignment: Assignment
@@ -257,9 +288,11 @@ class CorridorLayer:
         corridor at the ``Y`` the path leaves a row by, a run up the column, and a
         transverse at the ``Y`` it enters one by.  A path that starts or ends on
         the wall, or at a node standing in the column, simply has no transverse at
-        that end.  Every turn is a quarter circle of the corridor's own radius,
-        and every turn in the build goes the same way round, because a corridor is
-        only ever entered from the rows and left towards them.
+        that end.  Every turn in the build goes the same way round, because a
+        corridor is only ever entered from the rows and left towards them; HOW
+        each one is made -- an arc, or an attachment standing on the corner -- is
+        :meth:`_turn`'s answer, and it is asked once per turn with the room that
+        turn actually has.
         """
         point, heading, _ = start
         end, arriving, _ = finish
@@ -267,27 +300,52 @@ class CorridorLayer:
         left = net.side > 0
         bridge = bridge_z_cm(self.row_plan.belt_z, self.registry)
         transverse_b = abs(arriving[0]) > 0.5
-        stop = end[1] - (self.measures.radius if transverse_b else 0.0)
+        turn_b = (
+            self._turn(along=abs(end[1] - point[1]), across=abs(end[0] - x))
+            if transverse_b
+            else None
+        )
+        stop = end[1] - (turn_b.reach if turn_b is not None else 0.0)
         if abs(heading[0]) > 0.5:
             crossed = assignment.bridged_a
-            self._run_out(route, net, x, bridge if crossed else point[2], crossed)
-            route.turn(left, self.measures.radius)
+            turn_a = self._turn(along=abs(x - point[0]), across=abs(stop - point[1]))
+            self._run_out(route, net, x, bridge if crossed else point[2], crossed, turn_a)
+            route.turn(left, turn_a)
             if crossed:
                 # A bridge comes down inside its own column, right after the turn.
-                self._climb(route, net, self.row_plan.belt_z, stop, first=True)
+                self._climb(
+                    route,
+                    net,
+                    self.row_plan.belt_z,
+                    stop,
+                    first=True,
+                    head=self._flat_at(None, turn_a),
+                )
         self._climb(
             route,
             net,
             max(end[2], bridge) if transverse_b and assignment.bridged_b else end[2],
             stop,
             first=False,
+            head=self._flat_at(start, None),
+            tail=self._flat_at(None if transverse_b else finish, turn_b),
         )
-        if transverse_b:
-            route.turn(left, self.measures.radius)
-            self._run_in(route, net, end, assignment.bridged_b)
+        if turn_b is not None:
+            route.turn(left, turn_b)
+            self._run_in(route, net, end, assignment.bridged_b, turn_b)
         return route
 
-    def _climb(self, route: Route, net: _Net, height: float, stop: float, *, first: bool) -> None:
+    def _climb(
+        self,
+        route: Route,
+        net: _Net,
+        height: float,
+        stop: float,
+        *,
+        first: bool,
+        head: float = 0.0,
+        tail: float = 0.0,
+    ) -> None:
         """Change height inside the column, on the way to ``stop``.
 
         ``first`` puts the slope at the near end of the run and leaves the rest of
@@ -295,24 +353,54 @@ class CorridorLayer:
         and otherwise it goes at the far end, against the turn, which is what a
         bridge going up wants: the belt is at its height before it turns onto the
         transverse that crosses.
+
+        ``head`` and ``tail`` are how much flat run each end of this piece must
+        keep, and both are :meth:`_flat_at`'s answer for what stands at that end.
+        Nothing at a corridor's ends is allowed to be met on a slope: a PORT
+        because ``ports.position`` refuses a belt more than a hundredth of a
+        radian off the port's own horizontal facing, and the designer WALL
+        because a belt's clearance box turns with the belt, so a sloped box at
+        the wall has a corner outside the designer and ``geom.bounds`` refuses
+        the build.
         """
         run = stop - route.point[1]
         rise = height - route.point[2]
         lift = descent_run_cm(rise, self.registry)
-        if run < -_EPS or run + _EPS < lift:
+        head, tail = (head, tail) if lift else (0.0, 0.0)
+        if run < -_EPS or run + _EPS < lift + head + tail:
             raise CorridorError(
                 "bridge" if abs(rise) > _EPS else "depth",
                 f"the {net.item!r} trunk has {run:.0f} cm of column to change {rise:.0f} cm of "
-                f"height in and needs {lift:.0f}",
+                f"height in and needs {lift + head + tail:.0f}",
             )
         if first:
+            route.go(head)
             route.go(lift, rise)
             return
-        route.go(run - lift)
+        route.go(run - lift - tail)
         route.go(lift, rise)
+        route.go(tail)
+
+    def _flat_at(self, anchor: _Anchor | None, turn: Turn | None) -> float:
+        """How much flat belt whatever stands at this end of a run asks for.
+
+        A wall and an attachment's port both ask for the shortest belt the game
+        allows; an arc asks for nothing, because there is no port at one and no
+        box corner to push outside the designer.
+        """
+        at_wall = anchor is not None and anchor[2] is None
+        if at_wall or _is_attachment(turn):
+            return self.measures.lead_in
+        return 0.0
 
     def _run_out(
-        self, route: Route, net: _Net, x: float, climb: float, crossed: tuple[int, ...]
+        self,
+        route: Route,
+        net: _Net,
+        x: float,
+        climb: float,
+        crossed: tuple[int, ...],
+        turn: Turn,
     ) -> None:
         """The transverse a path leaves a row by, rising before what it crosses.
 
@@ -322,32 +410,43 @@ class CorridorLayer:
         the port's own facing, which is the same rule the row builder's feeders
         keep.
         """
-        span = abs(x - route.point[0]) - self.measures.radius
+        span = abs(x - route.point[0]) - turn.reach
         rise = climb - route.point[2]
         lift = descent_run_cm(rise, self.registry)
         flat = self.measures.lead_in if lift else 0.0
+        # A turn made by an attachment ends this run on a port, and a belt may
+        # not meet a port on a slope any more than it may leave one on a slope.
+        tail = self.measures.lead_in if lift and turn.is_attachment else 0.0
         room = self._room(route.point[0], crossed, net.side)
-        if span + _EPS < flat + lift or room + _EPS < flat + lift:
+        if span + _EPS < flat + lift + tail or room + _EPS < flat + lift:
             raise CorridorError(
                 "bridge",
-                f"the {net.item!r} trunk needs {flat + lift:.0f} cm to climb {rise:.0f} cm out "
-                f"of a row and has {min(span, room):.0f}",
+                f"the {net.item!r} trunk needs {flat + lift + tail:.0f} cm to climb "
+                f"{rise:.0f} cm out of a row and has {min(span, room):.0f}",
             )
         route.go(flat)
         route.go(lift, rise)
         route.go(span - flat - lift)
 
-    def _run_in(self, route: Route, net: _Net, end: Vector, crossed: tuple[int, ...]) -> None:
-        """The transverse a path enters a row by, coming down after the last crossing."""
+    def _run_in(
+        self, route: Route, net: _Net, end: Vector, crossed: tuple[int, ...], turn: Turn
+    ) -> None:
+        """The transverse a path enters a row by, coming down after the last crossing.
+
+        It runs flat first and falls at the end, which is what puts the slope
+        clear of the port it started from when that port is an attachment's: a
+        belt may not leave a port on a slope.
+        """
         drop = end[2] - route.point[2]
         fall = descent_run_cm(drop, self.registry)
+        head = self.measures.lead_in if fall and turn.is_attachment else 0.0
         span = abs(end[0] - route.point[0])
         room = self._room(end[0], crossed, net.side)
-        if span + _EPS < fall or room + _EPS < fall:
+        if span + _EPS < fall + head or room + _EPS < fall:
             raise CorridorError(
                 "bridge",
-                f"the {net.item!r} trunk needs {fall:.0f} cm to come down {-drop:.0f} cm into "
-                f"a row and has {min(span, room):.0f}",
+                f"the {net.item!r} trunk needs {fall + head:.0f} cm to come down {-drop:.0f} cm "
+                f"into a row and has {min(span, room):.0f}",
             )
         route.go(span - fall)
         route.go(fall, drop)
@@ -371,6 +470,10 @@ class CorridorLayer:
 
 
 # --- helpers ---------------------------------------------------------------
+
+
+def _is_attachment(turn: Turn | None) -> bool:
+    return turn is not None and turn.is_attachment
 
 
 def _flat(vector: Vector) -> Vector:

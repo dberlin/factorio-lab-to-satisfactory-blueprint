@@ -111,12 +111,17 @@ def test_a_given_name_is_the_file_name_and_the_blueprint_short_description(
 
 
 def test_a_build_that_does_not_fit_the_requested_designer_refuses_with_its_cause() -> None:
-    """Two rows want 42 m of band; a Mk.1 has 32.  The refusal says so."""
+    """``iron-rod*60``'s two rows want more band than a Mk.1 has.  It says so.
+
+    Not ``iron-plate*60``, which fits a Mk.1 since Task 8d paired its two groups
+    machine to machine; ``iron-rod*60``'s rates do not pair, so it is still a
+    manifold and still too deep for the two smaller designers.
+    """
     with pytest.raises(NoValidLayout) as caught:
         pipeline.build(
-            flow_url("iron-plate-60"),
+            flow_url("iron-rod-60"),
             designer="mk1",
-            flow=FLOWS / "iron-plate-60.csv",
+            flow=FLOWS / "iron-rod-60.csv",
         )
     assert caught.value.reason == "rows exceed the designer depth"
 

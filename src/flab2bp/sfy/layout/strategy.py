@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import itertools
 import time
+from collections import Counter
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from functools import cache, partial
@@ -50,7 +51,9 @@ from flab2bp.sfy.labmap import LabMap, load_lab_map
 from flab2bp.sfy.layout.corridors import (
     CorridorError,
     Measures,
+    attachment_box_cm,
     attachment_pitch_cm,
+    attachment_reach_cm,
     belt_pitch_cm,
     turn_radius_cm,
 )
@@ -323,7 +326,8 @@ class _Layout:
             row_plan=row_plan,
             corridor_plan=corridor_plan,
         )
-        return self._placement(measures, row_plan, layer._lay_corridors())
+        corridors = layer._lay_corridors()
+        return self._placement(measures, row_plan, corridors, tuple(layer.turns))
 
     # --- the floor and the placement ----------------------------------------
 
@@ -357,6 +361,7 @@ class _Layout:
         measures: Measures,
         row_plan: RowPlan,
         corridors: tuple[list[AttachmentObj], list[BeltRun], list[Link]],
+        turns: tuple[str, ...],
     ) -> SfyPlacement:
         attachments, belts, links = corridors
         machines: list[MachineObj] = []
@@ -375,7 +380,7 @@ class _Layout:
             wires=power.wires,
             foundations=self._floor(measures),
             links=tuple(links),
-            description=self._description(row_plan, belts, power),
+            description=self._description(row_plan, belts, power, turns),
             short_desc=f"{self.spec.label or 'manifold rows'}: {len(machines)} machines",
         )
 
@@ -394,9 +399,24 @@ class _Layout:
             designer=self.designer,
         )
 
-    def _description(self, row_plan: RowPlan, belts: Sequence[BeltRun], power: PowerPlan) -> str:
-        """The manifest's precursor: what arrives where, what leaves where, what runs."""
-        lines = [f"{self.spec.label or 'manifold rows'} in a {self.designer.mark} designer"]
+    def _description(
+        self,
+        row_plan: RowPlan,
+        belts: Sequence[BeltRun],
+        power: PowerPlan,
+        turns: Sequence[str],
+    ) -> str:
+        """The manifest's precursor: what arrives where, what leaves where, what runs.
+
+        It carries the two things about this build a reader cannot measure off
+        the blueprint without laying it out again: which rows were laid facing
+        each other because the spec's own rates paired them machine for machine,
+        and how the corners were made.
+        """
+        lines = [
+            f"{self.spec.label or 'manifold rows'} in a {self.designer.mark} designer, "
+            f"{row_plan.band_cm:.0f} cm of band"
+        ]
         for run in sorted(belts, key=lambda belt: (belt.item_id, belt.start[0])):
             if run.boundary_start:
                 lines.append(f"entry: {run.item_id} at x={run.start[0]:.0f}")
@@ -404,10 +424,26 @@ class _Layout:
             if run.boundary_end:
                 lines.append(f"exit: {run.item_id} at x={run.end[0]:.0f}")
         for row in row_plan.rows:
-            lines.append(
-                f"row {row.index}: {row.group.count} x {row.group.machine_class} running "
-                f"{row.group.recipe_id} at {float(row.group.clock) * 100:g}%"
+            for group in row.groups:
+                lines.append(
+                    f"row {row.index}: {group.count} x {group.machine_class} running "
+                    f"{group.recipe_id} at {float(group.clock) * 100:g}%"
+                )
+            if row.paired_item:
+                lines.append(
+                    f"row {row.index}: paired on {row.paired_item} -- "
+                    f"{row.groups[0].count} straight belts, machine to machine, "
+                    "no chain pair and no trunk between them"
+                )
+        tally = Counter(turns)
+        lines.append(
+            "turns: "
+            + (
+                ", ".join(f"{count} {kind}" for kind, count in sorted(tally.items()))
+                if tally
+                else "none"
             )
+        )
         lines += [f"power: {line}" for line in power.lines]
         return "\n".join(lines)
 
@@ -455,6 +491,8 @@ def _measure(registry: Registry, designer: Designer) -> Measures:
         lead=_lead_cm(registry),
         lead_in=_lead_in_cm(registry),
         half=designer.half_cm,
+        reach=attachment_reach_cm(registry),
+        box=attachment_box_cm(registry),
     )
 
 

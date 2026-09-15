@@ -41,7 +41,7 @@ def _layer(x_edge: float, offset: float) -> CorridorLayer:
         budget=WorkBudget(),
         measures=strategy._measure(sfy_registry(), designer(MARK, sfy_registry())),
         ids=itertools.count(1),
-        row_plan=RowPlan(rows=(), belt_z=0.0, x_edge=x_edge),
+        row_plan=RowPlan(rows=(), belt_z=0.0, x_edge=x_edge, band_cm=0.0),
         corridor_plan=CorridorPlan(nets=(), spine={}, offset=offset, reach_cm=0.0),
     )
 

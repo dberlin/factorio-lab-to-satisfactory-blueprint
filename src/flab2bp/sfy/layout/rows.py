@@ -38,19 +38,20 @@ from typing import TYPE_CHECKING
 from flab2bp.layout.base import NoValidLayout
 from flab2bp.layout.budget import WorkBudget
 from flab2bp.sfy.labmap import LabMap
-from flab2bp.sfy.layout.corridors import Measures
+from flab2bp.sfy.layout.corridors import COLUMN_LANE_CM, Measures, Turn, choose_turn
 from flab2bp.sfy.layout.manifold import (
     ChainEnd,
     RowError,
     RowGeometry,
+    build_pair,
     build_row,
     hard_footprint_cm,
     machine_pitch_cm,
 )
 from flab2bp.sfy.layout.model import Pose
 from flab2bp.sfy.layout.validate import BELT_CLEARANCE_HALF_WIDTH_CM
-from flab2bp.sfy.registry import Registry
-from flab2bp.sfy.spec import Designer, SfyBuildSpec, SfyMachineGroup
+from flab2bp.sfy.registry import Buildable, Registry
+from flab2bp.sfy.spec import Designer, DirectPair, SfyBuildSpec, SfyMachineGroup, direct_pairs
 
 if TYPE_CHECKING:  # the corridor planner is handed to the walk, never imported by it
     from flab2bp.sfy.layout.nets import CorridorPlan
@@ -79,29 +80,52 @@ The same tolerance :mod:`~flab2bp.sfy.layout.nets` and
 
 
 @dataclass(frozen=True, slots=True)
+class _Unit:
+    """One thing to lay as a row: a group, or a pair laid facing itself.
+
+    A pair is :class:`~flab2bp.sfy.spec.DirectPair`'s two groups, and it is one
+    unit because they stand as one row: producers along one line, consumers along
+    another, one straight belt from each to its partner and nothing between them.
+    """
+
+    groups: tuple[SfyMachineGroup, ...]
+    pair: DirectPair | None = None
+
+    @property
+    def count(self) -> int:
+        """How many machines stand along the widest line of this unit."""
+        return max(group.count for group in self.groups)
+
+
+@dataclass(frozen=True, slots=True)
 class _Row:
-    """One group's row, where it finally stands."""
+    """One unit's row, where it finally stands."""
 
     index: int
-    group: SfyMachineGroup
+    groups: tuple[SfyMachineGroup, ...]
     geometry: RowGeometry
     flip: bool
+    #: The item a paired row hands machine to machine, if it is one.
+    paired_item: str = ""
 
 
 @dataclass(frozen=True, slots=True)
 class RowPlan:
     """The rows as they finally stand, and what the corridors are laid against.
 
-    The two numbers beside the rows are the ones every later stage asks for and
-    neither is a property of a single row: :attr:`belt_z` is how high the
-    corridors run, which is the highest any row's chain ends stand, and
-    :attr:`x_edge` is how far out of the middle of the floor the rows reach,
-    which is where the innermost column is measured from.
+    The three numbers beside the rows are the ones every later stage asks for and
+    none is a property of a single row: :attr:`belt_z` is how high the corridors
+    run, which is the highest any row's chain ends stand, :attr:`x_edge` is how
+    far out of the middle of the floor the rows reach, which is where the
+    innermost column is measured from, and :attr:`band_cm` is the depth the whole
+    build takes -- the rows, the gaps their trunks turn in, and the margin at
+    each wall -- which is the number the designer's own depth is held against.
     """
 
     rows: tuple[_Row, ...]
     belt_z: float
     x_edge: float
+    band_cm: float
 
 
 @dataclass
@@ -148,22 +172,39 @@ class RowPlanner:
         reached for, because the corridor is laid out against the rows and this
         module knows nothing about trunks.  The plan it returns for the pass that
         settles is the one the build goes on to draw, which is why both come back.
+
+        A PAIR is one unit and is never split: the whole point of it is that
+        machine *i* faces machine *i*, and splitting the two halves into
+        different numbers of rows takes that away.  Where a pair does not fit the
+        floor, the pairing is given up and its two groups go back to being two
+        rows the manifold feeds, which always fits if anything does.
         """
-        order = _production_order(self.spec.groups)
-        allowance = self.measures.pitch + BELT_CLEARANCE_HALF_WIDTH_CM
-        splits = [1] * len(order)
+        units = _units(_production_order(self.spec.groups), direct_pairs(self.spec))
+        allowance = COLUMN_LANE_CM + max(BELT_CLEARANCE_HALF_WIDTH_CM, self.measures.box)
+        splits = [1] * len(units)
         for _ in range(SPLIT_ROUNDS):
             self.budget.check()
-            splits = self._splits(order, splits, allowance)
+            splits = self._splits(units, splits, allowance)
+            if any(
+                unit.pair is not None and rows > 1 for unit, rows in zip(units, splits, strict=True)
+            ):
+                units = _unpaired(units)
+                splits = [1] * len(units)
+                continue
             self.ids = itertools.count(1)
-            rows, x_edge = self._lay_rows(order, splits)
+            rows, x_edge, band = self._lay_rows(units, splits)
             plan = RowPlan(
                 rows=tuple(rows),
                 belt_z=max(row.geometry.belt_z_cm for row in rows),
                 x_edge=x_edge,
+                band_cm=band,
             )
             corridors = plan_columns(plan)
-            wanted = corridors.reach_cm + BELT_CLEARANCE_HALF_WIDTH_CM
+            # A column is not just a belt lane: mergers, splitters and the
+            # attachments that turn a belt all stand IN one, and their box is
+            # wider than a belt's.  ``geom.bounds`` measures every box, soft ones
+            # included, so what the designer has to hold is the widest of them.
+            wanted = corridors.reach_cm + max(BELT_CLEARANCE_HALF_WIDTH_CM, self.measures.box)
             if plan.x_edge + wanted <= self.measures.half + _EPS:
                 return plan, corridors
             allowance = _grid_ceil(wanted, self.measures.grid)
@@ -173,58 +214,59 @@ class RowPlanner:
             f"{self.designer.mark} designer in {SPLIT_ROUNDS} passes",
         )
 
-    def _splits(
-        self, order: Sequence[SfyMachineGroup], splits: Sequence[int], allowance: float
-    ) -> list[int]:
-        """How many rows each group is laid as, given what the corridors take.
+    def _splits(self, units: Sequence[_Unit], splits: Sequence[int], allowance: float) -> list[int]:
+        """How many rows each unit is laid as, given what the corridors take.
 
         ``per_row`` is what the floor between the corridors holds: a row of ``n``
         machines is ``(n - 1)`` pitches plus one machine's own hard footprint, and
         both numbers are the registry's through the row builder.  A count never
         falls -- a later pass has less floor to play with, not more -- so the walk
         in :meth:`_plan_rows` cannot oscillate.
+
+        A PAIR is measured at the wider of its two machines, on both counts: its
+        two lines share one pitch so that machine *i* faces machine *i*, and that
+        pitch is the wider machine's.
         """
         usable = 2.0 * (self.measures.half - allowance)
         out: list[int] = []
-        for group, before in zip(order, splits, strict=True):
-            machine = self.registry.buildables.get(group.machine_class)
-            if machine is None:
-                raise RowError(f"the registry has no buildable called {group.machine_class!r}")
-            pitch = machine_pitch_cm(machine, self.registry.limits)
-            x0, _, x1, _ = hard_footprint_cm(machine)
-            per_row = int(math.floor((usable - (x1 - x0)) / pitch + _EPS)) + 1
+        for unit, before in zip(units, splits, strict=True):
+            machines = [_machine(self.registry, group.machine_class) for group in unit.groups]
+            pitch = max(machine_pitch_cm(machine, self.registry.limits) for machine in machines)
+            wide = max(box[2] - box[0] for box in map(hard_footprint_cm, machines))
+            per_row = int(math.floor((usable - wide) / pitch + _EPS)) + 1
             if per_row < 1:
                 raise self.refuse(
                     "rows exceed the designer width",
-                    f"one {group.machine_class} is {x1 - x0:.0f} cm wide and the "
+                    f"one {unit.groups[0].machine_class} is {wide:.0f} cm wide and the "
                     f"{self.designer.mark} designer leaves {usable:.0f} cm of floor between "
                     "its two corridors, so not even one of them fits in a row",
                 )
-            out.append(max(before, -(-group.count // per_row)))
+            out.append(max(before, -(-unit.count // per_row)))
         return out
 
     def _lay_rows(
-        self, order: Sequence[SfyMachineGroup], splits: Sequence[int]
-    ) -> tuple[list[_Row], float]:
+        self, units: Sequence[_Unit], splits: Sequence[int]
+    ) -> tuple[list[_Row], float, float]:
         """Build every row and stand it where it belongs on the floor.
 
-        ``splits[i]`` is how many rows group ``i`` is laid as.  Every row of one
+        ``splits[i]`` is how many rows unit ``i`` is laid as.  Every row of one
         group stands next to its siblings and shares their ``flip``, which is what
         puts all their chain inputs in one corridor and all their merger outputs
         in the other: one splitter chain can then feed the lot and one merger
-        chain can drain it.  **The flip alternates per GROUP, not per row** --
+        chain can drain it.  **The flip alternates per UNIT, not per row** --
         which for a build that splits nothing is the same thing, and for one that
         splits is the only assignment that works, because two rows facing opposite
         corridors cannot be fed from one trunk.
 
-        Returns the rows and how far out of the middle the widest of them reaches,
-        which is what the corridor columns are measured from.
+        Returns the rows, how far out of the middle the widest of them reaches --
+        which is what the corridor columns are measured from -- and the whole
+        band the build takes along ``Y``.
         """
         measuring = _measuring_designer(self.designer)
         shares = [
             (index, share)
-            for index, (group, rows) in enumerate(zip(order, splits, strict=True))
-            for share in _split_group(group, rows)
+            for index, (unit, rows) in enumerate(zip(units, splits, strict=True))
+            for share in _split_unit(unit, rows)
         ]
         built: list[RowGeometry] = []
         for parent, share in shares:
@@ -232,8 +274,18 @@ class RowPlanner:
             # a row is the largest piece of work this module does in one step.
             self.budget.check()
             built.append(
-                build_row(
-                    share,
+                build_pair(
+                    share.pair,
+                    self.registry,
+                    designer=measuring,
+                    belt_tiers=self.spec.belt_tiers,
+                    flip=bool(parent % 2),
+                    next_id=self.ids,
+                    lab_map=self.lab_map,
+                )
+                if share.pair is not None
+                else build_row(
+                    share.groups[0],
                     self.registry,
                     designer=measuring,
                     belt_tiers=self.spec.belt_tiers,
@@ -243,18 +295,24 @@ class RowPlanner:
                 )
             )
         width = max(row.width_cm for row in built)
+        # Which turn a trunk will be made of is the drawing's choice, and it is
+        # made with the room that turn really has.  What a row plan can say is
+        # which turn the drawing would take if nothing were in its way, which is
+        # the cheapest one; reserving for that is what lets a build fit at all,
+        # and a turn that then cannot be drawn refuses with its centimetres.
+        turn = choose_turn(self.measures, math.inf, math.inf)
         gaps = [
             _row_gap(
                 before,
                 after,
-                self.measures.radius,
+                turn,
                 self.measures.grid,
                 siblings=shares[index][0] == shares[index + 1][0],
             )
             for index, (before, after) in enumerate(itertools.pairwise(built))
         ]
-        low = _wall_margin(built[0], self.measures.radius, self.measures.grid, entry=True)
-        high = _wall_margin(built[-1], self.measures.radius, self.measures.grid, entry=False)
+        low = _wall_margin(built[0], turn, self.measures.grid, entry=True)
+        high = _wall_margin(built[-1], turn, self.measures.grid, entry=False)
         deep = low + sum(row.depth_cm for row in built) + sum(gaps) + high
         if deep > 2.0 * self.measures.half + _EPS:
             raise self.refuse(
@@ -277,16 +335,69 @@ class RowPlanner:
             rows.append(
                 _Row(
                     index=index,
-                    group=share,
+                    groups=share.groups,
                     geometry=_translate(geometry, -centre, y - geometry.y_min_cm),
                     flip=bool(parent % 2),
+                    paired_item=share.pair.item if share.pair is not None else "",
                 )
             )
             y += geometry.depth_cm
-        return rows, x_edge
+        return rows, x_edge, deep
 
 
 # --- helpers ---------------------------------------------------------------
+
+
+def _units(order: Sequence[SfyMachineGroup], pairs: Sequence[DirectPair]) -> list[_Unit]:
+    """The production order with every matched pair collapsed into one unit.
+
+    A pair takes the PRODUCER's place in the order and its consumer drops out of
+    it, which keeps the order topological: everything the producer eats still
+    comes before it, and everything that eats what the consumer makes still comes
+    after, because the consumer sat there already.
+    """
+    consumers = {id(pair.consumer) for pair in pairs}
+    by_producer = {id(pair.producer): pair for pair in pairs}
+    units: list[_Unit] = []
+    for group in order:
+        if id(group) in consumers:
+            continue
+        pair = by_producer.get(id(group))
+        if pair is None:
+            units.append(_Unit(groups=(group,)))
+        else:
+            units.append(_Unit(groups=(pair.producer, pair.consumer), pair=pair))
+    return units
+
+
+def _unpaired(units: Sequence[_Unit]) -> list[_Unit]:
+    """The same units with every pairing given up, producer first.
+
+    Which is always a build if anything is: two rows and a trunk up a corridor is
+    what the manifold does, and it wants no machine to face any other.
+    """
+    return [_Unit(groups=(group,)) for unit in units for group in unit.groups]
+
+
+def _split_unit(unit: _Unit, rows: int) -> list[_Unit]:
+    """One unit as ``rows`` rows' worth of it.
+
+    A pair is never split -- :meth:`RowPlanner._plan_rows` gives the pairing up
+    rather than ask for that -- so only a single group ever divides here, and it
+    divides by :func:`_split_group`.
+    """
+    if unit.pair is not None:
+        if rows != 1:
+            raise ValueError("a paired unit is one row or it is not a pair")
+        return [unit]
+    return [_Unit(groups=(share,)) for share in _split_group(unit.groups[0], rows)]
+
+
+def _machine(registry: Registry, class_name: str) -> Buildable:
+    machine = registry.buildables.get(class_name)
+    if machine is None:
+        raise RowError(f"the registry has no buildable called {class_name!r}")
+    return machine
 
 
 def _measuring_designer(designer: Designer) -> Designer:
@@ -386,7 +497,7 @@ def _production_order(groups: Sequence[SfyMachineGroup]) -> list[SfyMachineGroup
 def _row_gap(
     before: RowGeometry,
     after: RowGeometry,
-    radius: float,
+    turn: Turn,
     grid: float,
     *,
     siblings: bool = False,
@@ -395,10 +506,11 @@ def _row_gap(
 
     One grid step is the brief's gap and the least the build gun would leave.
     Where a trunk turns out of one row and into the next it wants more: each turn
-    eats its own radius of ``Y``, and what the two bands already hold beyond
-    their chain ends counts towards it.  So the gap is whatever the two turns
-    still want, and never less than a grid step.  Ours, and derived: the radius
-    is the corridor's and the overhangs are the rows' own.
+    spends its own :attr:`~flab2bp.sfy.layout.corridors.Turn.cost` of ``Y``, and
+    what the two bands already hold beyond their chain ends counts towards it.
+    So the gap is whatever the two turns still want, and never less than a grid
+    step.  Ours, and derived: what a turn costs is the corridor's and the
+    overhangs are the rows' own.
 
     ``siblings`` -- two rows of ONE group, which :func:`_split_group` made -- get
     the grid step and nothing more, because no trunk turns between them: they are
@@ -412,30 +524,37 @@ def _row_gap(
     over = (before.y_max_cm - before.chain_out.pose.y) + (
         min(end.pose.y for end in after.chain_in) - after.y_min_cm
     )
-    return max(grid, _grid_ceil(2.0 * radius - over, grid))
+    return max(grid, float(math.ceil(2.0 * turn.cost - over)))
 
 
-def _wall_margin(row: RowGeometry, radius: float, grid: float, *, entry: bool) -> float:
-    """How much floor is left between the designer wall and the first (or last) row.
+def _wall_margin(row: RowGeometry, turn: Turn, grid: float, *, entry: bool) -> float:
+    """How much floor the wall needs for the belt that crosses it to reach the row.
 
     Ours, and the same arithmetic as :func:`_row_gap` with the wall standing in
     for the other row: a belt arriving at the wall has to turn into the row's
-    chain end, and that turn eats a radius of ``Y`` which the row's own band may
+    chain end, and that turn costs a piece of ``Y`` which the row's own band may
     already cover.
 
-    One grid step more, for the belt to run straight out of the wall before it
-    turns.  That is ours too, and it is geometry rather than taste: a belt's
-    clearance box is 79 cm to each side of its centreline and square to it, so a
-    box on a turning piece that began ON the wall would have a corner outside the
-    designer -- 4.8 cm outside, measured -- and ``geom.bounds`` would refuse the
-    build.  A straight step at the wall puts the first box square to it.
+    **Only where a turn actually happens.**  A chain end that already faces the
+    wall the belt comes in at is met by a straight belt, and a straight belt
+    wants nothing but its own shortest length; charging it for a turn was a
+    metre of designer floor at each wall that nothing used.  What a turn costs
+    when there IS one is the turn's own, not a constant here.
+
+    An ARC asks one grid step more, and it is geometry rather than taste: a
+    belt's clearance box is 79 cm to each side of its centreline and square to
+    it, so a box on a turning piece that began ON the wall would have a corner
+    outside the designer -- 4.8 cm outside, measured -- and ``geom.bounds`` would
+    refuse the build.  A straight step at the wall puts the first box square to
+    it.  An attachment turn has no such piece: every belt at it is straight.
     """
     inside = (
         min(end.pose.y for end in row.chain_in) - row.y_min_cm
         if entry
         else row.y_max_cm - row.chain_out.pose.y
     )
-    return max(0.0, _grid_ceil(radius + grid - inside, grid))
+    wanted = turn.cost + (0.0 if turn.is_attachment else grid)
+    return max(0.0, float(math.ceil(wanted - inside)))
 
 
 def _translate(row: RowGeometry, dx: float, dy: float) -> RowGeometry:

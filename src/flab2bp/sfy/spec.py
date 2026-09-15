@@ -24,6 +24,7 @@ geometry reads them.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from fractions import Fraction
 from typing import Literal, cast
 
@@ -312,12 +313,100 @@ class SfyBuildSpec(_Frozen):
         return sum(g.row_power_shards for g in self.groups)
 
 
+@dataclass(frozen=True, slots=True)
+class DirectPair:
+    """Two groups whose machines match one for one, and the item between them."""
+
+    item: str
+    producer: SfyMachineGroup
+    consumer: SfyMachineGroup
+
+
+def direct_pairs(spec: SfyBuildSpec) -> tuple[DirectPair, ...]:
+    """Every pair of groups a belt can join machine to machine, from the rates alone.
+
+    **A property of the SPEC and of nothing else.**  Where one group makes
+    exactly what another eats -- the same count of machines, the same rate per
+    machine, the same fraction on the odd last machine, and no other group and no
+    boundary belt touching the item at all -- the flow between them is N separate
+    one-to-one flows that FactorioLab has already balanced.  A layout that puts
+    the two rows face to face and runs one straight belt from each producer to
+    each consumer moves the same items at the same rates as a merger chain, a
+    trunk and a splitter chain do, and does it in a fraction of the floor.
+
+    Nothing is re-solved to find one.  Every comparison below is an exact
+    ``Fraction`` out of the spec, and a pair is reported only when EVERY one of
+    them holds:
+
+    * the two groups have the same machine count, so machine *i* has a partner;
+    * exactly one item leaves the producer and enters the consumer;
+    * each producer machine makes per second what each consumer machine eats;
+    * the odd last machine's share is the same fraction on both sides, so the
+      pairing holds for it too;
+    * no other group makes or eats the item, and the spec neither belts it in nor
+      sends it out -- otherwise the item has somewhere else to go and the flow is
+      not one-to-one however well the rates line up;
+    * the item is the ONLY thing the consumer eats.  That one is about where a
+      belt can go rather than about rates: a consumer with a second input needs a
+      splitter chain of its own, and the only floor left for it in a paired row
+      is the floor the pairing belts run through.  Such a pair is left to the
+      manifold, which has a corridor for it.
+
+    The pairs come back in the order the producers appear in ``spec.groups``, and
+    no group is in two of them: a group that could pair with two others would
+    have to stand in two places.
+    """
+    taken: set[int] = set()
+    pairs: list[DirectPair] = []
+    for maker, producer in enumerate(spec.groups):
+        for eater, consumer in enumerate(spec.groups):
+            if maker == eater or maker in taken or eater in taken:
+                continue
+            item = _one_to_one_item(spec, producer, consumer)
+            if item is None:
+                continue
+            pairs.append(DirectPair(item=item, producer=producer, consumer=consumer))
+            taken |= {maker, eater}
+            break
+    return tuple(pairs)
+
+
+def _one_to_one_item(
+    spec: SfyBuildSpec, producer: SfyMachineGroup, consumer: SfyMachineGroup
+) -> str | None:
+    """The item ``producer`` hands straight to ``consumer``, or ``None``."""
+    if producer.count != consumer.count:
+        return None
+    shared = sorted(set(producer.outputs_per_machine) & set(consumer.inputs_per_machine))
+    if len(shared) != 1 or set(consumer.inputs_per_machine) != set(shared):
+        return None
+    item = shared[0]
+    if producer.outputs_per_machine[item] != consumer.inputs_per_machine[item]:
+        return None
+    if producer.last_clock * consumer.clock != consumer.last_clock * producer.clock:
+        return None
+    if spec.external_inputs.get(item, Fraction(0)) or spec.outputs.get(item, Fraction(0)):
+        return None
+    if spec.surplus_outputs.get(item, Fraction(0)):
+        return None
+    others = [
+        group
+        for group in spec.groups
+        if group is not producer
+        and group is not consumer
+        and (item in group.outputs_per_machine or item in group.inputs_per_machine)
+    ]
+    return None if others else item
+
+
 __all__ = (
     "DESIGNER_CLASSES",
     "FOUNDATION_CLASS",
     "Designer",
+    "DirectPair",
     "SfyBuildSpec",
     "SfyMachineGroup",
     "designer",
+    "direct_pairs",
     "foundation_cm",
 )
