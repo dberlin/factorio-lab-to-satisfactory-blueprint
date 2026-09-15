@@ -69,6 +69,8 @@ from flab2bp.sfy.layout.manifold import (
     RowGeometry,
     build_row,
     grid_ceil,
+    hard_footprint_cm,
+    machine_pitch_cm,
 )
 from flab2bp.sfy.layout.model import (
     AttachmentObj,
@@ -182,6 +184,15 @@ _POWER_CAUSES = {
     "data": GAME_DATA,
     "limits": GAME_LIMITS,
 }
+
+SPLIT_ROUNDS = 6
+"""How many times the row plan and the corridor width may chase each other.
+
+Ours, and a backstop rather than a bound: splitting a group only ever adds rows,
+which only ever narrows them, so a pass that does not settle the width makes the
+next one's job easier and the walk is monotone.  Two passes settle every build in
+the corpus; six is room for a build whose corridors grow twice on the way.
+"""
 
 COLUMN_TRIES = 100_000
 """Column tries the search may make before it gives up.
@@ -363,10 +374,83 @@ class _Layout:
     def build(self) -> SfyPlacement:
         self._refuse_fluids()
         self._measure()
-        self.rows = self._lay_rows()
-        self.belt_z = max(row.geometry.belt_z_cm for row in self.rows)
-        self._plan_columns()
+        self._plan_rows()
         return self._placement(self._lay_corridors())
+
+    def _plan_rows(self) -> None:
+        """Lay the rows out, splitting any that are longer than the wall.
+
+        A group wider than the floor between the two corridors is laid as several
+        rows of the same recipe (:func:`_split_group`), which the corridor already
+        knows how to feed: the split rows are several sinks of one item, and one
+        source with several sinks is a splitter chain.
+
+        How wide the floor between the corridors IS depends on how many columns
+        the corridors need, and that is known only once the rows are placed and
+        the trunks assigned -- so this walks to a fixed point rather than guessing
+        at it.  The first pass assumes the narrowest corridor there can be (one
+        column, at the closest a column may stand), lays the rows, measures what
+        the corridors really took, and splits again if the rows no longer fit.
+        Splits only ever grow, so the walk ends: either the rows fit inside what
+        the corridors left, or a single machine does not and the refusal names its
+        class.
+        """
+        order = _production_order(self.spec.groups)
+        allowance = self.pitch + BELT_CLEARANCE_HALF_WIDTH_CM
+        splits = [1] * len(order)
+        for _ in range(SPLIT_ROUNDS):
+            self.budget.check()
+            splits = self._splits(order, splits, allowance)
+            self.ids = itertools.count(1)
+            self.rows = self._lay_rows(order, splits)
+            self.belt_z = max(row.geometry.belt_z_cm for row in self.rows)
+            self._plan_columns()
+            wanted = self.offset + self._columns_used() * self.pitch
+            wanted += BELT_CLEARANCE_HALF_WIDTH_CM
+            if self.x_edge + wanted <= self.half + _EPS:
+                return
+            allowance = _grid_ceil(wanted, self.grid)
+        raise _refuse(
+            self.spec,
+            "rows exceed the designer width",
+            f"the rows and the corridors they need did not settle inside the "
+            f"{self.designer.mark} designer in {SPLIT_ROUNDS} passes",
+        )
+
+    def _splits(
+        self, order: Sequence[SfyMachineGroup], splits: Sequence[int], allowance: float
+    ) -> list[int]:
+        """How many rows each group is laid as, given what the corridors take.
+
+        ``per_row`` is what the floor between the corridors holds: a row of ``n``
+        machines is ``(n - 1)`` pitches plus one machine's own hard footprint, and
+        both numbers are the registry's through the row builder.  A count never
+        falls -- a later pass has less floor to play with, not more -- so the walk
+        in :meth:`_plan_rows` cannot oscillate.
+        """
+        usable = 2.0 * (self.half - allowance)
+        out: list[int] = []
+        for group, before in zip(order, splits, strict=True):
+            machine = self.registry.buildables.get(group.machine_class)
+            if machine is None:
+                raise RowError(f"the registry has no buildable called {group.machine_class!r}")
+            pitch = machine_pitch_cm(machine, self.registry.limits)
+            x0, _, x1, _ = hard_footprint_cm(machine)
+            per_row = int(math.floor((usable - (x1 - x0)) / pitch + _EPS)) + 1
+            if per_row < 1:
+                raise _refuse(
+                    self.spec,
+                    "rows exceed the designer width",
+                    f"one {group.machine_class} is {x1 - x0:.0f} cm wide and the "
+                    f"{self.designer.mark} designer leaves {usable:.0f} cm of floor between "
+                    "its two corridors, so not even one of them fits in a row",
+                )
+            out.append(max(before, -(-group.count // per_row)))
+        return out
+
+    def _columns_used(self) -> int:
+        """How far out the corridors actually reach, as a column index."""
+        return max((assignment.column for assignment in self.spine.values()), default=0)
 
     def _measure(self) -> None:
         """Every number the rest of this build is laid out against, read once.
@@ -385,37 +469,50 @@ class _Layout:
 
     # --- rows ---------------------------------------------------------------
 
-    def _lay_rows(self) -> list[_Row]:
-        """Build every row and stand it where it belongs on the floor."""
-        order = _production_order(self.spec.groups)
+    def _lay_rows(self, order: Sequence[SfyMachineGroup], splits: Sequence[int]) -> list[_Row]:
+        """Build every row and stand it where it belongs on the floor.
+
+        ``splits[i]`` is how many rows group ``i`` is laid as.  Every row of one
+        group stands next to its siblings and shares their ``flip``, which is what
+        puts all their chain inputs in one corridor and all their merger outputs
+        in the other: one splitter chain can then feed the lot and one merger
+        chain can drain it.  **The flip alternates per GROUP, not per row** --
+        which for a build that splits nothing is the same thing, and for one that
+        splits is the only assignment that works, because two rows facing opposite
+        corridors cannot be fed from one trunk.
+        """
         measuring = _measuring_designer(self.designer)
+        shares = [
+            (index, share)
+            for index, (group, rows) in enumerate(zip(order, splits, strict=True))
+            for share in _split_group(group, rows)
+        ]
         built: list[RowGeometry] = []
-        for index, group in enumerate(order):
+        for parent, share in shares:
             # The clock bounds the whole of lay_out, not only the column search:
             # a row is the largest piece of work this module does in one step.
             self.budget.check()
             built.append(
                 build_row(
-                    group,
+                    share,
                     self.registry,
                     designer=measuring,
                     belt_tiers=self.spec.belt_tiers,
-                    flip=bool(index % 2),
+                    flip=bool(parent % 2),
                     next_id=self.ids,
                     lab_map=self.lab_map,
                 )
             )
         width = max(row.width_cm for row in built)
-        if width > 2.0 * self.half + _EPS:
-            raise _refuse(
-                self.spec,
-                "rows exceed the designer width",
-                f"the widest row is {width:.0f} cm and the {self.designer.mark} designer is "
-                f"{2 * self.half:.0f} cm across",
-            )
         gaps = [
-            _row_gap(before, after, self.radius, self.grid)
-            for before, after in itertools.pairwise(built)
+            _row_gap(
+                before,
+                after,
+                self.radius,
+                self.grid,
+                siblings=shares[index][0] == shares[index + 1][0],
+            )
+            for index, (before, after) in enumerate(itertools.pairwise(built))
         ]
         low = _wall_margin(built[0], self.radius, self.grid, entry=True)
         high = _wall_margin(built[-1], self.radius, self.grid, entry=False)
@@ -438,12 +535,13 @@ class _Layout:
             if index:
                 y += gaps[index - 1]
             centre = _grid_round((geometry.x_min_cm + geometry.x_max_cm) / 2.0, self.grid)
+            parent, share = shares[index]
             rows.append(
                 _Row(
                     index=index,
-                    group=order[index],
+                    group=share,
                     geometry=_translate(geometry, -centre, y - geometry.y_min_cm),
-                    flip=bool(index % 2),
+                    flip=bool(parent % 2),
                 )
             )
             y += geometry.depth_cm
@@ -452,9 +550,17 @@ class _Layout:
     # --- nets and columns ---------------------------------------------------
 
     def _plan_columns(self) -> None:
-        """Every trunk's column, worked out before a single belt is drawn."""
+        """Every trunk's column, worked out before a single belt is drawn.
+
+        The columns are assigned against a corridor as wide as it could possibly
+        need to be -- one column per trunk -- rather than against the designer,
+        because how far the corridor reaches is one of the things
+        :meth:`_plan_rows` is still deciding.  What the corridor really took is
+        :meth:`_columns_used`, and holding that against the designer is
+        ``_plan_rows``'s last step.
+        """
         self.nets = self._nets()
-        self.columns = self._column_count()
+        self._column_offset()
         # The two corridors are two sets of columns and share nothing: a belt on
         # one side of the rows cannot be in the way of a belt on the other, so
         # each side is assigned on its own.
@@ -474,18 +580,18 @@ class _Layout:
             for side in (-1, 1)
             for assignment in assign_columns(
                 requests[side],
-                columns=self.columns,
+                columns=max(1, len(requests[side])),
                 margin=BELT_CLEARANCE_HALF_WIDTH_CM,
                 budget=self.budget,
             )
         }
 
-    def _column_count(self) -> int:
-        """How many columns fit between the rows and the designer wall.
+    def _column_offset(self) -> None:
+        """How far out of the rows the innermost corridor column stands.
 
-        The innermost column stands far enough out that a belt turning into a row
-        has the turn's own radius and a legal straight to land on, and at least
-        one column pitch out, so that its lane clears the rows' own band.
+        Far enough that a belt turning into a row has the turn's own radius and a
+        legal straight to land on, and at least one column pitch, so that its lane
+        clears the rows' own band.
         """
         inset = min(
             (
@@ -497,16 +603,6 @@ class _Layout:
         )
         floor = self.registry.limits.belt_min_length_cm or 0.0
         self.offset = max(self.pitch, grid_ceil(max(0.0, self.radius + floor - inset), self.grid))
-        room = self.half - BELT_CLEARANCE_HALF_WIDTH_CM - self.x_edge - self.offset
-        if room < -_EPS:
-            raise _refuse(
-                self.spec,
-                "rows exceed the designer width",
-                f"the rows reach x = {self.x_edge:.0f} and the innermost corridor column "
-                f"would stand at {self.x_edge + self.offset:.0f}, outside the "
-                f"{self.designer.mark} designer",
-            )
-        return 1 + int(math.floor(room / self.pitch + _EPS))
 
     def _column_x(self, side: int, column: int) -> float:
         return side * (self.x_edge + self.offset + column * self.pitch)
@@ -1185,6 +1281,36 @@ def _measuring_designer(designer: Designer) -> Designer:
     )
 
 
+def _split_group(group: SfyMachineGroup, rows: int) -> list[SfyMachineGroup]:
+    """One group as ``rows`` rows' worth of it, machines as even as they divide.
+
+    Nothing is re-solved here: FactorioLab costed ``count - 1`` machines at
+    ``clock`` and one at ``last_clock`` -- the odd machine at the end of a row
+    absorbs the fractional remainder -- and the split hands the underclocked one
+    to the LAST row and leaves every other row at the group's own clock
+    throughout.  Summed back up, the multiset of clocks is the one the spec
+    states, which is what ``spec.machines`` compares; and each row's own
+    ``row_inputs`` and ``row_outputs`` are that row's share, which is what its
+    chain ends carry and what its belt tiers are chosen against.
+
+    The shares differ by at most one machine, largest first, so a group of seven
+    in rows of at most four is four and three rather than four, one and two.
+    """
+    if rows < 1 or rows > group.count:
+        raise ValueError(f"{group.recipe_id}: {group.count} machines cannot be laid as {rows} rows")
+    base, extra = divmod(group.count, rows)
+    counts = [base + (1 if index < extra else 0) for index in range(rows)]
+    return [
+        group.model_copy(
+            update={
+                "count": count,
+                "last_clock": group.last_clock if index == rows - 1 else group.clock,
+            }
+        )
+        for index, count in enumerate(counts)
+    ]
+
+
 def _production_order(groups: Sequence[SfyMachineGroup]) -> list[SfyMachineGroup]:
     """Groups in topological order of the item graph, ties by machine count.
 
@@ -1216,7 +1342,14 @@ def _production_order(groups: Sequence[SfyMachineGroup]) -> list[SfyMachineGroup
     return order
 
 
-def _row_gap(before: RowGeometry, after: RowGeometry, radius: float, grid: float) -> float:
+def _row_gap(
+    before: RowGeometry,
+    after: RowGeometry,
+    radius: float,
+    grid: float,
+    *,
+    siblings: bool = False,
+) -> float:
     """How much floor is left between two rows' bands.
 
     One grid step is the brief's gap and the least the build gun would leave.
@@ -1225,7 +1358,16 @@ def _row_gap(before: RowGeometry, after: RowGeometry, radius: float, grid: float
     their chain ends counts towards it.  So the gap is whatever the two turns
     still want, and never less than a grid step.  Ours, and derived: the radius
     is the corridor's and the overhangs are the rows' own.
+
+    ``siblings`` -- two rows of ONE group, which :func:`_split_group` made -- get
+    the grid step and nothing more, because no trunk turns between them: they are
+    two sinks of the same item and two sources of the same one, and the spine
+    reaches into each of them across the corridor without turning.  That matters
+    to what fits: splitting pays for width in depth, and three metres of it per
+    split is the difference between a build and a refusal.
     """
+    if siblings:
+        return grid
     over = (before.y_max_cm - before.chain_out.pose.y) + (
         min(end.pose.y for end in after.chain_in) - after.y_min_cm
     )

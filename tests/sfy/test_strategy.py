@@ -32,7 +32,12 @@ from flab2bp.sfy.labmap import load_lab_map
 from flab2bp.sfy.layout import strategy
 from flab2bp.sfy.layout.corridors import BRIDGE_CLEARANCE_BOXES, CorridorError
 from flab2bp.sfy.layout.emit import decode, emit
-from flab2bp.sfy.layout.manifold import RowError, crossing_gap_cm
+from flab2bp.sfy.layout.manifold import (
+    RowError,
+    crossing_gap_cm,
+    hard_footprint_cm,
+    machine_pitch_cm,
+)
 from flab2bp.sfy.layout.model import AttachmentObj, SfyPlacement
 from flab2bp.sfy.layout.strategy import ManifoldRows
 from flab2bp.sfy.layout.validate import validate
@@ -516,3 +521,66 @@ def test_a_column_search_that_runs_out_of_tries_says_so_instead() -> None:
     with patch.object(strategy, "COLUMN_TRIES", 1), pytest.raises(NoValidLayout) as caught:
         _lay_out(spec, MARK)
     assert caught.value.reason == "corridor assignment exceeded the budget"
+
+
+# --- a row longer than the wall is split ------------------------------------
+
+
+def test_concrete_at_sixty_is_two_rows_of_one_recipe_in_an_mk2() -> None:
+    """The corpus cell the split is for: four Constructors are 35 m of row and an
+    mk2 leaves 32 m of floor between its corridors, so it is laid as two rows.
+
+    The brief named ``screw*120`` for this, which is three groups and refuses on
+    DEPTH in every mark whatever the split does; ``concrete*60`` is the entry that
+    really refused on width and really fits once it is split, and it is one group,
+    so the two rows are two rows of the same recipe.
+    """
+    spec = _spec("concrete-60")
+    assert len(spec.groups) == 1
+    placement = _lay_out(spec, "mk2")
+    _assert_clean(placement, spec)
+    assert len(placement.machines) == spec.machine_count == spec.groups[0].count
+    lines = sorted({machine.pose.y for machine in placement.machines})
+    assert len(lines) == 2, "one group, two machine lines"
+    assert {machine.recipe_class for machine in placement.machines} == {spec.groups[0].recipe_class}
+    # The two rows face the same corridors, which is what lets one splitter chain
+    # feed both of them and one merger chain drain them.
+    assert len({machine.pose.yaw_deg for machine in placement.machines}) == 1
+
+
+def test_a_split_group_is_the_same_machines_at_the_same_clocks() -> None:
+    """Seven machines in rows of at most four: four and three, the underclocked
+    one in the last row, and the multiset of clocks the spec's own."""
+    flow = _spec("reinforced-iron-plate-10")
+    group = _group(flow, "screw").model_copy(update={"count": 7, "last_clock": Fraction(1, 4)})
+    shares = strategy._split_group(group, 2)
+    assert [share.count for share in shares] == [4, 3]
+    assert [share.clock for share in shares] == [Fraction(1), Fraction(1)]
+    assert [share.last_clock for share in shares] == [Fraction(1), Fraction(1, 4)]
+    # What spec.machines compares: count - 1 at clock and one at last_clock.
+    clocks: list[Fraction] = []
+    for share in shares:
+        clocks += [share.clock] * (share.count - 1) + [share.last_clock]
+    assert sorted(clocks) == sorted([Fraction(1, 4)] + [Fraction(1)] * 6)
+    # And what each row's chain ends carry is that row's own share.
+    assert sum(share.row_outputs["screw"] for share in shares) == group.row_outputs["screw"]
+
+
+def test_how_many_rows_a_group_is_laid_as_is_what_the_floor_holds() -> None:
+    """``per_row`` is the floor between the corridors over the machine pitch, and
+    a row of ``n`` is ``n - 1`` pitches plus one machine's own footprint."""
+    layout = _fresh(_spec("iron-plate-60"))
+    order = [_group(_spec("iron-plate-60"), "iron-plate").model_copy(update={"count": 7})]
+    machine = _registry().buildables[order[0].machine_class]
+    pitch = machine_pitch_cm(machine, _registry().limits)
+    x0, _, x1, _ = hard_footprint_cm(machine)
+    # An allowance that leaves exactly four pitches' worth of floor.
+    usable = 3.0 * pitch + (x1 - x0)
+    allowance = layout.half - usable / 2.0
+    assert layout._splits(order, [1], allowance) == [2]
+    # One machine wider than the floor is the refusal that remains, and it says
+    # which class could not be stood.
+    with pytest.raises(NoValidLayout) as caught:
+        layout._splits(order, [1], layout.half - (x1 - x0) / 2.0 + 100.0)
+    assert caught.value.reason == "rows exceed the designer width"
+    assert order[0].machine_class in caught.value.attempt_reasons[0]

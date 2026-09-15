@@ -233,8 +233,23 @@ a line along `X`, one splitter chain per input item feeding them and one merger
 chain draining them. It is built about its first machine and moved into place.
 
 **The rows stack along `Y`** in topological order of the item graph, so a row
-that makes what another eats stands below it. Every other row is *flipped*, so
-its chain input end faces the same corridor the row before it output into.
+that makes what another eats stands below it. Every other **group** is *flipped*,
+so its chain input end faces the same corridor the group before it output into.
+
+**A group longer than the wall is several rows.** The floor between the two
+corridors holds `per_row = floor((usable - one machine's footprint) / pitch) + 1`
+machines, and a group with more of them is laid as `ceil(count / per_row)` rows
+of the same recipe, as even as they divide, with the underclocked last machine in
+the last row. Those rows stand next to each other and share their group's flip —
+which is the whole reason the flip is per group and not per row: two rows facing
+opposite corridors could not be fed from one trunk. To the corridor they are
+simply several sinks of one item and several sources of another, which is the
+splitter chain and the merger chain it already had.
+
+How wide the floor is depends on how many columns the corridors take, and that is
+known only once the rows are placed, so the planner walks to a fixed point: the
+first pass assumes the narrowest corridor there can be, and each pass re-splits
+against what the last one measured. Splits only grow, so it settles.
 
 **A corridor** runs down each side of the rows: columns of one belt width at
 fixed `X`, a column pitch apart. Every trunk — an external input, a row-to-row
@@ -306,6 +321,8 @@ to be at and says nothing, so ours is 0.
 | flat lead out of a port | `grid_ceil(belt_min_length_cm)`, **ours**, because `ports.position` holds a belt to its port's own (horizontal) facing | 200 cm |
 | room at each wall | turn radius + one grid step, less what the row's band already covers. **Ours**: a belt's clearance box is square to the belt, so a box on a turning piece that began ON the wall reaches 4.8 cm outside it and `geom.bounds` refuses the build | 300 cm |
 | gap between two rows | whatever the two turns of a trunk still want after the rows' own overhangs, never less than a grid step. **Ours** | 400 cm |
+| gap between two rows of ONE group | a grid step: no trunk turns between them, because the spine reaches into each across the corridor. **Ours** | 100 cm |
+| machines per row | `floor((floor between the corridors − one machine's hard footprint) / pitch) + 1` | mk2: 3 Constructors |
 | floor | a full field of the shipped foundation at half its own box's thickness | 8 m tiles at z 50 |
 
 ### The refusals
@@ -340,6 +357,12 @@ one reaching the layout stage is a bug in this package and is raised as one.
 is an mk3 one; `iron-plate-60` refuses both smaller marks on depth.
 `reinforced-iron-plate-10` is five rows and 110 m of band, which no designer
 holds, and it refuses for every mark the game ships.
+
+Splitting a wide group pays for width in depth — a row is 16 m of band — so the
+corpus after Task 8c has **no width refusals left and 28 depth ones**: a build
+that was too wide by a machine is now too deep by a row. The exception is a group
+whose split rows still fit, which is `concrete-60` in an mk2: four Constructors as
+two rows of one recipe.
 
 ### One clearance box, placed in one place
 
