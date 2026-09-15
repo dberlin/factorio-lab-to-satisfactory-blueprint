@@ -13,6 +13,7 @@ import pytest
 from flab2bp.sfy.rules import (
     REQUIRED_RULE_IDS,
     RULE_EFFECTS,
+    RULES_PATH,
     RulesError,
     load_rules,
 )
@@ -328,29 +329,68 @@ def test_the_belt_clearance_rule_states_the_box_it_lays_along_the_spline():
     assert "158 cm wide" in r.interpretation
 
 
-def test_the_lift_clearance_rule_is_partial_because_two_globals_are_unreadable():
+def test_the_lift_clearance_rule_is_partial_because_the_centre_scale_is_unread():
     """``lift.clearance`` reads both functions whole and still cannot state the box.
 
     ``UpdateClearance`` and ``AFGBuildableConveyorLift::FitClearance`` are both
     bounded by ``.pdata``, and the span between the lift's two ends is in the
-    evidence. What is not is the half-extent: it comes from a module global in
-    ``.data``, which ``sfy-native`` refuses to quote because a mutable global is
-    not a constant. So the status is ``partial`` for a reason that is not a
-    callee, the effect is ``compute`` (nothing here turns a placement away), and
-    a placer must not take a lift's footprint from this rule.
+    evidence. So is the half-extent now, quoted through the PDB symbol the
+    ``0x19B8118`` global belongs to. What is still unread is the *second*
+    global, the one loaded through the pointer at ``0xEE7CC0`` that scales the
+    box's centre: nothing names it, so the rule stays ``partial``. The effect
+    stays ``compute`` -- nothing here turns a placement away.
     """
     r = load_rules()["lift.clearance"]
     assert (r.status, r.effect) == ("partial", "compute")
     assert r.function == "UpdateClearance"
     assert r.also_read == ("AFGBuildableConveyorLift::FitClearance @ 0x4e5dd0",)
     assert "No comparison is made in either function" in r.comparison
-    assert "THE TWO VECTORS ARE NOT IN THE EVIDENCE" in r.comparison
+    assert "THE CENTRE SCALE IS NOT IN THE EVIDENCE" in r.comparison
+    assert "0xEE7CC0" in r.comparison
     assert "0x19B8118" in r.comparison
     assert "mMeshHeight" in r.comparison and "-5" in r.comparison
     assert not any(
         callee in r.comparison
         for callee in ("SnapToFloor", "TestClearanceOverlap", "CreateClearanceData")
     )
+
+
+def test_lift_clearance_states_its_width_from_the_data_initialiser():
+    """The box's half-extent is the tool's output now, not a reader's hand read.
+
+    ``AFGBuildableConveyorLift::FitClearance`` takes it from the module global
+    at ``0x19B8118``, which is the static
+    ``AFGBuildableConveyorLift::CLEARANCE_EXTENT_2D``
+    (``Buildables/FGBuildableConveyorLift.h:211``). ``sfy-native``'s constant
+    annotation trusts only ``.rdata``, so until the tool could resolve the PDB
+    symbol itself the rule recorded ``(100.0, 100.0)`` as a hand read and
+    stated no width at all. ``sfy-native data`` quotes it now: the rule names
+    the symbol among the things the function reads, carries the bytes it was
+    read from, and says what a placer gets after the ``-5`` shrink.
+    """
+    r = load_rules()["lift.clearance"]
+    assert "CLEARANCE_EXTENT_2D" in r.reads
+    assert "95.0" in r.interpretation
+    assert "hand read" not in r.interpretation
+
+    raw = json.loads(RULES_PATH.read_text(encoding="utf-8"))
+    rule = next(entry for entry in raw["rules"] if entry["id"] == "lift.clearance")
+    (read,) = rule["data_reads"]
+    # The read is extracted even though the rule around it is not: the width is
+    # the game's own number now, whatever is still unread about the centre.
+    assert read["status"] == "extracted"
+    assert read["symbol"] == "AFGBuildableConveyorLift::CLEARANCE_EXTENT_2D"
+    assert read["section"] == ".data"
+    assert read["rva"] == "0x19b8118"
+    assert read["doubles"] == [100.0, 100.0]
+    assert read["adjustment"] == -5.0
+    assert read["values"] == [95.0, 95.0]
+    assert read["source"] == (
+        "binary .data initialiser via PDB symbol AFGBuildableConveyorLift::CLEARANCE_EXTENT_2D"
+    )
+    # A mutable global read out of the image is what the image held before the
+    # game ran, and the rule has to say so exactly once.
+    assert r.interpretation.count("CAVEAT") == 1
 
 
 def test_the_potential_rule_states_what_a_power_shard_and_an_exponent_do():

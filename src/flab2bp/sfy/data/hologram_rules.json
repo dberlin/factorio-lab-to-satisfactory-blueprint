@@ -1174,7 +1174,7 @@
     "AFGBuildableConveyorLift::FitClearance"
    ],
    "class": "AFGConveyorLiftHologram",
-   "comparison": "UpdateClearance builds the three doubles (-5, -5, -5) at [rsp+40h] from the .rdata pairs at 0xaa141d and 0xaa1433 (0xaa142e/0xaa143b store them), tests each of mSnappedPassthroughs (0xaa147b and 0xaa14de) into a byte, and hands the lift's height ([rbx+8B0h] at 0xaa14ff, narrowed at 0xaa1530), mMeshHeight (0xaa150d), a module global at 0x19B8118 and that -5 vector to AFGBuildableConveyorLift::FitClearance (0xaa1539), storing the 56-byte box it returns on the hologram (0xaa1541). FitClearance (0x4e5dd0, 375 bytes, read whole) works the span out in floats: top = (height + mMeshHeight - 100 - P) / 2 + Q and bottom = (|height| + mMeshHeight + 100 - P) / 2 - 30, where P is 200.0 when the first flag is set and 0 otherwise (0x4e5e0c, 0x4e5e81/0x4e5e86) and Q is 50.0 when the second is (0x4e5e33, 0x4e5ea2) -- 0x4e5e4e addss mMeshHeight, 0x4e5e46 andps the sign mask, 0x4e5e70/0x4e5e78 the 100.0, 0x4e5e91/0x4e5e99 the halving, 0x4e5ea6 the 30.0. It then reads two doubles from the 0x19B8118 vector (0x4e5e52, 0x4e5e5c), adds the -5 vector to them and to the bottom (0x4e5edb and the two following), multiplies the top by a third vector loaded through the pointer at 0xEE7CC0 (0x4e5ebf and the two following) and writes Max = centre + extent (0x4e5ef5, 0x4e5f19) and Min = extent - centre (0x4e5f03, 0x4e5f26). No comparison is made in either function. THE TWO VECTORS ARE NOT IN THE EVIDENCE: 0x19B8118 and the target of 0xEE7CC0 are in .data, which sfy-native refuses to read as constants because a mutable global is not one, so the box's half-width and its axis are unknown here and this rule stays partial.",
+   "comparison": "UpdateClearance builds the three doubles (-5, -5, -5) at [rsp+40h] from the .rdata pairs at 0xaa141d and 0xaa1433 (0xaa142e/0xaa143b store them), tests each of mSnappedPassthroughs (0xaa147b and 0xaa14de) into a byte, and hands the lift's height ([rbx+8B0h] at 0xaa14ff, narrowed at 0xaa1530), mMeshHeight (0xaa150d), a module global at 0x19B8118 and that -5 vector to AFGBuildableConveyorLift::FitClearance (0xaa1539), storing the 56-byte box it returns on the hologram (0xaa1541). FitClearance (0x4e5dd0, 375 bytes, read whole) works the span out in floats: top = (height + mMeshHeight - 100 - P) / 2 + Q and bottom = (|height| + mMeshHeight + 100 - P) / 2 - 30, where P is 200.0 when the first flag is set and 0 otherwise (0x4e5e0c, 0x4e5e81/0x4e5e86) and Q is 50.0 when the second is (0x4e5e33, 0x4e5ea2) -- 0x4e5e4e addss mMeshHeight, 0x4e5e46 andps the sign mask, 0x4e5e70/0x4e5e78 the 100.0, 0x4e5e91/0x4e5e99 the halving, 0x4e5ea6 the 30.0. It then reads two doubles from the 0x19B8118 vector (0x4e5e52, 0x4e5e5c), adds the -5 vector to them and to the bottom (0x4e5edb and the two following), multiplies the top by a third vector loaded through the pointer at 0xEE7CC0 (0x4e5ebf and the two following) and writes Max = centre + extent (0x4e5ef5, 0x4e5f19) and Min = extent - centre (0x4e5f03, 0x4e5f26). No comparison is made in either function. The vector at 0x19B8118 is not an operand annotation -- it is in .data, which sfy-native refuses to read as a constant because a mutable global is not one -- so it is read separately, by the PDB symbol it belongs to, and quoted under data_reads. THE CENTRE SCALE IS NOT IN THE EVIDENCE: the third vector is reached through the pointer at 0xEE7CC0 (0x4e5e3b loads it, 0x4e5ebf multiplies by what it points at), and a pointer's target is an address the loader filled in rather than a symbol anything here names, so what scales the box's centre along its axis is unknown and this rule stays partial for that.",
    "constants": [
     "0x12b8f00 f32=50.0 f64=14293653332992.0",
     "0x12b8f10 f32=200.0 f64=2.5220161525409382e+17",
@@ -1189,6 +1189,28 @@
     "0xf40bc4 f32=100.0 f64=-2.737952306753201e-308",
     "0xf4de50 f32=None f64=None",
     "0xf6dee8 f32=0.5 f64=7.673846642970894e+21"
+   ],
+   "data_reads": [
+    {
+     "adjustment": -5.0,
+     "bytes": 16,
+     "doubles": [
+      100.0,
+      100.0
+     ],
+     "hex": "00000000000059400000000000005940",
+     "mangled": "AFGBuildableConveyorLift::CLEARANCE_EXTENT_2D",
+     "rva": "0x19b8118",
+     "section": ".data",
+     "source": "binary .data initialiser via PDB symbol AFGBuildableConveyorLift::CLEARANCE_EXTENT_2D",
+     "status": "extracted",
+     "symbol": "AFGBuildableConveyorLift::CLEARANCE_EXTENT_2D",
+     "values": [
+      95.0,
+      95.0
+     ],
+     "what": "the clearance box's half-extent across the lift, in centimetres, in X and Y"
+    }
    ],
    "effect": "compute",
    "evidence": [
@@ -1230,8 +1252,9 @@
    "function": "UpdateClearance",
    "header": "Hologram/FGConveyorLiftHologram.h:70",
    "id": "lift.clearance",
-   "interpretation": "A lift's clearance is **one box** spanning the lift, not a chain along a spline as for a belt, and the span is read: it runs from (|height| + mMeshHeight + 100) / 2 - 30 to (height + mMeshHeight - 100) / 2, with 200 cm taken off when the lift meets a passthrough at one end and 50 cm added when it meets one at the other -- the same mMeshHeight of 200 cm that drives the lift height limits. What is *not* read is how wide the box is: the half-extent comes from a module global at 0x19B8118, shrunk by 5 cm on each axis, and the centre is scaled by a second global. FitClearance reads exactly two doubles from the first, and the class declares one static two-component constant, AFGBuildableConveyorLift::CLEARANCE_EXTENT_2D (Buildables/FGBuildableConveyorLift.h:211) -- but a static initialised at start-up lives in .data, which sfy-native will not quote, so that is a consistent reading and not a value this rule states. Reading the image at 0x19B8118 by hand gives (100.0, 100.0) -- a 2 m square footprint, 95 cm each way after FitClearance's -5 shrink -- and that is recorded here as what a reader will see and NOT as something this rule states: it is a mutable global, the tool will not quote it, and nothing in this project's own geometry may be justified by it until it comes out of the tool's own output. A placer must therefore not compute a lift's footprint from this rule; take the boxes registry.json already carries per buildable, or the mesh box, and treat the width as unknown. Nothing here refuses anything -- the effect is compute -- and whether the box overlaps is decided by buildable.clearance.",
+   "interpretation": "A lift's clearance is **one box** spanning the lift, not a chain along a spline as for a belt, and the span is read: it runs from (|height| + mMeshHeight + 100) / 2 - 30 to (height + mMeshHeight - 100) / 2, with 200 cm taken off when the lift meets a passthrough at one end and 50 cm added when it meets one at the other -- the same mMeshHeight of 200 cm that drives the lift height limits. How WIDE the box is is read too, and this is where it comes from: FitClearance reads exactly two doubles from the module global at 0x19B8118 (0x4e5e52, 0x4e5e5c) and adds the -5 vector to each of them (0x4e5edb and the two following), and that global is the one static the class declares, AFGBuildableConveyorLift::CLEARANCE_EXTENT_2D (Buildables/FGBuildableConveyorLift.h:211). A static initialised at start-up lives in .data, which sfy-native's operand annotation will not quote as a constant, so it is read the other way -- by its PDB symbol, through sfy-native's data mode -- and the numbers are in data_reads and in the sentence at the end of this interpretation. So a placer may take a lift's footprint from here: it is a square column of that half-extent about the axis the lift's two ends are strung along, spanning them. What is still unread is the box's CENTRE: FitClearance multiplies it by a third vector reached through the pointer at 0xEE7CC0, and nothing names that one, so where along the axis the box sits is this rule's remaining hole and why it stays partial. Nothing here refuses anything -- the effect is compute -- and whether the box overlaps is decided by buildable.clearance. READ FROM THE IMAGE: sfy-native data resolved AFGBuildableConveyorLift::CLEARANCE_EXTENT_2D to 0x19b8118, which is in .data, and read 16 bytes there -- 00000000000059400000000000005940, which is (100.0, 100.0) as little-endian doubles. Adding the -5.0 this rule's own instructions apply to each component gives (95.0, 95.0): the clearance box's half-extent across the lift, in centimetres, in X and Y. Source: binary .data initialiser via PDB symbol AFGBuildableConveyorLift::CLEARANCE_EXTENT_2D. CAVEAT: that is the *initialiser*, what the image holds before the game runs, and the validator reads the global at hologram time -- so if anything in the running game ever stored to it this reading would be stale. Nothing in either function disassembled here writes to it, and neither function is the whole game, so this rule states the number and not that it can never change.",
    "reads": [
+    "CLEARANCE_EXTENT_2D",
     "mMeshHeight",
     "mSnappedPassthroughs"
    ],
