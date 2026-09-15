@@ -279,10 +279,11 @@ BINARY_NOTES: dict[str, str] = {
 # ``buildable.grid_snap`` (a snap) and ``buildable.rotation_step`` (which
 # quantises nothing at all: it works a step out and returns it, effect
 # ``compute``) as things that "turn the value away". It also named
-# ``lift.step``, where nothing was found to be enforced at all; that limit is in
-# :data:`NOT_GOVERNED` now, because a rule whose effect is ``none`` governs
-# nothing. A ``compute`` rule does govern: it says where the number comes from,
-# and it says the game never refuses over it.
+# ``lift.step``, which does govern ``lift_step_cm`` -- ``UpdateTopTransform``
+# rounds a lift's height onto a multiple of it -- but with the effect ``snap``:
+# the game moves the height rather than refusing it. A ``compute`` rule governs
+# the same way: it says where the number comes from, and it says the game never
+# refuses over it.
 #
 # Every key of :class:`Limits` is in this table or in :data:`NOT_GOVERNED`, and
 # ``_check_rules`` holds the named ids, the copied effects and the copied
@@ -297,6 +298,7 @@ GOVERNED_BY: dict[str, str] = {
     "potential_shard_slots_default": "factory.potential",
     "production_boost_per_slot": "manufacturer.production_boost",
     "production_boost_slots_default": "manufacturer.production_boost",
+    "lift_step_cm": "lift.step",
     "lift_min_cm": "lift.height_range",
     "lift_max_cm": "lift.height_range",
     "lift_min_vertical_cm": "lift.height_range",
@@ -309,11 +311,6 @@ GOVERNED_BY: dict[str, str] = {
 # The limits no hologram rule governs at all, with the reason. A number here is
 # still game data; what it is not is a bound the game applies to a placement.
 NOT_GOVERNED: dict[str, str] = {
-    "lift_step_cm": (
-        "AFGConveyorLiftHologram compares mStepHeight (lift.step evidence) but "
-        "never quantises a height to it; the multiple is this project's own "
-        "stricter rule (spec section 10)."
-    ),
     "pipe_bend_radius_cm": (
         "AFGPipelineHologram::mBendRadius is the radius AutoRouteSpline builds "
         "its bends on, not a bound anything compares against. The bound on a "

@@ -362,8 +362,17 @@ EVIDENCE: dict[str, tuple[str, ...]] = {
         "0xaa4998", "0xaa499f", "0xaa4a6f", "0xaa4a7d",
     ),
     "lift.step": (
-        "0xaa46e8", "0xaa48ca", "0xaa48db", "0xaa4965", "0xaa480f", "0xaa482c",
-        "0xaa4830", "0xaa4843", "0xaa4859", "0xaa4863", "0xaa4867",
+        # The step itself, and the five instructions that quantise the raw
+        # height with it: divide, add a half, floor, multiply back.
+        "0xaa46e8", "0xaa474f", "0xaa4754", "0xaa4769", "0xaa476d", "0xaa4772",
+        "0xaa4776", "0xaa477c",
+        # What reads the snapped height afterwards: the zero test, the sign
+        # agreement, and the two ends of lift.height_range's clamp.
+        "0xaa48ca", "0xaa48db", "0xaa4965", "0xaa4979", "0xaa497d",
+        # The passthrough case: the thickness modulo 100 that rides through the
+        # clamp in edi and is added back after it.
+        "0xaa480f", "0xaa482c", "0xaa4830", "0xaa4843", "0xaa4859", "0xaa4863",
+        "0xaa4867", "0xaa4970", "0xaa4974", "0xaa4981", "0xaa49a3",
     ),
     "lift.connectors": (
         # SetupConnections: the two connection members, the directions it gives
@@ -899,27 +908,42 @@ INTERPRETATIONS: dict[str, tuple[str, str, str, str]] = {
         "scripts/sfy_registry.py. With H = 200 that is 400, 4800 and 150 cm.",
     ),
     "lift.step": (
-        "partial",
-        "none",
-        "mStepHeight is read once, at 0xaa46e8, and every use of it in "
-        "UpdateTopTransform is a comparison against the wanted height "
-        "(0xaa48ca ucomiss, 0xaa48db and 0xaa4965 comiss) choosing the upward "
-        "or downward branch -- not a quantisation. The one rounding in the "
-        "function is the passthrough case at 0xaa4830..0xaa4859, which takes "
-        "the passthrough's own thickness modulo 100 "
-        "(0xaa4834 imul / 0xaa4836 sar edx,5 / 0xaa4843 sub, the compiler's "
-        "divide by 100) and adds mStepHeight to it "
-        "(0xaa4863/0xaa4867). No instruction here snaps a free height to a "
-        "multiple of mStepHeight.",
-        "mStepHeight is 100.0 in the shipped build (a BeginPlay store, "
-        "data/native.json), but this extraction does not show the hologram "
-        "quantising a lift's height to it. The claim that every legal height "
-        "is a whole number of steps above the minimum is arithmetic on the "
-        "BeginPlay values, not a rule read from the binary. Until the "
-        "quantisation is found -- most likely in the mesh-building path that "
-        "UpdateTopTransform feeds -- a placer should keep to multiples of "
-        "mStepHeight because they are known-good, not because the game was "
-        "seen to require them.",
+        "extracted",
+        "snap",
+        "UpdateTopTransform loads mStepHeight into xmm7 once, at 0xaa46e8, and "
+        "quantises the height with it: FHologramHelpers::CalcPoleHeight hands "
+        "the raw height back in xmm0 (0xaa474f), 0xaa4754 loads 0.5 out of "
+        ".rdata at 0xf6dee8, 0xaa4769 `divss xmm0, xmm7` divides by the step, "
+        "0xaa476d `addss xmm0, xmm8` adds the half, 0xaa4772 moves the sum "
+        "into xmm1 and 0xaa4776 `roundps xmm6, xmm1, 1` floors it (imm8 1 is "
+        "round-toward-minus-infinity), and 0xaa477c `mulss xmm6, xmm7` "
+        "multiplies the whole number of steps back by the step -- "
+        "floor(raw / mStepHeight + 0.5) * mStepHeight. xmm6 is the snapped "
+        "height, and it is what every later use reads: the zero test at "
+        "0xaa48ca, the sign agreement at 0xaa48db, and both ends of "
+        "lift.height_range's clamp (0xaa4965 comiss, 0xaa4979 minss, 0xaa497d "
+        "maxss). The passthrough case at 0xaa480f..0xaa4867 is separate "
+        "arithmetic on the same step: it takes the passthrough's own thickness "
+        "modulo 100 into edi (0xaa4830 cvttss2si, 0xaa4834 imul / 0xaa4836 "
+        "sar edx,5 / 0xaa4843 sub, the compiler's divide by 100), subtracts it "
+        "from mMinimumHeightWithVerticalConnection (0xaa4859) and adds "
+        "mStepHeight to that floor (0xaa4863/0xaa4867); edi rides through the "
+        "clamp as xmm4 (0xaa4970/0xaa4974) and is added back at 0xaa4981, or "
+        "subtracted at 0xaa49a3 on the downward branch.",
+        "A conveyor lift's height is SNAPPED: the hologram rounds the raw "
+        "height half-up onto a multiple of mStepHeight before it clamps it "
+        "into lift.height_range's window, so a height that is not a multiple "
+        "of the step is a height the game silently moves rather than one it "
+        "refuses. mStepHeight is 100.0 in the shipped build (a BeginPlay "
+        "store, data/native.json), which is why registry.json's lift_step_cm "
+        "is governed by this rule with the effect snap. Nothing here turns a "
+        "placement away, so a validator that refuses a height off the step is "
+        "stating this project's own rule, with this snap as its reason: a lift "
+        "we author off the lattice would be built somewhere other than where "
+        "it was costed. The one exception the instructions state is a lift "
+        "snapped to a passthrough, which carries that passthrough's thickness "
+        "modulo 100 through the clamp and back and so sits off the lattice by "
+        "exactly that remainder; this project authors no passthroughs.",
     ),
     "lift.connectors": (
         "extracted",

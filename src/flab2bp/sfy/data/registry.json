@@ -40005,7 +40005,7 @@
   "inputs_sha256": {
    "assets.json": "0562165b4064d5c424ce2fbc68f94df0a7e39f9acb1edb604324537752ad56ef",
    "docs.json": "cf6cc33614d050144e1b869c0e318e9c5413002e26164c91ebb06eb096b1fbbf",
-   "hologram_rules.json": "e054cbb315cf71c97ed7cfe6c14ea4013f66ed73171c125b6dab99a3416f3881",
+   "hologram_rules.json": "a5470aa79066dde16575b7eb65f0bbf657dbb4c2e81dfd8f1ecf463d05fbdbb1",
    "native.json": "c6b204d7a5ba3fd7c7389ae50d22b8b3f1deafe623b8c4d0a8bb5c028078a11f",
    "native_directions.json": "4c6857ad39ce0b15fae789fabea4d6ff0e917e157d9eeb57a55ccd72d62e295c"
   },
@@ -40136,8 +40136,11 @@
     }
    },
    "lift_step_cm": {
-    "governed_by": null,
-    "ungoverned": "AFGConveyorLiftHologram compares mStepHeight (lift.step evidence) but never quantises a height to it; the multiple is this project's own stricter rule (spec section 10)."
+    "governed_by": {
+     "effect": "snap",
+     "rule": "lift.step",
+     "status": "extracted"
+    }
    },
    "pipe_bend_radius_2d_cm": {
     "governed_by": null,

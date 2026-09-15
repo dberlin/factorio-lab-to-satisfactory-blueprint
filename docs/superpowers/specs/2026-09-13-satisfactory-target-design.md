@@ -313,9 +313,12 @@ may not invent one in its place. The first consequence is concrete —
 - Per belt run: length <= max spline length, incline <= max incline, and
   horizontal radius of curvature >= the `belt.curvature` floor (not
   `mBendRadius`). Per lift: height within min/max and the vertical-connection
-  minimum when attached to a port; the step multiple is our own stricter rule,
-  because `lift.step` is `partial` and no quantisation was found in the game.
-  `lift_step_cm` is therefore *ungoverned* in the registry and says so.
+  minimum when attached to a port; height a multiple of `lift_step_cm`. The
+  multiple is the **game's own snap** — `UpdateTopTransform` rounds the height
+  onto a multiple of `mStepHeight` (`lift.step`, `extracted`/`snap`, and
+  `lift_step_cm` is governed by it in the registry) — and the *refusal* is
+  still ours, because a snap moves a lift rather than turning it away: a lift
+  we author off the step is one the game would silently build somewhere else.
 - Every port is connected exactly once with matching direction; every net's
   throughput <= its tier; pipes: flow <= tier and head lift within pump limits.
 - Wires <= max length and pole connection counts respected; every machine is

@@ -37,10 +37,11 @@ add a *construct disqualifier* — a `UFGConstructDisqualifier` subclass — to
 refuses while that list is non-empty. So a rule is found by looking for the
 `AddConstructDisqualifier` call and reading the branch that skips it.
 
-Two rules turn out not to work that way at all, which matters more than it
+Some rules turn out not to work that way at all, which matters more than it
 sounds: the grid snap **moves** a hologram rather than refusing it, and a
-conveyor lift's height is **clamped** into its legal range rather than checked.
-Neither can produce an illegal value, and neither has a disqualifier.
+conveyor lift's height is **snapped** onto a multiple of the step and then
+**clamped** into its legal range rather than checked. None of them can produce
+an illegal value, and none has a disqualifier.
 
 ## Conveyor belts — `Hologram/FGConveyorBeltHologram.h`
 
@@ -260,13 +261,28 @@ them from the lift buildable's mesh height H, which `tools/sfy-native` read as
 `LIFT_HEIGHT_FORMULAS` in `scripts/sfy_registry.py`). `mStepHeight` is the one
 stored constant, 100.0.
 
-`UpdateTopTransform` then *clamps* the wanted height between the minimum — the
-vertical-connection one when the lift meets a passthrough, the ordinary one
-otherwise — and `mMaximumHeight`. There is no disqualifier because there is
-nothing to refuse. Note what is **not** there: no instruction in that function
-rounds a free height to a multiple of `mStepHeight`, so "every legal height is a
-whole number of steps" is arithmetic on the `BeginPlay` values rather than a rule
-read from the binary. `lift.step` says so and stays `partial`.
+`UpdateTopTransform` *snaps* the wanted height onto a multiple of `mStepHeight`
+and then *clamps* it between the minimum — the vertical-connection one when the
+lift meets a passthrough, the ordinary one otherwise — and `mMaximumHeight`.
+There is no disqualifier for either, because neither refuses anything.
+
+The snap is `lift.step`, `extracted`/`snap`:
+`FHologramHelpers::CalcPoleHeight` hands the raw height back (`0xaa474f`) and
+`0xaa4769`–`0xaa477c` compute `floor(raw / mStepHeight + 0.5) * mStepHeight` —
+`divss` by the step, `addss` the 0.5 at `0xf6dee8`, `roundps ..., 1` (floor) and
+`mulss` back. That rounded value in `xmm6` is what the zero test (`0xaa48ca`),
+the sign agreement (`0xaa48db`) and both ends of the clamp (`0xaa4965`,
+`0xaa4979`, `0xaa497d`) read. So a height that is not a whole number of steps is
+one the game **moves**, not one it refuses: a validator that turns such a lift
+away is stating this project's own rule, with this snap as its reason. The one
+exception is a lift snapped to a passthrough, which carries that passthrough's
+thickness modulo 100 through the clamp (`0xaa4830`…`0xaa4867`, back in at
+`0xaa4981` / out at `0xaa49a3`) and so lands off the lattice by that remainder.
+
+This rule was `partial`/`none` until Task 8e: the earlier reading looked at the
+three `comiss`/`ucomiss` uses of `mStepHeight` and concluded nothing quantised
+the height, which was an absence claim over a function that contains the
+quantisation twelve bytes away.
 
 ### Where a lift's two connections sit — `lift.connectors`
 
@@ -604,8 +620,8 @@ placement because it is not a validator. The shipped twenty-four:
 | --- | --- |
 | `refuse` | `belt.curvature`, `belt.incline`, `belt.min_length`, `belt.max_length`, `pipe.min_length`, `pipe.curvature`, `pipe.max_length`, `pipe.fluid_requirements`, `lift.placement`, `buildable.clearance` |
 | `clamp` | `lift.height_range` |
-| `snap` | `belt.snap_directions`, `buildable.grid_snap` |
-| `none` | `lift.step` |
+| `snap` | `belt.snap_directions`, `buildable.grid_snap`, `lift.step` |
+| `none` | — (no shipped rule claims one) |
 | `compute` | `belt.cost`, `belt.clearance`, `lift.clearance`, `lift.connectors`, `lift.top_yaw`, `belt.straight_tangents`, `buildable.rotation_step`, `manufacturer.inventory_filters`, `factory.potential`, `manufacturer.production_boost` |
 
 Two of those deserve their own sentence. `buildable.clearance` is `partial` —
@@ -623,31 +639,32 @@ disagrees with the rule. That replaced an `enforced_by` field which claimed the
 grid, the rotation step, the lift heights and the lift step were all *enforced*,
 when the rules behind them clamp and snap.
 
-`lift.step` governs nothing: a rule whose effect is `none` does nothing to the
-number, so `lift_step_cm` is *ungoverned* in `registry.json` and carries the
-reason "AFGConveyorLiftHologram compares mStepHeight (lift.step evidence) but
-never quantises a height to it; the multiple is this project's own stricter rule
-(spec section 10)". Its source stays `binary` — the constructor value is real
-game data; what is not game data is the claim that a lift's height has to be a
-multiple of it.
+`lift.step` governs `lift_step_cm` with the effect `snap`: `UpdateTopTransform`
+rounds a lift's height onto a multiple of it, and rounding is not refusing. So
+the registry carries the number, its source `binary` and its governance, and a
+placer reads all three — the height it authors has to be a multiple of 100 cm
+because the game would otherwise move the lift, which is a reason of ours built
+on a fact of theirs.
 
 ## What was extracted, and what was not
 
-`hologram_rules.json` carries twenty-four rules; twenty are `extracted` and
-four `partial`. A `partial` rule is a **bound the placer must not assume it
+`hologram_rules.json` carries twenty-four rules; twenty-one are `extracted` and
+three `partial`. A `partial` rule is a **bound the placer must not assume it
 knows** — its `comparison` names where the comparison actually is, and its
 `interpretation` is a lead for the next extraction, not a constraint.
 
-The three reasons a rule is only `partial`:
+The two reasons a rule is only `partial`:
 
 - **the comparison is in a callee** — `buildable.clearance`
   (`AFGHologram::TestClearanceOverlap`), `buildable.grid_snap`
   (`FHologramHelpers::SnapToFloor`);
 - **a number is in `.data`** — `lift.clearance`, whose two functions were both
   read whole and whose box half-extent is a mutable module global
-  `sfy-native` will not quote as a constant;
-- **the rule may not exist** — `lift.step`, where nothing in
-  `UpdateTopTransform` quantises a height to `mStepHeight`.
+  `sfy-native` will not quote as a constant.
+
+There used to be a third — "the rule may not exist", claimed for `lift.step` —
+and it was a misreading rather than a reason: the quantisation is in the
+function, and the rule is `extracted` now.
 
 `belt.clearance` used to be in the first list and is not any more: its callee
 `AFGBuildableConveyorBelt::CreateClearanceData` was read whole, so the boxes it

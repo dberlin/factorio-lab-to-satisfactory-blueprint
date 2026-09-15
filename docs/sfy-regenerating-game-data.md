@@ -309,9 +309,10 @@ is the one in the shipped file. **Only the effect
 and `compute` only works a number out, so a validator that treats any of the
 three as a bound refuses builds the game accepts. A
 rule whose effect is `none` governs nothing and is never named here — the limit
-it was read beside is `ungoverned`, with the rule's id in the reason (this is
-`lift_step_cm` and `lift.step`). The merge refuses to write when a limit's
-copied effect or copied status is not the one its rule states.
+it was read beside is `ungoverned`, with the rule's id in the reason. No shipped
+rule claims `none` today; `lift_step_cm` used to be that case and is now
+governed by `lift.step` with the effect `snap`. The merge refuses to write when
+a limit's copied effect or copied status is not the one its rule states.
 
 It refuses to write when the sources contradict each other: a header against the
 binary, a port whose `direction_source` is not one of the four game sources, an

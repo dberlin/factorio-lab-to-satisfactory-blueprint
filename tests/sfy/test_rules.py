@@ -99,7 +99,7 @@ def test_the_effects_the_shipped_rules_state():
         "pipe.max_length": "refuse",
         "pipe.fluid_requirements": "refuse",
         "lift.height_range": "clamp",
-        "lift.step": "none",
+        "lift.step": "snap",
         "lift.placement": "refuse",
         "lift.connectors": "compute",
         "lift.top_yaw": "compute",

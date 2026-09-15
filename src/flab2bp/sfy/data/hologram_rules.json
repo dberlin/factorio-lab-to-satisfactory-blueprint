@@ -720,7 +720,7 @@
     "UFGFactoryConnectionComponent::GetConnectorNormal"
    ],
    "class": "AFGConveyorLiftHologram",
-   "comparison": "mStepHeight is read once, at 0xaa46e8, and every use of it in UpdateTopTransform is a comparison against the wanted height (0xaa48ca ucomiss, 0xaa48db and 0xaa4965 comiss) choosing the upward or downward branch -- not a quantisation. The one rounding in the function is the passthrough case at 0xaa4830..0xaa4859, which takes the passthrough's own thickness modulo 100 (0xaa4834 imul / 0xaa4836 sar edx,5 / 0xaa4843 sub, the compiler's divide by 100) and adds mStepHeight to it (0xaa4863/0xaa4867). No instruction here snaps a free height to a multiple of mStepHeight.",
+   "comparison": "UpdateTopTransform loads mStepHeight into xmm7 once, at 0xaa46e8, and quantises the height with it: FHologramHelpers::CalcPoleHeight hands the raw height back in xmm0 (0xaa474f), 0xaa4754 loads 0.5 out of .rdata at 0xf6dee8, 0xaa4769 `divss xmm0, xmm7` divides by the step, 0xaa476d `addss xmm0, xmm8` adds the half, 0xaa4772 moves the sum into xmm1 and 0xaa4776 `roundps xmm6, xmm1, 1` floors it (imm8 1 is round-toward-minus-infinity), and 0xaa477c `mulss xmm6, xmm7` multiplies the whole number of steps back by the step -- floor(raw / mStepHeight + 0.5) * mStepHeight. xmm6 is the snapped height, and it is what every later use reads: the zero test at 0xaa48ca, the sign agreement at 0xaa48db, and both ends of lift.height_range's clamp (0xaa4965 comiss, 0xaa4979 minss, 0xaa497d maxss). The passthrough case at 0xaa480f..0xaa4867 is separate arithmetic on the same step: it takes the passthrough's own thickness modulo 100 into edi (0xaa4830 cvttss2si, 0xaa4834 imul / 0xaa4836 sar edx,5 / 0xaa4843 sub, the compiler's divide by 100), subtracts it from mMinimumHeightWithVerticalConnection (0xaa4859) and adds mStepHeight to that floor (0xaa4863/0xaa4867); edi rides through the clamp as xmm4 (0xaa4970/0xaa4974) and is added back at 0xaa4981, or subtracted at 0xaa49a3 on the downward branch.",
    "constants": [
     "0x12bd258 f32=2.5 f64=5.315350785e-315",
     "0x12d6478 f32=3.5 f64=5.3360734e-315",
@@ -737,9 +737,16 @@
     "0xf6dee8 f32=0.5 f64=7.673846642970894e+21",
     "0xfd7950 f32=-0.0 f64=-1.0609978955e-314"
    ],
-   "effect": "none",
+   "effect": "snap",
    "evidence": [
     "0xaa46e8: movss xmm7,dword ptr [rcx+8E0h]  ; AFGConveyorLiftHologram::mStepHeight @2272",
+    "0xaa474f: call 0000000000AFF930h  ; -> FHologramHelpers::CalcPoleHeight",
+    "0xaa4754: movss xmm8,dword ptr [0F6DEE8h]  ; const 0xf6dee8 f32=0.5 f64=7.673846642970894e+21",
+    "0xaa4769: divss xmm0,xmm7",
+    "0xaa476d: addss xmm0,xmm8",
+    "0xaa4772: movss xmm1,xmm0",
+    "0xaa4776: roundps xmm6,xmm1,1",
+    "0xaa477c: mulss xmm6,xmm7",
     "0xaa480f: movss xmm1,dword ptr [rbx+8E0h]  ; AFGConveyorLiftHologram::mStepHeight @2272",
     "0xaa482c: addss xmm2,xmm1",
     "0xaa4830: cvttss2si edi,xmm2",
@@ -749,12 +756,18 @@
     "0xaa4867: movss dword ptr [rbx+8ECh],xmm1  ; AFGConveyorLiftHologram::mMinimumHeightWithVerticalConnection @2284",
     "0xaa48ca: ucomiss xmm6,xmm7",
     "0xaa48db: comiss xmm6,xmm7",
-    "0xaa4965: comiss xmm6,xmm7"
+    "0xaa4965: comiss xmm6,xmm7",
+    "0xaa4970: movd xmm4,edi",
+    "0xaa4974: cvtdq2ps xmm4,xmm4",
+    "0xaa4979: minss xmm2,xmm6",
+    "0xaa497d: maxss xmm2,xmm3",
+    "0xaa4981: addss xmm2,xmm4",
+    "0xaa49a3: subss xmm2,xmm4"
    ],
    "function": "UpdateTopTransform",
    "header": "Hologram/FGConveyorLiftHologram.h:107",
    "id": "lift.step",
-   "interpretation": "mStepHeight is 100.0 in the shipped build (a BeginPlay store, data/native.json), but this extraction does not show the hologram quantising a lift's height to it. The claim that every legal height is a whole number of steps above the minimum is arithmetic on the BeginPlay values, not a rule read from the binary. Until the quantisation is found -- most likely in the mesh-building path that UpdateTopTransform feeds -- a placer should keep to multiples of mStepHeight because they are known-good, not because the game was seen to require them.",
+   "interpretation": "A conveyor lift's height is SNAPPED: the hologram rounds the raw height half-up onto a multiple of mStepHeight before it clamps it into lift.height_range's window, so a height that is not a multiple of the step is a height the game silently moves rather than one it refuses. mStepHeight is 100.0 in the shipped build (a BeginPlay store, data/native.json), which is why registry.json's lift_step_cm is governed by this rule with the effect snap. Nothing here turns a placement away, so a validator that refuses a height off the step is stating this project's own rule, with this snap as its reason: a lift we author off the lattice would be built somewhere other than where it was costed. The one exception the instructions state is a lift snapped to a passthrough, which carries that passthrough's thickness modulo 100 through the clamp and back and so sits off the lattice by exactly that remainder; this project authors no passthroughs.",
    "reads": [
     "RootComponent",
     "mMaximumHeight",
@@ -766,7 +779,7 @@
     "mTopTransform"
    ],
    "rva": "0xaa4680",
-   "status": "partial"
+   "status": "extracted"
   },
   {
    "calls": [

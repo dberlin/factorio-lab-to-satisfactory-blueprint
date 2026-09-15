@@ -396,9 +396,10 @@ def test_what_the_game_does_with_each_governed_limit():
 
     ``enforced_by`` used to claim every one of these was turned away, which the
     rules themselves contradict: a lift's height is clamped into range, the grid
-    and the rotation step are snapped to. ``lift_step_cm`` is not here at all:
-    no instruction was seen quantising a lift's height to ``mStepHeight``, so
-    nothing governs it and it says so under ``ungoverned``.
+    and the rotation step are snapped to, and so is the lift's height before the
+    clamp -- ``UpdateTopTransform`` rounds it onto a multiple of ``mStepHeight``
+    (``lift.step``), which is why ``lift_step_cm`` is governed with the effect
+    ``snap`` and not refused by anything in the game.
     """
     governed = {
         key: entry["governed_by"]["effect"]
@@ -410,6 +411,7 @@ def test_what_the_game_does_with_each_governed_limit():
         "belt_bend_radius_cm": "refuse",
         "belt_max_incline_deg": "refuse",
         "belt_min_length_cm": "refuse",
+        "lift_step_cm": "snap",
         "lift_min_cm": "clamp",
         "lift_max_cm": "clamp",
         "lift_min_vertical_cm": "clamp",
@@ -455,16 +457,15 @@ def test_the_limits_no_rule_governs_say_why():
         if not entry["governed_by"]
     }
     assert set(ungoverned) == {
-        "lift_step_cm",
         "pipe_bend_radius_cm",
         "pipe_bend_radius_2d_cm",
         "wire_max_cm",
     }
     assert all(reason for reason in ungoverned.values())
-    # The lift step is still read out of the binary; what it is not is a bound
-    # the game applies. The multiple this project keeps to is its own rule.
-    assert "mStepHeight" in ungoverned["lift_step_cm"]
-    assert "never quantises" in ungoverned["lift_step_cm"]
+    # The lift step is no longer one of them: lift.step governs it with the
+    # effect ``snap``, because UpdateTopTransform rounds the height onto a
+    # multiple of mStepHeight before it clamps it.
+    assert reg.provenance["limits"]["lift_step_cm"]["governed_by"]["rule"] == "lift.step"
     assert load_registry().limits_sources["lift_step_cm"] == "binary"
 
 
