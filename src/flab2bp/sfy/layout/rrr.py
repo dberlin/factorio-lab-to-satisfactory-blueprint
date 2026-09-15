@@ -14,7 +14,7 @@ Failures are RETURNED, not raised: the packer
 (Task 8) is the caller that decides whether to move a machine, and a routing
 refusal swallowed here would be a strategy quietly shipping half a build.
 
-**Three ways a net loses its round, and only one of them proves anything.**
+**Four ways a net loses its round, and only one of them proves anything.**
 
 1. The search found no path.  Only a sealed pocket proves the geometry refused;
    a budget or a deadline proves only that a bound ended it, which is why
@@ -45,6 +45,21 @@ refusal swallowed here would be a strategy quietly shipping half a build.
    measured that closing one lift's bottom in an open corridor simply moves the
    lift one node sideways, so a loop that retried until it settled would retry
    for ever.
+
+4. The path stood in its own trunk's shadow.  A tap side has to be OPENED for
+   the query that may start there, and an opened node is passable for the whole
+   path, so a branch can leave one tap and then run along the line of tap sides
+   a grid step from its own trunk.  :func:`_in_the_shadow` catches that on the
+   path that comes back and the sides it walked through are shut for the next
+   query -- a correction rather than congestion, so nothing is charged for it.
+
+**What the loop shuts before it asks anything** (:func:`_shut_shafts`).  A port
+terminal's node and its reach lie inside the machine's own hard box, so a lift
+with either end on one of them has its column inside that box and can never be
+built.  The kernel cannot know that -- a lift row names no intermediate node --
+so every query shuts the shaft over every port of the net it is routing, and the
+net spends its round arguing about belts rather than about the same illegal lift
+at thirty different heights.
 
 **A tap is a splitter standing on a committed run** (R-M3-7, and the DSP
 junction shape of §1.15).  The first sink of a net is routed from its sources;
@@ -145,18 +160,20 @@ belt that walled another net in has to be worth moving.
 """
 
 LIFT_RETRIES = 3
-"""How many times one net may be re-queried over an occupied lift column.
+"""How many TRIES one net gets against an occupied lift column, in one round.
 
-A COUNT, not a convergence.  Task 5 measured that closing one lift's bottom node
-in an open corridor moves the lift one node sideways and proposes it again, so
-there is no fixed point to iterate to; after this many tries the net is stranded
-for the round and the next round's pressure and history do the arguing.
+The ruling's count, and a count rather than a convergence: Task 5 measured that
+closing one lift's bottom node in an open corridor moves the lift one node
+sideways and proposes it again, so there is no fixed point to iterate to.  Three
+is the whole allowance -- the first query and two more -- after which the net is
+stranded for the round and the next round's pressure and history do the arguing.
 """
 
 REALISE_RETRIES = 3
-"""How many times one net may be re-queried over a path the realiser refused.
+"""How many TRIES one net gets against a path the build refused, in one round.
 
-Covers ``corner``, ``leg``, ``lift`` and ``stub`` together, for the same reason
+Covers ``corner``, ``leg``, ``lift`` and ``stub`` together -- and the shadow
+correction, which is the one kind that charges nothing -- for the same reason
 :data:`LIFT_RETRIES` is a count: the blamed nodes are closed and the next query
 usually returns the same shape one node over.
 """
@@ -269,8 +286,12 @@ class _Branch:
     source: Terminal | None
     #: Where it ends, unless it merges into another branch.
     sink: Terminal | None
-    #: What arrives at its far end: a sink's draw, or a source's whole output.
-    delivered: Fraction
+    #: The one rate this branch's own terminal fixes, and WHICH end it fixes is
+    #: what ``merging`` says: a branch that feeds a sink is pinned at its far
+    #: end, by that sink's draw; a branch that carries a spare source into the
+    #: tree is pinned at its NEAR end, by that source's whole output.  Which end
+    #: is pinned is which end :func:`_flows` counts from.
+    pinned: Fraction
     tap: _Tap | None
     merging: bool
 
@@ -293,7 +314,9 @@ class _Try:
     realised: tuple[Realised, ...] = ()
     columns: tuple[tuple[Node, Node], ...] = ()
     routed: Routed | None = None
-    #: ``""`` where there is a tree; else ``"route"``, ``"realise"`` or ``"lift"``.
+    #: ``""`` where there is a tree; else ``"route"``, ``"realise"``, ``"lift"``
+    #: or ``"shadow"`` -- a path that stood in its own trunk's shadow, which is
+    #: corrected rather than priced and so is charged nothing.
     failure: str = ""
     #: What to charge the congestion history: the nodes the refusal NAMED.
     nodes: tuple[Node, ...] = ()
@@ -434,6 +457,28 @@ class _Run:
             self.owners.pop(stake, None)
         self.held = {node: owner for node, owner in self.held.items() if owner != net_id}
 
+    def foreign(self, node: Node, net_id: int) -> bool:
+        """Whether another net's belt is standing ON ``node`` or a step from it.
+
+        ``owner`` cannot answer this: a node two runs both deny records the
+        FIRST of them, so a node this net's own trunk shadows reads back as this
+        net's however many others shadow it too.  What can answer it is the one
+        thing this loop keeps itself -- which net each committed PATH node
+        belongs to -- because a node a grid step from a run is exactly a node in
+        that run's shadow (R-M3-2).
+
+        Stricter than R-M3-2 by one node, and ours: the rule keeps the node
+        BEYOND a run's last node free for a belt crossing it, and this refuses
+        that node too rather than stand a splitter's side belt on the one node
+        the rule was holding open for somebody else.
+        """
+        if self.held.get(node, net_id) != net_id:
+            return True
+        return any(
+            self.held.get((node[0] + dx, node[1] + dy, node[2]), net_id) != net_id
+            for dx, dy in FLAT_STEPS
+        )
+
     def blocker(self, node: Node) -> int | None:
         """Which net is holding or SHADOWING ``node``, if any.
 
@@ -471,8 +516,14 @@ class _Run:
 
         Keyed by the node the side port stands on, because that is what a query
         is offered: the tap node itself is where the attachment goes and no belt
-        ever stands there.  A side node the world denies, or one another belt is
-        already standing on, is not offered at all.
+        ever stands there.
+
+        A side node is offered only when it is THIS net's to open.  The world
+        may deny it; another belt may be standing on it; and -- the case the
+        first cut of this module missed -- another net's belt may be SHADOWING
+        it, which denies it just as surely, because two belts a grid step apart
+        lap by 58 cm.  The trunk's own shadow is the one that does not count:
+        that is what a tap is.
         """
         paths = [branch.path for branch in branches]
         breaks = {branch.tap.node for branch in branches if branch.tap is not None}
@@ -494,6 +545,8 @@ class _Run:
                 if not self.lattice.holds(side) or side in self.held:
                     continue
                 if self.occupancy.base[self.lattice.index(side)] == 0:
+                    continue
+                if self.foreign(side, net.id):
                     continue
                 out[side] = _Tap(branch=index, index=position, node=node, side=side)
         return out
@@ -652,6 +705,52 @@ def _in_the_doorway(run: _Run, net: GridNet) -> tuple[Node, ...]:
     return tuple(named)
 
 
+def _shut_shafts(run: _Run, net: GridNet) -> tuple[Node, ...]:
+    """Every node over a machine port that a lift could land on, shut in advance.
+
+    A port terminal's node and its reach lie INSIDE the machine's hard box
+    (R-M3-2 (d)), so a lift with either end on one of them has its column inside
+    that box and can never be built: the column check refuses it, every time, at
+    every height.  The kernel cannot know that -- a lift row names no
+    intermediate node, which is the whole reason the column is checked here --
+    so left to itself it offers the move, the builder refuses it, and the net
+    spends its round's whole allowance proving the same thing one level higher.
+
+    Saying it once, per query, costs this net only the right to fly over its own
+    port's column, and the nodes it gives up there are inside the machine for
+    most of their height anyway.  Wall terminals stand in open floor and keep
+    their shafts.
+    """
+    lattice = run.lattice
+    out: list[Node] = []
+    for terminal in (*net.sources, *net.sinks):
+        if terminal.kind != "port":
+            continue
+        for node in (terminal.node, *terminal.reach):
+            out.extend((node[0], node[1], level) for level in range(node[2] + 1, lattice.n + 1))
+    return tuple(out)
+
+
+def _in_the_shadow(walked: Sequence[Node], sides: Collection[Node]) -> tuple[Node, ...]:
+    """Tap sides a path STOOD on rather than started or ended at.
+
+    Every tap side a query is offered has to be opened for it, because the
+    kernel starts only on a passable node -- and an opened node is passable for
+    the whole path, not only for its first step.  So a path may leave one tap
+    and then run along the line of tap sides beside its own trunk, which is a
+    belt a grid step from another belt: 58 cm of lap, and a collision the
+    validator would report.
+
+    Nothing in a movement table can say "you may stand here only first", so this
+    is checked on the path that comes back.  ``walked`` is the path with the one
+    end that is ALLOWED to be a tap side cut off it -- the first node of a
+    branch that leaves a splitter, the last of one that feeds a merger -- and
+    anything of ``sides`` left in it is a node the next query is asked to shut.
+    A correction, not congestion: nothing is charged for it.
+    """
+    return tuple(node for node in walked if node in sides)
+
+
 def _route_one(run: _Run, net: GridNet) -> _Try:
     """One net, retried within the round over what the build itself refused.
 
@@ -661,11 +760,15 @@ def _route_one(run: _Run, net: GridNet) -> _Try:
     are the BUILD refusing a path the search was right to offer, so the nodes
     that refused it are charged and closed and the same net asks again, a
     bounded number of times (:data:`REALISE_RETRIES`, :data:`LIFT_RETRIES`).
+
+    The first query already has :func:`_shut_shafts` closed against it, so none
+    of those tries is spent on a lift out of the net's own port -- a move the
+    movement table offers and the column check can only ever refuse.
     """
     own = {
         node for terminal in (*net.sources, *net.sinks) for node in (terminal.node, *terminal.reach)
     }
-    closed: set[Node] = set()
+    closed: set[Node] = set(_shut_shafts(run, net))
     lift_tries = 0
     realise_tries = 0
     while True:
@@ -678,11 +781,11 @@ def _route_one(run: _Run, net: GridNet) -> _Try:
             return attempt
         if attempt.failure == "lift":
             lift_tries += 1
-            if lift_tries > LIFT_RETRIES:
+            if lift_tries >= LIFT_RETRIES:
                 return attempt
         else:
             realise_tries += 1
-            if realise_tries > REALISE_RETRIES:
+            if realise_tries >= REALISE_RETRIES:
                 return attempt
         # A net's own port is never closed against it.  A corner at the first
         # node of a run, and a lift whose bottom stands on the port it leaves,
@@ -690,7 +793,14 @@ def _route_one(run: _Run, net: GridNet) -> _Try:
         # correct the query, it would refuse to route the net at all -- and the
         # refusal would come back as ``dynamic-access``, which says the port was
         # unreachable when what really happened is that this loop shut it.
+        #
+        # And where that leaves nothing new shut, the next query is the query
+        # just asked: the same flags, the same answer.  Stop rather than spend
+        # the allowance proving it.
+        before = len(closed)
         closed.update(node for node in attempt.shut if node not in own)
+        if len(closed) == before:
+            return attempt
 
 
 def _attempt(run: _Run, net: GridNet, closed: Collection[Node]) -> _Try:
@@ -723,6 +833,9 @@ def _attempt(run: _Run, net: GridNet, closed: Collection[Node]) -> _Try:
         if routed.path is None:
             return _Try(failure="route", routed=routed)
         path = _cut_loops(routed.path)
+        stray = _in_the_shadow(path[1:], taps)
+        if stray:
+            return _Try(failure="shadow", shut=stray, routed=routed)
         head = starts[path[0]]
         if isinstance(head, _Tap):
             branches.append(
@@ -730,7 +843,7 @@ def _attempt(run: _Run, net: GridNet, closed: Collection[Node]) -> _Try:
                     path=path,
                     source=None,
                     sink=sink.at(path[-1]),
-                    delivered=sink.rate,
+                    pinned=sink.rate,
                     tap=head,
                     merging=False,
                 )
@@ -741,7 +854,7 @@ def _attempt(run: _Run, net: GridNet, closed: Collection[Node]) -> _Try:
                     path=path,
                     source=sources[head].at(path[0]),
                     sink=sink.at(path[-1]),
-                    delivered=sink.rate,
+                    pinned=sink.rate,
                     tap=None,
                     merging=False,
                 )
@@ -757,12 +870,15 @@ def _attempt(run: _Run, net: GridNet, closed: Collection[Node]) -> _Try:
         if routed.path is None:
             return _Try(failure="route", routed=routed)
         path = _cut_loops(routed.path)
+        stray = _in_the_shadow(path[:-1], taps)
+        if stray:
+            return _Try(failure="shadow", shut=stray, routed=routed)
         branches.append(
             _Branch(
                 path=path,
                 source=sources[index].at(path[0]),
                 sink=None,
-                delivered=sources[index].rate,
+                pinned=sources[index].rate,
                 tap=taps[path[-1]],
                 merging=True,
             )
@@ -827,22 +943,41 @@ def _flows(
 ) -> list[tuple[Fraction, ...]]:
     """What every PIECE of every branch carries, in path order -- R-M3-7.
 
-    Read from each branch's far end backwards: what arrives there is the sink's
-    own draw (or, on a branch that merges, the whole of its source's output), and
-    every junction above it adds back what a splitter sends away or takes off
-    what a merger brings in.  A child is always routed after its parent, so the
-    branches are already in an order where a child's answer is known before its
-    parent needs it.
+    Items travel a branch in path order, so a junction on it CHANGES what the
+    branch carries from there on: a splitter sends ``carried_in`` of its child
+    away, and a merger brings ``carried_out`` of its child in.  Those deltas are
+    the same however the branch is read; what differs is which end of the branch
+    the arithmetic can start from, and that is the end its own terminal pins.
+
+    A branch that feeds a sink is pinned at its FAR end -- the sink draws what it
+    draws -- so it is read backwards, adding a splitter's child back on and
+    taking a merger's child back off.  A branch that carries a spare source into
+    the tree is pinned at its NEAR end -- the source makes what it makes -- so it
+    is read FORWARDS.  Reading a merging branch backwards from its source's rate
+    is what the first cut of this module did, and it is wrong the moment a
+    second spare source merges into it: both of its pieces come out short by the
+    child's rate, which under-tiers the belt and can go negative.
+
+    A child is always routed after its parent, so the branches are already in an
+    order where a child's answer is known before its parent needs it.
     """
     pieces: list[tuple[Fraction, ...]] = [()] * len(branches)
     for index in reversed(range(len(branches))):
-        flow = branches[index].delivered
+        deltas = [
+            pieces[child][-1] if branches[child].merging else -pieces[child][0]
+            for child in children[index]
+        ]
+        flow = branches[index].pinned
+        if branches[index].merging:
+            walked = [flow]
+            for delta in deltas:
+                flow += delta
+                walked.append(flow)
+            pieces[index] = tuple(walked)
+            continue
         walked = [flow]
-        for child in reversed(children[index]):
-            if branches[child].merging:
-                flow -= pieces[child][-1]
-            else:
-                flow += pieces[child][0]
+        for delta in reversed(deltas):
+            flow -= delta
             walked.append(flow)
         pieces[index] = tuple(reversed(walked))
     return pieces
@@ -944,13 +1079,20 @@ def _stand(run: _Run, branches: Sequence[_Branch], child: int) -> _Stood:
     left = (-flow[1], flow[0])
     on_left = (tap.side[0] - tap.node[0], tap.side[1] - tap.node[1]) == left
     sign = 1.0 if on_left else -1.0
+    # A splitter takes one belt in and sends three out, a merger the other way
+    # round, so which direction the SIDE port has is the class's own answer and
+    # not a third thing to decide here.
+    side_direction = "input" if branch.merging else "output"
     return _Stood(
         obj=obj,
-        through_in=_pick(ports, class_name, lambda t: t[0] < -LATTICE_TOUCH_CM, _straight),
-        through_out=_pick(ports, class_name, lambda t: t[0] > LATTICE_TOUCH_CM, _straight),
+        through_in=_pick(ports, class_name, "input", lambda t: t[0] < -LATTICE_TOUCH_CM, _straight),
+        through_out=_pick(
+            ports, class_name, "output", lambda t: t[0] > LATTICE_TOUCH_CM, _straight
+        ),
         side=_pick(
             ports,
             class_name,
+            side_direction,
             lambda t: t[1] * sign > LATTICE_TOUCH_CM,
             lambda t: abs(t[0]) <= LATTICE_TOUCH_CM,
         ),
@@ -964,19 +1106,28 @@ def _straight(translation: Vector) -> bool:
 def _pick(
     ports: Sequence[Port],
     class_name: str,
+    direction: str,
     along: Callable[[Vector], bool],
     across: Callable[[Vector], bool],
 ) -> Port:
-    """One of an attachment's four belt ports, by where it stands on the object.
+    """One of an attachment's four belt ports, by where it stands and which way
+    it runs.
 
-    By POSITION rather than by name: the game's own splitter and merger put
+    By POSITION rather than by name -- the game's own splitter and merger put
     their through ports on ``+-X`` and their side ports on ``+-Y``, and a port
-    name is not a source for anything (global constraint 1).
+    name is not a source for anything (global constraint 1) -- and by
+    ``direction``, which is read out of the same registry entry.  Both, because
+    position alone would wire a belt into the wrong end of an attachment the
+    moment a class laid its ports out differently, and ``ports.direction`` is
+    the check that would then fail.
     """
     for port in ports:
-        if along(port.translation) and across(port.translation):
+        if port.direction == direction and along(port.translation) and across(port.translation):
             return port
-    raise NetError("data", f"{class_name} has no belt port where an attachment turn needs one")
+    raise NetError(
+        "data",
+        f"{class_name} has no belt {direction} port where an attachment turn needs one",
+    )
 
 
 def _through(run: _Run, stood: _Stood, node: Node, *, leaving: bool) -> Terminal:

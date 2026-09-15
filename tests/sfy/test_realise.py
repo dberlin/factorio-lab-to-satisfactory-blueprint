@@ -514,3 +514,4 @@ def test_every_belt_is_longer_than_the_minimum(seed: int) -> None:
     assert len(realised.lifts) == len(columns)
     for belt in realised.belts:
         assert _chord_cm(belt) >= floor
+    _judge(realised, only=BELT_CHECKS | LIFT_CHECKS)
