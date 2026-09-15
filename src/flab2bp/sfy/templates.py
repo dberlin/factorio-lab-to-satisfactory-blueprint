@@ -162,7 +162,12 @@ class TemplateLibrary:
         return cls(templates)
 
     def instantiate(
-        self, class_name: str, name_id: int, transform: Transform
+        self,
+        class_name: str,
+        name_id: int,
+        transform: Transform,
+        *,
+        connections: tuple[ObjectRef, ObjectRef] | None = None,
     ) -> tuple[tuple[ObjectHeader, ObjectData], ...]:
         """A fresh copy of one template actor and its components.
 
@@ -172,6 +177,13 @@ class TemplateLibrary:
         which are remapped (see :func:`_map_value`), and the trailer, which is
         built fresh rather than copied so that nothing the template happened to
         be carrying -- items on a belt, a power line's wire state -- rides along.
+
+        ``connections`` is the one thing a fresh trailer cannot work out for
+        itself: a power line's trailer IS the two circuit connections it joins,
+        and only the placement knows which. Passing them here is what lets a wire
+        be stamped the same way every other object is;
+        :func:`~flab2bp.sfy.trailers.trailer_for_new` refuses them on any other
+        class, so they cannot be handed to something that has no use for them.
         """
         try:
             template = self.templates[class_name]
@@ -188,7 +200,7 @@ class TemplateLibrary:
                         ObjectRef(LEVEL, f"{new_path}.{h.name}") for h, _ in template.components
                     ),
                     properties=_instance_properties(template.data.properties, old_path, new_path),
-                    trailer=trailer_for_new(class_name, ACTOR),
+                    trailer=trailer_for_new(class_name, ACTOR, connections),
                 ),
             )
         ]

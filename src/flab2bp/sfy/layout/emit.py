@@ -26,11 +26,11 @@ A power line is written like everything else, with one difference: what joins it
 to the two connections it spans is not a property but its class trailer, which
 :func:`~flab2bp.sfy.trailers.trailer_for_new` builds from the pair of
 ``FObjectReferenceDisc`` that ``AFGBuildableWire::Serialize`` writes. The wire is
-stamped out of the fixture template like any other actor, but not through
-:meth:`TemplateLibrary.instantiate
-<flab2bp.sfy.templates.TemplateLibrary.instantiate>`, which builds an empty
-trailer: only the caller placing a wire knows the two connections that go in it.
-:func:`_wire_object` says what that costs and what it checks instead.
+stamped out of the fixture template through :meth:`TemplateLibrary.instantiate
+<flab2bp.sfy.templates.TemplateLibrary.instantiate>` like every other actor,
+which takes those two connections as ``connections=`` because only the caller
+placing a wire knows them. :func:`_wire_object` then authors the two properties
+that are about a wire rather than about stamping one.
 """
 
 from __future__ import annotations
@@ -66,16 +66,14 @@ from flab2bp.sfy.query import connected, find, object_index, spline_points
 from flab2bp.sfy.registry import Registry
 from flab2bp.sfy.spec import DESIGNER_CLASSES, Designer, designer
 from flab2bp.sfy.templates import (
-    ACTOR_PATH_PREFIX,
     LEVEL,
-    TemplateError,
     TemplateLibrary,
     apply_recipe,
     assemble,
     connect,
     set_spline,
 )
-from flab2bp.sfy.trailers import PowerLineTrailer, trailer_for_new
+from flab2bp.sfy.trailers import PowerLineTrailer
 
 __all__ = ["FIRST_NAME_ID", "EmitError", "decode", "emit"]
 
@@ -393,38 +391,34 @@ def _wire_object(
 ) -> tuple[ObjectHeader, ObjectData]:
     """One power line, stamped out of the fixture template.
 
-    Not through :meth:`TemplateLibrary.instantiate
-    <flab2bp.sfy.templates.TemplateLibrary.instantiate>`, which builds the
-    trailer with :func:`~flab2bp.sfy.trailers.trailer_for_new` and no
-    connections -- and a power line's trailer IS its two connections, which only
-    the placement knows.  What ``instantiate`` does besides that is copy the
-    template, rename it and rewrite the references that name the source
-    blueprint; the corpus's wires carry no such reference (every one is an asset
-    path with no level), so instead of repeating the rewrite this checks for one
-    and refuses rather than writing a reference into a file that has no object
-    at the other end.
+    Through :meth:`TemplateLibrary.instantiate
+    <flab2bp.sfy.templates.TemplateLibrary.instantiate>` like everything else in
+    this module: a power line's trailer IS its two circuit connections, which
+    only the placement knows, and ``instantiate`` takes them as ``connections``
+    and hands them to :func:`~flab2bp.sfy.trailers.trailer_for_new`.
 
-    Two properties are authored rather than copied.  ``mWireInstances`` goes out
-    EMPTY, because the game's loader throws the meshes away and rebuilds them
-    from the two connections -- ``AFGBuildableWire::Serialize``'s loading side
-    calls ``DestroyWireInstances`` and then
-    ``CreateWireInstancesBetweenConnections`` -- so a copy of some fixture's
-    meshes, at that save's own world coordinates, would be bytes the game
-    discards.  ``mCachedLength`` is the span this wire really covers rather than
-    the template's.
+    What is left here is the two things that are about a WIRE rather than about
+    stamping.  ``mWireInstances`` goes out EMPTY, because the game's loader
+    throws the meshes away and rebuilds them from the two connections --
+    ``AFGBuildableWire::Serialize``'s loading side calls
+    ``DestroyWireInstances`` and then ``CreateWireInstancesBetweenConnections``
+    -- so a copy of some fixture's meshes, at that save's own world coordinates,
+    would be bytes the game discards.  ``mCachedLength`` is the span this wire
+    really covers rather than the template's.
+
+    A wire owns no components in the corpus and carries no reference into the
+    blueprint it came out of; both are checked rather than assumed, because a
+    reference this file has no object for is a file the game cannot load.
     """
-    try:
-        template = library.templates[wire.class_name]
-    except KeyError:
-        raise TemplateError(f"no template for {wire.class_name}") from None
-    if template.components:
+    built = library.instantiate(wire.class_name, name_id, pose.transform(), connections=refs)
+    if len(built) != 1:
         raise EmitError(
-            f"the {wire.class_name} template owns {len(template.components)} components, and a "
+            f"the {wire.class_name} template owns {len(built) - 1} components, and a "
             "power line in the corpus owns none"
         )
-    path = f"{ACTOR_PATH_PREFIX}{wire.class_name}_{name_id}"
+    header, data = built[0]
     properties = []
-    for p in template.data.properties:
+    for p in data.properties:
         value = p.value
         if p.tag.name == WIRE_INSTANCES and isinstance(value, Array):
             value = replace(value, items=())
@@ -437,15 +431,7 @@ def _wire_object(
                 f"{stray.level}, which this blueprint has not got"
             )
         properties.append(Property(p.tag, value))
-    return (
-        replace(template.header, path=path, transform=pose.transform()),
-        replace(
-            template.data,
-            components=(),
-            properties=tuple(properties),
-            trailer=trailer_for_new(wire.class_name, ACTOR, refs),
-        ),
-    )
+    return (header, replace(data, properties=tuple(properties)))
 
 
 def _level_refs(value: Value) -> Iterator[ObjectRef]:

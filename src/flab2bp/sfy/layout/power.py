@@ -46,7 +46,8 @@ import math
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 
-from flab2bp.sfy.geometry import quat_rotate, world_port
+from flab2bp.sfy.geometry import box_bounds as geometry_box_bounds
+from flab2bp.sfy.geometry import world_port
 from flab2bp.sfy.layout.manifold import grid_ceil
 from flab2bp.sfy.layout.model import (
     AttachmentObj,
@@ -225,39 +226,15 @@ def machine_budget(registry: Registry, class_name: str) -> int:
 # --- clearance boxes, where they stand -------------------------------------
 
 
-def _rotator_axes(rotation: Vector) -> tuple[Vector, Vector, Vector]:
-    """``FRotationMatrix``'s three axes for a ``(pitch, yaw, roll)`` rotator in degrees."""
-    pitch, yaw, roll = (math.radians(angle) for angle in rotation)
-    cp, sp = math.cos(pitch), math.sin(pitch)
-    cy, sy = math.cos(yaw), math.sin(yaw)
-    cr, sr = math.cos(roll), math.sin(roll)
-    return (
-        (cp * cy, cp * sy, sp),
-        (sr * sp * cy - cr * sy, sr * sp * sy + cr * cy, -sr * cp),
-        (-(cr * sp * cy + sr * sy), cy * sr - cr * sp * sy, cr * cp),
-    )
-
-
 def box_bounds(box: ClearanceBox, pose: Pose) -> tuple[Vector, Vector]:
     """An axis-aligned ``(min, max)`` around one clearance box on an object.
 
-    The same composition the row builder measures a row with and the validator
-    places a box with: the box's own ``RelativeTransform`` (scale, then the
-    rotator, then the offset) and then the object's pose.
+    :func:`flab2bp.sfy.geometry.box_bounds` does the arithmetic -- the same
+    composition the validator places a box with and the row builder measures a
+    band with -- and this takes the :class:`~flab2bp.sfy.layout.model.Pose` a
+    placed object carries rather than its transform.
     """
-    axes = _rotator_axes(box.rotation)
-    half = [(box.max[i] - box.min[i]) / 2.0 * abs(box.scale[i]) for i in range(3)]
-    mid = [(box.max[i] + box.min[i]) / 2.0 * box.scale[i] for i in range(3)]
-    local = tuple(box.translation[i] + sum(mid[k] * axes[k][i] for k in range(3)) for i in range(3))
-    transform = pose.transform()
-    turned = quat_rotate(transform.rotation, (local[0], local[1], local[2]))
-    centre = [turned[i] + transform.translation[i] for i in range(3)]
-    world = [quat_rotate(transform.rotation, axis) for axis in axes]
-    reach = [sum(half[k] * abs(world[k][i]) for k in range(3)) for i in range(3)]
-    return (
-        (centre[0] - reach[0], centre[1] - reach[1], centre[2] - reach[2]),
-        (centre[0] + reach[0], centre[1] + reach[1], centre[2] + reach[2]),
-    )
+    return geometry_box_bounds(box, pose.transform())
 
 
 def _laps(a: tuple[Vector, Vector], b: tuple[Vector, Vector]) -> bool:

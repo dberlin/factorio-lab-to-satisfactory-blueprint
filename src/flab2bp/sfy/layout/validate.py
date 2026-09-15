@@ -52,7 +52,7 @@ from functools import cache, cached_property
 from pathlib import Path
 
 from flab2bp.sfy.archive import Reader
-from flab2bp.sfy.geometry import port_forward, quat_rotate, world_port
+from flab2bp.sfy.geometry import placed_box, port_forward, world_port
 from flab2bp.sfy.header import BlueprintHeader, read_header
 from flab2bp.sfy.labmap import LabMap, load_lab_map
 from flab2bp.sfy.layout.emit import EmitError, decode, emit
@@ -309,46 +309,21 @@ class WorldBox:
         return tuple(out)
 
 
-def _rotator_axes(rotation: Vector) -> tuple[Vector, Vector, Vector]:
-    """``FRotationMatrix``'s three axes for an ``FRotator`` in degrees.
-
-    :attr:`~flab2bp.sfy.registry.ClearanceBox.rotation` is a ``(pitch, yaw,
-    roll)`` rotator -- ``flab2bp.sfy.docs.quaternion_to_rotator`` converts the
-    game's exported quaternion into one so that a box's rotation is spelled the
-    same way a port's ``RelativeRotation`` is.
-    """
-    pitch, yaw, roll = (math.radians(a) for a in rotation)
-    cp, sp = math.cos(pitch), math.sin(pitch)
-    cy, sy = math.cos(yaw), math.sin(yaw)
-    cr, sr = math.cos(roll), math.sin(roll)
-    return (
-        (cp * cy, cp * sy, sp),
-        (sr * sp * cy - cr * sy, sr * sp * sy + cr * cy, -sr * cp),
-        (-(cr * sp * cy + sr * sy), cy * sr - cr * sp * sy, cr * cp),
-    )
-
-
 def _place_box(box: ClearanceBox, transform: Transform, owner: int, label: str) -> WorldBox:
     """``box`` on an actor standing at ``transform``.
 
-    An ``FFGClearanceData`` is a ``Min``/``Max`` box in the frame of its own
-    ``RelativeTransform``, which is itself relative to the actor, so the two
-    transforms compose: translation, rotation and scale off the box, then the
-    actor's rotation and translation.
+    The composition itself -- the box's own ``RelativeTransform`` and then the
+    actor's -- is :func:`flab2bp.sfy.geometry.placed_box`, which the pole placer
+    and the row builder measure with too; what is added here is the flags and the
+    label a finding names the box by.
     """
-    rel = _rotator_axes(box.rotation)
-    half = tuple((box.max[i] - box.min[i]) / 2.0 * abs(box.scale[i]) for i in range(3))
-    mid = tuple((box.max[i] + box.min[i]) / 2.0 * box.scale[i] for i in range(3))
-    local = tuple(box.translation[i] + sum(mid[k] * rel[k][i] for k in range(3)) for i in range(3))
-    turned = quat_rotate(transform.rotation, (local[0], local[1], local[2]))
-    centre = tuple(turned[i] + transform.translation[i] for i in range(3))
-    axes = tuple(quat_rotate(transform.rotation, axis) for axis in rel)
+    centre, axes, half = placed_box(box, transform)
     return WorldBox(
         owner=owner,
         label=label,
-        centre=(centre[0], centre[1], centre[2]),
-        axes=(axes[0], axes[1], axes[2]),
-        half=(half[0], half[1], half[2]),
+        centre=centre,
+        axes=axes,
+        half=half,
         soft=box.soft,
         exclude_for_snapping=box.exclude_for_snapping,
     )
