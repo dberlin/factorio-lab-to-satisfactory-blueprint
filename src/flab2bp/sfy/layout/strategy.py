@@ -179,6 +179,8 @@ _POWER_CAUSES = {
     "wire": "wire exceeds the maximum length",
     "room": "no room for a power pole",
     "port": "a machine has no power connection",
+    "data": GAME_DATA,
+    "limits": GAME_LIMITS,
 }
 
 COLUMN_TRIES = 100_000

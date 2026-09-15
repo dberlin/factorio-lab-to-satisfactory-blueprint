@@ -342,3 +342,77 @@ def test_a_two_row_build_refuses_rather_than_authoring_a_wire_it_cannot_reach() 
     with pytest.raises(NoValidLayout) as caught:
         ManifoldRows().lay_out(spec, designer("mk3", short), registry=short)
     assert caught.value.reason == "wire exceeds the maximum length"
+
+
+def test_a_pole_never_stands_outside_the_designer_the_row_is_in() -> None:
+    """The end candidates are half a pitch OUTSIDE the machine line.
+
+    A row whose machines reach the designer wall would put one of them past it,
+    and ``geom.bounds`` would refuse the build -- so they are clamped to the
+    floor the same way the band across ``Y`` is, and a midpoint between two
+    machines is taken instead.
+    """
+    registry = _registry()
+    row = _constructor_row(3)
+    frame = designer("mk3", registry)
+    # Stand the row hard against the +X wall: its last machine's own box ends
+    # exactly on it, so the candidate half a pitch further out is off the floor.
+    hard = frame.half_cm - 400.0
+    shift = hard - max(machine.pose.x for machine in row.machines)
+    moved = power.PowerRow(
+        tuple(
+            replace(machine, pose=replace(machine.pose, x=machine.pose.x + shift))
+            for machine in row.machines
+        ),
+        tuple(
+            replace(obj, pose=replace(obj.pose, x=obj.pose.x + shift)) for obj in row.attachments
+        ),
+    )
+    plan = power.place((moved,), registry, ids=itertools.count(10_000), designer=frame)
+    pole = registry.buildables[power.POLE_CLASS]
+    for placed in plan.poles:
+        for box in pole.clearance:
+            low, high = power.box_bounds(box, placed.pose)
+            assert -frame.half_cm <= low[0] and high[0] <= frame.half_cm
+
+
+def test_a_row_with_no_machines_in_it_refuses_rather_than_raising_from_max() -> None:
+    """A build with nothing in it at all gets no power and no complaint; a build
+    with an EMPTY row beside a real one used to raise a bare ``ValueError`` out
+    of ``max()``, which is not a cause anybody can act on."""
+    empty = power.PowerRow((), ())
+    assert (
+        power.place(
+            (empty,),
+            _registry(),
+            ids=itertools.count(10_000),
+            designer=designer("mk3", _registry()),
+        ).poles
+        == ()
+    )
+    with pytest.raises(power.PowerError) as caught:
+        row = _constructor_row(3)
+        power.place(
+            (power.PowerRow(row.machines, row.attachments), empty),
+            _registry(),
+            ids=itertools.count(10_000),
+            designer=designer("mk3", _registry()),
+        )
+    assert caught.value.cause == "room"
+
+
+def test_a_gap_in_the_game_data_is_not_reported_as_a_pole_that_will_not_fit() -> None:
+    """Two causes that were wearing other causes' names: a class the registry
+    has not got, and a limit it does not state."""
+    registry = _registry()
+    with pytest.raises(power.PowerError) as missing:
+        power.pole_grid_cm(registry, "Build_NotAThing_C")
+    assert missing.value.cause == "data"
+    gridless = replace(registry, limits=replace(registry.limits, hologram_grid_cm=None))
+    with pytest.raises(power.PowerError) as ungridded:
+        power.pole_grid_cm(gridless, power.POLE_CLASS)
+    assert ungridded.value.cause == "limits"
+    reachless = replace(registry, limits=replace(registry.limits, wire_max_cm={}))
+    with pytest.raises(power.PowerError) as unreachable:
+        power.wire_limit_cm(reachless, power.WIRE_CLASS)
+    assert unreachable.value.cause == "limits"

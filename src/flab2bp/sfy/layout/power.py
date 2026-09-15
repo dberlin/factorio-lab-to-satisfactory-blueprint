@@ -106,12 +106,22 @@ _EPS = 1e-6
 class PowerError(ValueError):
     """Power this module will not lay, with the cause the strategy names.
 
-    ``cause`` is a discriminator rather than prose: ``"wire"`` when no pole line
-    this module will stand puts a machine inside ``wire_max_cm``, ``"room"``
-    when no place in the designer holds a pole whose box meets no hard box, and
-    ``"port"`` when a class the build uses has no power connection to wire at
-    all.  :mod:`flab2bp.sfy.layout.strategy` turns it into the refusal a caller
-    sees, so the refusal strings live in one place.
+    ``cause`` is a discriminator rather than prose, and there are five:
+
+    * ``"wire"`` -- no pole line this module will stand puts a machine inside
+      ``wire_max_cm``;
+    * ``"room"`` -- nowhere in the designer holds a pole whose box meets no hard
+      box, or a row with nothing in it to stand one against;
+    * ``"port"`` -- a class the build uses has no power connection to wire, or
+      more than one;
+    * ``"data"`` -- the registry has no buildable of a class this stage was asked
+      about, which is a hole in the extraction rather than a fact about the
+      build;
+    * ``"limits"`` -- the registry states no bound this stage needs: the hologram
+      grid a pole snaps to, or a wire class's own maximum length.
+
+    :mod:`flab2bp.sfy.layout.strategy` turns each into the refusal a caller sees,
+    so the refusal strings live in one place.
     """
 
     def __init__(self, cause: str, detail: str) -> None:
@@ -160,7 +170,7 @@ def power_port(registry: Registry, class_name: str) -> Port:
     """
     buildable = registry.buildables.get(class_name)
     if buildable is None:
-        raise PowerError("port", f"the registry has no buildable called {class_name}")
+        raise PowerError("data", f"the registry has no buildable called {class_name}")
     ports = [port for port in buildable.ports if port.kind == "power"]
     if len(ports) != 1:
         raise PowerError(
@@ -183,17 +193,22 @@ def pole_grid_cm(registry: Registry, class_name: str) -> float:
     ``limits.hologram_grid_cm``: 100, read out of the shipped DLL.
 
     Taking the global grid where the class is silent is the safe reading in both
-    directions: 100 is a multiple of 50, so a pole placed on it stands on the
-    50 cm grid as well, whatever the Mk2's own hologram turns out to override.
+    directions, and ``buildable.grid_snap`` is why.  That rule's effect is
+    ``snap``, not ``refuse``: ``SnapToFloor`` loads ``mGridSnapSize`` and passes
+    it to ``FHologramHelpers::SnapToFloor``, which MOVES the hologram, and nothing
+    in it turns a placement away for standing off the grid.  So being on the
+    wrong grid would cost a nudge rather than a build -- and 100 is a multiple of
+    50, so a pole placed on the global grid stands on the 50 cm one as well,
+    whatever the Mk2's own hologram turns out to override.
     """
     buildable = registry.buildables.get(class_name)
     if buildable is None:
-        raise PowerError("port", f"the registry has no buildable called {class_name}")
+        raise PowerError("data", f"the registry has no buildable called {class_name}")
     if buildable.grid_snap_cm is not None:
         return buildable.grid_snap_cm
     grid = registry.limits.hologram_grid_cm
     if grid is None:
-        raise PowerError("room", "the registry states no hologram grid, so a pole has no grid")
+        raise PowerError("limits", "the registry states no hologram grid, so a pole has no grid")
     return grid
 
 
@@ -201,7 +216,7 @@ def wire_limit_cm(registry: Registry, class_name: str) -> float:
     """How far one wire of this class reaches, from ``limits.wire_max_cm``."""
     limit = registry.limits.wire_max_cm.get(class_name)
     if limit is None:
-        raise PowerError("wire", f"the registry gives {class_name} no maximum wire length")
+        raise PowerError("limits", f"the registry gives {class_name} no maximum wire length")
     return limit
 
 
@@ -311,15 +326,26 @@ def _steps(first: float, last: float, grid: float) -> list[float]:
     return out
 
 
-def _pole_xs(row: PowerRow, count: int, registry: Registry, grid: float) -> list[float]:
+def _pole_xs(
+    row: PowerRow, count: int, registry: Registry, grid: float, designer: Designer, width: float
+) -> list[float]:
     """Where ``count`` poles stand along the row, one per group of machines.
 
     **Ours**: the candidates are the midpoints of the machine pitch -- between
     each pair of neighbours, and half a pitch outside each end -- and each group
     of machines takes the free candidate nearest its own centre.  A midpoint is
     the one place along a row that is never inside a machine.
+
+    The two END candidates stand half a pitch OUTSIDE the machine line, so a row
+    whose machines reach the designer wall would put one outside it and
+    ``geom.bounds`` would refuse the build.  They are clamped to the designer the
+    same way :func:`_pole_band` clamps the band across ``Y``: a candidate whose
+    own box would leave the floor is dropped, and a row with nowhere left to
+    stand a pole refuses rather than standing one outside.
     """
     machines = sorted(row.machines, key=lambda m: m.pose.x)
+    if not machines:
+        raise PowerError("room", "a row with no machines in it has nowhere to stand a pole")
     xs = [machine.pose.x for machine in machines]
     if len(xs) > 1:
         pitch = min(b - a for a, b in itertools.pairwise(xs))
@@ -328,7 +354,16 @@ def _pole_xs(row: PowerRow, count: int, registry: Registry, grid: float) -> list
         low, _ = _boxes(registry, machines[0].class_name, machines[0].pose, soft=False)[0]
         pitch = 2.0 * (xs[0] - low[0])
         mids = []
-    candidates = [xs[0] - pitch / 2.0, *mids, xs[-1] + pitch / 2.0]
+    wall = designer.half_cm - width / 2.0
+    candidates = [
+        x for x in (xs[0] - pitch / 2.0, *mids, xs[-1] + pitch / 2.0) if abs(x) <= wall + _EPS
+    ]
+    if not candidates:
+        raise PowerError(
+            "room",
+            f"every place a pole could stand along this row is outside the "
+            f"{designer.mark} designer, whose floor ends at x = {wall:.0f}",
+        )
     taken: set[int] = set()
     out: list[float] = []
     for group in _groups(machines, count):
@@ -374,8 +409,11 @@ def _stand(
     origin = Pose(0.0, 0.0, 0.0, 0.0)
     spans = [box_bounds(box, origin) for box in pole.clearance]
     depth = max((high[1] - low[1] for low, high in spans), default=0.0)
+    width = max((high[0] - low[0] for low, high in spans), default=0.0)
+    if not row.machines:
+        raise PowerError("room", "a row with no machines in it has nowhere to stand a pole")
     z = min(machine.pose.z for machine in row.machines)
-    xs = _pole_xs(row, count, registry, grid)
+    xs = _pole_xs(row, count, registry, grid, designer, width)
     standing: list[MachineObj | AttachmentObj] = [*row.machines, *row.attachments]
     hard = [
         bounds

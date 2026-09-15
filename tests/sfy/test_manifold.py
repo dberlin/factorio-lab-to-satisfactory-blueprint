@@ -549,3 +549,39 @@ def test_the_band_covers_the_splitters_soft_box_and_not_only_the_hard_ones() -> 
         min(m.pose.y for m in row.machines) + hard_footprint_cm(REGISTRY.buildables[CONSTRUCTOR])[1]
     )
     assert reach < machines
+
+
+def test_a_chain_carries_the_last_machines_own_share_and_not_a_full_one() -> None:
+    """The odd machine at the end of a row runs at ``last_clock`` and eats less.
+
+    So the feeder into it carries ``rate * last_clock / clock`` and the chain
+    belt upstream of it carries what is still to come -- not ``rate * (count - i)
+    / count``, which is the same arithmetic only while every machine is at the
+    same clock.  ``flow.capacity`` holds the placement to exactly this, machine
+    by machine, and a tier chosen against a full-clock share would be a tier
+    chosen for a belt that never carries it.
+    """
+    group = _rods(3).model_copy(update={"last_clock": Fraction(1, 2)})
+    row = _row(group)
+    rate = group.inputs_per_machine["iron-ingot"]
+    shares = [rate, rate, rate / 2]
+    belts = {belt.id: belt for belt in row.belts}
+    machines = {machine.id: machine for machine in row.machines}
+    feeders = sorted(
+        (
+            belts[link.a[0]]
+            for link in row.links
+            if link.b[0] in machines
+            and link.a[0] in belts
+            and belts[link.a[0]].item_id == "iron-ingot"
+        ),
+        key=lambda belt: belt.start[0],
+    )
+    assert [belt.items_per_second for belt in feeders] == shares
+    fed = {belt.id for belt in feeders}
+    chain = sorted(
+        (belt for belt in row.belts if belt.item_id == "iron-ingot" and belt.id not in fed),
+        key=lambda belt: belt.start[0],
+    )
+    assert [belt.items_per_second for belt in chain] == [sum(shares[1:]), shares[2]]
+    assert row.chain_in[0].items_per_second == sum(shares, Fraction(0))

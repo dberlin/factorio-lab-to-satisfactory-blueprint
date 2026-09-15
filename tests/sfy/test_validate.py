@@ -476,6 +476,112 @@ def test_power_wires_refuses_a_machine_no_pole_reaches() -> None:
     assert _findings(replace(powered, wires=powered.wires[:1]), "power.wires") == ["power.wires"]
 
 
+def test_power_wires_reports_an_end_it_cannot_find_rather_than_passing_over_it() -> None:
+    """A wire whose length cannot be measured is a wire nobody has checked."""
+    placement = _placement()
+    pole = PoleObj(20, POLE, Pose(600.0, ROD_Y_CM, SLAB_TOP_CM, 0.0))
+    powered = replace(
+        placement,
+        poles=(pole,),
+        wires=(
+            WireObj(30, POWER_LINE, Link((20, "PowerConnection"), (ROD_ID, "PowerInput"))),
+            WireObj(31, POWER_LINE, Link((20, "PowerConnection"), (SCREW_ID, "PowerInput"))),
+        ),
+    )
+    assert _findings(powered, "power.wires") == []
+    astray = replace(
+        powered,
+        wires=(
+            replace(powered.wires[0], link=Link((20, "PowerConnection"), (ROD_ID, "Nowhere"))),
+            powered.wires[1],
+        ),
+    )
+    report = validate(astray, None, _registry(), only={"power.wires"})
+    assert [f.check for f in report.errors] == ["power.wires"]
+    assert "which is not a connection the registry gives it" in report.errors[0].message
+    assert report.errors[0].detail["end"] == "Nowhere"
+
+
+def test_power_wires_reports_a_class_the_registry_gives_no_reach() -> None:
+    placement = _placement()
+    pole = PoleObj(20, POLE, Pose(600.0, ROD_Y_CM, SLAB_TOP_CM, 0.0))
+    powered = replace(
+        placement,
+        poles=(pole,),
+        wires=(
+            WireObj(30, POWER_LINE, Link((20, "PowerConnection"), (ROD_ID, "PowerInput"))),
+            WireObj(31, POWER_LINE, Link((20, "PowerConnection"), (SCREW_ID, "PowerInput"))),
+        ),
+    )
+    registry = _registry()
+    reachless = replace(registry, limits=replace(registry.limits, wire_max_cm={}))
+    report = validate(powered, None, reachless, only={"power.wires"})
+    assert {f.check for f in report.errors} == {"power.wires"}
+    assert all("no wire_max_cm" in f.message for f in report.errors)
+
+
+def test_flow_capacity_feeds_the_last_machine_of_a_group_at_its_own_clock() -> None:
+    """The odd machine at the end of a row runs at ``last_clock`` and eats less.
+
+    FactorioLab's own count is ``count - 1`` machines at ``clock`` and one at
+    ``last_clock``; a check that wanted the full rate from every machine would
+    report a row it costed correctly as starved.
+    """
+    registry = _registry()
+    _, exit_end = belt_ends(registry, BELT)
+    output = _port(CONSTRUCTOR, "Output0")
+    poses = (Pose(0.0, ROD_Y_CM, SLAB_TOP_CM, 0.0), Pose(900.0, ROD_Y_CM, SLAB_TOP_CM, 0.0))
+    feeders = tuple(
+        BeltRun(
+            40 + index,
+            BELT,
+            straight(world_port(pose.transform(), output), (0.0, 1.0, 0.0), BELT_LENGTH_CM),
+            "iron-ingot",
+            share,
+        )
+        for index, (pose, share) in enumerate(
+            zip(poses, (Fraction(1, 4), Fraction(1, 8)), strict=True)
+        )
+    )
+    half = SfyPlacement(
+        designer=designer("mk1", registry),
+        machines=(
+            MachineObj(ROD_ID, CONSTRUCTOR, poses[0], ROD, clock=Fraction(1)),
+            MachineObj(SCREW_ID, CONSTRUCTOR, poses[1], ROD, clock=Fraction(1, 2)),
+        ),
+        belts=feeders,
+        links=(
+            Link((feeders[0].id, exit_end), (ROD_ID, "Input0")),
+            Link((feeders[1].id, exit_end), (SCREW_ID, "Input0")),
+        ),
+    )
+    spec = SfyBuildSpec(
+        groups=(
+            _group(
+                "iron-rod", ROD, {"iron-ingot": Fraction(1, 4)}, {"iron-rod": Fraction(1, 4)}, 2
+            ),
+        ),
+        external_inputs={"iron-ingot": Fraction(3, 8)},
+        outputs={"iron-rod": Fraction(3, 8)},
+        belt_item_id="conveyor-belt-mk1",
+        belt_items_per_second=Fraction(1),
+        label="one underclocked machine",
+    )
+    spec = spec.model_copy(
+        update={"groups": (spec.groups[0].model_copy(update={"last_clock": Fraction(1, 2)}),)}
+    )
+    assert _findings(half, "flow.capacity", spec) == []
+    # And it is the machine's OWN share, not a free pass: a quarter of what it
+    # needs is still starved.
+    starved = replace(
+        half,
+        belts=(feeders[0], replace(feeders[1], items_per_second=Fraction(1, 16))),
+    )
+    report = validate(starved, spec, _registry(), only={"flow.capacity"})
+    assert [f.check for f in report.errors] == ["flow.capacity"]
+    assert report.errors[0].detail["needed"] == "1/8"
+
+
 def test_roundtrip_refuses_a_placement_the_emitter_cannot_write() -> None:
     placement = _placement()
     assert _findings(placement, "roundtrip") == []

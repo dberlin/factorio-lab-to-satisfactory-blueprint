@@ -1351,10 +1351,20 @@ def _capacity(ctx: Context) -> Iterable[Finding]:
     double.
 
     The second half: every item a machine's group consumes must arrive on a belt
-    wired into one of its inputs, at the group's per-machine rate or better.  An
-    item the spec funds from ``external_inputs`` and that no belt feeds is not
-    this check's business -- the boundary belt is a later task's -- and is
-    passed over rather than called a fault.
+    wired into one of its inputs, at THAT MACHINE's rate or better.  Which is not
+    the group's per-machine rate for every machine in it: a group is
+    ``count - 1`` machines at ``clock`` and one at ``last_clock``, because the
+    odd machine at the end of a row absorbs the fractional remainder, and the
+    last one eats ``last_clock / clock`` of what the others do.  The placement
+    says which is which -- :attr:`MachineObj.clock` is that machine's own
+    potential and ``spec.machines`` holds the two multisets equal -- so the
+    expectation is ``inputs_per_machine * machine.clock / group.clock``, in exact
+    ``Fraction`` arithmetic.  Comparing every machine against the full-clock rate
+    reports a row FactorioLab costed correctly as starved.
+
+    An item the spec funds from ``external_inputs`` and that no belt feeds is not
+    this check's business -- the boundary belt is a later task's -- and is passed
+    over rather than called a fault.
     """
     spec = ctx.spec
     if spec is None:
@@ -1383,17 +1393,18 @@ def _capacity(ctx: Context) -> Iterable[Finding]:
         if group is None:
             continue
         for item, rate in group.inputs_per_machine.items():
+            wanted = rate * machine.clock / group.clock
             supplied = _supplied(ctx, machine, item)
             if supplied == 0 and item in spec.external_inputs:
                 continue
-            if supplied < rate:
+            if supplied < wanted:
                 yield ctx.finding(
                     "flow.capacity",
-                    f"{machine.class_name} {machine.id} needs {float(rate):.4g} items/s of "
+                    f"{machine.class_name} {machine.id} needs {float(wanted):.4g} items/s of "
                     f"{item!r} and the belts on its inputs bring {float(supplied):.4g}",
                     machine.id,
                     item=item,
-                    needed=str(rate),
+                    needed=str(wanted),
                     supplied=str(supplied),
                 )
 
@@ -1581,6 +1592,11 @@ def _wires(ctx: Context) -> Iterable[Finding]:
     in the game is unread and the refusal here is ours rather than the
     hologram's.  That a machine must reach a pole is ours outright as well: the
     game is happy to build an unpowered machine and we decline to author one.
+
+    A wire whose end names no connection the registry gives that object, or whose
+    class carries no ``wire_max_cm``, is REPORTED rather than passed over: a wire
+    whose length cannot be measured is a wire nobody has checked, and a check
+    that says nothing about it is a check claiming coverage it has not got.
     """
     if not ctx.placement.wires:
         yield ctx.skip("power.wires", _NO_WIRES)
@@ -1593,8 +1609,29 @@ def _wires(ctx: Context) -> Iterable[Finding]:
         joined.setdefault(wire.link.a[0], set()).add(wire.link.b[0])
         joined.setdefault(wire.link.b[0], set()).add(wire.link.a[0])
         head, tail = ctx.world_port(*wire.link.a), ctx.world_port(*wire.link.b)
+        for side, where in ((wire.link.a, head), (wire.link.b, tail)):
+            if where is None:
+                yield ctx.finding(
+                    "power.wires",
+                    f"wire {wire.id} names object {side[0]}'s {side[1]}, which is not a "
+                    "connection the registry gives it, so where this wire ends is unknown",
+                    wire.id,
+                    side[0],
+                    end=side[1],
+                )
         limit = ctx.registry.limits.wire_max_cm.get(wire.class_name)
+        if limit is None:
+            yield ctx.finding(
+                "power.wires",
+                f"wire {wire.id} is a {wire.class_name}, which the registry gives no "
+                f"wire_max_cm, so nothing here knows how far one reaches",
+                wire.id,
+                class_name=wire.class_name,
+            )
         if head is None or tail is None or limit is None:
+            # Each of the three is reported above; without all three there is no
+            # length to compare, and passing over it silently is what this check
+            # used to do.
             continue
         length = math.dist(head, tail)
         if length > limit:
