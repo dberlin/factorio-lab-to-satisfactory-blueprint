@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import math
 import time
+from dataclasses import replace
 from fractions import Fraction
 from functools import cache
 
@@ -27,11 +28,16 @@ from flab2bp.sfy.geometry import box_bounds
 from flab2bp.sfy.labmap import load_lab_map
 from flab2bp.sfy.layout.corridors import Measures, attachment_turn
 from flab2bp.sfy.layout.grid_nets import net_plan, nets_for, terminal_for
-from flab2bp.sfy.layout.lattice import Lattice
-from flab2bp.sfy.layout.manifold import shortest_belt_cm, slab_top_cm
+from flab2bp.sfy.layout.lattice import Lattice, occupancy_for
+from flab2bp.sfy.layout.manifold import (
+    hard_footprint_cm,
+    machine_pitch_cm,
+    shortest_belt_cm,
+    slab_top_cm,
+)
 from flab2bp.sfy.layout.model import MachineObj
 from flab2bp.sfy.layout.packer import Feedback, Pack, PackError, pack, port_apron_nodes
-from flab2bp.sfy.layout.refusals import REFUSALS
+from flab2bp.sfy.layout.refusals import GAME_DATA, REFUSALS
 from flab2bp.sfy.layout.strategy import _measure
 from flab2bp.sfy.layout.validate import TOUCH_CM
 from flab2bp.sfy.registry import Port, Registry, load_registry
@@ -131,6 +137,18 @@ def _chain(count: int = 3) -> SfyBuildSpec:
     return _spec(smelters, constructors)
 
 
+def _row(count: int = 5) -> SfyBuildSpec:
+    """``count`` Smelters, every one of them fed from the designer wall.
+
+    One net, ``count`` sinks and no machine source, so every Smelter wants the
+    smallest ``Y`` it can have and they all compete for the bottom row.  What
+    they fit into there is the registry's own arithmetic, asserted where it is
+    relied on.
+    """
+    smelters = _group(SMELTER, INGOT, count, {ORE: Fraction(1)}, {IRON_INGOT: Fraction(1)})
+    return _spec(smelters, external_inputs={ORE: Fraction(count)})
+
+
 def _packed(spec: SfyBuildSpec, *, feedback: Feedback | None = None) -> Pack:
     """One pack with the limits HANDED DOWN, the way a strategy calls it.
 
@@ -222,43 +240,77 @@ def test_three_smelters_and_three_constructors_pack_inside_mk1_with_no_overlap()
     boxes = [_world_box(machine) for machine in packed.machines]
     for i, a in enumerate(boxes):
         for b in boxes[i + 1 :]:
-            assert _gap_cm(a, b) > TOUCH_CM
+            assert _gap_cm(a, b) >= _lattice().grid_cm - TOUCH_CM
 
 
 def test_every_machine_stands_on_a_node_with_a_grid_step_between_hard_boxes() -> None:
-    """R-M3-1 for a machine, and R7 for two of them.
+    """R-M3-1 for a machine, and R7 for two of them: ONE grid step, not two.
 
     ``(x, y)`` is a node pair -- the machine's hologram-snapped centre -- ``z``
-    is the slab top, the yaw is one of the build gun's four, and no two hard
-    boxes come closer than the one grid step R7 keeps between them.
+    is the slab top and the yaw is one of the build gun's four.  Between two
+    machines R7 keeps one grid step, and the packed row shows it both ways: no
+    pair is closer than a step, and the closest pair is a step apart EXACTLY,
+    so a model that reserved two would fail here.
+
+    The row is what forces it, and the forcing is read rather than arranged:
+    five Smelters, each a sink of the one net the ``-Y`` wall feeds, so every
+    one of them wants the smallest ``Y`` it can have; and five Smelter
+    footprints with one grid step between them come to exactly the open floor's
+    width, so the only way they all stand in the bottom row is shoulder to
+    shoulder.
     """
     lattice, registry = _lattice(), _registry()
-    packed = _packed(_chain())
+    grid = lattice.grid_cm
+    packed = _packed(_row())
+    assert len(packed.machines) == 5
 
     for machine in packed.machines:
         assert lattice.node((machine.pose.x, machine.pose.y, 0.0)) is not None
         assert machine.pose.z == pytest.approx(slab_top_cm(registry))
         assert machine.pose.yaw_deg in {0.0, 90.0, 180.0, -90.0}
 
+    # Four pitches exactly span the centre nodes the open floor leaves for a
+    # Smelter, which is why the row is forced -- read, not assumed, and the
+    # pitch is the manifold's own: a footprint plus ONE grid step.
+    pitch = machine_pitch_cm(registry.buildables[SMELTER], registry.limits)
+    x0, _, x1, _ = hard_footprint_cm(registry.buildables[SMELTER])
+    lines = lattice.open_lines
+    low = lattice.world((lines.start, lines.start, 0))
+    high = lattice.world((lines.stop - 1, lines.stop - 1, 0))
+    reach = (x1 - x0) / 2.0 + grid / 2.0
+    stands = [
+        node
+        for node in lines
+        if low[0] - TOUCH_CM <= lattice.world((node, 0, 0))[0] - reach
+        and lattice.world((node, 0, 0))[0] + reach <= high[0] + TOUCH_CM
+    ]
+    assert (len(packed.machines) - 1) * pitch == pytest.approx(grid * (stands[-1] - stands[0]))
+
     boxes = [_world_box(machine) for machine in packed.machines]
-    for i, a in enumerate(boxes):
-        for b in boxes[i + 1 :]:
-            assert _gap_cm(a, b) >= lattice.grid_cm - TOUCH_CM
+    gaps = [_gap_cm(a, b) for i, a in enumerate(boxes) for b in boxes[i + 1 :]]
+    assert min(gaps) == pytest.approx(grid, abs=TOUCH_CM)
 
 
 def test_port_aprons_are_free_of_other_machines() -> None:
-    """Every belt port keeps its own straight run clear of every other machine.
+    """Every belt port's straight run is somewhere a belt centreline may stand.
 
-    The apron is read back through
-    :func:`~flab2bp.sfy.layout.grid_nets.terminal_for`, which is the router's own
-    statement of where a belt leaves a port, so a packer that reserved a
-    different run from the one the router uses would fail here.
+    Read back through the router's own two statements rather than through a
+    distance written here: :func:`~flab2bp.sfy.layout.grid_nets.terminal_for`
+    says where a belt leaves a port, and
+    :meth:`~flab2bp.sfy.layout.lattice.Occupancy.free` -- the predicate the
+    kernel searches -- says whether a node is passable at all with every packed
+    machine standing.  A reserved run the occupancy denies would be a reservation
+    of nothing, which is what an apron held off the wrong rectangle buys.
+
+    The exception is the terminal's own ``reach`` (R-M3-2 (d)): the nodes between
+    a port and its own machine's box edge lie INSIDE that box, so the occupancy
+    denies them to everyone and they travel with the terminal to be opened for
+    that one net.  Those are the only denied nodes an apron may contain.
     """
     lattice, registry = _lattice(), _registry()
-    grid = lattice.grid_cm
     apron = port_apron_nodes(_measures())
     packed = _packed(_chain())
-    boxes = {machine.id: _world_box(machine) for machine in packed.machines}
+    occupancy = occupancy_for(lattice, packed.machines, (), (), (), registry)
 
     for machine in packed.machines:
         buildable = registry.buildables[machine.class_name]
@@ -266,10 +318,7 @@ def test_port_aprons_are_free_of_other_machines() -> None:
             if port.kind != "belt":
                 continue
             terminal = terminal_for(machine, port, lattice, registry)
-            step = (
-                round(terminal.facing[0]),
-                round(terminal.facing[1]),
-            )
+            step = (round(terminal.facing[0]), round(terminal.facing[1]))
             for index in range(apron):
                 node = (
                     terminal.node[0] + step[0] * index,
@@ -277,19 +326,10 @@ def test_port_aprons_are_free_of_other_machines() -> None:
                     terminal.node[2],
                 )
                 assert lattice.holds(node)
-                here = lattice.world(node)
-                for other in packed.machines:
-                    if other.id == machine.id:
-                        continue  # a port sits inside its own machine's box
-                    x0, y0, x1, y1 = boxes[other.id]
-                    inside = (
-                        x0 - grid + TOUCH_CM < here[0] < x1 + grid - TOUCH_CM
-                        and y0 - grid + TOUCH_CM < here[1] < y1 + grid - TOUCH_CM
-                    )
-                    assert not inside, (
-                        f"{machine.class_name} {machine.id}'s {port.name} apron node {node} "
-                        f"stands in {other.class_name} {other.id}'s inflated box"
-                    )
+                assert occupancy.free(node) or node in terminal.reach, (
+                    f"{machine.class_name} {machine.id}'s {port.name} apron node {node} "
+                    "is denied by the occupancy the router will search"
+                )
 
 
 def test_the_packer_reads_its_nets_from_the_plan_the_router_numbers() -> None:
@@ -394,15 +434,48 @@ def _span(packed: Pack, index: int, count: int) -> int:
 def test_a_failed_net_weight_pulls_its_terminals_closer() -> None:
     """A net the router could not lay is worth more than the ones it did.
 
-    The same spec, packed twice: once with nothing learned and once with one
-    net's weight raised.  That net's own terminals do not end up further apart
-    than they were, which is the whole of what the weight buys -- it cannot
-    promise closer, because the boxes may already be as close as they go.
+    The same real flow packed twice, once with nothing learned and once with one
+    net's weight raised, on a spec whose nets really do compete for the same
+    floor: ``iron-plate-60`` belts ore in at the ``-Y`` wall, pairs each smelter
+    to a constructor, and sends plates out at the ``+Y`` wall, so the build can
+    sit against one wall or the other but not both, and every metre net 5 gains
+    net 4 loses.
+
+    So the assertion is two-sided and strict -- the weighted net gets STRICTLY
+    shorter and the net it competes with STRICTLY longer -- which is what a
+    weight buys and what an unweighted pack cannot produce by chance.  The
+    control is ``failed_nets={}``, the same call with the same feedback object
+    and nothing in it, so what is being measured is the WEIGHT rather than the
+    presence of feedback.
     """
-    spec = _chain()
-    before = _packed(spec)
-    after = _packed(spec, feedback=Feedback(failed_nets={1: 8.0}, hot_nodes={}))
-    assert _span(after, 0, 3) <= _span(before, 0, 3)
+    lattice, registry = _lattice(), _registry()
+    spec = flow_spec("iron-plate-60")
+    plans = net_plan(spec, registry)
+    ore = next(plan for plan in plans if not plan.sources)
+    plate = next(plan for plan in plans if not plan.sinks)
+
+    control = _packed(spec, feedback=Feedback(failed_nets={}, hot_nodes={}))
+    weighted = _packed(spec, feedback=Feedback(failed_nets={plate.id: 8.0}, hot_nodes={}))
+
+    def out_to_wall(packed: Pack) -> int:
+        """How far the plate net's sources stand from the wall they drain to."""
+        ys = [_port_node(packed, port)[1] for port in plate.sources]
+        return (lattice.open_lines.stop - 1) - sum(ys) // len(ys)
+
+    def in_from_wall(packed: Pack) -> int:
+        """How far the ore net's sinks stand from the wall that feeds them."""
+        return sum(_port_node(packed, port)[1] - lattice.open_lines.start for port in ore.sinks)
+
+    assert out_to_wall(weighted) < out_to_wall(control)
+    assert in_from_wall(weighted) > in_from_wall(control)
+
+
+def _port_node(packed: Pack, port: tuple[int, str]) -> tuple[int, int, int]:
+    """Where one :func:`net_plan` port stands, once its machine has been placed."""
+    machine = packed.machines[port[0]]
+    buildable = _registry().buildables[machine.class_name]
+    named = next(one for one in buildable.ports if one.name == port[1])
+    return terminal_for(machine, named, _lattice(), _registry()).node
 
 
 def test_feedback_decays_by_the_dsp_factor() -> None:
@@ -475,3 +548,60 @@ def test_a_spec_that_cannot_fit_refuses_with_the_packer_cause() -> None:
         _packed(spec)
     assert refused.value.cause == "the packer found no arrangement"
     assert refused.value.cause in REFUSALS
+
+
+def test_game_data_the_packer_cannot_lay_a_box_on_refuses_with_the_game_data_cause() -> None:
+    """A hole in the game data leaves by the refusal table, not by a bare error.
+
+    Two of them, and both are the same answer to the caller -- this build cannot
+    be authored from the game data we have -- so both carry
+    :data:`~flab2bp.sfy.layout.refusals.GAME_DATA`: a hologram grid that is not a
+    whole number of centimetres, which is a grid this packer cannot state a box
+    on; and a belt port that does not stand at the port level with its machine on
+    the slab, which R-M3-3 says it must.
+    """
+    registry = _registry()
+    spec = _chain(1)
+
+    # A grid that divides the designer evenly and is still not whole centimetres.
+    fractional = Lattice(_designer(), 6.25)
+    with pytest.raises(PackError) as refused:
+        pack(
+            spec,
+            _designer(),
+            registry,
+            fractional,
+            feedback=None,
+            deadline=None,
+            workers=WORKERS,
+            seed=SEED,
+        )
+    assert refused.value.cause == GAME_DATA
+    assert refused.value.cause in REFUSALS
+
+    # The same Smelter with its output port a grid step higher than the game
+    # puts it, which lands it above the level a grid-snapped machine's belts
+    # leave on.
+    smelter = registry.buildables[SMELTER]
+    lifted = tuple(
+        replace(port, translation=(port.translation[0], port.translation[1], 300.0))
+        if port.name == "Output2"
+        else port
+        for port in smelter.ports
+    )
+    doctored = replace(
+        registry,
+        buildables={**registry.buildables, SMELTER: replace(smelter, ports=lifted)},
+    )
+    with pytest.raises(PackError) as lifted_port:
+        pack(
+            spec,
+            _designer(),
+            doctored,
+            _lattice(),
+            feedback=None,
+            deadline=None,
+            workers=WORKERS,
+            seed=SEED,
+        )
+    assert lifted_port.value.cause == GAME_DATA

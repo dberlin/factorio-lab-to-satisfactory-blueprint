@@ -15,13 +15,17 @@ that node: the hard footprint
 buildable's hard clearance boxes on the ground) turned by the yaw, and one
 apron per belt port.
 
-**One grid step between two hard boxes, and it is OURS** (R7).  ``buildable.clearance``
+**ONE grid step between two hard boxes, and it is OURS** (R7).  ``buildable.clearance``
 is ``partial`` -- ``AFGHologram::TestClearanceOverlap`` was never read -- so the
-gap two holograms really need is unknown and this project keeps its own: every
-footprint enters the no-overlap inflated by one grid step on every side, which
-is the same step :func:`~flab2bp.sfy.layout.manifold.machine_pitch_cm` puts
-between two machines of a manifold row.  The margin against the designer wall is
-the same statement: an inflated footprint, and every apron, lies inside
+gap two holograms really need is unknown and this project keeps its own, and it
+is the same one step :func:`~flab2bp.sfy.layout.manifold.machine_pitch_cm` puts
+between two machines of a manifold row (a footprint plus ONE step, a 100 cm
+gap).  A rule about the gap BETWEEN two boxes is stated on each of them as half
+of it: every footprint enters the no-overlap grown by half a step on every side,
+so two boxes that do not lap stand one whole step apart and no more.  Growing
+each by a whole step would reserve two, which is a rule nobody stated and 100 cm
+of floor per machine pair nobody asked for.  The margin against the designer
+wall is the same rectangle: a grown footprint, and every apron, lies inside
 :attr:`~flab2bp.sfy.layout.lattice.Lattice.open_lines`.
 
 **The apron is DERIVED** -- see :func:`port_apron_nodes`.  A lift can never land
@@ -29,10 +33,19 @@ on a port node (its column would run through the machine it serves), so every
 approach to a port is horizontal and the last corner before it is an attachment
 turn, which needs that turn's ``box + lead_in`` of straight run beside it.  An
 apron is that run in whole nodes: ``apron_nodes`` nodes along the port's facing,
-one node wide, tied to the yaw.  It is kept clear of every OTHER machine's
-inflated footprint and of nothing else -- an apron laps its own machine's box,
-because the port sits inside it, and two machines' aprons may lap each other,
-because belts share space by level and only footprints are exclusive.
+one node wide, tied to the yaw.
+
+What an apron keeps out of is a DIFFERENT rectangle from what a machine keeps
+out of, and a larger one: an apron is somewhere a belt centreline really has to
+stand, and :meth:`~flab2bp.sfy.layout.lattice.Occupancy.free` denies any node
+whose 158 cm belt box meets a hard box, so an apron reserved nearer than
+:data:`~flab2bp.sfy.layout.validate.BELT_CLEARANCE_HALF_WIDTH_CM` to a machine
+would be a run the router cannot use.  Each machine therefore carries a second
+rectangle -- its hard box grown by that clearance -- and every OTHER machine's
+apron is held off it.  Off it and off nothing else: an apron laps its own
+machine's box, because the port sits inside it, and two machines' aprons may lap
+each other, because belts share space by level and only footprints are
+exclusive.
 
 **Two integer frames, both exact.**  The no-overlap and the wall margin are in
 whole centimetres measured from the designer's own ``-X``/``-Y`` wall, so that a
@@ -96,6 +109,7 @@ from flab2bp.sfy.layout.manifold import (
 from flab2bp.sfy.layout.model import MachineObj, Pose
 from flab2bp.sfy.layout.refusals import GAME_DATA, REFUSALS
 from flab2bp.sfy.layout.strategy import _measure
+from flab2bp.sfy.layout.validate import BELT_CLEARANCE_HALF_WIDTH_CM
 from flab2bp.sfy.registry import Buildable, Registry
 from flab2bp.sfy.spec import Designer, SfyBuildSpec, SfyMachineGroup, direct_pairs
 
@@ -166,11 +180,22 @@ same thing from the other side: longer packs wired FEWER cells.
 _DETERMINISTIC_TIME_FLOOR: Final = 1.0
 """The smallest whole budget a solve is given, however few machines it stands.
 
-Presolve is charged to the same clock, and the hot-node tables make it the
-expensive part: one machine with a blame history over half the designer spends
-0.8 units before the search starts.  A per-machine budget alone would hand that
-model less than its presolve and get ``UNKNOWN`` back from a problem with one
-rectangle in it.
+Presolve is charged to the same clock, so a per-machine budget alone would hand
+a two-machine model less than its own presolve and get ``UNKNOWN`` back from a
+problem with two rectangles in it.
+"""
+
+_DETERMINISTIC_TIME_HOT: Final = 1.0
+"""What a blame table costs on top, when there is one.
+
+Measured, and the reason it is a term of its own rather than a bigger floor for
+everyone: a one-machine model with a blame history over half the designer
+charges 1.01 deterministic units before its search starts -- the summed-area
+tables are read through ``add_element``, which presolve works hard on -- and it
+proves optimality immediately afterwards.  At a flat budget of 1.0 that model
+comes back ``FEASIBLE`` with a machine standing in the blamed half; at 2.0 it
+comes back ``OPTIMAL`` with the machine clear of it, in 0.45 s.  Charging every
+pack that extra unit would spend it on models that have no table to presolve.
 """
 
 _SEED_MODULUS: Final = 2**31 - 1
@@ -287,13 +312,32 @@ class _Apron:
 class _Shape:
     """One buildable at one yaw: the ground it denies, and where its belts leave.
 
-    ``box`` is the hard footprint turned by the yaw, inflated by one grid step
-    on every side (R7) and rounded OUTWARD to whole centimetres, as offsets from
-    the machine's own node.  ``inside`` is the same footprint UNINFLATED, in
-    node offsets, which is the window the hot-node summed-area table reads.
+    Three rectangles about the machine's own node, all in whole centimetres and
+    all rounded OUTWARD, which is stricter and never laxer.
+
+    ``box`` is what two machines keep out of each other: the hard footprint
+    turned by the yaw and inflated by HALF a grid step on every side, so that
+    two boxes which do not lap put their hard boxes one WHOLE step apart -- R7,
+    which is ours, and the same one step
+    :func:`~flab2bp.sfy.layout.manifold.machine_pitch_cm` leaves between two
+    machines of a manifold row.  (Inflating by a whole step on each side would
+    reserve two, which is a rule nobody stated.)
+
+    ``keepout`` is what a belt keeps out of, which is a different and larger
+    question: a belt carries
+    :data:`~flab2bp.sfy.layout.validate.BELT_CLEARANCE_HALF_WIDTH_CM` of its own
+    clearance to either side of its centreline, so a node closer than that to a
+    hard box is a node
+    :meth:`~flab2bp.sfy.layout.lattice.Occupancy.free` already denies.  Reserving
+    an apron nearer than that would reserve nodes the router cannot use, so the
+    apron is held off this rectangle rather than off ``box``.
+
+    ``inside`` is the footprint UNINFLATED, in node offsets: the window the
+    hot-node summed-area table reads.
     """
 
     box: tuple[int, int, int, int]
+    keepout: tuple[int, int, int, int]
     inside: tuple[int, int, int, int]
     aprons: tuple[_Apron, ...]
 
@@ -344,7 +388,11 @@ def _shapes(
     except RowError as exc:
         raise PackError(GAME_DATA, str(exc)) from exc
     grid = lattice.grid_cm
-    step = _whole_grid(grid)
+    _whole_grid(grid)
+    # Half a step per side, so that two boxes which do not lap put their HARD
+    # boxes one whole step apart.  A belt keeps its own clearance instead.
+    half_step = grid / 2.0
+    belt = BELT_CLEARANCE_HALF_WIDTH_CM
     centre = lattice.n // 2
     here = lattice.world((centre, centre, 0))
     ports = sorted(
@@ -358,10 +406,11 @@ def _shapes(
         for port in ports:
             terminal = terminal_for(probe, port, lattice, registry)
             if terminal.node[2] != GROUND_LEVEL:
-                raise ValueError(
+                raise PackError(
+                    GAME_DATA,
                     f"{class_name}'s {port.name} stands at level {terminal.node[2]} with the "
                     f"machine on the slab, and R-M3-3 puts a grid-snapped machine's belt "
-                    f"ports at level {GROUND_LEVEL}"
+                    f"ports at level {GROUND_LEVEL}",
                 )
             aprons.append(
                 _Apron(
@@ -372,12 +421,8 @@ def _shapes(
             )
         shapes.append(
             _Shape(
-                box=(
-                    math.floor(turned[0]) - step,
-                    math.floor(turned[1]) - step,
-                    math.ceil(turned[2]) + step,
-                    math.ceil(turned[3]) + step,
-                ),
+                box=_grown(turned, half_step),
+                keepout=_grown(turned, belt),
                 inside=(
                     math.ceil(turned[0] / grid),
                     math.ceil(turned[1] / grid),
@@ -390,13 +435,35 @@ def _shapes(
     return tuple(shapes)
 
 
+def _grown(box: tuple[float, float, float, float], by: float) -> tuple[int, int, int, int]:
+    """``box`` reached out ``by`` on every side, in whole centimetres.
+
+    Rounded OUTWARD, so the rectangle reserved is never smaller than the one
+    asked for: on the shipped registry every edge is already whole, and on one
+    that is not, the reservation errs towards the strict side.
+    """
+    return (
+        math.floor(box[0] - by),
+        math.floor(box[1] - by),
+        math.ceil(box[2] + by),
+        math.ceil(box[3] + by),
+    )
+
+
 def _whole_grid(grid_cm: float) -> int:
-    """The grid step in whole centimetres, or a refusal to pretend it is one."""
+    """The grid step in whole centimetres, or a refusal to pretend it is one.
+
+    A refusal in the table rather than a bare ``ValueError``: what it says is
+    that the game data states a grid this packer cannot lay a box on, which is
+    the same answer as a machine the game data does not describe, so it leaves
+    by the same door.
+    """
     step = round(grid_cm)
     if abs(grid_cm - step) > 0.0:
-        raise ValueError(
+        raise PackError(
+            GAME_DATA,
             f"the hologram grid is {grid_cm} cm, which is not a whole number of centimetres; "
-            "this packer states every box in whole centimetres and cannot round the grid"
+            "this packer states every box in whole centimetres and cannot round the grid",
         )
     return step
 
@@ -465,6 +532,8 @@ def _build(
     yaws: list[list[cp_model.IntVar]] = []
     x_boxes: list[tuple[cp_model.IntVar, cp_model.IntVar]] = []
     y_boxes: list[tuple[cp_model.IntVar, cp_model.IntVar]] = []
+    keep_x: list[tuple[cp_model.IntVar, cp_model.IntVar]] = []
+    keep_y: list[tuple[cp_model.IntVar, cp_model.IntVar]] = []
     x_intervals: list[cp_model.IntervalVar] = []
     y_intervals: list[cp_model.IntervalVar] = []
     for machine, stand in enumerate(stands):
@@ -474,10 +543,29 @@ def _build(
         literals = [model.new_bool_var(f"yaw{machine}_{int(yaw)}") for yaw in _YAWS]
         model.add_exactly_one(literals)
         edges = []
+        keeps = []
         spans = []
         for axis, (node, name) in enumerate(((x, "fx"), (y, "fy"))):
-            lo = model.new_int_var(low, high, f"{name}0_{machine}")
-            hi = model.new_int_var(low, high, f"{name}1_{machine}")
+            # The box carries the wall margin, so its own domain states it: an
+            # inflated footprint lies inside ``open_lines``.  The keepout is a
+            # belt's clearance about the same footprint, which reaches further,
+            # and is a RELATIVE reservation -- what it must miss is an apron, not
+            # a wall -- so its domain is only as wide as its offsets make it.
+            lo, hi = _edges(model, literals, node, turns, axis, "box", grid, low, high, machine)
+            keeps.append(
+                _edges(
+                    model,
+                    literals,
+                    node,
+                    turns,
+                    axis,
+                    "keepout",
+                    grid,
+                    min(shape.keepout[axis] for shape in turns),
+                    grid * lattice.n + max(shape.keepout[axis + 2] for shape in turns),
+                    machine,
+                )
+            )
             # The size is its own variable rather than ``hi - lo``: an interval's
             # size has to be affine in ONE variable, and a turned box is as wide
             # as the yaw says.
@@ -487,13 +575,13 @@ def _build(
                 f"{name}w_{machine}",
             )
             for literal, shape in zip(literals, turns, strict=True):
-                model.add(lo == grid * node + shape.box[axis]).only_enforce_if(literal)
-                model.add(hi == grid * node + shape.box[axis + 2]).only_enforce_if(literal)
                 model.add(side == shape.box[axis + 2] - shape.box[axis]).only_enforce_if(literal)
             edges.append((lo, hi))
             spans.append(side)
         x_boxes.append(edges[0])
         y_boxes.append(edges[1])
+        keep_x.append(keeps[0])
+        keep_y.append(keeps[1])
         x_intervals.append(
             model.new_interval_var(edges[0][0], spans[0], edges[0][1], f"xi{machine}")
         )
@@ -513,8 +601,8 @@ def _build(
         xs,
         ys,
         yaws,
-        x_boxes,
-        y_boxes,
+        keep_x,
+        keep_y,
         grid=grid,
         low=low,
         high=high,
@@ -533,6 +621,33 @@ def _build(
     )
     _add_objective(model, nets, registry, lattice, stands, shapes, xs, ys, yaws, feedback)
     return _Build(model=model, xs=xs, ys=ys, yaws=yaws)
+
+
+def _edges(
+    model: cp_model.CpModel,
+    literals: Sequence[cp_model.IntVar],
+    node: cp_model.IntVar,
+    turns: Sequence[_Shape],
+    axis: int,
+    which: str,
+    grid: int,
+    low: int,
+    high: int,
+    machine: int,
+) -> tuple[cp_model.IntVar, cp_model.IntVar]:
+    """One of a machine's rectangles on one axis, tied to its yaw.
+
+    ``which`` names the field of :class:`_Shape` to read, so the two rectangles
+    a machine reserves -- what another machine keeps out of, and what a belt
+    keeps out of -- are built by one statement rather than two that could drift.
+    """
+    lo = model.new_int_var(low, high, f"{which}{axis}_{machine}_lo")
+    hi = model.new_int_var(low, high, f"{which}{axis}_{machine}_hi")
+    for literal, shape in zip(literals, turns, strict=True):
+        box: tuple[int, int, int, int] = getattr(shape, which)
+        model.add(lo == grid * node + box[axis]).only_enforce_if(literal)
+        model.add(hi == grid * node + box[axis + 2]).only_enforce_if(literal)
+    return lo, hi
 
 
 def _anchor(
@@ -577,8 +692,8 @@ def _add_aprons(
     xs: Sequence[cp_model.IntVar],
     ys: Sequence[cp_model.IntVar],
     yaws: Sequence[Sequence[cp_model.IntVar]],
-    x_boxes: Sequence[tuple[cp_model.IntVar, cp_model.IntVar]],
-    y_boxes: Sequence[tuple[cp_model.IntVar, cp_model.IntVar]],
+    keep_x: Sequence[tuple[cp_model.IntVar, cp_model.IntVar]],
+    keep_y: Sequence[tuple[cp_model.IntVar, cp_model.IntVar]],
     *,
     grid: int,
     low: int,
@@ -588,15 +703,22 @@ def _add_aprons(
     list[tuple[cp_model.IntVar, cp_model.IntVar]],
     list[tuple[cp_model.IntVar, cp_model.IntVar]],
 ]:
-    """Keep every belt port's straight run clear of every OTHER machine's box.
+    """Keep every belt port's straight run clear of every OTHER machine.
 
-    Not one :meth:`add_no_overlap_2d` over aprons and boxes together: that would
-    also hold an apron off its own machine, which the port sits inside, and off
-    every other apron, which belts are entitled to share.  What is asked for is
-    exactly the pairs -- this apron against that box -- so each pair is one
-    disjunction of the four ways two rectangles can miss each other.  The box on
-    the other side is already inflated by a grid step, so a box that ENDS on an
-    apron line is a machine a grid step away from it, which is what R7 allows.
+    Not one :meth:`add_no_overlap_2d` over aprons and machines together: that
+    would also hold an apron off its own machine, which the port sits inside,
+    and off every other apron, which belts are entitled to share.  What is asked
+    for is exactly the pairs -- this apron against that machine -- so each pair
+    is one disjunction of the four ways two rectangles can miss each other.
+
+    The rectangle on the other side is ``keepout``, the machine's hard box grown
+    by a belt's own clearance half width, and NOT the box two machines keep out
+    of each other by: what an apron reserves is somewhere a belt centreline can
+    really stand, and
+    :meth:`~flab2bp.sfy.layout.lattice.Occupancy.free` denies any node whose belt
+    box meets a hard box.  Touching is allowed, so an apron line that ENDS on the
+    keepout edge is a belt exactly its own clearance from the machine -- which is
+    the boundary ``_lines_meeting`` leaves open.
 
     The apron rectangles come back so that :func:`_anchor` can slide the whole
     arrangement against the wall: an apron reaches further out than its own
@@ -633,7 +755,7 @@ def _add_aprons(
             for other in range(len(stands)):
                 if other == machine:
                     continue  # a port sits INSIDE its own machine's box
-                _keep_apart(model, edges[0], edges[1], x_boxes[other], y_boxes[other])
+                _keep_apart(model, edges[0], edges[1], keep_x[other], keep_y[other])
     return reach_x, reach_y
 
 
@@ -644,7 +766,7 @@ def _keep_apart(
     box_x: tuple[cp_model.IntVar, cp_model.IntVar],
     box_y: tuple[cp_model.IntVar, cp_model.IntVar],
 ) -> None:
-    """One apron and one inflated footprint miss each other on at least one side."""
+    """One apron and one machine's keepout miss each other on at least one side."""
     sides = [model.new_bool_var("") for _ in range(4)]
     model.add(box_x[1] <= apron_x[0]).only_enforce_if(sides[0])
     model.add(apron_x[1] <= box_x[0]).only_enforce_if(sides[1])
@@ -955,7 +1077,7 @@ def pack(
     solver.parameters.random_seed = seed % _SEED_MODULUS
     solver.parameters.max_deterministic_time = max(
         _DETERMINISTIC_TIME_FLOOR, _DETERMINISTIC_TIME_PER_MACHINE * len(stands)
-    )
+    ) + (_DETERMINISTIC_TIME_HOT if feedback is not None and feedback.hot_nodes else 0.0)
     if deadline is not None:
         left = deadline - time.monotonic()
         if left <= 0.0:
