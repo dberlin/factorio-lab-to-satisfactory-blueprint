@@ -438,22 +438,7 @@ impl PdbIndex {
     /// `symbols` asks for the full function-symbol list as well: the `extract`
     /// mode never needs it and the module's is large, so it is opt-in.
     fn open(path: &Path, pe: &Pe, symbols: bool) -> Result<PdbIndex> {
-        let file = fs::File::open(path).with_context(|| format!("reading {}", path.display()))?;
-        let mut pdb = pdb::PDB::open(file).with_context(|| format!("{}", path.display()))?;
-
-        let info = pdb.pdb_information()?;
-        let guid = format!("{:X}", info.guid.hyphenated());
-        if guid != pe.pdb_guid || info.age != pe.pdb_age {
-            bail!(
-                "PDB does not match the DLL: PDB is {} age {}, the DLL's debug record names {} age {} ({})",
-                guid,
-                info.age,
-                pe.pdb_guid,
-                pe.pdb_age,
-                pe.pdb_name,
-            );
-        }
-
+        let (mut pdb, guid, age) = open_matching_pdb(path, pe)?;
         let layouts = read_layouts(&mut pdb)?;
         let want_symbols = symbols;
         let (functions, symbols) = read_functions(&mut pdb, want_symbols)?;
@@ -464,7 +449,7 @@ impl PdbIndex {
         };
         Ok(PdbIndex {
             guid,
-            age: info.age,
+            age,
             layouts,
             functions,
             symbols,
@@ -486,6 +471,31 @@ impl PdbIndex {
         }
         chain
     }
+}
+
+/// Open `path`, refusing a PDB that does not match `pe`'s CodeView record.
+///
+/// Returns the open PDB with the GUID and age it states, which is what
+/// `native.json`'s provenance carries. Every mode goes through here: reading a
+/// symbol out of a PDB that is not this DLL's is reading another build's
+/// addresses, which is worse than reading nothing.
+fn open_matching_pdb(path: &Path, pe: &Pe) -> Result<(pdb::PDB<'static, fs::File>, String, u32)> {
+    let file = fs::File::open(path).with_context(|| format!("reading {}", path.display()))?;
+    let mut pdb = pdb::PDB::open(file).with_context(|| format!("{}", path.display()))?;
+    let info = pdb.pdb_information()?;
+    let guid = format!("{:X}", info.guid.hyphenated());
+    let age = info.age;
+    if guid != pe.pdb_guid || age != pe.pdb_age {
+        bail!(
+            "PDB does not match the DLL: PDB is {} age {}, the DLL's debug record names {} age {} ({})",
+            guid,
+            age,
+            pe.pdb_guid,
+            pe.pdb_age,
+            pe.pdb_name,
+        );
+    }
+    Ok((pdb, guid, age))
 }
 
 /// Every class's members and first base, resolving forward references.
@@ -733,6 +743,48 @@ fn read_functions<S: pdb::Source<'static> + 'static>(
     symbols.sort();
     symbols.dedup();
     Ok((functions, symbols))
+}
+
+/// Every *data* symbol the PDB publishes, named the way it publishes it.
+///
+/// A static data member reaches the global stream either as a `Public` record
+/// with `function` clear -- mangled,
+/// `?CLEARANCE_EXTENT_2D@AFGBuildableConveyorLift@@2...` -- or as an
+/// `S_GDATA32`/`S_LDATA32` `Data` record, whose name the compiler writes out
+/// already decorated as `Class::Name`. Both are taken and a function symbol is
+/// never one of them. [`member_function`] derives a `Class::Name` from the
+/// mangled form; the `Data` form has none to derive and keeps `None`, and its
+/// own readable name is what [`find_data`] matches and what the output prints.
+/// The shipped module's `CLEARANCE_EXTENT_2D` is the second kind.
+fn read_data_symbols<S: pdb::Source<'static> + 'static>(
+    pdb: &mut pdb::PDB<'static, S>,
+) -> Result<Vec<Symbol>> {
+    use pdb::FallibleIterator;
+
+    let address_map = pdb.address_map()?;
+    let globals = pdb.global_symbols()?;
+    let mut symbols: Vec<Symbol> = Vec::new();
+    let mut iter = globals.iter();
+    while let Some(symbol) = iter.next()? {
+        let (mangled, offset) = match symbol.parse() {
+            Ok(pdb::SymbolData::Public(public)) if !public.function => {
+                (public.name.to_string().into_owned(), public.offset)
+            }
+            Ok(pdb::SymbolData::Data(data)) => (data.name.to_string().into_owned(), data.offset),
+            _ => continue,
+        };
+        let Some(rva) = offset.to_rva(&address_map) else {
+            continue;
+        };
+        symbols.push(Symbol {
+            rva: rva.0,
+            name: member_function(&mangled).map(|(class, name, _)| format!("{class}::{name}")),
+            mangled,
+        });
+    }
+    symbols.sort();
+    symbols.dedup();
+    Ok(symbols)
 }
 
 /// The byte length the PDB states for every function it has a procedure
@@ -2364,7 +2416,146 @@ fn run_disasm(args: &DisasmArgs) -> Result<()> {
 }
 
 // ---------------------------------------------------------------------------
-// 7. main
+// 7. One initialised global, read by its PDB symbol
+// ---------------------------------------------------------------------------
+
+/// The sections a global may be read out of.
+///
+/// The constant annotation on an instruction operand trusts `.rdata` alone,
+/// because a writable global is not a constant and quoting one as if it were
+/// would put a number in a rule that the game may have moved on from. This mode
+/// exists for exactly that case and says so instead: it reads `.data` as well,
+/// prints the section it found, and every caller has to carry the caveat that
+/// an initialiser is what the image held before the game ran. Anywhere else --
+/// `.text`, a resource section, the uninitialised tail of a section -- is not
+/// an initialiser at all, and is refused with the section it did land in.
+const READABLE_SECTIONS: [&str; 2] = [".data", ".rdata"];
+
+/// One initialised global, exactly as the shipped image holds it.
+#[derive(Debug, Serialize)]
+struct DataOut {
+    /// `Class::Name`, or the mangling when it yields no such form.
+    symbol: String,
+    mangled: String,
+    rva: String,
+    /// The PE section the RVA fell in, always one of [`READABLE_SECTIONS`].
+    section: String,
+    bytes: u32,
+    hex: String,
+    /// Those bytes as little-endian `f64`s, one per whole 8-byte group.
+    doubles: Vec<f64>,
+}
+
+/// The data symbols matching `needle`, a case-sensitive substring of either the
+/// `Class::Name` a mangling yields or the name the PDB published.
+///
+/// Both are matched because the two kinds of record name a global differently
+/// (see [`read_data_symbols`]), and a caller naming the static it wants should
+/// not have to know which kind its PDB happens to carry.
+fn find_data(symbols: &[Symbol], needle: &str) -> Vec<Symbol> {
+    let mut hits: Vec<Symbol> = symbols
+        .iter()
+        .filter(|symbol| {
+            symbol.mangled.contains(needle)
+                || symbol.name.as_deref().is_some_and(|n| n.contains(needle))
+        })
+        .cloned()
+        .collect();
+    hits.sort();
+    hits.dedup_by_key(|symbol| symbol.rva);
+    hits
+}
+
+/// `count` bytes of the image at `symbol`, refusing a section that is not one
+/// a global's initialiser lives in.
+fn read_global(pe: &Pe, symbol: &Symbol, count: u32) -> Result<DataOut> {
+    let section = pe.section_of(symbol.rva).ok_or_else(|| {
+        anyhow!(
+            "{} is at {:#x}, which is outside every section of the image",
+            symbol.display(),
+            symbol.rva
+        )
+    })?;
+    let name = section.name.clone();
+    if !READABLE_SECTIONS.contains(&name.as_str()) {
+        bail!(
+            "{} is at {:#x}, which is in {}: an initialiser is only read from {:?}, and \
+             anything else is code or not initialised in the file at all",
+            symbol.display(),
+            symbol.rva,
+            name,
+            READABLE_SECTIONS,
+        );
+    }
+    let bytes = pe
+        .rva_to_bytes(symbol.rva, count as usize)
+        .filter(|bytes| bytes.len() == count as usize)
+        .ok_or_else(|| {
+            anyhow!(
+                "{} is at {:#x} in {}, but {count} bytes there run past what the file holds \
+                 for that section, so this global is not initialised in the image",
+                symbol.display(),
+                symbol.rva,
+                name,
+            )
+        })?;
+    Ok(DataOut {
+        symbol: symbol.display().to_string(),
+        mangled: symbol.mangled.clone(),
+        rva: format!("{:#x}", symbol.rva),
+        section: name,
+        bytes: count,
+        hex: hex(bytes),
+        doubles: bytes
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .copied()
+            .map(f64::from_le_bytes)
+            .collect(),
+    })
+}
+
+fn run_data(args: &DataArgs) -> Result<()> {
+    let pe = Pe::load(&args.dll)?;
+    // No layout walk, no symbol trace and no decoder: this mode names a global
+    // and reads the image, and never disassembles anything.
+    let (mut pdb, _guid, _age) = open_matching_pdb(&args.pdb, &pe)?;
+    let symbols = read_data_symbols(&mut pdb)?;
+    let hits = find_data(&symbols, &args.symbol);
+    let [symbol] = hits.as_slice() else {
+        bail!(
+            "{:?} matches {} of the PDB's data symbols ({:?}), wanted exactly one",
+            args.symbol,
+            hits.len(),
+            hits.iter()
+                .map(|s| format!("{} @ {:#x}", s.display(), s.rva))
+                .collect::<Vec<_>>(),
+        );
+    };
+    let out = read_global(&pe, symbol, args.bytes)?;
+    println!(
+        "{} @ {} in {} ({} bytes): {} = {}",
+        out.symbol,
+        out.rva,
+        out.section,
+        out.bytes,
+        out.hex,
+        out.doubles
+            .iter()
+            .map(f64::to_string)
+            .collect::<Vec<_>>()
+            .join(", "),
+    );
+    match &args.out {
+        Some(path) => fs::write(path, serde_json::to_string_pretty(&out)? + "\n")
+            .with_context(|| format!("writing {}", path.display())),
+        None => Ok(()),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 8. main
 // ---------------------------------------------------------------------------
 
 struct Args {
@@ -2385,15 +2576,32 @@ struct DisasmArgs {
     out: PathBuf,
 }
 
-/// The two things the tool does.
+/// `data` asks for one named global rather than a function.
+struct DataArgs {
+    dll: PathBuf,
+    pdb: PathBuf,
+    /// A case-sensitive substring of a `Class::Name`, or a whole mangling.
+    symbol: String,
+    /// How many bytes of the image to read at the symbol.
+    bytes: u32,
+    out: Option<PathBuf>,
+}
+
+/// The three things the tool does.
 enum Mode {
     Extract(Args),
     Disasm(DisasmArgs),
+    Data(DataArgs),
 }
 
 const USAGE: &str = "usage: sfy-native <dll> <pdb> <out.json> \
 [--class Class[:member,member]] [--expect Class.member=value] [--dump Class]\n\
-       sfy-native <dll> <pdb> disasm <symbol-substring> --out <json>";
+       sfy-native <dll> <pdb> disasm <symbol-substring> --out <json>\n\
+       sfy-native <dll> <pdb> data <symbol> --bytes <n> [--out <json>]";
+
+/// The most bytes `data` will read at one symbol. A global whose initialiser is
+/// bigger than this is not the kind of thing this mode is for.
+const MAX_DATA_BYTES: u32 = 4096;
 
 fn parse_args(argv: &[String]) -> Result<Mode> {
     let mut positional = Vec::new();
@@ -2401,6 +2609,7 @@ fn parse_args(argv: &[String]) -> Result<Mode> {
     let mut expect = Vec::new();
     let mut dump = None;
     let mut out: Option<PathBuf> = None;
+    let mut bytes: Option<u32> = None;
     let mut it = argv.iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -2442,6 +2651,14 @@ fn parse_args(argv: &[String]) -> Result<Mode> {
                         .into(),
                 );
             }
+            "--bytes" => {
+                let value = it.next().ok_or_else(|| anyhow!("--bytes needs a count"))?;
+                bytes = Some(
+                    value
+                        .parse()
+                        .with_context(|| format!("--bytes wants a count of bytes, got {value}"))?,
+                );
+            }
             other if other.starts_with("--") => bail!("unknown option {other}\n{USAGE}"),
             other => positional.push(other.to_string()),
         }
@@ -2455,6 +2672,9 @@ fn parse_args(argv: &[String]) -> Result<Mode> {
         if !classes.is_empty() || !expect.is_empty() || dump.is_some() {
             bail!("disasm takes none of --class, --expect or --dump\n{USAGE}");
         }
+        if bytes.is_some() {
+            bail!("--bytes belongs to the data mode\n{USAGE}");
+        }
         let out = out.ok_or_else(|| anyhow!("disasm needs --out <json>\n{USAGE}"))?;
         return Ok(Mode::Disasm(DisasmArgs {
             dll: dll.into(),
@@ -2464,8 +2684,35 @@ fn parse_args(argv: &[String]) -> Result<Mode> {
         }));
     }
 
+    // So is `data`, which reads the image at a symbol and decodes nothing.
+    if positional.get(2).map(String::as_str) == Some("data") {
+        let [dll, pdb, _, symbol] = positional.as_slice() else {
+            bail!("data needs one symbol\n{USAGE}");
+        };
+        if !classes.is_empty() || !expect.is_empty() || dump.is_some() {
+            bail!("data takes none of --class, --expect or --dump\n{USAGE}");
+        }
+        let bytes = bytes.ok_or_else(|| anyhow!("data needs --bytes <n>\n{USAGE}"))?;
+        if bytes == 0 || bytes > MAX_DATA_BYTES {
+            bail!("--bytes wants 1 to {MAX_DATA_BYTES} bytes, got {bytes}\n{USAGE}");
+        }
+        return Ok(Mode::Data(DataArgs {
+            dll: dll.into(),
+            pdb: pdb.into(),
+            symbol: symbol.clone(),
+            bytes,
+            out,
+        }));
+    }
+
     if out.is_some() {
-        bail!("--out belongs to the disasm mode; extract names its output positionally\n{USAGE}");
+        bail!(
+            "--out belongs to the disasm and data modes; extract names its output \
+             positionally\n{USAGE}"
+        );
+    }
+    if bytes.is_some() {
+        bail!("--bytes belongs to the data mode\n{USAGE}");
     }
     let [dll, pdb, out] = positional.as_slice() else {
         bail!("{USAGE}");
@@ -2638,6 +2885,7 @@ fn main() -> Result<()> {
     match parse_args(&argv)? {
         Mode::Extract(args) => run(&args),
         Mode::Disasm(args) => run_disasm(&args),
+        Mode::Data(args) => run_data(&args),
     }
 }
 
@@ -3971,5 +4219,136 @@ mod tests {
             "game.dll", "game.pdb", "disasm", "X", "--out", "x", "--dump", "C"
         ]))
         .is_err());
+    }
+
+    #[test]
+    fn the_data_mode_is_its_own_command_line() {
+        let argv = |args: &[&str]| args.iter().map(|a| a.to_string()).collect::<Vec<_>>();
+        let Ok(Mode::Data(args)) = parse_args(&argv(&[
+            "game.dll",
+            "game.pdb",
+            "data",
+            "AFGBuildableConveyorLift::CLEARANCE_EXTENT_2D",
+            "--bytes",
+            "16",
+        ])) else {
+            panic!("data was not parsed");
+        };
+        assert_eq!(args.symbol, "AFGBuildableConveyorLift::CLEARANCE_EXTENT_2D");
+        assert_eq!((args.bytes, args.out), (16, None));
+
+        // The JSON is optional; the printed line is not.
+        let Ok(Mode::Data(args)) = parse_args(&argv(&[
+            "game.dll", "game.pdb", "data", "X", "--bytes", "8", "--out", "x.json",
+        ])) else {
+            panic!("data with --out was not parsed");
+        };
+        assert_eq!(args.out, Some(PathBuf::from("x.json")));
+
+        // A size is required, has to be a count, and has to be one this mode
+        // will read; and `--bytes` belongs to no other mode.
+        assert!(parse_args(&argv(&["game.dll", "game.pdb", "data", "X"])).is_err());
+        assert!(parse_args(&argv(&[
+            "game.dll", "game.pdb", "data", "X", "--bytes", "0"
+        ]))
+        .is_err());
+        assert!(parse_args(&argv(&[
+            "game.dll", "game.pdb", "data", "X", "--bytes", "1e6"
+        ]))
+        .is_err());
+        assert!(parse_args(&argv(&[
+            "game.dll", "game.pdb", "data", "X", "--bytes", "5000"
+        ]))
+        .is_err());
+        assert!(parse_args(&argv(&["game.dll", "game.pdb", "out.json", "--bytes", "8"])).is_err());
+        assert!(parse_args(&argv(&[
+            "game.dll", "game.pdb", "disasm", "X", "--out", "x", "--bytes", "8"
+        ]))
+        .is_err());
+    }
+
+    #[test]
+    fn a_global_is_read_as_little_endian_doubles_out_of_the_named_section() {
+        let mut initialiser = Vec::new();
+        initialiser.extend_from_slice(&100.0f64.to_le_bytes());
+        initialiser.extend_from_slice(&100.0f64.to_le_bytes());
+        let pe = fake_pe_in(".data", &initialiser);
+        let global = Symbol {
+            rva: 0x2000,
+            name: Some("AFGBuildableConveyorLift::CLEARANCE_EXTENT_2D".to_string()),
+            mangled: "?CLEARANCE_EXTENT_2D@AFGBuildableConveyorLift@@2VX@@B".to_string(),
+        };
+        let out = read_global(&pe, &global, 16).expect("the .data initialiser reads");
+        assert_eq!(out.section, ".data");
+        assert_eq!(out.rva, "0x2000");
+        assert_eq!(out.hex, "0000000000005940".repeat(2));
+        assert_eq!(out.doubles, [100.0, 100.0]);
+        assert_eq!(out.bytes, 16);
+
+        // `.rdata` is the other initialised section, and is read the same way.
+        assert_eq!(
+            read_global(&fake_pe(&initialiser), &global, 8)
+                .expect("the .rdata initialiser reads")
+                .section,
+            ".rdata"
+        );
+    }
+
+    #[test]
+    fn a_global_outside_the_initialised_sections_is_refused_with_the_section() {
+        let pe = fake_pe_in(".text", &100.0f64.to_le_bytes());
+        let global = Symbol {
+            rva: 0x2000,
+            name: Some("UFGThing::NOT_AN_INITIALISER".to_string()),
+            mangled: "?NOT_AN_INITIALISER@UFGThing@@2VX@@B".to_string(),
+        };
+        let why = read_global(&pe, &global, 8).unwrap_err().to_string();
+        assert!(why.contains(".text"), "{why}");
+        assert!(why.contains("UFGThing::NOT_AN_INITIALISER"), "{why}");
+
+        // An RVA in no section at all, and a read that runs off the end of one,
+        // are refusals too: neither is an initialiser the image holds.
+        let nowhere = Symbol {
+            rva: 0x9000,
+            ..global.clone()
+        };
+        assert!(read_global(&fake_pe_in(".data", &[]), &nowhere, 8).is_err());
+        assert!(read_global(&fake_pe_in(".data", &[0u8; 4]), &global, 0x2000).is_err());
+    }
+
+    #[test]
+    fn a_data_symbol_is_matched_by_its_class_name_form_or_its_mangling() {
+        let symbols = vec![
+            symbol(
+                "?CLEARANCE_EXTENT_2D@AFGBuildableConveyorLift@@2VX@@B",
+                0x2000,
+            ),
+            symbol("?mGridSnapSize@AFGBuildableHologram@@2MB", 0x2010),
+            // No Class::Name form: a templated scope has only its mangling.
+            symbol("?Value@?$TConst@M@@2MB", 0x2020),
+            // An S_GDATA32 record's name is already readable, and is all there
+            // is to match on -- which is how the shipped module publishes the
+            // static this mode was written for.
+            symbol("AFGBuildableConveyorLift::MID_MESH_LENGTH", 0x2030),
+        ];
+        let found = |needle: &str| {
+            find_data(&symbols, needle)
+                .into_iter()
+                .map(|s| s.rva)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            found("AFGBuildableConveyorLift::CLEARANCE_EXTENT_2D"),
+            [0x2000]
+        );
+        assert_eq!(found("CLEARANCE_EXTENT_2D"), [0x2000]);
+        assert_eq!(found("?Value@?$TConst@M@@2MB"), [0x2020]);
+        assert_eq!(found("AFGBuildableConveyorLift::MID_MESH_LENGTH"), [0x2030]);
+        assert_eq!(found("MID_MESH_LENGTH"), [0x2030]);
+        // A needle both of them carry matches both, which the caller refuses.
+        assert_eq!(found("AFGBuildableConveyorLift"), [0x2000, 0x2030]);
+        // Case-sensitive, and a name that matches nothing matches nothing.
+        assert!(found("clearance_extent_2d").is_empty());
+        assert!(found("NO_SUCH_STATIC").is_empty());
     }
 }

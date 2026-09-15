@@ -215,6 +215,58 @@ and it comes from the mangling's access code:
 Output is deterministic: functions sorted by RVA, instructions in address
 order, fixed key order, so two runs give byte-identical files.
 
+## Reading a global: the `data` mode
+
+The `constant` annotation above trusts `.rdata` and nothing else, because a
+writable global is not a constant: quoting one as if it were would put a number
+in a rule that the running game may have moved on from. Some of what a validator
+reads *is* a writable global, though —
+`AFGBuildableConveyorLift::FitClearance` takes its clearance box's half-extent
+from one — and "the tool will not quote it" left the value to be read by hand,
+which is not a source. `data` is the way to read one and say what it is:
+
+```
+./target/release/sfy-native game.dll game.pdb \
+  data AFGBuildableConveyorLift::CLEARANCE_EXTENT_2D --bytes 16 --out extent.json
+```
+
+```
+AFGBuildableConveyorLift::CLEARANCE_EXTENT_2D @ 0x19b8118 in .data (16 bytes): 00000000000059400000000000005940 = 100, 100
+```
+
+```json
+{"symbol": "AFGBuildableConveyorLift::CLEARANCE_EXTENT_2D",
+ "mangled": "AFGBuildableConveyorLift::CLEARANCE_EXTENT_2D",
+ "rva": "0x19b8118", "section": ".data", "bytes": 16,
+ "hex": "00000000000059400000000000005940", "doubles": [100.0, 100.0]}
+```
+
+The argument is a case-sensitive substring of the symbol's name, and it has to
+match **exactly one** of them — several matches are a refusal listing them, as
+is none. The symbols it matches are the PDB's *data* symbols, never a function's:
+a `Public` record with `function` clear, which is mangled and gets the same
+`Class::Method`-style name derivation `disasm` uses, or an
+`S_GDATA32`/`S_LDATA32` `Data` record, whose name the compiler already wrote out
+as `Class::Name`. Both spellings are matched, because which kind a given static
+is published as is the PDB's business and not the caller's; `CLEARANCE_EXTENT_2D`
+is the second kind here, which is why its `mangled` above is readable. This mode
+decodes no instructions at all: it resolves a symbol, reads the section table
+and reads the file.
+
+Where the RVA lands decides whether it is read: `.data` and `.rdata` are the
+initialised sections and are the only two accepted, and anything else — `.text`,
+a resource section, an address in no section, or a read that runs past what the
+file holds for the section — is refused **with the section it did land in**. The
+`--out` file is optional; the line above is printed either way, and `--bytes` is
+not.
+
+**What such a read is, and is not.** It is the initialiser: what the image holds
+*before the game runs*. `FitClearance` reads the global at hologram time, so if
+anything in the running game ever wrote to it, this reading would be stale, and
+nothing the tool can see proves nothing does. Every caller has to carry that
+caveat with the number — `scripts/sfy_native_rules.py` writes it into the
+`lift.clearance` rule's interpretation, once, beside the bytes.
+
 ## The oracle
 
 Four members' values are stated in the public headers, and a fifth is in
