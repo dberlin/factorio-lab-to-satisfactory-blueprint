@@ -1,8 +1,8 @@
 """Where every object in a Satisfactory build stands, in centimetres.
 
 A :class:`SfyPlacement` is the whole build as geometry: machines, conveyor
-attachments, belt runs, poles, wires and foundations, each with an id, the game
-class it is built from, and where it is. It is the hand-off between the layout
+attachments, belt runs, conveyor lifts, poles, wires and foundations, each with
+an id, the game class it is built from, and where it is. It is the hand-off between the layout
 stages and :mod:`flab2bp.sfy.layout.emit`, which writes it into a blueprint, and
 it is what the validator is given to judge.
 
@@ -37,9 +37,10 @@ from array import array
 from dataclasses import dataclass, field
 from fractions import Fraction
 
+from flab2bp.sfy.geometry import quat_rotate, snap_zeros
 from flab2bp.sfy.layout.splines import SplinePoint, Vector, yaw_quaternion
 from flab2bp.sfy.objects import Transform
-from flab2bp.sfy.registry import Registry
+from flab2bp.sfy.registry import LiftGeometry, Registry
 from flab2bp.sfy.spec import Designer
 
 __all__ = [
@@ -47,6 +48,7 @@ __all__ = [
     "AttachmentObj",
     "BeltRun",
     "FoundationObj",
+    "LiftObj",
     "Link",
     "MachineObj",
     "Placed",
@@ -57,6 +59,7 @@ __all__ = [
     "Vector",
     "WireObj",
     "belt_ends",
+    "lift_geometry",
     "stored_float",
 ]
 
@@ -269,6 +272,89 @@ class BeltRun:
 
 
 @dataclass(frozen=True, slots=True)
+class LiftObj:
+    """One conveyor lift: a vertical run between two connections.
+
+    A lift is not a belt with a spline in it.  It is an actor with a height:
+    ``pose`` is the BOTTOM, because ``AFGBuildableConveyorLift::SetupConnections``
+    puts ``mConnection0`` at the actor transform exactly and facing the actor's
+    own forward (the ``lift.connectors`` rule, and
+    :class:`~flab2bp.sfy.registry.LiftGeometry` carries the two numbers), and
+    the top end is ``mTopTransform`` beside it.
+
+    ``height_cm`` is SIGNED, the way ``mTopTransform``'s translation is: the top
+    sits that far along the geometry's ``top_offset_axis`` from the actor, above
+    it for a positive height and below it for a negative one.  Which way items
+    travel does not depend on that sign.  ``reversed_swaps_flow`` is false --
+    items always enter by ``mConnection0``, and
+    ``AFGBuildableConveyorLift::GetConveyorLiftFlowDirection`` reads nothing but
+    the sign of that Z to decide which way the MESH runs -- so a lift that
+    carries items upward is one whose actor is at the bottom, and a lift that
+    carries them down is one whose actor is at the top with a negative height.
+    :func:`belt_ends` names the two ports either way: the entry is the bottom's.
+
+    ``top_yaw_deg`` is the yaw ``mTopTransform`` carries, **in the actor's own
+    frame** (``Hologram/FGConveyorLiftHologram.h:102-104``: "Transform of the
+    top part of the lift, in actor local space"), so the top end faces the
+    pose's yaw plus this one.  ``lift.top_yaw`` says it is a whole number of
+    ``top_yaw_step_deg`` steps -- four directions, 90 degrees apart -- and the
+    validator holds it to that.
+
+    The height is NOT held at :func:`stored_float` width.  A pose is ten 32-bit
+    floats because that is what the object table writes; ``mTopTransform`` is a
+    property beside it, written as doubles, so rounding the height here would
+    claim a coarseness the file does not have.
+    """
+
+    id: int
+    class_name: str
+    pose: Pose
+    height_cm: float
+    top_yaw_deg: float = 0.0
+
+    def bottom_end(self, geometry: LiftGeometry) -> tuple[Vector, Vector]:
+        """``(where the bottom connection sits, which way it faces)``, in world space.
+
+        ``mConnection0``'s relative transform is the identity moved
+        ``CONNECTION_RELATIVE_FORWARD`` (which is zero) along its own forward,
+        so the connection is at the actor and faces the actor's forward:
+        ``geometry.bottom_offset`` and ``geometry.bottom_facing``, both turned
+        by the pose's yaw.
+        """
+        return (self._at(geometry.bottom_offset), self._facing(geometry, 0.0))
+
+    def top_end(self, geometry: LiftGeometry) -> tuple[Vector, Vector]:
+        """``(where the top connection sits, which way it faces)``, in world space.
+
+        ``mConnection1``'s relative transform is ``mTopTransform``: its
+        translation is :meth:`LiftGeometry.top_offset` of this lift's height and
+        its rotation is :attr:`top_yaw_deg`, so the end sits that far along the
+        offset axis and faces that much further round than the bottom.
+        """
+        return (
+            self._at(geometry.top_offset(self.height_cm)),
+            self._facing(geometry, self.top_yaw_deg),
+        )
+
+    def _at(self, offset: Vector) -> Vector:
+        turned = quat_rotate(yaw_quaternion(self.pose.yaw_deg), offset)
+        origin = self.pose.location
+        return (turned[0] + origin[0], turned[1] + origin[1], turned[2] + origin[2])
+
+    def _facing(self, geometry: LiftGeometry, extra_yaw_deg: float) -> Vector:
+        """The connector normal of an end turned ``extra_yaw_deg`` past the actor.
+
+        ``UFGFactoryConnectionComponent::GetConnectorNormal`` is the component's
+        own forward (``FGFactoryConnectionComponent.h:142``), and
+        ``geometry.bottom_facing`` is what that forward is under an unrotated
+        relative transform.  The top's relative transform adds its own yaw to
+        the actor's, which is the only difference between the two ends.
+        """
+        quaternion = yaw_quaternion(self.pose.yaw_deg + extra_yaw_deg)
+        return snap_zeros(quat_rotate(quaternion, geometry.bottom_facing))
+
+
+@dataclass(frozen=True, slots=True)
 class Link:
     """One connection: ``a``'s port wired to ``b``'s port.
 
@@ -298,7 +384,7 @@ class WireObj:
     link: Link
 
 
-Placed = MachineObj | AttachmentObj | BeltRun | PoleObj | WireObj | FoundationObj
+Placed = MachineObj | AttachmentObj | BeltRun | LiftObj | PoleObj | WireObj | FoundationObj
 """Anything a placement holds: everything with an id and a class name."""
 
 
@@ -328,6 +414,7 @@ class SfyPlacement:
     machines: tuple[MachineObj, ...] = ()
     attachments: tuple[AttachmentObj, ...] = ()
     belts: tuple[BeltRun, ...] = ()
+    lifts: tuple[LiftObj, ...] = ()
     poles: tuple[PoleObj, ...] = ()
     wires: tuple[WireObj, ...] = ()
     foundations: tuple[FoundationObj, ...] = ()
@@ -350,6 +437,7 @@ class SfyPlacement:
             *self.machines,
             *self.attachments,
             *self.belts,
+            *self.lifts,
             *self.poles,
             *self.wires,
         )
@@ -386,6 +474,21 @@ def _link_order(link: Link) -> tuple[int, str, int, str]:
     return (link.a[0], link.a[1], link.b[0], link.b[1])
 
 
+def lift_geometry(registry: Registry, class_name: str) -> LiftGeometry:
+    """Where this lift class's two ends sit, out of ``registry.json``.
+
+    Every field of the :class:`~flab2bp.sfy.registry.LiftGeometry` was read out
+    of the game -- the ``lift.connectors`` and ``lift.top_yaw`` rules -- and
+    ``load_registry`` refuses a lift class that carries none, so a class with no
+    geometry here is not a lift and raises rather than being given a default.
+    """
+    buildable = registry.buildables.get(class_name)
+    geometry = None if buildable is None else buildable.lift
+    if geometry is None:
+        raise KeyError(f"the registry gives {class_name} no lift geometry, so it is not a lift")
+    return geometry
+
+
 def belt_ends(registry: Registry, class_name: str) -> tuple[str, str]:
     """``(entry, exit)``: which connection of a conveyor items enter and leave by.
 
@@ -394,6 +497,13 @@ def belt_ends(registry: Registry, class_name: str) -> tuple[str, str]:
     through ``mConnection0``, and the cooked class default object says which
     named component that is. A class with no ``flow`` is not a conveyor and
     raises.
+
+    A conveyor LIFT is a conveyor too, and this answers for one: a lift does not
+    override ``Factory_Tick``, so items enter it by ``mConnection0`` -- the end
+    at the actor, whichever way the lift runs -- and leave by ``mConnection1``
+    at ``mTopTransform`` (the ``lift.connectors`` rule). The sentence below
+    about the first spline point is a belt's; a lift has no spline, and
+    :meth:`LiftObj.bottom_end` is where its entry sits.
 
     That the entry sits at the run's **first** spline point is this project's
     stated assumption from M1b and not something read out of the game

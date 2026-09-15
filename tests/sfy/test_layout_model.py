@@ -13,12 +13,14 @@ from flab2bp.sfy.layout.emit import decode, emit
 from flab2bp.sfy.layout.model import (
     BeltRun,
     FoundationObj,
+    LiftObj,
     Link,
     MachineObj,
     PoleObj,
     Pose,
     SfyPlacement,
     belt_ends,
+    lift_geometry,
     stored_float,
 )
 from flab2bp.sfy.layout.splines import straight, yaw_quaternion
@@ -29,6 +31,7 @@ from tests.sfy.conftest import fixture_paths
 
 CONSTRUCTOR = "Build_ConstructorMk1_C"
 BELT = "Build_ConveyorBeltMk1_C"
+LIFT = "Build_ConveyorLiftMk1_C"
 FOUNDATION = "Build_Foundation_8x1_01_C"
 POLE = "Build_PowerPoleMk1_C"
 IRON_PLATE = "Recipe_IronPlate_C"
@@ -230,3 +233,67 @@ def test_a_boundary_end_is_outside_equality_because_no_file_property_carries_it(
     assert flagged == plain
     assert flagged.boundary_start and not flagged.boundary_end
     assert not plain.boundary_start
+
+
+def test_a_lifts_bottom_end_is_its_actor_and_its_top_is_the_signed_height_above() -> None:
+    """``lift.connectors``: ``mConnection0`` sits at the actor transform exactly.
+
+    The top is ``mTopTransform``'s translation, which ``lift.top_yaw`` reads as
+    the height along ``FVector::UpVector`` and nothing sideways -- so a lift of
+    height ``h`` puts its top ``h`` above its bottom, and a *negative* height
+    puts it below.  Both offsets come out of the registry's ``LiftGeometry``
+    rather than being spelled here.
+    """
+    registry = load_registry()
+    geometry = lift_geometry(registry, LIFT)
+    up = LiftObj(1, LIFT, Pose(100.0, -200.0, 0.0, 0.0), 400.0)
+    down = LiftObj(2, LIFT, Pose(100.0, -200.0, 400.0, 0.0), -400.0)
+    assert up.bottom_end(geometry)[0] == (100.0, -200.0, 0.0)
+    assert up.top_end(geometry)[0] == (100.0, -200.0, 400.0)
+    assert down.bottom_end(geometry)[0] == (100.0, -200.0, 400.0)
+    assert down.top_end(geometry)[0] == (100.0, -200.0, 0.0)
+
+
+def test_a_lifts_two_ends_face_the_actors_forward_and_the_tops_own_yaw() -> None:
+    """A connection faces its component's forward (``FGFactoryConnectionComponent.h:142``).
+
+    The bottom's relative transform is the identity, so it faces the actor's own
+    forward; the top's is ``mTopTransform``, whose rotation is the top yaw in the
+    actor's own frame, so it faces that much further round.
+    """
+    registry = load_registry()
+    geometry = lift_geometry(registry, LIFT)
+    straight_up = LiftObj(1, LIFT, Pose(0.0, 0.0, 0.0, 90.0), 400.0)
+    assert straight_up.bottom_end(geometry)[1] == (0.0, 1.0, 0.0)
+    assert straight_up.top_end(geometry)[1] == (0.0, 1.0, 0.0)
+    turned = LiftObj(1, LIFT, Pose(0.0, 0.0, 0.0, 90.0), 400.0, top_yaw_deg=90.0)
+    assert turned.bottom_end(geometry)[1] == (0.0, 1.0, 0.0)
+    assert turned.top_end(geometry)[1] == (-1.0, 0.0, 0.0)
+
+
+def test_a_lift_is_wired_by_the_two_port_names_the_registry_gives_it() -> None:
+    """A lift is a conveyor, so ``flow`` names its ends: entry at the bottom.
+
+    ``reversed_swaps_flow`` is false -- items always enter by ``mConnection0``,
+    which is always at the actor -- so the entry port is the bottom's whichever
+    way the lift runs, and ``by_id`` has to find a lift like anything else.
+    """
+    registry = load_registry()
+    entry, exit_end = belt_ends(registry, LIFT)
+    assert (entry, exit_end) == ("ConveyorAny0", "ConveyorAny1")
+    lift = LiftObj(7, LIFT, Pose(0.0, 0.0, 0.0, 0.0), 400.0)
+    placement = SfyPlacement(designer=designer("mk1", registry), lifts=(lift,))
+    assert placement.by_id(7) is lift
+    assert lift in placement.objects
+
+
+def test_a_lift_states_its_height_at_the_width_the_file_holds_it() -> None:
+    """``mTopTransform`` is a double transform, so the height is not rounded to f32.
+
+    A pose is ten 32-bit floats and says so; the top transform beside it is a
+    property, written as doubles, and a height rounded to ``f32`` would not be
+    the number that came back out of the file.
+    """
+    lift = LiftObj(1, LIFT, Pose(0.0, 0.0, 0.0, 0.0), 350.1)
+    assert lift.height_cm == 350.1
+    assert lift.height_cm != stored_float(350.1)

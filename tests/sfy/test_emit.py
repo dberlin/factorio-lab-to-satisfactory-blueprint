@@ -23,8 +23,13 @@ from flab2bp.sfy.layout.emit import (
     CURRENT_POTENTIAL,
     CURRENT_PRODUCTION_BOOST,
     FIRST_NAME_ID,
+    IS_REVERSED,
     PENDING_POTENTIAL,
     PENDING_PRODUCTION_BOOST,
+    ROTATION,
+    SNAPPED_PASSTHROUGHS,
+    TOP_TRANSFORM,
+    TRANSLATION,
     EmitError,
     decode,
     emit,
@@ -32,6 +37,7 @@ from flab2bp.sfy.layout.emit import (
 from flab2bp.sfy.layout.model import (
     BeltRun,
     FoundationObj,
+    LiftObj,
     Link,
     MachineObj,
     PoleObj,
@@ -40,9 +46,9 @@ from flab2bp.sfy.layout.model import (
     WireObj,
     belt_ends,
 )
-from flab2bp.sfy.layout.splines import straight
+from flab2bp.sfy.layout.splines import straight, yaw_quaternion
 from flab2bp.sfy.objects import ACTOR, ObjectData, ObjectHeader, Transform
-from flab2bp.sfy.properties import Float, Property, Tag
+from flab2bp.sfy.properties import Array, Float, Property, Quat, Struct, Tag, Vector
 from flab2bp.sfy.query import connected, find, object_index
 from flab2bp.sfy.registry import Port, Registry, load_registry
 from flab2bp.sfy.spec import designer
@@ -61,6 +67,7 @@ from tests.sfy.conftest import FIXTURES, fixture_paths
 FOUNDATION = "Build_Foundation_8x1_01_C"
 CONSTRUCTOR = "Build_ConstructorMk1_C"
 BELT = "Build_ConveyorBeltMk1_C"
+LIFT = "Build_ConveyorLiftMk1_C"
 POLE = "Build_PowerPoleMk1_C"
 POWER_LINE = "Build_PowerLine_C"
 IRON_PLATE = "Recipe_IronPlate_C"
@@ -71,6 +78,7 @@ FOUNDATION_Z_CM = 50.0
 SLAB_TOP_CM = 100.0
 POLE_X_CM = 700.0
 BELT_LENGTH_CM = 400.0
+LIFT_HEIGHT_CM = 400.0
 
 
 @cache
@@ -540,3 +548,94 @@ def test_a_fractional_yaw_comes_back_out_of_the_file_it_went_into(yaw: float) ->
     )
     assert placement.machines[0].pose.yaw_deg == pytest.approx(yaw, abs=1e-4)
     assert decode(_emit(placement), load_registry()) == placement
+
+
+def _lift_placement(height_cm: float = LIFT_HEIGHT_CM, top_yaw_deg: float = 0.0) -> SfyPlacement:
+    """A Constructor with a conveyor lift standing on its output."""
+    registry = load_registry()
+    machine_pose = Pose(0.0, 0.0, SLAB_TOP_CM, 0.0)
+    foot = world_port(machine_pose.transform(), _port(registry, CONSTRUCTOR, "Output0"))
+    entry, _ = belt_ends(registry, LIFT)
+    return SfyPlacement(
+        designer=designer("mk1", registry),
+        machines=(MachineObj(4, CONSTRUCTOR, machine_pose, IRON_PLATE),),
+        lifts=(LiftObj(7, LIFT, Pose(*foot, 0.0), height_cm, top_yaw_deg),),
+        links=(Link((4, "Output0"), (7, entry)),),
+    )
+
+
+def _top_transform(built: Blueprint) -> dict[str, object]:
+    """The fields of the emitted lift's ``mTopTransform``, by name."""
+    lift = next(d for h, d in built.objects if h.class_name == LIFT and h.kind == ACTOR)
+    struct = find(lift.properties, TOP_TRANSFORM)
+    assert isinstance(struct, Struct) and struct.name == "Transform"
+    return {f.tag.name: f.value for f in struct.fields}
+
+
+def test_a_lift_is_written_as_its_actor_plus_the_top_transform_beside_it() -> None:
+    """``mTopTransform`` is the save property the game keeps a lift's top in.
+
+    ``UPROPERTY( SaveGame, ReplicatedUsing=OnRep_TopTransform ) FTransform
+    mTopTransform`` (``Buildables/FGBuildableConveyorLift.h:266-267``), and
+    ``lift.top_yaw`` reads what the hologram puts in it: the height along
+    ``FVector::UpVector`` and nothing sideways.  A straight lift writes no
+    rotation at all, because an identity rotation is the struct's default and
+    the game serialises a struct's non-default members only -- which is what the
+    corpus's own lifts show, 276 of 757 carrying a translation alone.
+    """
+    fields = _top_transform(_emit(_lift_placement()))
+    assert fields == {TRANSLATION: Vector(0.0, 0.0, LIFT_HEIGHT_CM, wide=True)}
+
+
+def test_a_lift_that_turns_at_the_top_writes_that_yaw_as_the_quaternion() -> None:
+    """``UpdateTopTransform`` stores ``FRotator(0, yaw, 0).Quaternion()`` (0xaa49d1)."""
+    fields = _top_transform(_emit(_lift_placement(top_yaw_deg=90.0)))
+    assert fields == {
+        ROTATION: Quat(*yaw_quaternion(90.0), wide=True),
+        TRANSLATION: Vector(0.0, 0.0, LIFT_HEIGHT_CM, wide=True),
+    }
+
+
+def test_a_lift_of_ours_claims_no_passthrough_and_no_deprecated_reversal() -> None:
+    """Two properties a lift template carries that a lift of ours must not inherit.
+
+    ``mSnappedPassthroughs`` names the passthroughs the fixture's own lift was
+    built through, which this blueprint has not got -- and the flags decide
+    where ``SetupConnections`` puts the two ends (``lift.connectors``) and what
+    ``lift.height_range``'s floor is, so a stale one would be a claim about
+    geometry.  ``mIsReversed`` is marked ``DEPRECATED 2023-01-30`` in the header
+    (``:269-272``) with "Instead build lifts where mConnector0 is always input",
+    and ``SetupConnections`` -- 1950 bytes, read whole -- never reads it, so a
+    lift of ours does not write one.
+    """
+    built = _emit(_lift_placement())
+    lift = next(d for h, d in built.objects if h.class_name == LIFT and h.kind == ACTOR)
+    passthroughs = find(lift.properties, SNAPPED_PASSTHROUGHS)
+    assert isinstance(passthroughs, Array) and passthroughs.items == ()
+    assert find(lift.properties, IS_REVERSED) is None
+
+
+def test_a_placement_with_a_lift_going_up_and_one_going_down_comes_back_whole() -> None:
+    """``decode(emit(p)) == p`` over both signs: the height is what the file holds.
+
+    A lift carrying items downward is one whose actor stands at the TOP with a
+    negative height -- ``reversed_swaps_flow`` is false, so the end items enter
+    by is ``mConnection0`` at the actor either way.
+    """
+    for height in (LIFT_HEIGHT_CM, -LIFT_HEIGHT_CM):
+        placement = _lift_placement(height)
+        assert decode(_emit(placement), load_registry()) == placement
+
+
+def test_a_lift_that_turns_at_the_top_comes_back_with_that_yaw() -> None:
+    for yaw in (90.0, 180.0, -90.0):
+        placement = _lift_placement(top_yaw_deg=yaw)
+        assert decode(_emit(placement), load_registry()) == placement
+
+
+def test_the_link_onto_a_lift_comes_back_naming_the_machine_first() -> None:
+    """A lift's ports are its two connection components, wired like any other."""
+    registry = load_registry()
+    entry, _ = belt_ends(registry, LIFT)
+    placement = decode(_emit(_lift_placement()), registry)
+    assert placement.links == (Link((4, "Output0"), (7, entry)),)

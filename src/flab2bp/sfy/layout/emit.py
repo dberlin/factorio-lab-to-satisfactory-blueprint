@@ -66,7 +66,7 @@ that are about a wire rather than about stamping one.
 from __future__ import annotations
 
 import math
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import replace
 from fractions import Fraction
 
@@ -79,6 +79,7 @@ from flab2bp.sfy.layout.model import (
     AttachmentObj,
     BeltRun,
     FoundationObj,
+    LiftObj,
     Link,
     MachineObj,
     PoleObj,
@@ -87,11 +88,22 @@ from flab2bp.sfy.layout.model import (
     SplinePoint,
     Vector,
     WireObj,
+    lift_geometry,
     stored_float,
 )
 from flab2bp.sfy.layout.splines import Quaternion, yaw_quaternion
 from flab2bp.sfy.objects import ACTOR, ObjectData, ObjectHeader, Transform
-from flab2bp.sfy.properties import Array, Float, Object, Property, Struct, Tag, Value
+from flab2bp.sfy.properties import (
+    TAG_NATIVE_SERIALIZE,
+    Array,
+    Float,
+    Object,
+    Property,
+    Quat,
+    Struct,
+    Tag,
+    Value,
+)
 from flab2bp.sfy.properties import Vector as PropertyVector
 from flab2bp.sfy.query import connected, find, object_index, spline_points
 from flab2bp.sfy.registry import Registry
@@ -106,7 +118,17 @@ from flab2bp.sfy.templates import (
 )
 from flab2bp.sfy.trailers import PowerLineTrailer
 
-__all__ = ["FIRST_NAME_ID", "EmitError", "decode", "emit"]
+__all__ = [
+    "FIRST_NAME_ID",
+    "IS_REVERSED",
+    "ROTATION",
+    "SNAPPED_PASSTHROUGHS",
+    "TOP_TRANSFORM",
+    "TRANSLATION",
+    "EmitError",
+    "decode",
+    "emit",
+]
 
 FIRST_NAME_ID = 2_000_000_000
 """The game names an actor ``<Class>_<digits>``; a placement's object id is
@@ -142,6 +164,29 @@ _WHOLE_SOMERSLOOP_TOLERANCE = 1e-4
 and still be read back as that number: the boost is one 32-bit float, and the
 step per somersloop is 1, 0.5 or 0.25 of one across the shipped classes."""
 
+TOP_TRANSFORM = "mTopTransform"
+SNAPPED_PASSTHROUGHS = "mSnappedPassthroughs"
+IS_REVERSED = "mIsReversed"
+"""The three ``SaveGame`` properties of a conveyor lift this module touches,
+named as ``Buildables/FGBuildableConveyorLift.h`` names them: ``mTopTransform``
+at ``:266-267`` (``UPROPERTY( SaveGame, ReplicatedUsing=OnRep_TopTransform )
+FTransform``), ``mSnappedPassthroughs`` at ``:286-287`` and ``mIsReversed`` at
+``:271-272``, which the same header marks ``DEPRECATED 2023-01-30``."""
+
+TRANSFORM_STRUCT = "Transform"
+ROTATION = "Rotation"
+TRANSLATION = "Translation"
+_TRANSFORM_FIELD_TAGS = {
+    name: Tag(name, "StructProperty", 0, struct_name=struct).as_modern(TAG_NATIVE_SERIALIZE)
+    for name, struct in ((ROTATION, "Quat"), (TRANSLATION, "Vector"))
+}
+"""The tags an ``FTransform``'s two members are written with. A transform is a
+property list like any other struct, its ``FQuat`` and ``FVector`` members
+natively serialised -- which is the :data:`~flab2bp.sfy.properties.TAG_NATIVE_SERIALIZE`
+flag -- and a corpus lift's own ``mTopTransform`` carries exactly these two
+tags. The fixture is the format example and nothing more: what goes IN them is
+the geometry the rules state."""
+
 _ATTACHMENT_NATIVE = frozenset(
     {
         "FGBuildableAttachmentSplitter",
@@ -150,6 +195,7 @@ _ATTACHMENT_NATIVE = frozenset(
         "FGBuildableMergerPriority",
     }
 )
+_LIFT_NATIVE = frozenset({"FGBuildableConveyorLift"})
 _POLE_NATIVE = frozenset({"FGBuildablePowerPole"})
 _FOUNDATION_NATIVE = frozenset({"FGBuildableFoundationLightweight"})
 _WIRE_NATIVE = frozenset({"FGBuildableWire"})
@@ -161,6 +207,12 @@ _ROTATION_TOLERANCE = 1e-6
 """How far a stored rotation may sit from a whole degree's quaternion and still
 be read back as that degree: an actor's rotation is four 32-bit floats, whose
 last digit lands around 6e-8."""
+
+_TOP_OFFSET_TOLERANCE_CM = 1e-6
+"""How far a lift's top may sit off its own offset axis and still be read as a
+height.  Ours, and the same kind of number as :data:`_ROTATION_TOLERANCE`: the
+game multiplies one vector by one scalar, so anything sideways is arithmetic
+noise up to here and a lift this model cannot state past it."""
 
 
 class EmitError(ValueError):
@@ -187,7 +239,8 @@ def emit(
     inventory components as well as on the actor; a belt's spline is set in the
     belt actor's own frame, with the run's first point at the actor's origin.
     A machine's clock and its somersloops go on the actor too, as the four
-    ``SaveGame`` floats :func:`_set_potential` writes.
+    ``SaveGame`` floats :func:`_set_potential` writes, and a lift's height and
+    top yaw as the one transform :func:`_set_top_transform` writes.
 
     ``links`` are wired with :func:`connect <flab2bp.sfy.templates.connect>`,
     which writes ``mConnectedComponent`` on both sides. A link names a belt end
@@ -254,6 +307,11 @@ def emit(
         header, data = objects[start]
         objects[start] = (header, set_spline(data, _spline_values(run.local_points())))
 
+    for lift in placement.lifts:
+        start, _ = place(lift.id, lift.class_name, lift.pose)
+        header, data = objects[start]
+        objects[start] = (header, _set_top_transform(data, lift, registry))
+
     for pole in placement.poles:
         place(pole.id, pole.class_name, pole.pose)
 
@@ -299,8 +357,9 @@ def decode(bp: Blueprint, registry: Registry) -> SfyPlacement:
 
     Every actor is placed by what it is: a machine is one carrying
     ``mCurrentRecipe``, a belt is a conveyor with ``mSplineData`` (put through
-    the actor's transform, because the points are stored in its own frame), and
-    an attachment, pole or foundation is one whose native class in
+    the actor's transform, because the points are stored in its own frame), a
+    lift is one with ``mTopTransform`` beside it (:func:`_lift_top`), and an
+    attachment, pole or foundation is one whose native class in
     ``registry.json`` says so. An actor that is none of those is refused rather
     than dropped -- a placement that silently lost an object would make the
     round trip meaningless.
@@ -323,6 +382,7 @@ def decode(bp: Blueprint, registry: Registry) -> SfyPlacement:
     machines: list[MachineObj] = []
     attachments: list[AttachmentObj] = []
     belts: list[BeltRun] = []
+    lifts: list[LiftObj] = []
     poles: list[PoleObj] = []
     foundations: list[FoundationObj] = []
     spans: list[tuple[int, str, tuple[ObjectRef, ObjectRef]]] = []
@@ -349,6 +409,9 @@ def decode(bp: Blueprint, registry: Registry) -> SfyPlacement:
             )
         elif native in _BELT_NATIVE:
             belts.append(BeltRun(obj_id, header.class_name, _world_points(header, data)))
+        elif native in _LIFT_NATIVE:
+            height, top_yaw = _lift_top(registry, header, data)
+            lifts.append(LiftObj(obj_id, header.class_name, pose, height, top_yaw))
         elif native in _ATTACHMENT_NATIVE:
             attachments.append(AttachmentObj(obj_id, header.class_name, pose))
         elif native in _POLE_NATIVE:
@@ -373,6 +436,7 @@ def decode(bp: Blueprint, registry: Registry) -> SfyPlacement:
         machines=tuple(machines),
         attachments=tuple(attachments),
         belts=tuple(belts),
+        lifts=tuple(lifts),
         poles=tuple(poles),
         wires=tuple(
             WireObj(obj_id, class_name, Link(_wire_side(refs[0], ids), _wire_side(refs[1], ids)))
@@ -426,6 +490,124 @@ def _set_potential(data: ObjectData, machine: MachineObj, registry: Registry) ->
             _boost_value(registry, machine.class_name, machine.somersloops),
         )
     return replace(data, properties=tuple(properties))
+
+
+def _set_top_transform(data: ObjectData, lift: LiftObj, registry: Registry) -> ObjectData:
+    """``data`` with this lift's top written on it, and nothing of the template's.
+
+    Three properties, and the reason for each:
+
+    ``mTopTransform`` is the top end's transform in the actor's own frame
+    (``Hologram/FGConveyorLiftHologram.h:102-104``).  Its translation is the
+    registry's :meth:`LiftGeometry.top_offset
+    <flab2bp.sfy.registry.LiftGeometry.top_offset>` of the lift's signed height
+    -- the height along ``FVector::UpVector`` and nothing sideways, which is
+    what ``UpdateTopTransform`` multiplies (``lift.top_yaw``, ``0xaa4a0c``) --
+    and its rotation the quaternion of the top yaw, which is what the same
+    function stores (``0xaa49d1``).  An identity rotation is NOT written: a
+    struct serialises its non-default members only, which is why 276 of the
+    corpus's 757 lifts carry a translation alone.
+
+    ``mSnappedPassthroughs`` goes out EMPTY.  A template's array names the
+    passthroughs the fixture's own lift was built through, which this blueprint
+    has not got, and the two flags are read as geometry -- ``SetupConnections``
+    faces both ends up or down instead of forward when one is set
+    (``lift.connectors``), and ``lift.height_range``'s floor becomes
+    ``mMinimumHeightWithVerticalConnection`` -- so inheriting one would be a
+    claim about where this lift's ends are.  This project authors no
+    passthroughs.
+
+    ``mIsReversed`` is not written at all.  The header marks it ``DEPRECATED
+    2023-01-30`` with "Instead build lifts where mConnector0 is always input"
+    (``:269-272``), ``GetIsReversed`` returns ``IsFlowUpwards()`` instead
+    (``:133-135``), and ``SetupConnections`` -- 1950 bytes, all four ``.pdata``
+    chunks read -- never touches its offset.  Nothing reads it, so nothing of
+    ours writes it, and a template that carries one does not pass it on.
+    """
+    geometry = lift_geometry(registry, lift.class_name)
+    struct = find(data.properties, TOP_TRANSFORM)
+    if not isinstance(struct, Struct) or struct.name != TRANSFORM_STRUCT:
+        raise EmitError(
+            f"the {lift.class_name} template carries no {TOP_TRANSFORM} transform, so there "
+            "is nowhere to write this lift's height"
+        )
+    wide = _transform_is_wide(lift.class_name, struct)
+    offset = geometry.top_offset(lift.height_cm)
+    fields: list[Property] = []
+    if lift.top_yaw_deg:
+        turn = yaw_quaternion(lift.top_yaw_deg)
+        fields.append(Property(_TRANSFORM_FIELD_TAGS[ROTATION], Quat(*turn, wide=wide)))
+    fields.append(Property(_TRANSFORM_FIELD_TAGS[TRANSLATION], PropertyVector(*offset, wide=wide)))
+    properties = []
+    for p in data.properties:
+        if p.tag.name == IS_REVERSED:
+            continue
+        value = p.value
+        if p.tag.name == TOP_TRANSFORM:
+            value = replace(struct, fields=tuple(fields))
+        elif p.tag.name == SNAPPED_PASSTHROUGHS and isinstance(value, Array):
+            value = replace(value, items=())
+        properties.append(Property(p.tag, value))
+    return replace(data, properties=tuple(properties))
+
+
+def _transform_is_wide(class_name: str, struct: Struct) -> bool:
+    """Whether this file writes a transform's members as doubles.
+
+    A natively serialised ``FVector`` is three ``f32`` in an older save and three
+    ``f64`` in a current one, and the reader remembers which on the value
+    (``properties.Vector.wide``).  The template's own translation is the one
+    place that says which family this blueprint belongs to, so it is read off
+    that rather than assumed -- every lift the game writes carries one.
+    """
+    for field in struct.fields:
+        if field.tag.name == TRANSLATION and isinstance(field.value, PropertyVector):
+            return field.value.wide
+    raise EmitError(
+        f"the {class_name} template's {TOP_TRANSFORM} has no {TRANSLATION}, so the width "
+        "this file stores a transform at is unknown"
+    )
+
+
+def _lift_top(registry: Registry, header: ObjectHeader, data: ObjectData) -> tuple[float, float]:
+    """``(height, top yaw)`` out of an actor's ``mTopTransform``.
+
+    :func:`_set_top_transform` read backwards.  A member the struct does not
+    carry is that member's default, which is how the game leaves out an identity
+    rotation: no ``Rotation`` is a top that faces the way the bottom does, and no
+    ``Translation`` is a height of zero.
+
+    The height is the translation's length along the geometry's own
+    ``top_offset_axis``, signed.  A translation with anything off that axis is
+    refused rather than projected onto it: ``lift.top_yaw`` says the hologram
+    multiplies the height by ``FVector::UpVector`` and nothing else, so such a
+    transform is not one this model can state.
+    """
+    struct = find(data.properties, TOP_TRANSFORM)
+    if not isinstance(struct, Struct) or struct.name != TRANSFORM_STRUCT:
+        raise EmitError(f"{header.name} is a conveyor lift with no {TOP_TRANSFORM} on it")
+    fields = {p.tag.name: p.value for p in struct.fields}
+    axis = lift_geometry(registry, header.class_name).top_offset_axis
+    translation = fields.get(TRANSLATION)
+    if translation is None:
+        offset: Vector = (0.0, 0.0, 0.0)
+    elif isinstance(translation, PropertyVector):
+        offset = (translation.x, translation.y, translation.z)
+    else:
+        raise EmitError(f"{header.name}'s {TOP_TRANSFORM} translation is not an FVector")
+    height = sum(offset[i] * axis[i] for i in range(3))
+    if any(abs(offset[i] - height * axis[i]) > _TOP_OFFSET_TOLERANCE_CM for i in range(3)):
+        raise EmitError(
+            f"{header.name}'s top sits at {offset}, which is not {axis} times a height: a "
+            "lift's top is above or below its bottom and nowhere else"
+        )
+    rotation = fields.get(ROTATION)
+    if rotation is None:
+        return (height, 0.0)
+    if not isinstance(rotation, Quat):
+        raise EmitError(f"{header.name}'s {TOP_TRANSFORM} rotation is not an FQuat")
+    turn = (rotation.x, rotation.y, rotation.z, rotation.w)
+    return (height, _yaw_of(header.name, turn, float))
 
 
 def _both(current: str, pending: str, value: float) -> list[Property]:
@@ -709,7 +891,23 @@ def _pose(header: ObjectHeader) -> Pose:
 
 
 def _yaw_degrees(header: ObjectHeader, transform: Transform) -> float:
+    """The yaw an actor's stored rotation encodes, in degrees.
+
+    An actor's rotation is four 32-bit floats in the object table, so the
+    fallback below rounds to that width.  See :func:`_yaw_of` for the rest.
+    """
+    return _yaw_of(header.name, transform.rotation, stored_float)
+
+
+def _yaw_of(
+    name: str, rotation: tuple[float, float, float, float], round_to: Callable[[float], float]
+) -> float:
     """The yaw a stored rotation encodes, in degrees.
+
+    ``round_to`` is the width the rotation is held at, for the fallback: an
+    actor's is four ``f32`` (:func:`stored_float`), and a lift's
+    ``mTopTransform`` is a property beside it whose ``FQuat`` is four ``f64``,
+    so that one rounds to nothing at all.
 
     A placement turns a buildable about ``+Z`` alone, so a rotation with a pitch
     or a roll in it is not one this model can state and is refused. The angle
@@ -729,16 +927,14 @@ def _yaw_degrees(header: ObjectHeader, transform: Transform) -> float:
     candidate is CHECKED against the stored rotation, so this never invents a
     tidier angle than the file actually carries.
     """
-    x, y, z, w = transform.rotation
+    x, y, z, w = rotation
     if abs(x) > _ROTATION_TOLERANCE or abs(y) > _ROTATION_TOLERANCE:
-        raise EmitError(
-            f"{header.name} is turned about more than its up axis: {transform.rotation}"
-        )
+        raise EmitError(f"{name} is turned about more than its up axis: {rotation}")
     yaw = math.degrees(2.0 * math.atan2(z, w))
     for candidate in (float(round(yaw)), *(round(yaw, places) for places in range(1, 7))):
-        if _same_rotation(yaw_quaternion(candidate), transform.rotation):
+        if _same_rotation(yaw_quaternion(candidate), rotation):
             return candidate
-    return stored_float(yaw)
+    return round_to(yaw)
 
 
 def _same_rotation(a: Quaternion, b: tuple[float, float, float, float]) -> bool:
