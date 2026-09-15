@@ -391,32 +391,47 @@ needs vertical transport between rows on different levels, which is a lift, and
 Blueprint Designer and refuses a chain that does not fit it. That ruling is what
 most of the corpus refusals below are.
 
-**How deep a row band is.** Measured over the 28 rows the corpus builds, one
-row's own band is 1600 to 2400 cm deep -- the machine's hard box, its splitter
+**How deep a row band is.** Measured over the 30 rows the corpus builds, one
+row's own band is 1560 to 2260 cm deep -- the machine's hard box, its splitter
 and merger chains, and the feeder belts between them, all from `registry.json`.
-Add the two wall margins a belt turns in at (300 cm each) and a one-row build is
-2200 cm. Add a second row and the 400 cm gap a trunk turns out of one row and
-into the next and it is 4200 cm, and the designers are 3200 (Mk1), 4000 (Mk2) and
-4800 (Mk3) cm deep: **only a Mk3 takes a two-row build.** Two SIBLING rows of one
-split group are cheaper, because no trunk turns between them and the gap is one
-grid step: `concrete*60` is 3900 cm of band and builds in a Mk2.
+Add the two wall margins (101 cm each, which is what a turn made by a conveyor
+attachment costs there) and the 202 cm gap a trunk turns out of one row and into
+the next, against designers 3200 (Mk1), 4000 (Mk2) and 4800 (Mk3) cm deep.
 
-**The corpus, at the head this note was written against.** 36 cells (12 entries x
-3 marks): 5 CLEAN, 28 refused `rows exceed the designer depth`, 3 refused `fluids
-are M4`. Both gates pass and no cell is off its pin;
-`docs/superpowers/evidence/sfy-m2-audit-2026-09-14.md` is the table, cell by
-cell, with the centimetres each depth refusal measured.
+Task 8d took 1437 cm out of the smallest build. `iron-plate*60` is **2763 cm and
+fits a Mk1**, where the manifold wanted 4200 and a Mk3: its three Smelters make
+exactly what its three Constructors eat, so `flab2bp.sfy.spec.direct_pairs`
+reports the pair from the rates alone and the two groups are laid as ONE row
+facing itself -- one straight belt per pair of machines, no merger chain, no
+splitter chain and no trunk between them. Where the rates do NOT pair, two rows
+and the gap their trunk turns in is what a build costs: `iron-rod*60` is 3524 cm
+and still wants a Mk3. Two SIBLING rows of ONE split group sit between the two --
+no trunk turns between them, so their gap is one grid step -- and `concrete*60`
+is 3422 cm of band and builds in a Mk2.
+
+**The corpus, measured at `f85afe3f`.** 36 cells (12 entries x 3 marks): 7 CLEAN, 25
+refused `rows exceed the designer depth`, 3 refused `fluids are M4`, 1 refused
+`corridor needs a bridge that does not fit`. Both gates pass and no cell is off
+its pin; `docs/superpowers/evidence/sfy-m2-audit-2026-09-14.md` is the table,
+cell by cell, with the centimetres each depth refusal measured -- the run at
+`6a35a02b` and, appended under it, the re-take after Task 8d.
 
 **The refusal inventory.** `flab2bp.sfy.layout.strategy.REFUSALS` is 24 named
 causes and the only ones the strategy may raise -- `_refuse` raises `ValueError`
 on anything else, and the mapping tables that turn a `RowError`, a
-`CorridorError` or a `PowerError` into one are pinned by a test. Exactly two of
-the 24 ever fire over the corpus, which is the honest reading of the list: it is
-a vocabulary for the failures this build form CAN have, not a claim that they
+`CorridorError` or a `PowerError` into one are pinned by a test. Three of the 24
+ever fire over the corpus -- the depth, the fluids and, since Task 8d made a Mk2
+deep enough for `steel-beam*20`'s two rows, the bridge its ore trunk needs to
+ride over its coal trunk. That is the honest reading of the list: it is a
+vocabulary for the failures this build form CAN have, not a claim that they
 happen. `docs/sfy-layout-model.md` says which bound each one comes from.
 
-**Checkpoint 2.** Three `.sbp`/`.sbpcfg` pairs, all `iron-plate*60` in a Mk3,
-each asking one question a paste test can answer: the plain two-row chain (does
+**Checkpoint 2.** Three `.sbp`/`.sbpcfg` pairs, all `iron-plate*60` and all
+written for a **Mk1** since Task 8d -- `scripts/sfy_checkpoint2.py` tries the
+three marks in order and writes each pair into the first that holds it, because
+a blueprint a player can paste into the designer they already own is worth more
+than one that needs the biggest. Each asks one question a paste test can
+answer: the plain two-row chain (does
 it run at the flow's rate), the somersloop flow (does the same rate come out of
 fewer machines), and the 250 % overclock. The last one settles what section 7
 left open -- a blueprint writes each machine's saved potential but puts no Power
