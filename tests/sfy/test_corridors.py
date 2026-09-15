@@ -10,7 +10,9 @@ the turn radius out of ``belt_bend_radius_cm``.
 
 from __future__ import annotations
 
+import itertools
 from collections.abc import Sequence
+from fractions import Fraction
 from functools import cache
 
 import pytest
@@ -21,13 +23,17 @@ from flab2bp.sfy.layout.corridors import (
     ColumnRequest,
     CorridorError,
     Interval,
+    LaidPath,
+    Route,
     assign_columns,
     attachment_pitch_cm,
     belt_pitch_cm,
     bridge_z_cm,
+    lay_path,
     turn_radius_cm,
 )
 from flab2bp.sfy.layout.manifold import crossing_gap_cm, grid_ceil
+from flab2bp.sfy.layout.splines import spline_length
 from flab2bp.sfy.registry import Registry, load_registry
 
 
@@ -36,10 +42,8 @@ def _registry() -> Registry:
     return load_registry()
 
 
-def _request(
-    belt: str, y_a: float, y_b: float, *, joins_a: str = "", inner_a: int = 0
-) -> ColumnRequest:
-    return ColumnRequest(belt=belt, y_a=y_a, y_b=y_b, joins_a=joins_a, inner_a=inner_a)
+def _request(belt: str, y_a: float, y_b: float, *, taps: tuple[float, ...] = ()) -> ColumnRequest:
+    return ColumnRequest(belt=belt, y_a=y_a, y_b=y_b, taps=taps)
 
 
 def _by_belt(assignments: Sequence[Assignment]) -> dict[str, Assignment]:
@@ -134,33 +138,36 @@ def test_a_corridor_with_no_column_left_is_refused_as_width() -> None:
     assert caught.value.cause == "width"
 
 
-def test_a_belt_never_bridges_the_column_it_is_joined_to() -> None:
-    """A branch leaves its splitter ON the spine's column; that is a join, not a
-    crossing, and nothing rises over the belt it is wired to."""
-    spine = _request("spine", -1000.0, 1000.0)
-    branch = _request("branch", 0.0, 1400.0, joins_a="spine")
-    assignments = _by_belt(assign_columns([spine, branch], columns=4))
-    assert assignments["branch"].column == 1
-    assert assignments["branch"].bridged_a == ()
-
-
-def test_a_transverse_is_only_crossed_by_the_columns_it_actually_reaches() -> None:
-    """``inner_a`` is how far in a transverse goes; it does not cross what it never
-    reaches."""
+def test_a_belt_never_has_to_get_past_itself() -> None:
+    """A tap leaves the very column its belt is in, so its own belt is not a
+    crossing -- and a belt inside it still is."""
     assignments = _by_belt(
         assign_columns(
             [
-                _request("deep", -1000.0, 1000.0),
-                _request("spine", -900.0, 1100.0),
-                _request("branch", 0.0, 1200.0, joins_a="spine", inner_a=1),
+                _request("inner", -1000.0, 1000.0),
+                _request("spine", -900.0, 1100.0, taps=(0.0, 900.0)),
             ],
             columns=4,
         )
     )
-    assert assignments["deep"].column == 0
-    assert assignments["spine"].column == 1
-    assert assignments["branch"].column == 2
-    assert assignments["branch"].bridged_a == ()
+    spine = assignments["spine"]
+    assert spine.column == 1
+    assert spine.bridged_taps == ((0,), (0,))
+    assert assignments["inner"].bridged_taps == ()
+
+
+def test_a_tap_that_crosses_nothing_is_recorded_as_crossing_nothing() -> None:
+    assignments = _by_belt(
+        assign_columns(
+            [
+                _request("inner", -1000.0, -600.0),
+                _request("spine", -500.0, 1100.0, taps=(0.0,)),
+            ],
+            columns=4,
+        )
+    )
+    assert assignments["spine"].column == 0
+    assert assignments["spine"].bridged_taps == ((),)
 
 
 def test_the_margin_widens_an_interval_by_the_belt_it_stands_for() -> None:
@@ -238,3 +245,57 @@ def test_two_attachments_stand_far_enough_apart_for_a_legal_belt_between_them() 
     assert grid is not None and floor is not None
     assert attachment_pitch_cm(registry) == grid_ceil(200.0 + floor, grid)
     assert attachment_pitch_cm(registry) == 400.0
+
+
+# --- cutting a path into belts ---------------------------------------------
+
+
+def _laid(route: Route, registry: Registry) -> LaidPath:
+    return lay_path(
+        route,
+        registry=registry,
+        class_name="Build_ConveyorBeltMk1_C",
+        item_id="iron-ore",
+        rate=Fraction(1),
+        ids=itertools.count(1),
+        upstream=None,
+        downstream=None,
+    )
+
+
+def test_one_leg_longer_than_a_belt_may_be_is_cut_into_belts_that_meet() -> None:
+    """``belt.max_length`` bounds a BELT, not a path, and a straight leg can be
+    longer than one: the cut falls inside the leg and the pieces share their ends."""
+    registry = _registry()
+    limit = registry.limits.belt_max_spline_cm
+    assert limit is not None
+    route = Route(point=(0.0, 0.0, 200.0), heading=(0.0, 1.0, 0.0))
+    route.go(2.5 * limit)
+    path = _laid(route, registry)
+    assert len(path.belts) == 3
+    assert all(spline_length(belt.points) <= limit for belt in path.belts)
+    for before, after in itertools.pairwise(path.belts):
+        assert before.end == after.start
+    assert path.belts[0].start == (0.0, 0.0, 200.0)
+    assert path.belts[-1].end[1] == pytest.approx(2.5 * limit)
+    # Wired end to end, and open at the two ends the caller gave no port for.
+    assert len(path.links) == len(path.belts) - 1
+    assert path.belts[0].boundary_start and path.belts[-1].boundary_end
+
+
+def test_an_inclined_leg_past_the_limit_is_cut_and_keeps_its_slope() -> None:
+    registry = _registry()
+    limit = registry.limits.belt_max_spline_cm
+    assert limit is not None
+    route = Route(point=(0.0, 0.0, 200.0), heading=(0.0, 1.0, 0.0))
+    route.go(1.5 * limit, 300.0)
+    path = _laid(route, registry)
+    assert len(path.belts) == 2
+    assert path.belts[-1].end[2] == pytest.approx(500.0)
+    assert path.belts[0].end == path.belts[1].start
+
+
+def test_a_path_with_no_length_at_all_is_refused_as_a_path() -> None:
+    with pytest.raises(CorridorError) as caught:
+        _laid(Route(point=(0.0, 0.0, 200.0), heading=(0.0, 1.0, 0.0)), _registry())
+    assert caught.value.cause == "path"

@@ -72,12 +72,21 @@ _EPS = 1e-9
 class CorridorError(ValueError):
     """A corridor this module will not lay, with the cause the strategy names.
 
-    ``cause`` is a discriminator, not prose: ``"width"`` when the corridor has no
-    column left to put a belt in, ``"bridge"`` when the only columns left need a
-    crossing that will not fit, and ``"depth"`` when two things the corridor has
-    to join are closer together along ``Y`` than the turns between them are long.
-    :mod:`flab2bp.sfy.layout.strategy` turns it into the refusal the caller sees,
-    so the refusal strings live in one place.
+    ``cause`` is a discriminator, not prose, and there are five:
+
+    * ``"width"`` -- no column left in the corridor to put a belt in;
+    * ``"bridge"`` -- the only columns left need a crossing that will not fit;
+    * ``"depth"`` -- two things the corridor has to join are closer together
+      along ``Y`` than the turns between them are long;
+    * ``"backwards"`` -- something the trunk has to meet stands outside the span
+      it runs through, so serving it would mean running back down the corridor;
+    * ``"limits"`` -- ``registry.json`` states no bound this module needs, which
+      is a hole in the extraction rather than a fact about the build;
+    * ``"path"`` -- a path with no length at all, which is two ports in the same
+      place and a fault in the caller rather than in the designer.
+
+    :mod:`flab2bp.sfy.layout.strategy` turns each into the refusal the caller
+    sees, so the refusal strings live in one place.
     """
 
     def __init__(self, cause: str, detail: str) -> None:
@@ -92,7 +101,7 @@ class CorridorError(ValueError):
 def _grid(registry: Registry) -> float:
     grid = registry.limits.hologram_grid_cm
     if grid is None:
-        raise CorridorError("width", "the registry states no hologram grid")
+        raise CorridorError("limits", "the registry states no hologram grid")
     return grid
 
 
@@ -119,7 +128,7 @@ def turn_radius_cm(registry: Registry) -> float:
     """
     bend = registry.limits.belt_bend_radius_cm
     if bend is None:
-        raise CorridorError("width", "the registry states no belt bend radius")
+        raise CorridorError("limits", "the registry states no belt bend radius")
     return grid_ceil(2.0 * bend, _grid(registry))
 
 
@@ -135,7 +144,7 @@ def attachment_pitch_cm(registry: Registry) -> float:
     """
     floor = registry.limits.belt_min_length_cm
     if floor is None:
-        raise CorridorError("width", "the registry states no minimum belt length")
+        raise CorridorError("limits", "the registry states no minimum belt length")
     return grid_ceil(2.0 * _through_port_offset(registry) + floor, _grid(registry))
 
 
@@ -166,7 +175,7 @@ def descent_run_cm(rise: float, registry: Registry) -> float:
         return 0.0
     limit = registry.limits.belt_max_incline_deg
     if limit is None:
-        raise CorridorError("width", "the registry states no maximum belt incline")
+        raise CorridorError("limits", "the registry states no maximum belt incline")
     return grid_ceil(abs(rise) / math.tan(math.radians(limit)), _grid(registry))
 
 
@@ -208,23 +217,19 @@ class Interval:
 class ColumnRequest:
     """One corridor belt asking for a column.
 
-    ``joins_a`` and ``joins_b`` name the belt this one is WIRED to at that end,
-    if any: joining a belt is not crossing it.  ``inner_a`` and ``inner_b`` are
-    how far in that end's transverse actually reaches -- a belt does not cross
-    what it never gets to.
+    ``y_a`` and ``y_b`` are the two ends, each of which reaches across the
+    corridor to a row or to a wall.  ``taps`` are the ``Y`` of every FURTHER
+    transverse the belt has: a spine with a merger or a splitter on it reaches
+    into a row there too, and that reach crosses whatever stands inside it
+    exactly as its two ends do.
 
-    ``taps`` are the ``Y`` of every FURTHER transverse the belt has: a spine with
-    a merger or a splitter on it reaches into a row there too, and that reach
-    crosses whatever stands inside it exactly as its two ends do.
+    A belt never has to get past ITSELF, which is the only exclusion the crossing
+    test needs: a tap leaves the very column the belt is in.
     """
 
     belt: str
     y_a: float
     y_b: float
-    joins_a: str = ""
-    joins_b: str = ""
-    inner_a: int = 0
-    inner_b: int = 0
     taps: tuple[float, ...] = ()
 
     @property
@@ -322,13 +327,9 @@ def _place(
             for other in standing
         ):
             continue
-        crossed_a = _crossed(
-            request, standing, column, request.y_a, request.joins_a, request.inner_a, margin
-        )
-        crossed_b = _crossed(
-            request, standing, column, request.y_b, request.joins_b, request.inner_b, margin
-        )
-        taps = tuple(_crossed(request, standing, column, y, "", 0, margin) for y in request.taps)
+        crossed_a = _crossed(request, standing, column, request.y_a, margin)
+        crossed_b = _crossed(request, standing, column, request.y_b, margin)
+        taps = tuple(_crossed(request, standing, column, y, margin) for y in request.taps)
         rejected = [
             c
             for c in {*crossed_a, *crossed_b, *(c for tap in taps for c in tap)}
@@ -360,18 +361,20 @@ def _crossed(
     standing: Sequence[Interval],
     column: int,
     y: float,
-    joins: str,
-    inner: int,
     margin: float,
 ) -> tuple[int, ...]:
-    """Which occupied columns this end's transverse has to get past."""
+    """Which occupied columns a transverse at ``y`` has to get past.
+
+    Every column inside the one the belt lands in whose belt runs through that
+    ``Y``, and the belt's own column is not one of them: a tap leaves the column
+    it is part of.
+    """
     return tuple(
         sorted(
             {
                 other.column
                 for other in standing
-                if inner <= other.column < column
-                and other.belt != joins
+                if other.column < column
                 and other.belt != request.belt
                 and other.strictly_contains(y, margin)
             }
@@ -424,16 +427,52 @@ class Route:
         self.point = leg[-1][0]
         self.heading = leg[-1][2]
 
-    def climb_to(self, height: float, registry: Registry, *, run: float | None = None) -> float:
-        """Climb to ``height`` at the steepest slope ``belt.incline`` allows.
 
-        Returns the run it took, so a caller that has to fit the climb into a
-        known distance can subtract it.
-        """
-        rise = height - self.point[2]
-        needed = descent_run_cm(rise, registry) if run is None else run
-        self.go(needed, rise)
-        return needed
+def _split(leg: tuple[SplinePoint, ...], limit: float) -> list[tuple[SplinePoint, ...]]:
+    """``leg`` in pieces no longer than ``limit``, or as it was if it is short enough.
+
+    Only a straight leg is ever long enough to want this -- a quarter turn of the
+    corridor's radius is a few metres of arc against a limit of tens -- and a
+    straight leg is two points with the chord between them, so the pieces are the
+    chord's own fractions and every one of them is the shape
+    :func:`~flab2bp.sfy.layout.splines.straight` builds.  A CURVED leg past the
+    limit is refused rather than cut: cutting it would mean guessing tangents,
+    and nothing in this package makes one.
+    """
+    length = spline_length(leg)
+    if length <= limit:
+        return [leg]
+    if len(leg) != 2:
+        raise CorridorError(
+            "path",
+            f"a curved leg of {length:.0f} cm is past the {limit:.0f} cm a belt may be, and "
+            "this module will not guess at the tangents to cut one",
+        )
+    head, tail = leg[0][0], leg[1][0]
+    pieces = math.ceil(length / limit)
+    if length / pieces >= limit:
+        # A length that divides exactly lands ON the bound, where floating point
+        # can put the measured arc either side of it and ``belt.max_length``'s
+        # comparison is strict.  One more piece costs a belt and settles it.
+        pieces += 1
+    step: Vector = (
+        (tail[0] - head[0]) / pieces,
+        (tail[1] - head[1]) / pieces,
+        (tail[2] - head[2]) / pieces,
+    )
+    out: list[tuple[SplinePoint, ...]] = []
+    for piece in range(pieces):
+        start: Vector = (
+            head[0] + piece * step[0],
+            head[1] + piece * step[1],
+            head[2] + piece * step[2],
+        )
+        out.append(
+            incline(start, (step[0], step[1], 0.0), math.hypot(step[0], step[1]), step[2])
+            if abs(step[2]) > _EPS
+            else straight(start, step, math.dist((0.0, 0.0, 0.0), step))
+        )
+    return out
 
 
 @dataclass(frozen=True, slots=True)
@@ -460,28 +499,33 @@ def lay_path(
     A path longer than ``belt_max_spline_cm`` is more than one conveyor, because
     that is the bound ``belt.max_length`` holds every belt to; the cut falls at a
     leg boundary, where two pieces already share a point, so the two belts meet
-    exactly and ``ports.position`` has nothing to report.
+    exactly and ``ports.position`` has nothing to report.  A single leg longer
+    than the limit is cut inside itself first, by :func:`_split`.
 
     ``upstream`` and ``downstream`` are the ports the path starts and ends on;
     ``None`` means the designer wall, and the belt that end belongs to is flagged
     as a boundary end so that ``ports.connected_once`` expects no link there and
     ``flow.boundary`` holds it to the wall.
     """
+    # ``belt_max_spline_cm`` is one of the four limits the public headers state
+    # outright, so ``Limits`` gives it a default and it is never ``None`` -- which
+    # is why there is no guard here and why ``mypy`` would call one unreachable.
     limit = registry.limits.belt_max_spline_cm
     chunks: list[list[tuple[SplinePoint, ...]]] = []
     walked = 0.0
-    for leg in route.legs:
-        length = spline_length(leg)
-        if chunks and walked + length > limit:
-            chunks.append([leg])
-            walked = length
-        else:
-            if not chunks:
-                chunks.append([])
-            chunks[-1].append(leg)
-            walked += length
+    for long in route.legs:
+        for leg in _split(long, limit):
+            length = spline_length(leg)
+            if chunks and walked + length > limit:
+                chunks.append([leg])
+                walked = length
+            else:
+                if not chunks:
+                    chunks.append([])
+                chunks[-1].append(leg)
+                walked += length
     if not chunks or not chunks[0]:
-        raise CorridorError("width", f"the path for {item_id!r} has no length at all")
+        raise CorridorError("path", f"the path for {item_id!r} has no length at all")
     entry, exit_end = belt_ends(registry, class_name)
     belts: list[BeltRun] = []
     links: list[Link] = []

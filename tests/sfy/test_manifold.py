@@ -29,6 +29,7 @@ from flab2bp.sfy.header import read_header
 from flab2bp.sfy.labmap import load_lab_map, machine_class
 from flab2bp.sfy.layout.emit import decode, emit
 from flab2bp.sfy.layout.manifold import (
+    SPLITTER_CLASS,
     ChainEnd,
     RowError,
     RowGeometry,
@@ -65,15 +66,19 @@ CONSTRUCTOR = "Build_ConstructorMk1_C"
 ASSEMBLER = "Build_AssemblerMk1_C"
 MANUFACTURER = "Build_ManufacturerMk1_C"
 
-#: What ``validate(placement, None, registry)`` cannot cover on a row fragment
-#: whatever else it stands aside from: the three spec checks, because a row is
-#: not a spec; the clearance rule the extraction left partial; and the power
-#: wires Task 9 has not decoded.
+#: Exactly what ``validate(placement, None, registry)`` stands aside from on a
+#: row fragment: the three spec checks, because a row is not a spec; the two
+#: rules the extraction left partial; the power wires, which a row carries none
+#: of; and the boundary, because a row flags no end as one.  Asserted as an
+#: EQUALITY -- a check that quietly joined this set would be coverage a row
+#: silently lost.
 SKIPPED = frozenset(
     {
         "geom.hard_clearance",
+        "belt.capsule",
         "flow.capacity",
         "flow.balance",
+        "flow.boundary",
         "spec.machines",
         "power.wires",
     }
@@ -252,7 +257,7 @@ def _clean(row: RowGeometry, mark: str) -> None:
     report = validate(_placement(row, mark), None, REGISTRY, only=_GEOMETRY)
     assert [f.message for f in report.errors] == []
     assert report.ok
-    assert set(report.skipped) >= SKIPPED
+    assert set(report.skipped) == SKIPPED
     assert set(report.checks_run) >= ANSWERABLE
     for skipped in report.skipped:
         assert any(
@@ -519,3 +524,28 @@ def test_a_row_reports_the_band_it_occupies() -> None:
     assert row.depth_cm > 0 and row.width_cm > 0
     fits: Designer = designer("mk3", REGISTRY)
     assert row.depth_cm <= 2 * fits.half_cm
+
+
+def test_the_band_covers_the_splitters_soft_box_and_not_only_the_hard_ones() -> None:
+    """A row's band is every clearance box in it, soft ones included.
+
+    It has to be.  A splitter's only box is SOFT -- the game lets a belt and a
+    machine share it -- and it reaches 200 cm past the attachment it belongs to,
+    further out than any belt's own clearance in the row.  The band is what
+    Task 8 stands a corridor clear of, so a band measured over the hard boxes
+    alone would put a corridor column through the splitters.
+    """
+    row = _row(_rods(3))
+    splitter = REGISTRY.buildables[SPLITTER_CLASS]
+    box = splitter.clearance[0]
+    assert box.soft, "this test is about a soft box; the registry says this one is not"
+    chain = min(a.pose.y for a in row.attachments if a.class_name == SPLITTER_CLASS)
+    reach = chain + box.min[1] + box.translation[1]
+    assert row.y_min_cm == pytest.approx(reach)
+    # And the hard boxes alone would not reach it: the machines stop at -500 and
+    # the chain belt's own clearance at -679, so dropping the soft boxes out of
+    # the band would move this edge and this assertion would fail.
+    machines = (
+        min(m.pose.y for m in row.machines) + hard_footprint_cm(REGISTRY.buildables[CONSTRUCTOR])[1]
+    )
+    assert reach < machines

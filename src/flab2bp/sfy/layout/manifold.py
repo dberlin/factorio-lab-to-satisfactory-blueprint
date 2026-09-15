@@ -38,7 +38,7 @@ from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from fractions import Fraction
 
-from flab2bp.sfy.geometry import quat_rotate, world_port
+from flab2bp.sfy.geometry import box_bounds, world_port
 from flab2bp.sfy.labmap import LabMap, load_lab_map, machine_class
 from flab2bp.sfy.layout.model import (
     AttachmentObj,
@@ -200,39 +200,16 @@ def slab_top_cm(registry: Registry) -> float:
 # --- clearance boxes, where they stand -------------------------------------
 
 
-def _rotator_axes(rotation: Vector) -> tuple[Vector, Vector, Vector]:
-    """``FRotationMatrix``'s three axes for a ``(pitch, yaw, roll)`` rotator in degrees.
-
-    The same composition :mod:`flab2bp.sfy.layout.validate` places a clearance
-    box with, so that the extents this module measures are the extents
-    ``geom.bounds`` will judge.
-    """
-    pitch, yaw, roll = (math.radians(angle) for angle in rotation)
-    cp, sp = math.cos(pitch), math.sin(pitch)
-    cy, sy = math.cos(yaw), math.sin(yaw)
-    cr, sr = math.cos(roll), math.sin(roll)
-    return (
-        (cp * cy, cp * sy, sp),
-        (sr * sp * cy - cr * sy, sr * sp * sy + cr * cy, -sr * cp),
-        (-(cr * sp * cy + sr * sy), cy * sr - cr * sp * sy, cr * cp),
-    )
-
-
 def _box_bounds(box: ClearanceBox, pose: Pose) -> tuple[Vector, Vector]:
-    """An axis-aligned ``(min, max)`` around one clearance box on an actor."""
-    axes = _rotator_axes(box.rotation)
-    half = [(box.max[i] - box.min[i]) / 2.0 * abs(box.scale[i]) for i in range(3)]
-    mid = [(box.max[i] + box.min[i]) / 2.0 * box.scale[i] for i in range(3)]
-    local = tuple(box.translation[i] + sum(mid[k] * axes[k][i] for k in range(3)) for i in range(3))
-    transform = pose.transform()
-    turned = quat_rotate(transform.rotation, (local[0], local[1], local[2]))
-    centre = [turned[i] + transform.translation[i] for i in range(3)]
-    world = [quat_rotate(transform.rotation, axis) for axis in axes]
-    reach = [sum(half[k] * abs(world[k][i]) for k in range(3)) for i in range(3)]
-    return (
-        (centre[0] - reach[0], centre[1] - reach[1], centre[2] - reach[2]),
-        (centre[0] + reach[0], centre[1] + reach[1], centre[2] + reach[2]),
-    )
+    """An axis-aligned ``(min, max)`` around one clearance box on an actor.
+
+    :func:`flab2bp.sfy.geometry.box_bounds` does the arithmetic -- the same
+    composition :mod:`flab2bp.sfy.layout.validate` places a box with, so that the
+    extents this module measures are the extents ``geom.bounds`` will judge --
+    and this takes the :class:`~flab2bp.sfy.layout.model.Pose` a placed object
+    carries rather than its transform.
+    """
+    return box_bounds(box, pose.transform())
 
 
 @dataclass(frozen=True, slots=True)
@@ -543,6 +520,21 @@ def _lay_input_chain(
 
     drop = _descent_run(depth * gap, limits, grid)
     lead = _lead_in(limits, grid)
+    # Whether this chain's feeder clears the chains inside it does NOT depend on
+    # where the chain stands, so it is settled once, before the walk: the feeder
+    # is flat until its last ``drop`` centimetres, and moving the chain outward
+    # only makes it flat for longer.  Walking to the designer wall to discover
+    # that would refuse the row for its depth, which is not what is wrong with it.
+    crossing = _crossing_below(chain_z, drop, port_y, belt_z, gap, placed)
+    if crossing is not None:
+        lower_y, lower_z, here = crossing
+        raise RowError(
+            f"a feeder crosses the chain inside it: the feeder of chain {depth} for "
+            f"{item_id!r} passes the chain at y = {lower_y:.0f}, z = {lower_z:.0f} at "
+            f"z = {here:.0f}, {here - lower_z:.0f} cm above it where {gap:.0f} is wanted. "
+            "Standing this chain further out does not change that -- the feeder is flat "
+            f"until its last {drop:.0f} cm -- so the row is refused rather than walked."
+        )
     y = grid_floor(port_y - abs(side.translation[1]) - drop - lead, grid)
     if placed:
         y = min(y, placed[-1][0] - grid)
@@ -554,9 +546,7 @@ def _lay_input_chain(
                 f"cm, outside the {designer.mark} designer's "
                 f"{2 * designer.half_cm:.0f} x {2 * designer.half_cm:.0f} cm floor"
             )
-        if _lane_is_clear(y, chain_z, bands) and _clears_lower_chains(
-            y, chain_z, drop, port_y, belt_z, gap, placed
-        ):
+        if _lane_is_clear(y, chain_z, bands):
             break
         y -= grid
 
@@ -756,32 +746,35 @@ def _descent_run(fall: float, limits: Limits, grid: float) -> float:
     return grid_ceil(fall / math.tan(math.radians(limits.belt_max_incline_deg)), grid)
 
 
-def _clears_lower_chains(
-    y: float,
+def _crossing_below(
     chain_z: float,
     drop: float,
     port_y: float,
     belt_z: float,
     gap: float,
     placed: Sequence[tuple[float, float]],
-) -> bool:
-    """Does this chain's feeder pass over every chain inside it with room to spare?
+) -> tuple[float, float, float] | None:
+    """The first chain inside this one that its feeder does not clear, if any.
+
+    ``(y, z, height)`` of that chain and of the feeder where it passes over it, or
+    ``None`` when every crossing has its room.
 
     A feeder runs flat out of its splitter and then descends over ``drop`` into
     the machine port, so its height where it crosses a lower chain is fixed by
-    the descent alone.  The room asked for is one :func:`crossing_gap_cm`, which
-    is a whole belt clearance box: ours, and the same number the chains are
-    stacked at.
+    the descent alone -- **and by nothing about where its own chain stands**.
+    That is why this takes no ``y`` and why the caller settles it once instead of
+    walking the chain outward hoping for a different answer.  The room asked for
+    is one :func:`crossing_gap_cm`, which is a whole belt clearance box: ours, and
+    the same number the chains are stacked at.
     """
-    del y
     seam = port_y - drop
     for lower_y, lower_z in placed:
         here = (
             chain_z if lower_y <= seam else belt_z + (port_y - lower_y) / drop * (chain_z - belt_z)
         )
         if here + _EPS < lower_z + gap:
-            return False
-    return True
+            return (lower_y, lower_z, here)
+    return None
 
 
 # --- belts -----------------------------------------------------------------
