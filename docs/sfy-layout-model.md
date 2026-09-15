@@ -686,6 +686,15 @@ ours) and the router the rest: the packer holds an incumbent within its own
 `max_deterministic_time` and returns it when the clock stops, while the router
 spends every second it is given.
 
+A *later* arrangement whose pack runs out of clock is not the run's answer: the
+build has already been packed and routed once, and telling a caller "packing
+exceeded the budget" would send them off to shrink machines that really did
+stand. Such a pack stops the loop and the refusal comes from what the routing
+found. A *first* arrangement that runs out has nothing behind it and says so, and
+a pack that *proved* the machines do not stand (`the packer found no arrangement`)
+is reported as itself however late it comes — the two wear one exception type and
+only the bound is a reason to fall back.
+
 ### The lift class
 
 `route_all` takes one lift class for the whole build, so it has to be the one that

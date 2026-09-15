@@ -56,7 +56,7 @@ from flab2bp.sfy.layout.grid_nets import NetError
 from flab2bp.sfy.layout.manifold import RowError
 from flab2bp.sfy.layout.measure import measure
 from flab2bp.sfy.layout.model import SfyPlacement
-from flab2bp.sfy.layout.packer import NO_ARRANGEMENT, OVER_BUDGET, PackError
+from flab2bp.sfy.layout.packer import NO_ARRANGEMENT, OVER_BUDGET, PackError, pack
 from flab2bp.sfy.layout.power import PowerError
 from flab2bp.sfy.layout.protocol import SfyLayoutStrategy
 from flab2bp.sfy.layout.realise import RealiseError
@@ -435,6 +435,57 @@ def test_a_net_the_clock_never_reached_refuses_the_budget_instead(
 
     monkeypatch.setattr(grid, "route_all", stranding)
     assert _refusal(_chain(), time_budget_s=BUDGET_S) == "routing exceeded the budget"
+
+
+def test_a_later_pack_that_runs_out_of_clock_reports_what_routing_found(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The second arrangement's clock is not the run's answer, the first one's routing is.
+
+    Once a build has been packed and routed, "packing exceeded the budget" would
+    send a reader off to shrink machines that really did stand.  A FIRST
+    arrangement that runs out has nothing behind it and says so, which is the
+    test above this one.
+    """
+    packs: list[int] = []
+
+    def once(*args: object, **kwargs: object) -> object:
+        packs.append(1)
+        if len(packs) > 1:
+            raise PackError(OVER_BUDGET, "the clock stopped the second arrangement")
+        return pack(*args, **kwargs)  # type: ignore[arg-type]
+
+    def stranding(nets: object, occupancy: object, **kwargs: object) -> RoutingOutcome:
+        return _stranded(nets, RouteFailureKind.SEALED_POCKET)
+
+    monkeypatch.setattr(grid, "pack", once)
+    monkeypatch.setattr(grid, "route_all", stranding)
+    assert _refusal(_chain(), time_budget_s=BUDGET_S) == "a belt could not be routed"
+    assert len(packs) == 2
+
+
+def test_a_pack_proved_infeasible_is_the_answer_however_late_it_comes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A build PROVED not to stand is not a bound, so it is reported as itself.
+
+    The two wear one exception type, and only the budget one is a reason to fall
+    back on what the routing found.
+    """
+    packs: list[int] = []
+
+    def once(*args: object, **kwargs: object) -> object:
+        packs.append(1)
+        if len(packs) > 1:
+            raise PackError(NO_ARRANGEMENT, "nowhere for the second arrangement to stand")
+        return pack(*args, **kwargs)  # type: ignore[arg-type]
+
+    def stranding(nets: object, occupancy: object, **kwargs: object) -> RoutingOutcome:
+        return _stranded(nets, RouteFailureKind.SEALED_POCKET)
+
+    monkeypatch.setattr(grid, "pack", once)
+    monkeypatch.setattr(grid, "route_all", stranding)
+    assert _refusal(_chain(), time_budget_s=BUDGET_S) == NO_ARRANGEMENT
 
 
 def test_the_time_budget_is_a_wall_the_strategy_keeps() -> None:

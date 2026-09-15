@@ -84,7 +84,7 @@ from flab2bp.sfy.layout.model import (
     MachineObj,
     SfyPlacement,
 )
-from flab2bp.sfy.layout.packer import Feedback, Pack, PackError, pack
+from flab2bp.sfy.layout.packer import OVER_BUDGET, Feedback, Pack, PackError, pack
 from flab2bp.sfy.layout.power import PowerError, PowerPlan
 from flab2bp.sfy.layout.realise import Realised, RealiseError
 from flab2bp.sfy.layout.refusals import GAME_DATA, GAME_LIMITS, refuse
@@ -241,6 +241,18 @@ class GridRouted:
             raise refuse(spec, _row_cause(exc), str(exc)) from exc
 
 
+def _out_of_clock(error: Exception) -> bool:
+    """Whether a packing failure was a BOUND rather than a build that will not fit.
+
+    Two different things wear one exception type here: the packer refuses
+    :data:`~flab2bp.sfy.layout.packer.NO_ARRANGEMENT` when it PROVED the machines
+    do not stand, and :data:`~flab2bp.sfy.layout.packer.OVER_BUDGET` when the
+    clock stopped it holding nothing.  Only the second is a reason to stop trying
+    arrangements and report what the routing already found.
+    """
+    return isinstance(error, BudgetExhausted) or getattr(error, "cause", "") == OVER_BUDGET
+
+
 def _named(causes: Mapping[str, str], cause: str, stage: str) -> str:
     """One stage's own cause as a named refusal, or a refusal to guess at it.
 
@@ -297,7 +309,18 @@ class _Run:
             if arrangement > 1 and expired(self.deadline):
                 break
             ends = self._slice(arrangement)
-            packed = self._pack(lattice, measures, feedback, arrangement, ends)
+            try:
+                packed = self._pack(lattice, measures, feedback, arrangement, ends)
+            except (PackError, BudgetExhausted) as exc:
+                # A LATER arrangement that ran out of clock is not this run's
+                # answer: the build has already been packed and routed once, and
+                # what a caller wants to hear about is what the routing found.
+                # Telling them "packing exceeded the budget" would send them off
+                # to shrink a build whose machines really did stand.  A FIRST
+                # arrangement that runs out has nothing behind it and is raised.
+                if outcome is None or not _out_of_clock(exc):
+                    raise
+                break
             ids = _numbering(packed.machines)
             occupancy = occupancy_for(lattice, packed.machines, (), (), (), self.registry)
             nets = nets_for(self.spec, packed.machines, lattice, self.registry, self.lab_map)
