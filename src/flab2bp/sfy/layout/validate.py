@@ -1362,9 +1362,14 @@ def _capacity(ctx: Context) -> Iterable[Finding]:
     ``Fraction`` arithmetic.  Comparing every machine against the full-clock rate
     reports a row FactorioLab costed correctly as starved.
 
-    An item the spec funds from ``external_inputs`` and that no belt feeds is not
-    this check's business -- the boundary belt is a later task's -- and is passed
-    over rather than called a fault.
+    An item the spec funds from ``external_inputs`` that no belt in the
+    placement carries is not this check's business, and it now SAYS so instead
+    of passing over in silence: a placement like that is a FRAGMENT -- one row, a
+    pair of machines -- where the boundary belt is simply not in the picture, and
+    calling its machines starved would be a statement about the fragment.  A
+    whole build has the belt, and ``flow.boundary`` is what refuses one whose
+    ``-Y`` wall does not carry exactly the spec's external inputs, so nothing
+    goes unjudged: what is skipped here is refused there.
     """
     spec = ctx.spec
     if spec is None:
@@ -1388,6 +1393,7 @@ def _capacity(ctx: Context) -> Iterable[Finding]:
                 carried=str(run.items_per_second),
                 capacity=str(speed),
             )
+    outside: list[str] = []
     for machine in ctx.placement.machines:
         group = ctx.group_for(machine)
         if group is None:
@@ -1396,6 +1402,7 @@ def _capacity(ctx: Context) -> Iterable[Finding]:
             wanted = rate * machine.clock / group.clock
             supplied = _supplied(ctx, machine, item)
             if supplied == 0 and item in spec.external_inputs:
+                outside.append(f"{machine.class_name} {machine.id} on {item!r}")
                 continue
             if supplied < wanted:
                 yield ctx.finding(
@@ -1407,6 +1414,14 @@ def _capacity(ctx: Context) -> Iterable[Finding]:
                     needed=str(wanted),
                     supplied=str(supplied),
                 )
+    if outside:
+        yield ctx.skip(
+            "flow.capacity",
+            f"what reaches {', '.join(outside)} was not measured: the spec belts that item "
+            "in from outside the blueprint and no belt in this placement carries it, which "
+            "makes this a fragment rather than a build -- a whole build's -Y wall is held to "
+            "the spec's external inputs by flow.boundary",
+        )
 
 
 def _tier_speeds(spec: SfyBuildSpec, labmap: LabMap) -> dict[str, Fraction]:

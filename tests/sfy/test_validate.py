@@ -245,16 +245,19 @@ def test_a_placement_that_is_right_passes_every_check_it_can_run() -> None:
     report = validate(_placement(), _spec(), _registry())
     assert report.ok, [f.message for f in report.errors]
     assert set(report.checks_run) | set(report.skipped) == set(CHECKS)
-    # The four that say what they could not cover stand aside; the rest ran.
-    # ``flow.boundary`` is among them because this placement is a fragment: no
-    # belt in it flags an end as a boundary end, so there is nothing to hold to
-    # the designer wall (Task 8's strategy is what flags them).
+    # The five that say what they could not cover stand aside; the rest ran.
+    # ``flow.boundary`` and ``flow.capacity`` are among them because this
+    # placement is a fragment: no belt in it flags an end as a boundary end, so
+    # there is nothing to hold to the designer wall and nothing carries the
+    # ingots the spec belts in (Task 8's strategy is what lays both).
     assert set(report.skipped) == {
         "geom.hard_clearance",
         "belt.capsule",
         "power.wires",
         "flow.boundary",
+        "flow.capacity",
     }
+    assert "fragment rather than a build" in report.by_check("flow.capacity")[0].message
 
 
 def test_a_check_that_needs_a_spec_is_skipped_rather_than_silently_passing() -> None:
@@ -953,6 +956,23 @@ def test_flow_boundary_holds_the_items_at_the_wall_to_the_specs_own() -> None:
     messages = [f.message for f in report.errors]
     assert messages == [
         "the build enters at the -Y wall on ['iron-plate'] and the spec says ['iron-ingot']"
+    ]
+
+
+def test_flow_boundary_refuses_a_build_that_belts_an_external_input_in_nowhere() -> None:
+    """Which is why ``flow.capacity`` no longer passes a starved external input over.
+
+    An item the spec funds from ``external_inputs`` that no belt carries in used
+    to be excused there, from before the boundary belts were laid.  It is this
+    check's business, it has always been refused here, and refusing it once and
+    naming it once is the honest answer.
+    """
+    at_the_wall = _at_the_wall()
+    arriving, leaving = at_the_wall.belts
+    unfed = replace(at_the_wall, belts=(replace(arriving, boundary_start=False), leaving))
+    report = validate(unfed, _spec(), _registry(), only={"flow.boundary"})
+    assert [f.message for f in report.errors] == [
+        "the build enters at the -Y wall on [] and the spec says ['iron-ingot']"
     ]
 
 

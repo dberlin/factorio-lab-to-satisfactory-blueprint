@@ -401,8 +401,7 @@ def extract(
     recipes = {entry["ClassName"]: _recipe(entry) for entry in docs.get("FGRecipe", ())}
 
     power_shards = {
-        entry["ClassName"]: _power_shard(entry)
-        for entry in docs.get("FGPowerShardDescriptor", ())
+        entry["ClassName"]: _power_shard(entry) for entry in docs.get("FGPowerShardDescriptor", ())
     }
 
     descriptors: dict[str, str] = {}

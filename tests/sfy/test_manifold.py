@@ -49,7 +49,12 @@ from flab2bp.sfy.layout.model import (
     SfyPlacement,
 )
 from flab2bp.sfy.layout.splines import spline_length
-from flab2bp.sfy.layout.validate import CHECKS, Severity, validate
+from flab2bp.sfy.layout.validate import (
+    BELT_CLEARANCE_HALF_HEIGHT_CM,
+    CHECKS,
+    Severity,
+    validate,
+)
 from flab2bp.sfy.registry import Registry, load_registry
 from flab2bp.sfy.spec import FOUNDATION_CLASS, Designer, SfyMachineGroup, designer, foundation_cm
 from flab2bp.sfy.templates import TemplateLibrary
@@ -318,7 +323,7 @@ def test_an_assembler_row_stacks_its_second_chain_one_crossing_gap_higher() -> N
     gap = crossing_gap_cm(REGISTRY)
     heights = sorted({end.pose.z for end in row.chain_in})
     assert heights == [row.belt_z_cm, row.belt_z_cm + gap]
-    assert gap == grid_ceil(4 * 15.0, GRID)
+    assert gap == grid_ceil(4 * BELT_CLEARANCE_HALF_HEIGHT_CM, GRID)
 
 
 def test_an_outer_feeder_descends_no_steeper_than_the_registry_allows() -> None:
