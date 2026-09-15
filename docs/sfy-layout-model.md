@@ -642,3 +642,110 @@ The loops that flatten a placement onto the lattice are the only per-node Python
 in the grid-routed strategy. They are written as such: a box's node range is
 computed once per axis and the resulting slab is written a column at a time, never
 one predicate call per node per box.
+
+## Grid-routed
+
+`flab2bp.sfy.layout.grid`'s `GridRouted` is the second strategy, and it is a
+**loop** rather than a pipeline. Nothing in it lays a row and nothing in it is a
+template: every machine stands wherever a CP-SAT no-overlap model likes it on the
+hologram grid, and where a belt goes is what the router returns.
+
+### The loop
+
+A fluid is refused first, before a limit is read or a lattice is built — the same
+sentence `ManifoldRows` refuses on, asked of FactorioLab's own dataset. Then the
+limits are read once into one `Measures`, the `Lattice` is built from the designer
+and the registry, and for each of `ARRANGEMENTS` (3, ours):
+
+1. `packer.pack` stands the machines, seeded by the arrangement number so that two
+   runs of one spec walk the same three arrangements, and priced by what the last
+   arrangement's routing learned;
+2. `lattice.occupancy_for` flattens them;
+3. `grid_nets.nets_for` says what has to be belted;
+4. `rrr.route_all` negotiates every net across rip-up rounds;
+5. with nothing stranded, `grid_power.place_on_free_nodes` stands the poles on the
+   occupancy the router left holding its **best** round — not its last — and
+   `floor.foundations` lays the slab. The object counter starts past the ids the
+   packer spent on its machines, so one numbering covers the build.
+
+Where a net *is* stranded, its id and the router's blame become a `Feedback`: the
+previous evidence decayed by `packer.DECAY` (0.85) at the boundary, plus one
+`STRANDED_WEIGHT` per stranded net and one node of belt per `BLAME_WEIGHT` the
+router charged (`HOT_NODE_SCALE`). Both halves are evidence and neither is a
+constraint — no cheap surrogate predicts routability — so a floor the router
+failed on is made expensive rather than illegal.
+
+### The wall, and how it is split
+
+The deadline is `absolute_deadline` when a caller gives one (a race hands both
+strategies the same `time.monotonic()` frame) and `time.monotonic() +
+time_budget_s` otherwise. Each arrangement takes an equal share of what is *left*,
+so an arrangement that came in under its slice hands the rest on and the last one
+gets the whole remainder. Inside a slice the packer takes `PACK_SHARE` (a third,
+ours) and the router the rest: the packer holds an incumbent within its own
+`max_deterministic_time` and returns it when the clock stops, while the router
+spends every second it is given.
+
+### The lift class
+
+`route_all` takes one lift class for the whole build, so it has to be the one that
+carries the fastest piece of belt the router can lay. No piece of a net's tree
+carries more than that net's own total rate, so the heaviest net's tier bounds
+every piece; the lift is the buildable whose `native_class` is
+`FGBuildableConveyorLift` and whose `belt_speed_per_min` equals that tier's
+conveyor's. Both numbers are the game's, on both sides — a registry that renamed
+either class would still pair them.
+
+### The refusals
+
+Every cause is one of `refusals.REFUSALS` and every stage's own error is mapped
+here, with no default anywhere: a cause this module has not been taught raises
+`ValueError` at the point of use rather than reaching a caller wearing another
+cause's name (the discipline `strategy._row_cause` states).
+
+| raised by | cause | refusal |
+| --- | --- | --- |
+| `packer.PackError` | `the packer found no arrangement` | itself — a pack has one reading |
+| `packer.PackError` | `packing exceeded the budget` | itself |
+| `grid_nets.NetError` | `ceiling` | `run exceeds the belt ceiling` |
+| | `lattice` | `a port is off the hologram lattice` |
+| | `ports` | `more input items than the machine has belt ports` |
+| | `data` | *the game data does not describe a machine this build needs* |
+| `realise.RealiseError` | any of `corner`/`leg`/`lift`/`stub` | `a belt could not be laid` |
+| `power.PowerError` | `wire`/`room`/`port`/`data`/`limits` | as the manifold names them |
+| `corridors.CorridorError` | `limits`/`data` | the two shared extraction causes |
+| `manifold.RowError` | by message | `strategy._row_cause`'s table |
+| `budget.BudgetExhausted` | — | by stage: packing, or routing |
+
+Two refusals the loop reaches by **running out of arrangements** rather than by
+catching anything, because `rrr.route_all` returns its failures rather than
+raising them. Where every stranded net's `Routed` is a `BUDGET` result, a bound
+ended it and nothing has been proved about the build, so the cause is `routing
+exceeded the budget`; otherwise the geometry refused and the cause is `a belt
+could not be routed`, naming each net that still has no tree.
+
+### What is ours
+
+`ARRANGEMENTS` (3), `PACK_SHARE` (a third), `STRANDED_WEIGHT` (1), `HOT_NODE_SCALE`
+(one node of belt per `BLAME_WEIGHT`) and `WORKERS` (1, because a strategy is pure
+and more than one CP-SAT worker makes the incumbent a race between threads). The
+description's own arithmetic is ours too: attachments are split into taps and
+corner turns by the *shape* `route_all` hands back — a tap arrives as a `Realised`
+of one attachment and no belts — and the corners are counted off the committed
+paths, a node whose step in differs from its step out at one level.
+
+### What does not route yet
+
+A corpus flow runs several machines on one recipe, so the item it belts in is one
+stream from the `−Y` wall to several machine ports (R-M3-5 and R-M3-7), and that
+needs a trunk with a tap on it. Two things below this strategy stop that today,
+both reproduced in the M3 Task 10 report:
+
+* the packer prices a wall-fed sink at its distance to the wall line, so such a
+  port lands exactly `port_apron_nodes` (four) nodes off the wall and the trunk to
+  it is four nodes where `tap_nodes` needs `2·clear + 1` (nine). The second sink
+  then has nowhere to start and the net strands `DYNAMIC_ACCESS`;
+* given room, the trunk *is* tapped and the branch leaving the tap turns after
+  three grid steps. An attachment turn costs `box + lead_in` = 301 cm and three
+  steps are 300, so the realiser refuses the corner by one centimetre — and the
+  router's cost is one per flat step, which gives it no reason to leave a fourth.
