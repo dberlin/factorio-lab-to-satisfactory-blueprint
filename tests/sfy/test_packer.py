@@ -26,24 +26,18 @@ import pytest
 from flab2bp.sfy.geometry import box_bounds
 from flab2bp.sfy.labmap import load_lab_map
 from flab2bp.sfy.layout.corridors import Measures, attachment_turn
-from flab2bp.sfy.layout.grid_nets import nets_for, terminal_for
+from flab2bp.sfy.layout.grid_nets import net_plan, nets_for, terminal_for
 from flab2bp.sfy.layout.lattice import Lattice
 from flab2bp.sfy.layout.manifold import shortest_belt_cm, slab_top_cm
 from flab2bp.sfy.layout.model import MachineObj
-from flab2bp.sfy.layout.packer import (
-    Feedback,
-    Pack,
-    PackError,
-    _plan_nets,
-    pack,
-    port_apron_nodes,
-)
+from flab2bp.sfy.layout.packer import Feedback, Pack, PackError, pack, port_apron_nodes
 from flab2bp.sfy.layout.refusals import REFUSALS
 from flab2bp.sfy.layout.strategy import _measure
 from flab2bp.sfy.layout.validate import TOUCH_CM
 from flab2bp.sfy.registry import Port, Registry, load_registry
 from flab2bp.sfy.spec import Designer, SfyBuildSpec, SfyMachineGroup, designer, direct_pairs
 from flab2bp.spec import BeltTier
+from tests.sfy.conftest import flow_spec
 
 CONSTRUCTOR = "Build_ConstructorMk1_C"
 SMELTER = "Build_SmelterMk1_C"
@@ -138,6 +132,13 @@ def _chain(count: int = 3) -> SfyBuildSpec:
 
 
 def _packed(spec: SfyBuildSpec, *, feedback: Feedback | None = None) -> Pack:
+    """One pack with the limits HANDED DOWN, the way a strategy calls it.
+
+    The tests that call :func:`~flab2bp.sfy.layout.packer.pack` directly leave
+    ``measures`` off instead, so both readings -- a strategy's one
+    :class:`~flab2bp.sfy.layout.corridors.Measures` passed along, and a caller
+    with no run around it -- are exercised.
+    """
     return pack(
         spec,
         _designer(),
@@ -147,6 +148,7 @@ def _packed(spec: SfyBuildSpec, *, feedback: Feedback | None = None) -> Pack:
         deadline=time.monotonic() + 60.0,
         workers=WORKERS,
         seed=SEED,
+        measures=_measures(),
     )
 
 
@@ -290,41 +292,40 @@ def test_port_aprons_are_free_of_other_machines() -> None:
                     )
 
 
-def test_the_planned_nets_are_the_ones_the_router_will_be_handed() -> None:
-    """The packer's net ids ARE ``nets_for``'s, terminal for terminal.
+def test_the_packer_reads_its_nets_from_the_plan_the_router_numbers() -> None:
+    """The packer places the machines a :func:`net_plan` port INDEX means.
 
-    The whole of :class:`~flab2bp.sfy.layout.packer.Feedback` rests on this: a
-    weight fed back under net 3 has to land on net 3.  So the mirror is checked
-    against the real thing rather than described -- the same spec planned by the
-    packer before placement and by
-    :func:`~flab2bp.sfy.layout.grid_nets.nets_for` after it.
+    Net ids have one source, and it is not this module: the packer and
+    :func:`~flab2bp.sfy.layout.grid_nets.nets_for` both read
+    :func:`~flab2bp.sfy.layout.grid_nets.net_plan`, so ``GridNet.id`` is
+    ``NetPlan.id`` by construction.  What the packer still owes the plan is the
+    machine ORDER -- a plan names a port as ``(machine index, port name)`` into
+    the flat machine list, and a packer that emitted its machines in any other
+    order would weight the wrong ports and hand the router the wrong poses.
 
-    The spec has a boundary, which is what makes it interesting: ``ore`` and
-    ``rod`` each consume a net id and then turn out to have nowhere to come from
-    or go, because a direct pair's groups are left out of every other item's
-    tree.  A mirror that did not burn those two ids would number every later net
-    wrong.
+    So this reads a real FactorioLab flow, packs it, and asserts that every
+    plan port resolved through :attr:`Pack.machines` is the terminal
+    ``nets_for`` puts on that net: ore from the ``-Y`` wall into three smelters,
+    three paired ingot nets, plates from three constructors out through the
+    ``+Y`` wall -- five nets, and the wall terminals after the machine ones.
     """
     lattice, registry = _lattice(), _registry()
-    smelters = _group(SMELTER, INGOT, 3, {ORE: Fraction(1)}, {IRON_INGOT: Fraction(1)})
-    constructors = _group(CONSTRUCTOR, ROD, 3, {IRON_INGOT: Fraction(1)}, {ROD_ITEM: Fraction(2)})
-    spec = _spec(
-        smelters,
-        constructors,
-        external_inputs={ORE: Fraction(3)},
-        outputs={ROD_ITEM: Fraction(6)},
-    )
+    spec = flow_spec("iron-plate-60")
+    planned = net_plan(spec, registry)
+    assert [plan.id for plan in planned] == [1, 2, 3, 4, 5]
+
     packed = _packed(spec)
+    assert len(packed.machines) == spec.machine_count
     routed = nets_for(spec, packed.machines, lattice, registry, load_lab_map())
-    planned = _plan_nets(spec, registry)
 
     assert [net.id for net in routed] == [plan.id for plan in planned]
-    assert [net.id for net in routed] == [1, 2, 3]
     for net, plan in zip(routed, planned, strict=True):
         for terminals, ports in ((net.sources, plan.sources), (net.sinks, plan.sinks)):
-            assert [terminal.port for terminal in terminals] == [
-                (packed.machines[port.machine].id, port.name) for port in ports
+            assert [terminal.port for terminal in terminals[: len(ports)]] == [
+                (packed.machines[index].id, name) for index, name in ports
             ]
+            # Anything past the plan's machine ports is the designer wall.
+            assert all(terminal.kind == "wall" for terminal in terminals[len(ports) :])
 
 
 def test_direct_pairs_face_each_other_a_shortest_belt_apart_when_room_allows() -> None:

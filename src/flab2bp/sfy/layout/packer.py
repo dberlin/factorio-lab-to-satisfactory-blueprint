@@ -51,16 +51,26 @@ constraint of any kind.  What it carries instead is EVIDENCE -- a
 priced as objective terms rather than as constraints, so that a second
 arrangement is drawn towards a floor the router has already been over.
 
-**The net ids are the router's.**  :func:`~flab2bp.sfy.layout.grid_nets.nets_for`
-numbers nets from 1, the direct pairs first (one per machine pair, in
-:func:`~flab2bp.sfy.spec.direct_pairs` order) and then one per remaining item in
-sorted order -- consuming an id even for an item that turns out to have nowhere
-to come from or go.  :func:`_plan_nets` mirrors that numbering exactly, because
-``nets_for`` needs placed machines and the packer has none yet, and the two
-would be useless to each other if a weight fed back under net 3 landed on a
-different net.  What keeps the mirror honest is the machine ORDER: this module
-emits machines group by group in ``spec.groups`` order, which is the order
-``nets_for``'s own ``_machines_by_group`` hands them out in.
+**The net ids are the router's, because there is only one place they come
+from.**  :func:`~flab2bp.sfy.layout.grid_nets.net_plan` numbers every net a spec
+has to belt before anything is placed, and both this module and
+:func:`~flab2bp.sfy.layout.grid_nets.nets_for` read that one list -- the packer
+for the ports it has to pull together, the router for the same ports with poses
+on them -- so ``GridNet.id`` is ``NetPlan.id`` by construction rather than by
+agreement.  That matters because :class:`Feedback` is keyed by net id: a weight
+fed back under net 3 has to land on net 3.
+
+What this module owes the plan is the MACHINE ORDER.  A plan names a port as
+``(machine index, port name)`` into the flat machine list ``net_plan``'s
+docstring states -- the spec's groups in spec order, each group's machines in
+index order -- and :func:`_stands` builds exactly that list, so the machines in
+:attr:`Pack.machines` are already at the indices the plan means.
+
+**A wall side is a LINE, not a node** (R-M3-5).  A plan carries machine ports
+only; an empty side is the designer wall, the ``-Y`` wall for a source and the
+``+Y`` wall for a sink.  The router picks which node of that line it enters at,
+so what the objective prices is the distance to the NEAREST point on the line --
+the across-wall distance alone -- rather than to any node on it.
 """
 
 from __future__ import annotations
@@ -75,7 +85,7 @@ from typing import Final
 from ortools.sat.python import cp_model
 
 from flab2bp.sfy.layout.corridors import Measures, attachment_turn
-from flab2bp.sfy.layout.grid_nets import terminal_for
+from flab2bp.sfy.layout.grid_nets import NetPlan, net_plan, terminal_for
 from flab2bp.sfy.layout.lattice import GROUND_LEVEL, Lattice, Node
 from flab2bp.sfy.layout.manifold import (
     RowError,
@@ -118,11 +128,6 @@ A solve that ran out of clock WITH one returns the incumbent instead: an
 arrangement the router can try is worth more than a refusal, and the status name
 on the :class:`Pack` says it was not proved optimal.
 """
-
-MORE_ITEMS_THAN_PORTS: Final = "more input items than the machine has belt ports"
-"""The same refusal :func:`~flab2bp.sfy.layout.grid_nets.nets_for` raises for a
-recipe that moves more items than its machine has belt ports of that direction.
-It is reached here first, because the packer assigns the same ports."""
 
 DECAY: Final = 0.85
 """How much of one arrangement's evidence the next one keeps.
@@ -407,175 +412,18 @@ class _Stand:
     index: int
 
 
-@dataclass(frozen=True, slots=True)
-class _Port:
-    """One machine's one belt port, as the objective names it."""
-
-    machine: int
-    name: str
-
-
-@dataclass(frozen=True, slots=True)
-class _NetPlan:
-    """One net of :func:`~flab2bp.sfy.layout.grid_nets.nets_for`, before placement.
-
-    ``wall_in`` and ``wall_out`` are R-M3-5's designer wall: a whole line of
-    terminals the router picks one of, so the objective prices only the distance
-    ACROSS to that line rather than to any node on it.
-    """
-
-    id: int
-    sources: tuple[_Port, ...]
-    sinks: tuple[_Port, ...]
-    wall_in: bool
-    wall_out: bool
-    direct: bool
-
-
 def _stands(spec: SfyBuildSpec) -> tuple[_Stand, ...]:
     """Every machine the spec runs, group by group in the spec's own order.
 
-    That order is what makes :func:`_plan_nets`' mirror of ``nets_for`` exact:
-    ``_machines_by_group`` pools a placement by ``(recipe_class, machine_class)``
-    and hands each group the next ``count`` of them in placement order, so a
-    placement laid out group by group lines up index for index.
+    THE flat machine list :func:`~flab2bp.sfy.layout.grid_nets.net_plan`'s
+    docstring names: the spec's groups in spec order and each group's machines
+    in index order, so group ``g``'s machine ``i`` is at ``sum(count of every
+    earlier group) + i``.  A plan's ports are indices into this list, and
+    :attr:`Pack.machines` comes back in the same order, so nothing between the
+    packer and the router has to map one onto the other.
     """
     return tuple(
         _Stand(group=group, index=index) for group in spec.groups for index in range(group.count)
-    )
-
-
-def _port_name(
-    registry: Registry, class_name: str, items: Sequence[str], item_id: str, direction: str
-) -> str:
-    """Which belt port of ``class_name`` carries ``item_id`` -- ``_terminal``'s rule.
-
-    Mirrored rather than shared because
-    :func:`~flab2bp.sfy.layout.grid_nets.nets_for` needs placed machines and the
-    packer has none yet.  The rule itself is stated there: the recipe's items in
-    that direction, in id order, take the machine's belt ports of that direction
-    in name order.
-    """
-    buildable = _buildable(registry, class_name)
-    ports = sorted(
-        (port for port in buildable.ports if port.kind == "belt" and port.direction == direction),
-        key=lambda port: port.name,
-    )
-    if len(items) > len(ports):
-        raise PackError(
-            MORE_ITEMS_THAN_PORTS,
-            f"{class_name} has {len(ports)} belt {direction} ports and its recipe moves "
-            f"{len(items)} items",
-        )
-    return ports[items.index(item_id)].name
-
-
-def _plan_nets(spec: SfyBuildSpec, registry: Registry) -> tuple[_NetPlan, ...]:
-    """Every net :func:`~flab2bp.sfy.layout.grid_nets.nets_for` will number, in its order.
-
-    The direct pairs first, one net per machine pair; then one per remaining
-    item in sorted order.  An id is consumed for EVERY loose item, including one
-    that turns out to have nowhere to come from or go, because ``nets_for``
-    consumes it before it finds out -- and a mirror that skipped the id would
-    number every later net one lower than the router does.
-    """
-    by_group: dict[int, tuple[int, ...]] = {}
-    first = 0
-    for group in spec.groups:
-        by_group[id(group)] = tuple(range(first, first + group.count))
-        first += group.count
-    ids = count(1)
-    plans: list[_NetPlan] = []
-    paired: set[int] = set()
-    for pair in direct_pairs(spec):
-        paired |= {id(pair.producer), id(pair.consumer)}
-        out = _port_name(
-            registry,
-            pair.producer.machine_class,
-            tuple(sorted(pair.producer.outputs_per_machine)),
-            pair.item,
-            "output",
-        )
-        into = _port_name(
-            registry,
-            pair.consumer.machine_class,
-            tuple(sorted(pair.consumer.inputs_per_machine)),
-            pair.item,
-            "input",
-        )
-        for maker, eater in zip(
-            by_group[id(pair.producer)], by_group[id(pair.consumer)], strict=True
-        ):
-            plans.append(
-                _NetPlan(
-                    id=next(ids),
-                    sources=(_Port(maker, out),),
-                    sinks=(_Port(eater, into),),
-                    wall_in=False,
-                    wall_out=False,
-                    direct=True,
-                )
-            )
-    for item_id in _loose_items(spec, paired):
-        plan = _tree_plan(spec, registry, by_group, paired, item_id, next(ids))
-        if plan is not None:
-            plans.append(plan)
-    return tuple(plans)
-
-
-def _loose_items(spec: SfyBuildSpec, paired: frozenset[int] | set[int]) -> tuple[str, ...]:
-    """Every item a net may still have to move, sorted -- ``_loose_items``' own rule."""
-    items: set[str] = set(spec.external_inputs) | set(spec.outputs) | set(spec.surplus_outputs)
-    for group in spec.groups:
-        if id(group) in paired:
-            continue
-        items |= set(group.inputs_per_machine) | set(group.outputs_per_machine)
-    return tuple(sorted(items))
-
-
-def _tree_plan(
-    spec: SfyBuildSpec,
-    registry: Registry,
-    by_group: Mapping[int, tuple[int, ...]],
-    paired: frozenset[int] | set[int],
-    item_id: str,
-    net_id: int,
-) -> _NetPlan | None:
-    """One item's whole tree, or ``None`` where it has nowhere to come from or go."""
-    sources: list[_Port] = []
-    sinks: list[_Port] = []
-    for group in spec.groups:
-        if id(group) in paired:
-            continue
-        if item_id in group.outputs_per_machine:
-            name = _port_name(
-                registry,
-                group.machine_class,
-                tuple(sorted(group.outputs_per_machine)),
-                item_id,
-                "output",
-            )
-            sources.extend(_Port(machine, name) for machine in by_group[id(group)])
-        if item_id in group.inputs_per_machine:
-            name = _port_name(
-                registry,
-                group.machine_class,
-                tuple(sorted(group.inputs_per_machine)),
-                item_id,
-                "input",
-            )
-            sinks.extend(_Port(machine, name) for machine in by_group[id(group)])
-    wall_in = bool(spec.external_inputs.get(item_id))
-    wall_out = bool(spec.outputs.get(item_id)) or bool(spec.surplus_outputs.get(item_id))
-    if not (sources or wall_in) or not (sinks or wall_out):
-        return None
-    return _NetPlan(
-        id=net_id,
-        sources=tuple(sources),
-        sinks=tuple(sinks),
-        wall_in=wall_in,
-        wall_out=wall_out,
-        direct=False,
     )
 
 
@@ -657,7 +505,7 @@ def _build(
         yaws.append(literals)
     model.add_no_overlap_2d(x_intervals, y_intervals)
 
-    nets = _plan_nets(spec, registry)
+    nets = net_plan(spec, registry)
     apron_x, apron_y = _add_aprons(
         model,
         stands,
@@ -681,7 +529,7 @@ def _build(
         low=low,
         high=high,
         hot=bool(feedback and feedback.hot_nodes),
-        walled=any(net.wall_in or net.wall_out for net in nets),
+        walled=any(not net.sources or not net.sinks for net in nets),
     )
     _add_objective(model, nets, registry, lattice, stands, shapes, xs, ys, yaws, feedback)
     return _Build(model=model, xs=xs, ys=ys, yaws=yaws)
@@ -836,7 +684,7 @@ def _break_symmetry(
 
 def _add_objective(
     model: cp_model.CpModel,
-    nets: Sequence[_NetPlan],
+    nets: Sequence[NetPlan],
     registry: Registry,
     lattice: Lattice,
     stands: Sequence[_Stand],
@@ -859,6 +707,16 @@ def _add_objective(
       it;
     * every machine's share of the blame history under its footprint, read out
       of a summed-area table and only when there is any.
+
+    A net with no machine source is fed from the ``-Y`` wall and one with no
+    machine sink drains to the ``+Y`` wall (R-M3-5), and a wall is a whole LINE
+    of terminals the router picks one of.  So a wall side is priced at the
+    NEAREST point of its line -- the across-wall distance alone, with nothing
+    along it -- which is the real Manhattan distance to the nearest wall
+    terminal rather than to a node chosen for it.  Where a plan has machines on
+    both sides the wall is not priced at all: the plan carries machine ports
+    only, and an item that is both made here and belted in is one the router
+    will feed from the machines it has.
     """
     failed: Mapping[int, float] = {} if feedback is None else feedback.failed_nets
     nodes = _PortNodes(model, stands, shapes, xs, ys, yaws, lattice.n)
@@ -871,18 +729,15 @@ def _add_objective(
         for sink in net.sinks:
             into = nodes.of(sink)
             if centre is None:
-                if net.wall_in:
-                    terms.append(weight * _span(model, into[1], lines.start, lattice.n))
+                terms.append(weight * _span(model, into[1], lines.start, lattice.n))
                 continue
             span = _span(model, centre[0] - into[0], 0, lattice.n) + _span(
                 model, centre[1] - into[1], 0, lattice.n
             )
             terms.append(weight * span)
-            if net.direct:
+            if net.paired:
                 terms.append(2 * weight * _span(model, span - shortest, 0, 2 * lattice.n))
-        if centre is not None and net.wall_in:
-            terms.append(weight * _span(model, centre[1], lines.start, lattice.n))
-        if centre is not None and net.wall_out:
+        if centre is not None and not net.sinks:
             terms.append(weight * _span(model, centre[1], lines.stop - 1, lattice.n))
     terms.extend(_hot_terms(model, lattice, stands, shapes, xs, ys, yaws, feedback))
     model.minimize(sum(terms))
@@ -914,34 +769,40 @@ class _PortNodes:
         self._n = n
         self._made: dict[tuple[int, str], tuple[cp_model.IntVar, cp_model.IntVar]] = {}
 
-    def of(self, port: _Port) -> tuple[cp_model.IntVar, cp_model.IntVar]:
-        made = self._made.get((port.machine, port.name))
+    def of(self, port: tuple[int, str]) -> tuple[cp_model.IntVar, cp_model.IntVar]:
+        """One :class:`~flab2bp.sfy.layout.grid_nets.NetPlan` port's node pair.
+
+        ``port`` is the plan's own ``(machine index, port name)``, and the index
+        is into :func:`_stands` -- the flat machine list ``net_plan`` documents.
+        """
+        made = self._made.get(port)
         if made is not None:
             return made
-        turns = self._shapes[self._stands[port.machine].group.machine_class]
+        machine, name = port
+        turns = self._shapes[self._stands[machine].group.machine_class]
         node = (
-            self._model.new_int_var(0, self._n, f"px{port.machine}_{port.name}"),
-            self._model.new_int_var(0, self._n, f"py{port.machine}_{port.name}"),
+            self._model.new_int_var(0, self._n, f"px{machine}_{name}"),
+            self._model.new_int_var(0, self._n, f"py{machine}_{name}"),
         )
-        centres = (self._xs[port.machine], self._ys[port.machine])
-        for literal, shape in zip(self._yaws[port.machine], turns, strict=True):
-            apron = next(one for one in shape.aprons if one.name == port.name)
+        centres = (self._xs[machine], self._ys[machine])
+        for literal, shape in zip(self._yaws[machine], turns, strict=True):
+            apron = next(one for one in shape.aprons if one.name == name)
             for axis in range(2):
                 self._model.add(node[axis] == centres[axis] + apron.node[axis]).only_enforce_if(
                     literal
                 )
-        self._made[port.machine, port.name] = node
+        self._made[port] = node
         return node
 
 
 def _centroid(
-    model: cp_model.CpModel, nodes: _PortNodes, net: _NetPlan, n: int
+    model: cp_model.CpModel, nodes: _PortNodes, net: NetPlan, n: int
 ) -> tuple[cp_model.IntVar, cp_model.IntVar] | None:
     """Where a net comes from: the floor of the mean of its sources' port nodes.
 
-    ``None`` where the net has no machine source at all, which is an item the
-    spec belts in: the wall is a whole LINE of terminals the router picks one
-    of (R-M3-5), so it has no node to take a mean with and the sinks are priced
+    ``None`` where the net has no machine source at all, which is the ``-Y``
+    wall: the wall is a whole LINE of terminals the router picks one of
+    (R-M3-5), so it has no node to take a mean with and the sinks are priced
     against the line instead.
 
     The floor rather than a scaled exact mean: a mean of three nodes is not a
@@ -1058,6 +919,7 @@ def pack(
     deadline: float | None,
     workers: int,
     seed: int,
+    measures: Measures | None = None,
 ) -> Pack:
     """Stand every machine the spec runs on the hologram grid, or refuse.
 
@@ -1071,12 +933,21 @@ def pack(
     ``feedback`` is what the last arrangement's routing learned, already decayed
     by the caller (:meth:`Feedback.decayed`).  ``None`` is the first arrangement,
     which is packed on the geometry alone.
+
+    ``measures`` is the one place a limit is read, HANDED DOWN: a strategy reads
+    it once at the top of a run and passes the same one to every stage, which is
+    what keeps two stages from being laid out against different numbers (see
+    :class:`~flab2bp.sfy.layout.corridors.Measures`).  ``None`` reads it here
+    from ``designer`` and ``registry`` instead, which is for a caller that has
+    no run around it -- a test, or a packer asked for one arrangement on its
+    own.  Passing one is what a strategy does; the packer is not the place the
+    limits are read twice.
     """
     stands = _stands(spec)
     if not stands:
         raise PackError(NO_ARRANGEMENT, "the spec runs no machines, so there is nothing to stand")
-    measures = _measure(registry, designer)
-    build = _build(spec, registry, lattice, measures, stands, feedback)
+    read = _measure(registry, designer) if measures is None else measures
+    build = _build(spec, registry, lattice, read, stands, feedback)
 
     solver = cp_model.CpSolver()
     # Never zero: ortools reads ``num_workers == 0`` as ALL CORES.
