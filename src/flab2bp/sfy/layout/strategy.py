@@ -127,6 +127,7 @@ REFUSALS = (
     # The corridor's own, beyond the three the brief names.
     "a trunk would have to run back down the corridor",
     "a corridor path has no length",
+    "a curved leg is longer than a belt may be",
     "layout exceeded the budget",
     # Two more this shape of build can hit that the brief does not name.
     "a row makes something the spec never sends out",
@@ -172,6 +173,7 @@ _CORRIDOR_CAUSES = {
     "depth": "rows exceed the designer depth",
     "backwards": "a trunk would have to run back down the corridor",
     "path": "a corridor path has no length",
+    "curve": "a curved leg is longer than a belt may be",
     "limits": GAME_LIMITS,
 }
 

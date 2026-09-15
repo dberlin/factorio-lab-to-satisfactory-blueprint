@@ -335,7 +335,7 @@ carry would go and look at the wrong thing.
 | what went wrong | cause |
 | --- | --- |
 | the build is too big for the designer | `rows exceed the designer depth` · `rows exceed the designer width` · `row too deep` · `row too tall` |
-| the corridor cannot be laid | `corridor needs a bridge that does not fit` · `a trunk would have to run back down the corridor` · `a corridor path has no length` |
+| the corridor cannot be laid | `corridor needs a bridge that does not fit` · `a trunk would have to run back down the corridor` · `a corridor path has no length` · `a curved leg is longer than a belt may be` |
 | the belts cannot carry it | `run exceeds the belt ceiling` · `this spec names no belt` |
 | the machine will not take it | `more input items than the machine has belt ports` · `a row drains one of several products` · `a feeder crosses the chain inside it` |
 | the spec sends something nowhere | `a row makes something the spec never sends out` · `a row is fed from the corridor on the other side of the build` |

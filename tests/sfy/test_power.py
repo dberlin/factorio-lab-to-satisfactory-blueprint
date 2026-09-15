@@ -369,7 +369,35 @@ def test_a_pole_never_stands_outside_the_designer_the_row_is_in() -> None:
         ),
     )
     plan = power.place((moved,), registry, ids=itertools.count(10_000), designer=frame)
-    pole = registry.buildables[power.POLE_CLASS]
+    _inside(plan, frame)
+
+    # And the clamp is applied to the SNAPPED candidate, not the midpoint that
+    # suggested it: three Constructors at -1900, -1000 and -100 put the outer
+    # candidate at -2350, which is inside an mk3's floor and rounds to -2400,
+    # which is not -- the pole's box would reach -2440.
+    line = tuple(
+        replace(machine, pose=replace(machine.pose, x=x))
+        for machine, x in zip(row.machines, (-1900.0, -1000.0, -100.0), strict=True)
+    )
+    edged = power.PowerRow(
+        line,
+        tuple(
+            replace(obj, pose=replace(obj.pose, x=obj.pose.x - 1900.0)) for obj in row.attachments
+        ),
+    )
+    plan = power.place(
+        (edged,),
+        registry,
+        ids=itertools.count(10_000),
+        designer=frame,
+    )
+    assert [pole.pose.x for pole in plan.poles] != [-2400.0]
+    _inside(plan, frame)
+
+
+def _inside(plan: power.PowerPlan, frame: Designer) -> None:
+    pole = _registry().buildables[power.POLE_CLASS]
+    assert plan.poles
     for placed in plan.poles:
         for box in pole.clearance:
             low, high = power.box_bounds(box, placed.pose)

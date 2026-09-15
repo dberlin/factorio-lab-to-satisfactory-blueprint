@@ -227,7 +227,7 @@ def machine_budget(registry: Registry, class_name: str) -> int:
     """
     port = power_port(registry, class_name)
     if port.max_connections is None:
-        raise PowerError("port", f"{class_name}'s {port.name} has no link count in the registry")
+        raise PowerError("data", f"{class_name}'s {port.name} has no link count in the registry")
     budget = port.max_connections - CHAIN_LINKS_PER_POLE
     if budget < 1:
         raise PowerError(
@@ -342,6 +342,9 @@ def _pole_xs(
     same way :func:`_pole_band` clamps the band across ``Y``: a candidate whose
     own box would leave the floor is dropped, and a row with nowhere left to
     stand a pole refuses rather than standing one outside.
+
+    The clamp is applied to the SNAPPED candidate, because where a pole stands is
+    the grid value and not the midpoint that suggested it.
     """
     machines = sorted(row.machines, key=lambda m: m.pose.x)
     if not machines:
@@ -355,8 +358,17 @@ def _pole_xs(
         pitch = 2.0 * (xs[0] - low[0])
         mids = []
     wall = designer.half_cm - width / 2.0
+    # SNAPPED first, then measured against the wall: a pole stands on the grid,
+    # so the candidate that matters is the one it will really stand at.  Filtering
+    # the un-snapped value and rounding afterwards puts a pole back outside the
+    # floor -- half a grid step is 50 cm and a box corner does not forgive it.
     candidates = [
-        x for x in (xs[0] - pitch / 2.0, *mids, xs[-1] + pitch / 2.0) if abs(x) <= wall + _EPS
+        x
+        for x in (
+            _grid_round(value, grid)
+            for value in (xs[0] - pitch / 2.0, *mids, xs[-1] + pitch / 2.0)
+        )
+        if abs(x) <= wall + _EPS
     ]
     if not candidates:
         raise PowerError(
@@ -379,7 +391,7 @@ def _pole_xs(
                 f"a row of {len(machines)} machines has no {count} midpoints to stand poles at",
             )
         taken.add(pick)
-        out.append(_grid_round(candidates[pick], grid))
+        out.append(candidates[pick])
     if len(set(out)) != len(out):
         raise PowerError("room", f"two poles in one row snap to the same x on a {grid:.0f} cm grid")
     return sorted(out)

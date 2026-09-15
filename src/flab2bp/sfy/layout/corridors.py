@@ -72,7 +72,7 @@ _EPS = 1e-9
 class CorridorError(ValueError):
     """A corridor this module will not lay, with the cause the strategy names.
 
-    ``cause`` is a discriminator, not prose, and there are five:
+    ``cause`` is a discriminator, not prose, and there are seven:
 
     * ``"width"`` -- no column left in the corridor to put a belt in;
     * ``"bridge"`` -- the only columns left need a crossing that will not fit;
@@ -83,7 +83,9 @@ class CorridorError(ValueError):
     * ``"limits"`` -- ``registry.json`` states no bound this module needs, which
       is a hole in the extraction rather than a fact about the build;
     * ``"path"`` -- a path with no length at all, which is two ports in the same
-      place and a fault in the caller rather than in the designer.
+      place and a fault in the caller rather than in the designer;
+    * ``"curve"`` -- a curved leg longer than a belt may be, which this module
+      will not cut because cutting it would mean guessing at tangents.
 
     :mod:`flab2bp.sfy.layout.strategy` turns each into the refusal the caller
     sees, so the refusal strings live in one place.
@@ -428,6 +430,29 @@ class Route:
         self.heading = leg[-1][2]
 
 
+def _is_straight(leg: tuple[SplinePoint, ...]) -> bool:
+    """Whether a two-point leg is the straight one between its two points.
+
+    Both tangents at the seam -- the first point's leave and the second's arrive
+    -- point along the chord, which is what
+    :func:`~flab2bp.sfy.layout.splines.straight` builds and what
+    :func:`~flab2bp.sfy.layout.splines.quarter_turn` deliberately does not.
+    """
+    head, tail = leg[0][0], leg[1][0]
+    chord = (tail[0] - head[0], tail[1] - head[1], tail[2] - head[2])
+    span = math.sqrt(sum(value * value for value in chord))
+    if span <= _EPS:
+        return False
+    unit = tuple(value / span for value in chord)
+    for tangent in (leg[0][2], leg[1][1]):
+        reach = math.sqrt(sum(value * value for value in tangent))
+        if reach <= _EPS:
+            return False
+        if sum(tangent[i] * unit[i] for i in range(3)) / reach < 1.0 - 1e-9:
+            return False
+    return True
+
+
 def _split(leg: tuple[SplinePoint, ...], limit: float) -> list[tuple[SplinePoint, ...]]:
     """``leg`` in pieces no longer than ``limit``, or as it was if it is short enough.
 
@@ -438,13 +463,17 @@ def _split(leg: tuple[SplinePoint, ...], limit: float) -> list[tuple[SplinePoint
     :func:`~flab2bp.sfy.layout.splines.straight` builds.  A CURVED leg past the
     limit is refused rather than cut: cutting it would mean guessing tangents,
     and nothing in this package makes one.
+
+    Straight is asked of the TANGENTS, not of the number of points: a quarter turn
+    is two points as well, and cutting one along its chord would hand back a
+    straight belt where a turn was asked for.
     """
     length = spline_length(leg)
     if length <= limit:
         return [leg]
-    if len(leg) != 2:
+    if len(leg) != 2 or not _is_straight(leg):
         raise CorridorError(
-            "path",
+            "curve",
             f"a curved leg of {length:.0f} cm is past the {limit:.0f} cm a belt may be, and "
             "this module will not guess at the tangents to cut one",
         )

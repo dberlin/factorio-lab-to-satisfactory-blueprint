@@ -295,6 +295,20 @@ def test_an_inclined_leg_past_the_limit_is_cut_and_keeps_its_slope() -> None:
     assert path.belts[0].end == path.belts[1].start
 
 
+def test_a_curved_leg_too_long_to_be_a_belt_is_refused_by_its_own_cause() -> None:
+    """Cutting it would mean guessing at tangents, and a path with no length is a
+    different fault from a turn nobody can cut."""
+    registry = _registry()
+    limit = registry.limits.belt_max_spline_cm
+    assert limit is not None
+    route = Route(point=(0.0, 0.0, 200.0), heading=(0.0, 1.0, 0.0))
+    route.turn(True, limit)  # a quarter circle of the whole spline limit
+    with pytest.raises(CorridorError) as caught:
+        _laid(route, registry)
+    assert caught.value.cause == "curve"
+    assert "guess at the tangents" in caught.value.detail
+
+
 def test_a_path_with_no_length_at_all_is_refused_as_a_path() -> None:
     with pytest.raises(CorridorError) as caught:
         _laid(Route(point=(0.0, 0.0, 200.0), heading=(0.0, 1.0, 0.0)), _registry())

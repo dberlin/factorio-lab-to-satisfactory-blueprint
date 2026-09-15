@@ -25,7 +25,7 @@ from flab2bp.lab.data import load_vendored
 from flab2bp.lab.flow import load_flow
 from flab2bp.lab.url import Game, parse_url
 from flab2bp.layout.base import NoValidLayout
-from flab2bp.layout.budget import WorkBudget
+from flab2bp.layout.budget import BudgetExhausted, WorkBudget
 from flab2bp.sfy.archive import Reader
 from flab2bp.sfy.header import read_header
 from flab2bp.sfy.labmap import load_lab_map
@@ -584,3 +584,28 @@ def test_how_many_rows_a_group_is_laid_as_is_what_the_floor_holds() -> None:
         layout._splits(order, [1], layout.half - (x1 - x0) / 2.0 + 100.0)
     assert caught.value.reason == "rows exceed the designer width"
     assert order[0].machine_class in caught.value.attempt_reasons[0]
+
+
+def test_the_clock_is_read_again_once_the_columns_are_planned() -> None:
+    """The budget bounds the DRAWING as well as the search.
+
+    Every net turns into belts, turns and links after the columns are settled,
+    and a clock that ran out between the two would otherwise not be looked at
+    until the build was finished.  The fake clock here runs out at exactly that
+    moment: the rows are built, the columns are assigned, and the first net to be
+    drawn finds the time gone.
+    """
+    layout = _fresh(_spec("iron-plate-60"))
+    planned = {"columns": False}
+    settle = layout._plan_columns
+
+    def watched() -> None:
+        settle()
+        planned["columns"] = True
+
+    layout._plan_columns = watched  # type: ignore[method-assign]
+    layout.budget = WorkBudget(deadline=1.0, clock=lambda: 100.0 if planned["columns"] else 0.0)
+    with pytest.raises(BudgetExhausted):
+        layout.build()
+    assert layout.rows, "the rows were built before the clock ran out"
+    assert planned["columns"], "and so were the columns"
