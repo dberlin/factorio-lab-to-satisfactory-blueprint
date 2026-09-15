@@ -58,6 +58,7 @@ from flab2bp.sfy.labmap import LabMap, machine_class
 from flab2bp.sfy.layout.lattice import GROUND_LEVEL, Lattice, Node
 from flab2bp.sfy.layout.model import MachineObj, Vector
 from flab2bp.sfy.layout.realise import Terminal
+from flab2bp.sfy.layout.validate import BELT_CLEARANCE_HALF_WIDTH_CM, TOUCH_CM
 from flab2bp.sfy.registry import Buildable, Port, Registry
 from flab2bp.sfy.spec import SfyBuildSpec, SfyMachineGroup, direct_pairs
 from flab2bp.spec import BeltTier
@@ -88,14 +89,17 @@ noise and well below the 25 cm a Manufacturer's input really stands off the grid
 (R-M3-1), so nothing this milestone meets falls on the wrong side of it.
 """
 
-TAP_CLEAR_NODES = 2
-"""How many straight nodes R-M3-7 keeps on either side of a tap.
+TAP_CLEAR_NODES = 3
+"""How many straight nodes are kept on either side of a tap, at the least.
 
-The floor rather than the answer: a caller that knows what a turn costs where it
-stands passes its own, and :mod:`flab2bp.sfy.layout.rrr` does.  Ours, and the
-reason is R-M3-4: the piece of belt between a splitter's port and whatever is
-next is at least two nodes long, so a tap with fewer than two straight nodes
-behind it is a tap whose own trunk cannot be cut legally.
+R-M3-7 says two, and two is one short: ``clear`` nodes of run span ``clear - 1``
+grid steps, so a piece cut off two nodes is 100 cm of belt and R-M3-4's floor is
+one centimetre over that.  Three nodes span 200 cm and clear it, which is why
+this is three and the rule's own number is a node count rather than a length.
+
+The floor rather than the answer, either way: a caller that knows what a turn
+costs where it stands passes its own, and :mod:`flab2bp.sfy.layout.rrr` passes
+``ceil(measures.radius / grid)``.
 """
 
 
@@ -528,18 +532,34 @@ def _node_on_ray(world: Vector, facing: Vector, lattice: Lattice, name: str) -> 
 def _reach(
     node: Node, facing: Vector, low: Vector, high: Vector, lattice: Lattice
 ) -> tuple[Node, ...]:
-    """The nodes from ``node`` to the hard box's edge along ``facing`` -- R-M3-2 (d).
+    """The nodes from ``node`` out along ``facing`` that this machine denies.
 
-    They lie inside the machine's own box, which denies them to everyone, and
-    they are what one net opens for itself.  The count is the box's, in whole
-    grid steps: a port already outside its own box reaches nothing, which is the
-    honest answer rather than a special case.
+    R-M3-2 (d): a belt's own path from its port to where its machine stops
+    standing in the way lies inside that machine, the occupancy denies every
+    node of it to everyone, and these are what one net opens for itself.
+
+    "Where the machine stops standing in the way" is the occupancy's own reading
+    and not the box edge, and the difference matters: a node is denied when the
+    158 cm belt box on it MEETS the hard box, so a box whose edge does not land
+    on a lattice line -- an Assembler turned a quarter turn has its at 50 cm off
+    -- denies one node further than it reaches.  Stopping at the edge left that
+    node denied and in nobody's reach, which walls the port in altogether; this
+    is the same ``_lines_meeting`` arithmetic
+    :func:`~flab2bp.sfy.layout.lattice._mark_box` denies it with, read along one
+    ray.
+
+    What that costs: where two machines stand a grid step apart, the node in the
+    gap is denied by BOTH boxes, and a reach that opens it opens a node the
+    other machine also denies.  The packer's port apron is what keeps a port
+    from facing into such a gap; a port already outside its own machine's way
+    reaches nothing, which is the honest answer and not a special case.
     """
     axis = _facing_axis(facing)
     sign = 1 if facing[axis] > 0.0 else -1
     edge = high[axis] if sign > 0 else low[axis]
-    grid = lattice.grid_cm
-    steps = math.floor(((edge - lattice.world(node)[axis]) * sign + LATTICE_TOUCH_CM) / grid)
+    here = lattice.world(node)[axis]
+    span = (edge - here) * sign + BELT_CLEARANCE_HALF_WIDTH_CM - TOUCH_CM
+    steps = math.ceil(span / lattice.grid_cm) - 1
     out: list[Node] = []
     for step in range(max(steps, -1) + 1):
         moved = list(node)

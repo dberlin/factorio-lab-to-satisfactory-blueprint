@@ -26,14 +26,16 @@ from flab2bp.sfy.labmap import LabMap, load_lab_map
 from flab2bp.sfy.layout.corridors import Measures
 from flab2bp.sfy.layout.grid_nets import (
     LATTICE_TOUCH_CM,
+    TAP_CLEAR_NODES,
     GridNet,
     NetError,
     belt_class_for,
     nets_for,
     tap_nodes,
+    terminal_for,
     tier_for,
 )
-from flab2bp.sfy.layout.lattice import GROUND_LEVEL, Lattice, Node
+from flab2bp.sfy.layout.lattice import GROUND_LEVEL, Lattice, Node, occupancy_for
 from flab2bp.sfy.layout.manifold import hard_footprint_cm
 from flab2bp.sfy.layout.model import MachineObj, Pose
 from flab2bp.sfy.layout.strategy import _measure
@@ -326,25 +328,35 @@ def test_a_port_terminal_stands_on_the_first_node_out_along_its_own_normal() -> 
 
 
 def test_a_ports_reach_is_the_nodes_inside_its_own_machines_hard_box() -> None:
-    """R-M3-2 (d): the belt's first nodes lie in the box, and nobody else's.
+    """R-M3-2 (d): the reach is exactly what this machine denies along the ray.
 
-    The count is the box's own: the distance from the port to the box edge along
-    the port's normal, in grid steps, read out of ``hard_footprint_cm``.
+    Asserted against the occupancy rather than against a count: the reach exists
+    to open what the flattening denied, so the node it stops at must be one the
+    occupancy denies and the node past it one the occupancy allows.  A box whose
+    edge does not land on a lattice line -- an Assembler turned a quarter turn
+    has its 50 cm off -- denies one node further than it reaches, and a reach
+    measured to the edge would leave that node walled in and in nobody's hands.
     """
     spec, smelters, constructors = _paired()
-    nets = nets_for(spec, (*smelters, *constructors), _lattice(), _registry(), _lab_map())
-    source = next(net for net in nets if net.item_id == "iron-ingot").sources[0]
-
-    machine = next(m for m in smelters if source.port and m.id == source.port[0])
-    _, _, _, y1 = hard_footprint_cm(_registry().buildables[machine.class_name])
-    edge = machine.pose.y + y1
     lattice = _lattice()
-    expected = int((edge - lattice.world(source.node)[1]) / lattice.grid_cm) + 1
-
-    assert len(source.reach) == expected
-    assert source.reach[0] == source.node
-    assert all(lattice.world(node)[1] <= edge for node in source.reach)
-    assert all(node[0] == source.node[0] and node[2] == source.node[2] for node in source.reach)
+    for machines, name in ((smelters, "Output2"), (constructors, "Input0")):
+        occupancy = occupancy_for(lattice, machines, (), (), (), _registry())
+        for machine in machines:
+            port = next(
+                p for p in _registry().buildables[machine.class_name].ports if p.name == name
+            )
+            terminal = terminal_for(machine, port, lattice, _registry())
+            assert terminal.reach[0] == terminal.node
+            for node in terminal.reach:
+                assert not occupancy.free(node), f"{node} is inside the machine"
+            axis = 0 if abs(terminal.facing[0]) >= abs(terminal.facing[1]) else 1
+            step = 1 if terminal.facing[axis] > 0.0 else -1
+            beyond = list(terminal.reach[-1])
+            beyond[axis] += step
+            assert occupancy.free((beyond[0], beyond[1], beyond[2])), (
+                "the reach stops where the machine stops denying, and not before"
+            )
+    del spec
 
 
 def test_a_machine_whose_port_is_off_the_lattice_refuses_rather_than_rounding() -> None:
@@ -368,21 +380,30 @@ def test_a_machine_whose_port_is_off_the_lattice_refuses_rather_than_rounding() 
 
 
 def test_tap_nodes_are_interior_straight_nodes_two_from_any_corner() -> None:
-    """R-M3-7: a tap keeps two straight nodes on either side of the splitter."""
+    """R-M3-7: a tap keeps straight nodes on either side of the splitter.
+
+    Two is the rule's own number and :data:`TAP_CLEAR_NODES` is one more, for
+    the reason it states: two nodes of run is one grid step, which is under the
+    101 cm floor R-M3-4 holds every piece of belt to.  Both are asserted -- the
+    rule's floor, and the constant's own -- rather than a number written here.
+    """
+    clear = TAP_CLEAR_NODES
+    assert clear >= 2  # R-M3-7's own floor, which the constant may only raise
     corner = (5, 15, GROUND_LEVEL)
     path = _join(_line((5, 5, GROUND_LEVEL), corner), _line(corner, (15, 15, GROUND_LEVEL)))
 
     taps = set(tap_nodes((path,), _lattice()))
 
-    assert (5, 7, GROUND_LEVEL) in taps
-    assert (5, 13, GROUND_LEVEL) in taps
-    assert (7, 15, GROUND_LEVEL) in taps
+    assert (5, 5 + clear, GROUND_LEVEL) in taps
+    assert (5, 15 - clear, GROUND_LEVEL) in taps
+    assert (5 + clear, 15, GROUND_LEVEL) in taps
     assert corner not in taps
-    for near in ((5, 5, GROUND_LEVEL), (5, 6, GROUND_LEVEL), (5, 14, GROUND_LEVEL)):
-        assert near not in taps
+    for short in range(clear):
+        assert (5, 5 + short, GROUND_LEVEL) not in taps
+        assert (5, 15 - short, GROUND_LEVEL) not in taps
     for tap in taps:
         along = max(abs(tap[0] - corner[0]), abs(tap[1] - corner[1]))
-        assert along >= 2
+        assert along >= clear
 
 
 def test_a_tap_keeps_the_turn_radius_clear_when_the_measures_say_so() -> None:
@@ -412,10 +433,11 @@ def test_a_node_a_run_is_broken_at_is_no_longer_a_tap_or_beside_one() -> None:
     taps = set(tap_nodes((path,), _lattice(), breaks=(stood,)))
 
     assert stood not in taps
-    assert (5, 15, GROUND_LEVEL) not in taps
-    assert (5, 17, GROUND_LEVEL) not in taps
-    assert (5, 13, GROUND_LEVEL) in taps
-    assert (5, 19, GROUND_LEVEL) in taps
+    for short in range(TAP_CLEAR_NODES):
+        assert (5, 15 - short, GROUND_LEVEL) not in taps
+        assert (5, 17 + short, GROUND_LEVEL) not in taps
+    assert (5, 15 - TAP_CLEAR_NODES, GROUND_LEVEL) in taps
+    assert (5, 17 + TAP_CLEAR_NODES, GROUND_LEVEL) in taps
 
 
 def test_a_climb_ends_a_run_so_no_tap_stands_on_a_ramp() -> None:
