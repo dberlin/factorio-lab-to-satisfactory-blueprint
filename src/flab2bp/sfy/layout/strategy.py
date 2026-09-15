@@ -19,18 +19,20 @@ each group is laid as and where they stand), :mod:`~flab2bp.sfy.layout.nets`
 (which item runs up which corridor, where its mergers and splitters stand, and in
 which column) and :mod:`~flab2bp.sfy.layout.laying` (the shape of every belt).
 
-It also owns the vocabulary of refusal.  :data:`REFUSALS` is the whole of it and
-:func:`_refuse` is the one place a refusal is built; a stage is handed that
-function rather than the table, so nothing below this module can invent a cause.
-The choices that are this project's own are made in the stage that makes them and
-say so there.
+It does NOT own the vocabulary of refusal.  That is
+:mod:`flab2bp.sfy.layout.refusals`, shared with the other strategy: this module
+maps each stage's own error onto one of its named causes, and hands the stages
+:func:`~flab2bp.sfy.layout.refusals.refuse` rather than the table, so nothing
+below this module can invent a cause.  The choices that are this project's own
+are made in the stage that makes them and say so there.
 
 Legality is the validator's
 ---------------------------
 Nothing here decides what the game accepts.  Every placement this module returns
 is meant to come back clean from ``validate(placement, spec, registry)``, and
 where it cannot lay one it refuses with
-:class:`~flab2bp.layout.base.NoValidLayout` and a cause out of :data:`REFUSALS`.
+:class:`~flab2bp.layout.base.NoValidLayout` and a cause out of
+:data:`~flab2bp.sfy.layout.refusals.REFUSALS`.
 """
 
 from __future__ import annotations
@@ -45,7 +47,6 @@ from typing import Any
 
 from flab2bp.lab.data import load_vendored
 from flab2bp.lab.url import Game
-from flab2bp.layout.base import NoValidLayout
 from flab2bp.layout.budget import BudgetExhausted, WorkBudget, WorkLimits
 from flab2bp.sfy.labmap import LabMap, load_lab_map
 from flab2bp.sfy.layout.corridors import (
@@ -57,79 +58,25 @@ from flab2bp.sfy.layout.corridors import (
     belt_pitch_cm,
     turn_radius_cm,
 )
+from flab2bp.sfy.layout.floor import foundations
 from flab2bp.sfy.layout.laying import CorridorLayer
 from flab2bp.sfy.layout.manifold import SPLITTER_CLASS, RowError, shortest_belt_cm
 from flab2bp.sfy.layout.model import (
     AttachmentObj,
     BeltRun,
-    FoundationObj,
     Link,
     MachineObj,
-    Pose,
     SfyPlacement,
 )
 from flab2bp.sfy.layout.nets import NetPlanner
 from flab2bp.sfy.layout.power import PowerError, PowerPlan, PowerRow
 from flab2bp.sfy.layout.power import place as place_power
+from flab2bp.sfy.layout.refusals import GAME_DATA, GAME_LIMITS, refuse
 from flab2bp.sfy.layout.rows import RowPlan, RowPlanner
 from flab2bp.sfy.registry import Registry, load_registry
-from flab2bp.sfy.spec import FOUNDATION_CLASS, Designer, SfyBuildSpec
+from flab2bp.sfy.spec import Designer, SfyBuildSpec
 
-__all__ = ["REFUSALS", "ManifoldRows"]
-
-GAME_DATA = "the game data does not describe a machine this build needs"
-"""One cause for every way the extraction leaves a hole a build falls into.
-
-A missing buildable, a machine with no hard clearance box or no belt output port,
-a belt tier the lab map has no class for: all of them are the same answer to the
-caller -- this build cannot be authored from the game data we have -- and all of
-them carry the detail that says which.
-"""
-
-GAME_LIMITS = "the game data states no limit this build needs"
-"""The same, for a ``limits`` field the registry does not carry: the hologram
-grid, the minimum belt length, the maximum incline, the bend radius, the maximum
-spline.  Separate from :data:`GAME_DATA` because a missing bound is a different
-gap from a missing machine, and a reader chasing one is not chasing the other."""
-
-REFUSALS = (
-    # The brief's own list.
-    "rows exceed the designer depth",
-    "rows exceed the designer width",
-    "corridor needs a bridge that does not fit",
-    "row too deep",
-    "run exceeds the belt ceiling",
-    "fluids are M4",
-    "corridor assignment exceeded the budget",
-    # The row builder's other causes, each kept as itself rather than folded into
-    # a designer bound it has nothing to do with.
-    "row too tall",
-    "more input items than the machine has belt ports",
-    "a row drains one of several products",
-    "a feeder crosses the chain inside it",
-    "this spec names no belt",
-    GAME_DATA,
-    GAME_LIMITS,
-    # The corridor's own, beyond the three the brief names.
-    "a trunk would have to run back down the corridor",
-    "a corridor path has no length",
-    "a curved leg is longer than a belt may be",
-    "layout exceeded the budget",
-    # Two more this shape of build can hit that the brief does not name.
-    "a row makes something the spec never sends out",
-    "a row is fed from the corridor on the other side of the build",
-    # The row/corridor walk's own backstop, kept separate from the width bound it
-    # used to borrow: a build that ran out of PASSES has not been shown not to
-    # fit, and a reader told "rows exceed the designer width" would go measuring
-    # a designer when what happened is that this module gave up.
-    "row splitting did not converge",
-    # Task 9's three: a pole line that cannot be reached, cannot be stood, or a
-    # class with no power connection to wire at all.
-    "wire exceeds the maximum length",
-    "no room for a power pole",
-    "a machine has no power connection",
-)
-"""Every reason this strategy refuses with, and the only ones it may use."""
+__all__ = ["ManifoldRows"]
 
 #: The row builder's own causes, as they arrive on a ``RowError``, mapped onto the
 #: names a caller of this module sees, by the words each message is built from.
@@ -221,7 +168,7 @@ class ManifoldRows:
             # that is not asking for thousands of columns.  ``TransportRefusal``
             # says which ran out.
             spent = getattr(exc, "reason", "")
-            raise _refuse(
+            raise refuse(
                 spec,
                 "corridor assignment exceeded the budget"
                 if spent == "POLICY_BOUND"
@@ -229,22 +176,11 @@ class ManifoldRows:
                 str(exc),
             ) from exc
         except CorridorError as exc:
-            raise _refuse(spec, _CORRIDOR_CAUSES[exc.cause], exc.detail) from exc
+            raise refuse(spec, _CORRIDOR_CAUSES[exc.cause], exc.detail) from exc
         except RowError as exc:
-            raise _refuse(spec, _row_cause(exc), str(exc)) from exc
+            raise refuse(spec, _row_cause(exc), str(exc)) from exc
         except PowerError as exc:
-            raise _refuse(spec, _POWER_CAUSES[exc.cause], exc.detail) from exc
-
-
-def _refuse(spec: SfyBuildSpec, reason: str, detail: str = "") -> NoValidLayout:
-    """The one place a refusal is built, so every cause is one of the named ones."""
-    if reason not in REFUSALS:
-        raise ValueError(f"{reason!r} is not one of this strategy's named refusals")
-    return NoValidLayout(
-        reason,
-        spec_label=spec.label or "this build",
-        attempt_reasons=(detail,) if detail else (),
-    )
+            raise refuse(spec, _POWER_CAUSES[exc.cause], exc.detail) from exc
 
 
 def _row_cause(error: RowError) -> str:
@@ -262,7 +198,8 @@ def _row_cause(error: RowError) -> str:
             return cause
     raise ValueError(
         f"this module has no named refusal for the row builder's {message!r}; add one to "
-        "_ROW_CAUSES and to REFUSALS rather than letting it wear another cause's name"
+        "_ROW_CAUSES and to flab2bp.sfy.layout.refusals.REFUSALS rather than letting it "
+        "wear another cause's name"
     )
 
 
@@ -294,7 +231,7 @@ class _Layout:
         """
         self._refuse_fluids()
         measures = _measure(self.registry, self.designer)
-        refuse = partial(_refuse, self.spec)
+        refusal = partial(refuse, self.spec)
         planner = RowPlanner(
             spec=self.spec,
             designer=self.designer,
@@ -302,7 +239,7 @@ class _Layout:
             lab_map=self.lab_map,
             budget=self.budget,
             measures=measures,
-            refuse=refuse,
+            refuse=refusal,
             ids=self.ids,
         )
         nets = NetPlanner(
@@ -310,7 +247,7 @@ class _Layout:
             registry=self.registry,
             budget=self.budget,
             measures=measures,
-            refuse=refuse,
+            refuse=refusal,
         )
         row_plan, corridor_plan = planner._plan_rows(
             lambda plan: nets._plan_columns(plan.rows, plan.x_edge)
@@ -327,38 +264,12 @@ class _Layout:
             corridor_plan=corridor_plan,
         )
         corridors = layer._lay_corridors()
-        return self._placement(measures, row_plan, corridors, tuple(layer.turns))
+        return self._placement(row_plan, corridors, tuple(layer.turns))
 
-    # --- the floor and the placement ----------------------------------------
-
-    def _floor(self, measures: Measures) -> tuple[FoundationObj, ...]:
-        """A full floor of the shipped foundation, covering the designer.
-
-        Each slab stands at half its own box's thickness, so that its top is
-        where the row builder stands its machines.
-        """
-        side = self.designer.foundation_cm
-        box = self.registry.buildables[FOUNDATION_CLASS].clearance[0]
-        stand = (box.max[2] - box.min[2]) / 2.0
-        count = int(round(2.0 * measures.half / side))
-        return tuple(
-            FoundationObj(
-                id=next(self.ids),
-                class_name=FOUNDATION_CLASS,
-                pose=Pose(
-                    -measures.half + side / 2.0 + i * side,
-                    -measures.half + side / 2.0 + j * side,
-                    stand,
-                    0.0,
-                ),
-            )
-            for i in range(count)
-            for j in range(count)
-        )
+    # --- the placement ------------------------------------------------------
 
     def _placement(
         self,
-        measures: Measures,
         row_plan: RowPlan,
         corridors: tuple[list[AttachmentObj], list[BeltRun], list[Link]],
         turns: tuple[str, ...],
@@ -378,7 +289,7 @@ class _Layout:
             belts=tuple(belts),
             poles=power.poles,
             wires=power.wires,
-            foundations=self._floor(measures),
+            foundations=foundations(self.designer, self.registry, self.ids),
             links=tuple(links),
             description=self._description(row_plan, belts, power, turns),
             short_desc=f"{self.spec.label or 'manifold rows'}: {len(machines)} machines",
@@ -450,7 +361,7 @@ class _Layout:
     # --- the refusal that comes before any geometry -------------------------
 
     def _refuse_fluids(self) -> None:
-        """A fluid is M4, and FactorioLab is what says an item is one.
+        """A fluid is M5, and FactorioLab is what says an item is one.
 
         The dataset marks a fluid by carrying no stack size, which is the test
         :mod:`flab2bp.sfy.rates` already refuses a whole flow on; a spec built by
@@ -470,7 +381,7 @@ class _Layout:
             if (entry := data.get_item(item)) is not None and entry.stack is None
         )
         if wet:
-            raise _refuse(self.spec, "fluids are M4", f"this build moves {', '.join(wet)}")
+            raise refuse(self.spec, "fluids are M5", f"this build moves {', '.join(wet)}")
 
 
 # --- the numbers every stage is laid out against ---------------------------

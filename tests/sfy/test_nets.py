@@ -18,6 +18,7 @@ from flab2bp.layout.budget import WorkBudget
 from flab2bp.sfy.layout import strategy
 from flab2bp.sfy.layout.corridors import CorridorError
 from flab2bp.sfy.layout.nets import NetPlanner, _carried, _Net, _Terminal
+from flab2bp.sfy.layout.refusals import REFUSALS, refuse
 from flab2bp.sfy.spec import SfyBuildSpec, designer
 from tests.sfy.conftest import flow_spec, sfy_registry
 
@@ -32,7 +33,7 @@ def _planner(spec: SfyBuildSpec, mark: str = MARK) -> NetPlanner:
         registry=sfy_registry(),
         budget=WorkBudget(),
         measures=strategy._measure(sfy_registry(), designer(mark, sfy_registry())),
-        refuse=partial(strategy._refuse, spec),
+        refuse=partial(refuse, spec),
     )
 
 
@@ -83,7 +84,7 @@ def test_a_source_outside_the_span_the_trunk_runs_through_is_refused_by_its_own_
     with pytest.raises(CorridorError) as caught:
         planner._plan_nodes(net)
     assert caught.value.cause == "backwards"
-    assert strategy._CORRIDOR_CAUSES["backwards"] in strategy.REFUSALS
+    assert strategy._CORRIDOR_CAUSES["backwards"] in REFUSALS
 
 
 def test_an_item_made_only_on_the_other_side_of_the_rows_is_refused_by_its_own_cause() -> None:

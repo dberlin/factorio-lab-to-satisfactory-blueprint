@@ -169,7 +169,7 @@ def test_a_flow_that_moves_a_fluid_exits_two_rather_than_three(
     url = flow.read_text(encoding="utf-8").splitlines()[0].strip().strip('"')
     code = cli.main([url, "--flow", str(flow), "--designer", "mk3", "-o", str(tmp_path)])
     assert code == 2
-    assert "fluids are M4" in capsys.readouterr().err
+    assert "fluids are M5" in capsys.readouterr().err
 
 
 def test_a_url_naming_neither_game_falls_through_to_the_dsp_arm_and_exits_two(

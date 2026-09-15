@@ -423,10 +423,13 @@ carry would go and look at the wrong thing.
 | the power stage | `wire exceeds the maximum length` · `no room for a power pole` · `a machine has no power connection` |
 | a bound ran out | `corridor assignment exceeded the budget` (columns tried) · `layout exceeded the budget` (the clock) |
 | the extraction left a hole | `the game data does not describe a machine this build needs` · `the game data states no limit this build needs` |
-| not this milestone | `fluids are M4` |
+| not this milestone | `fluids are M5` |
 
-The module refuses to raise anything else. `_refuse` checks the string against
-`REFUSALS` and raises `ValueError` on a cause nobody declared; `_row_cause` and
+The module refuses to raise anything else. The table is
+`flab2bp.sfy.layout.refusals.REFUSALS`, shared with the grid-routed strategy and
+holding its causes too; the ones above are the manifold's own, plus the five both
+raise. `refuse` checks the string against it and raises `ValueError` on a cause
+nobody declared; `_row_cause` and
 the two mapping tables beside it do the same for a cause arriving from the row
 builder, the corridor or the power stage, rather than defaulting to some other
 refusal's name. An input no row makes and the spec does not belt in is not in the

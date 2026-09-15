@@ -284,7 +284,7 @@ rather than solving a selection the player did not choose. Exit codes are the DS
 written, `1` the validator found errors and the blueprint was withheld (`--allow-invalid`
 overrides), `2` a bad URL, spec or missing flow, `3` no layout.
 
-What M2 refuses, rather than guessing at: **fluids** (`fluids are M4` — nothing pipes yet, so a
+What M2 refuses, rather than guessing at: **fluids** (`fluids are M5` — nothing pipes yet, so a
 flow carrying one is refused before any geometry), a **run past the fastest belt the save can
 build** (`run exceeds the belt ceiling`), and anything that **does not fit the chosen designer**
 in a single level of rows (`rows exceed the designer depth`/`width`).

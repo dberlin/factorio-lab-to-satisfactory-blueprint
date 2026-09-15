@@ -28,12 +28,12 @@ from flab2bp.sfy.layout import nets, strategy
 from flab2bp.sfy.layout.emit import decode, emit
 from flab2bp.sfy.layout.manifold import RowError, crossing_gap_cm
 from flab2bp.sfy.layout.model import AttachmentObj, SfyPlacement
+from flab2bp.sfy.layout.refusals import GAME_DATA, REFUSALS
 from flab2bp.sfy.layout.rows import _Row
 from flab2bp.sfy.layout.strategy import ManifoldRows
 from flab2bp.sfy.layout.validate import validate
 from flab2bp.sfy.registry import Registry
 from flab2bp.sfy.spec import (
-    FOUNDATION_CLASS,
     SfyBuildSpec,
     SfyMachineGroup,
     designer,
@@ -234,18 +234,6 @@ def test_every_external_input_arrives_at_the_minus_y_wall_and_every_output_leave
     assert entries["iron-ore"][2] == exits["iron-plate"][2] == 200.0
 
 
-def test_a_full_floor_of_foundations_stands_under_the_whole_designer() -> None:
-    placement = _lay_out(_spec("iron-plate-60"), MARK)
-    half = placement.designer.half_cm
-    side = placement.designer.foundation_cm
-    slabs = placement.foundations
-    assert {slab.class_name for slab in slabs} == {FOUNDATION_CLASS}
-    assert len(slabs) == (2 * half / side) ** 2
-    assert {slab.pose.z for slab in slabs} == {side / 16.0}  # 50 cm: the box's own half
-    assert min(slab.pose.x for slab in slabs) == -half + side / 2.0
-    assert max(slab.pose.y for slab in slabs) == half - side / 2.0
-
-
 def test_the_whole_build_survives_the_blueprint_round_trip() -> None:
     """``roundtrip`` inside ``validate`` says the same thing; both are kept.
 
@@ -407,7 +395,7 @@ def test_a_fluid_in_the_spec_is_refused_as_a_later_milestone() -> None:
     wet = flow.model_copy(
         update={"external_inputs": {**flow.external_inputs, "water": Fraction(1)}}
     )
-    assert _refusal(wet, MARK) == "fluids are M4"
+    assert _refusal(wet, MARK) == "fluids are M5"
 
 
 def test_the_strategy_names_itself() -> None:
@@ -419,11 +407,15 @@ def test_the_strategy_names_itself() -> None:
 
 def test_every_cause_this_module_maps_onto_is_one_it_may_refuse_with() -> None:
     """A mapping table that named a cause ``REFUSALS`` has not got would turn a
-    refusal into a ``ValueError`` at the worst moment."""
+    refusal into a ``ValueError`` at the worst moment.
+
+    The table is :mod:`flab2bp.sfy.layout.refusals`, shared with the other
+    strategy; this module maps its stages' errors onto entries in it.
+    """
     mapped = {cause for _, cause in strategy._ROW_CAUSES}
     mapped |= set(strategy._CORRIDOR_CAUSES.values())
     mapped |= set(strategy._POWER_CAUSES.values())
-    assert mapped <= set(strategy.REFUSALS)
+    assert mapped <= set(REFUSALS)
 
 
 def test_an_unmapped_row_error_raises_rather_than_wearing_another_causes_name() -> None:
@@ -436,7 +428,7 @@ def test_a_row_builder_cause_keeps_its_own_name() -> None:
     assert strategy._row_cause(RowError("row too tall: the row reaches z = 4000")) == "row too tall"
     assert (
         strategy._row_cause(RowError("the lab map has no conveyor class for 'conveyor-belt-mk9'"))
-        == strategy.GAME_DATA
+        == GAME_DATA
     )
 
 

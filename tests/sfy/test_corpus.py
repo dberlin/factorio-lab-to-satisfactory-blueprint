@@ -35,7 +35,7 @@ from flab2bp.bench.tier import Tier
 from flab2bp.lab.flow import load_flow
 from flab2bp.layout.base import LayoutAttemptFailure, NoValidLayout, SpecInfeasible
 from flab2bp.sfy.layout.model import MachineObj, PoleObj, Pose, SfyPlacement
-from flab2bp.sfy.layout.strategy import REFUSALS
+from flab2bp.sfy.layout.refusals import REFUSALS
 from flab2bp.sfy.layout.validate import Finding, Report, Severity
 from flab2bp.sfy.spec import Designer
 from scripts import sfy_audit
@@ -50,7 +50,7 @@ def test_the_corpus_spans_the_tiers_the_plan_asked_for() -> None:
     assert {e.tier for e in SFY_CORPUS} >= {Tier.TRIVIAL, Tier.SMALL, Tier.MID}
     fluid = entry("plastic-20")
     assert fluid.expected == "refuse"
-    assert fluid.expected_cause == "fluids are M4"
+    assert fluid.expected_cause == "fluids are M5"
 
 
 @pytest.mark.parametrize("item", SFY_CORPUS, ids=lambda e: e.url_id)
@@ -84,8 +84,13 @@ def test_every_entrys_flow_was_exported_from_that_entrys_own_url(item: SfyCorpus
     load_flow(item.flow_path, url=item.url)
 
 
-def test_every_ruled_cause_is_one_the_strategy_can_actually_raise() -> None:
-    """A ruled cause the strategy never emits would green the gate on nothing."""
+def test_the_corpus_ruled_causes_are_refusals() -> None:
+    """A ruled cause no strategy emits would green the gate on nothing.
+
+    Read off :mod:`flab2bp.sfy.layout.refusals`, the leaf both strategies share,
+    rather than off either strategy: a cause the grid-routed one raises is just
+    as ruled as one the manifold raises.
+    """
     assert set(RULED_CAUSES) <= set(REFUSALS)
 
 
@@ -104,7 +109,7 @@ def test_an_entry_must_pin_exactly_the_marks_it_is_built_in() -> None:
 
 def test_an_entry_may_not_pin_the_same_mark_twice() -> None:
     with pytest.raises(ValueError, match="same mark twice"):
-        _made(expects=(("mk1", CLEAN), ("mk1", "fluids are M4")), designers=("mk1",))
+        _made(expects=(("mk1", CLEAN), ("mk1", "fluids are M5")), designers=("mk1",))
 
 
 def test_an_entry_may_only_ask_for_designer_marks_that_exist() -> None:
@@ -114,11 +119,11 @@ def test_an_entry_may_only_ask_for_designer_marks_that_exist() -> None:
 
 def test_the_summary_expectation_is_the_largest_marks_pin() -> None:
     """``expected`` / ``expected_cause`` read the best chance the entry has."""
-    built = _made(expects=(("mk1", "fluids are M4"), ("mk3", CLEAN)), designers=("mk1", "mk3"))
+    built = _made(expects=(("mk1", "fluids are M5"), ("mk3", CLEAN)), designers=("mk1", "mk3"))
     assert built.largest == "mk3"
     assert (built.expected, built.expected_cause) == ("clean", None)
     refusing = _made(
-        expects=(("mk1", "fluids are M4"), ("mk3", "row too deep")), designers=("mk1", "mk3")
+        expects=(("mk1", "fluids are M5"), ("mk3", "row too deep")), designers=("mk1", "mk3")
     )
     assert (refusing.expected, refusing.expected_cause) == ("refuse", "row too deep")
 
@@ -141,7 +146,7 @@ def _made(*, expects: tuple[tuple[str, str], ...], designers: tuple[str, ...]) -
 
 
 def test_a_cause_no_ruling_names_is_not_ruled() -> None:
-    assert is_ruled_cause("fluids are M4")
+    assert is_ruled_cause("fluids are M5")
     assert not is_ruled_cause("corridor assignment exceeded the budget")
 
 
@@ -230,10 +235,10 @@ def test_a_spec_the_rate_model_refuses_is_a_refusal_carrying_its_own_cause() -> 
         entry("plastic-20"),
         "mk1",
         15.0,
-        build=_raises(SpecInfeasible("fluids are M4", item="plastic*20")),
+        build=_raises(SpecInfeasible("fluids are M5", item="plastic*20")),
     )
     assert cell.verdict == "REFUSED"
-    assert cell.cause == "fluids are M4"
+    assert cell.cause == "fluids are M5"
     assert cell.gate_ok
 
 
@@ -337,7 +342,7 @@ def _refusing_cell(url_id: str, mark: str, cause: str) -> sfy_audit.Cell:
 
 def test_a_cell_that_did_what_the_corpus_pins_it_to_do_passes_both_gates() -> None:
     clean = _clean_cell("iron-plate-60", "mk3")  # pinned clean
-    refused = _refusing_cell("plastic-20", "mk1", "fluids are M4")  # pinned that cause
+    refused = _refusing_cell("plastic-20", "mk1", "fluids are M5")  # pinned that cause
     for cell in (clean, refused):
         assert cell.as_pinned, cell
         assert cell.gate_ok and cell.strict_ok
@@ -419,13 +424,13 @@ def test_the_report_states_the_gate_verdict_the_commit_and_every_cell() -> None:
         entry("plastic-20"),
         "mk1",
         15.0,
-        build=_raises(SpecInfeasible("fluids are M4", item="plastic*20")),
+        build=_raises(SpecInfeasible("fluids are M5", item="plastic*20")),
     )
     text = sfy_audit.render_report([clean, refused], head="abc1234", budget_s=15.0, dirty=False)
     assert "PASS" in text
     assert "abc1234" in text
     assert "iron-plate-60" in text and "plastic-20" in text
-    assert "fluids are M4" in text
+    assert "fluids are M5" in text
     assert "what refuses and why" in text
 
 
@@ -544,7 +549,7 @@ def test_importing_the_satisfactory_corpus_adds_no_dsp_module_of_its_own() -> No
     ``Tier`` now lives in :mod:`flab2bp.bench.tier`, which imports nothing but
     ``enum``, so the seam is closed rather than pinned: reading this corpus
     loads no DSP module and no rate solver at all.  ``flab2bp.sfy.pipeline``
-    and ``flab2bp.sfy.layout.strategy``, the other two imports, each pull none
+    and ``flab2bp.sfy.layout.refusals``, the other two imports, each pull none
     of their own.
     """
     probe = _import_probe()

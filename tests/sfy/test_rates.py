@@ -137,7 +137,7 @@ def test_external_inputs_are_the_flows_mined_items() -> None:
 def test_a_fluid_in_the_flow_refuses_with_the_cause_named() -> None:
     with pytest.raises(RatesRefusal) as caught:
         _spec("plastic-10")
-    assert caught.value.cause == "fluids are M4"
+    assert caught.value.cause == "fluids are M5"
     assert "crude-oil" in str(caught.value)
 
 

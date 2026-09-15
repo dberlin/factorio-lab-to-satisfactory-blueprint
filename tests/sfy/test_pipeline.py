@@ -134,7 +134,7 @@ def test_a_flow_that_moves_a_fluid_is_refused_before_any_geometry() -> None:
             designer="mk3",
             flow=FLOWS / "plastic-10.csv",
         )
-    assert caught.value.reason == "fluids are M4"
+    assert caught.value.reason == "fluids are M5"
 
 
 def test_a_build_without_a_flow_refuses_and_names_both_ways_to_supply_one() -> None:

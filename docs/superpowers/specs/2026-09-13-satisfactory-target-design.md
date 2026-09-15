@@ -421,16 +421,18 @@ no trunk turns between them, so their gap is one grid step -- and `concrete*60`
 is 3422 cm of band and builds in a Mk2.
 
 **The corpus, measured at `f85afe3f`.** 36 cells (12 entries x 3 marks): 7 CLEAN, 25
-refused `rows exceed the designer depth`, 3 refused `fluids are M4`, 1 refused
+refused `rows exceed the designer depth`, 3 refused `fluids are M5`, 1 refused
 `corridor needs a bridge that does not fit`. Both gates pass and no cell is off
 its pin; `docs/superpowers/evidence/sfy-m2-audit-2026-09-14.md` is the table,
 cell by cell, with the centimetres each depth refusal measured -- the run at
 `6a35a02b` and, appended under it, the re-take after Task 8d.
 
-**The refusal inventory.** `flab2bp.sfy.layout.strategy.REFUSALS` is 24 named
-causes and the only ones the strategy may raise -- `_refuse` raises `ValueError`
+**The refusal inventory.** `flab2bp.sfy.layout.refusals.REFUSALS` is 31 named
+causes and the only ones a strategy may raise -- `refuse` raises `ValueError`
 on anything else, and the mapping tables that turn a `RowError`, a
-`CorridorError` or a `PowerError` into one are pinned by a test. Three of the 24
+`CorridorError` or a `PowerError` into one are pinned by a test. M3 moved the
+list out of `strategy.py` into a leaf both strategies share, and added the
+grid-routed strategy's seven to it. Three of them
 ever fire over the corpus -- the depth, the fluids and, since Task 8d made a Mk2
 deep enough for `steel-beam*20`'s two rows, the bridge its ore trunk needs to
 ride over its coal trunk. That is the honest reading of the list: it is a

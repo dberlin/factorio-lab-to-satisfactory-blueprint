@@ -23,8 +23,8 @@ What the gate accepts, and why it is not simply "no exceptions"
 Legality is what the hologram does; the audit reports what the validator says.
 A refusal is therefore a RESULT, not an error -- but only when its cause is one
 the plan already ruled on.  :data:`RULED_CAUSES` is that list, and it is
-deliberately a subset of :data:`~flab2bp.sfy.layout.strategy.REFUSALS`: several
-of the strategy's causes are excluded on purpose, because a build that ran out
+deliberately a subset of :data:`~flab2bp.sfy.layout.refusals.REFUSALS`: several
+of the strategies' causes are excluded on purpose, because a build that ran out
 of seconds or of passes, or whose rows contradict the spec, is a build nobody
 has shown fits.  The comment above :data:`RULED_CAUSES` names each exclusion.
 
@@ -76,7 +76,7 @@ from pathlib import Path
 from typing import Final, Literal
 
 from flab2bp.bench.tier import Tier
-from flab2bp.sfy.layout.strategy import REFUSALS
+from flab2bp.sfy.layout.refusals import REFUSALS
 from flab2bp.sfy.pipeline import DESIGNER_MARKS
 
 __all__ = [
@@ -119,9 +119,11 @@ _LIST: Final = "https://factoriolab.github.io/sfy/list?v=11&o="
 #: * ``corridor needs a bridge that does not fit`` -- R2/M3.  Belts only, on one
 #:   level: where two trunks must cross and the climb does not fit under the
 #:   designer's roof there is no lift to fall back on.
-#: * ``fluids are M4`` -- R4.
+#: * ``fluids are M5`` -- R4.  The milestone reorder of 2026-09-15 (spec section
+#:   12) moved piping from M4 to M5; the cause is named for the milestone that
+#:   will carry it, so the string is the later one.
 #:
-#: Four of the strategy's causes are deliberately absent.  ``corridor
+#: Four of the strategies' causes are deliberately absent.  ``corridor
 #: assignment exceeded the budget`` is a clock running out, not a shape being
 #: impossible, and ``row splitting did not converge`` is the same in passes
 #: rather than seconds: the row/corridor walk gave up, which says nothing about
@@ -136,7 +138,7 @@ RULED_CAUSES: Final = (
     "row too deep",
     "run exceeds the belt ceiling",
     "corridor needs a bridge that does not fit",
-    "fluids are M4",
+    "fluids are M5",
 )
 
 
@@ -360,7 +362,7 @@ SFY_CORPUS: Final[tuple[SfyCorpusEntry, ...]] = (
         _LIST + "plastic*20",
         "plastic-20.csv",
         Tier.TRIVIAL,
-        expects=_pins("fluids are M4", "fluids are M4", "fluids are M4"),
+        expects=_pins("fluids are M5", "fluids are M5", "fluids are M5"),
         note="the fluid URL, here to be refused: crude oil into a Refinery",
     ),
 )

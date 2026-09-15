@@ -198,7 +198,7 @@ class Cell:
 
     @property
     def summary(self) -> str:
-        """The verdict as a report cell: ``REFUSED(fluids are M4)``."""
+        """The verdict as a report cell: ``REFUSED(fluids are M5)``."""
         if self.verdict == "REFUSED":
             return f"REFUSED({self.cause})"
         if self.verdict == "CRASH":

@@ -20,6 +20,7 @@ from flab2bp.layout.budget import WorkBudget
 from flab2bp.sfy.labmap import load_lab_map
 from flab2bp.sfy.layout import strategy
 from flab2bp.sfy.layout.manifold import hard_footprint_cm, machine_pitch_cm
+from flab2bp.sfy.layout.refusals import refuse
 from flab2bp.sfy.layout.rows import RowPlanner, _split_group, _Unit
 from flab2bp.sfy.spec import SfyBuildSpec, SfyMachineGroup, designer, direct_pairs
 from tests.sfy.conftest import flow_spec, sfy_registry
@@ -42,7 +43,7 @@ def _planner(spec: SfyBuildSpec, mark: str = MARK) -> RowPlanner:
         lab_map=load_lab_map(),
         budget=WorkBudget(),
         measures=strategy._measure(sfy_registry(), frame),
-        refuse=partial(strategy._refuse, spec),
+        refuse=partial(refuse, spec),
     )
 
 

@@ -277,7 +277,7 @@ def _machine_power_mw(
 def _fluids(data: Dataset, item_ids: Mapping[str, Fraction]) -> list[str]:
     """Those of ``item_ids`` the lab dataset carries without a stack size.
 
-    No stack is how FactorioLab marks a fluid, and fluids are M4.  An id the
+    No stack is how FactorioLab marks a fluid, and fluids are M5.  An id the
     dataset does not carry at all is refused rather than waved through: it
     would otherwise slip past this check and be belted as a solid.
     """
@@ -469,7 +469,7 @@ def spec_from_flow(
         crossing |= group.outputs_per_machine
     fluids = _fluids(data, crossing)
     if fluids:
-        raise RatesRefusal("fluids are M4", f"this flow moves {', '.join(fluids)}")
+        raise RatesRefusal("fluids are M5", f"this flow moves {', '.join(fluids)}")
 
     belt_item_id, belt_speed, upgrades = _belts(data, request)
     return SfyBuildSpec(

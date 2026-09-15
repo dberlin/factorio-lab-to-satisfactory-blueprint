@@ -210,7 +210,7 @@ def build(
     :raises SpecInfeasible: the flow and the rate model cannot both be right, or
         the build needs something M2 does not carry (a fluid).
     :raises NoValidLayout: the spec does not fit the requested designer.  The
-        cause is one of :data:`flab2bp.sfy.layout.strategy.REFUSALS`.
+        cause is one of :data:`flab2bp.sfy.layout.refusals.REFUSALS`.
     """
     request = _request(url)
     selection = _flow(
