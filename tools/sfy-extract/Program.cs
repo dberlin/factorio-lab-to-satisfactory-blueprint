@@ -146,10 +146,11 @@ foreach (var pkg in buildPackages)
     var bounds = MeshBounds(generatedClass, exports);
     if (bounds is not null) meshBounds[className] = bounds;
 
+    var hologram = HologramLimits(generatedClass, exports);
+    if (hologram is not null) holograms[className] = hologram;
+
     var cdo = exports.FirstOrDefault(e => e.Name == "Default__" + className);
     if (cdo is null) continue;
-    var hologram = HologramLimits(cdo);
-    if (hologram is not null) holograms[className] = hologram;
     var connections = ConveyorConnections(cdo);
     if (connections is not null) conveyorConnections[className] = connections;
 }
@@ -646,24 +647,57 @@ static string PipeDirection(string stated) =>
 /// Nearly all of these are native C++ constructor values that no cooked asset
 /// repeats, so most entries come back null; they are written out anyway so that
 /// the merge can tell "the hologram does not set this" from "no hologram".
-Dictionary<string, object?>? HologramLimits(UObject cdo)
+///
+/// `mHologramClass` is a UPROPERTY on `AFGBuildable`, so a cooked asset carries
+/// it only where a Blueprint in the chain overrides the archetype's -- exactly
+/// as `MeshBounds`'s `mMesh` does, and for the same reason the CDO CHAIN is
+/// walked rather than only the class's own. `Build_PowerPoleMk2_C` and
+/// `Build_PowerPoleMk3_C` are Blueprint subclasses of `Build_PowerPoleMk1_C`
+/// that restate nothing, so reading only their own class default objects
+/// reported them as having no hologram at all -- and the two marks shipped with
+/// no `mGridSnapSize` while the Mk1 had 50. `stated_on` is the class that named
+/// the hologram, so an inherited one is visible as inherited.
+///
+/// The hologram class's OWN Blueprint supers are not walked, and that is a
+/// measurement rather than an oversight: of the 89 hologram classes in the
+/// 1.2.0 content, the 23 that state any of these eleven members all rest
+/// directly on a native C++ hologram, and none of the 8 whose super is another
+/// Blueprint has a super that states one. There is nothing there to inherit.
+Dictionary<string, object?>? HologramLimits(UObject generatedClass, List<UObject> exports)
 {
-    UObject? hologramClass;
-    try { hologramClass = cdo.GetOrDefault<UObject?>("mHologramClass", null); }
-    catch (Exception) { return null; }
-    if (hologramClass is null) return null;
-
-    var defaults = hologramClass.Owner?.GetExports()
-        .FirstOrDefault(e => e.Name.StartsWith("Default__", StringComparison.Ordinal));
-    var limits = new Dictionary<string, object?> { ["class"] = hologramClass.Name };
-    foreach (var key in new[]
-             {
-                 "mBendRadius", "mBendRadius2D", "mGridSnapSize", "mMaximumHeight", "mMaxIncline",
-                 "mMaxSplineLength", "mMinBendRadius", "mMinimumHeight",
-                 "mMinimumHeightWithVerticalConnection", "mRotationStep", "mStepHeight",
-             })
-        limits[key] = defaults is null ? null : Number(defaults, key);
-    return limits;
+    var current = generatedClass;
+    var currentExports = exports;
+    for (var depth = 0; depth < 16 && current is not null; depth++)
+    {
+        var cdo = currentExports.FirstOrDefault(e => e.Name == "Default__" + current.Name);
+        UObject? hologramClass;
+        // A class default object this tool cannot read `mHologramClass` off is
+        // not a statement that there is no hologram, so the chain keeps going:
+        // the answer, if there is one, is its parent's.
+        try { hologramClass = cdo?.GetOrDefault<UObject?>("mHologramClass", null); }
+        catch (Exception) { hologramClass = null; }
+        if (hologramClass is not null)
+        {
+            var defaults = hologramClass.Owner?.GetExports()
+                .FirstOrDefault(e => e.Name.StartsWith("Default__", StringComparison.Ordinal));
+            var limits = new Dictionary<string, object?>
+            {
+                ["class"] = hologramClass.Name,
+                ["stated_on"] = current.Name,
+            };
+            foreach (var key in new[]
+                     {
+                         "mBendRadius", "mBendRadius2D", "mGridSnapSize", "mMaximumHeight",
+                         "mMaxIncline", "mMaxSplineLength", "mMinBendRadius", "mMinimumHeight",
+                         "mMinimumHeightWithVerticalConnection", "mRotationStep", "mStepHeight",
+                     })
+                limits[key] = defaults is null ? null : Number(defaults, key);
+            return limits;
+        }
+        current = SuperClass(current);
+        currentExports = current?.Owner?.GetExports().ToList() ?? [];
+    }
+    return null;
 }
 
 /// The component each of a conveyor's `mConnection0`/`mConnection1` points at.

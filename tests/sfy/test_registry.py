@@ -330,8 +330,8 @@ def test_the_lift_height_ladder_is_self_consistent():
 def test_the_hologram_grid_is_the_native_snap_size():
     reg = load_registry()
     # AFGBuildableHologram's constructor stores mGridSnapSize = 100.0f, so the
-    # grid is 100. The only 50s in the game's data are three holograms'
-    # own overrides -- the two power poles and the street light -- which
+    # grid is 100. The only 50s in the game's data are two hologram Blueprints'
+    # own overrides -- Holo_PowerPole_C and Holo_StreetLight_C -- which
     # test_a_hologram_that_snaps_finer_carries_its_own_grid pins per buildable.
     assert reg.limits.hologram_grid_cm == 100.0
     assert reg.limits_sources["hologram_grid_cm"] == "binary"
@@ -339,15 +339,50 @@ def test_the_hologram_grid_is_the_native_snap_size():
 
 
 def test_a_hologram_that_snaps_finer_carries_its_own_grid():
-    """The global snap size is a default, not a rule every hologram obeys."""
+    """The global snap size is a default, not a rule every hologram obeys.
+
+    Six buildables, two hologram Blueprints: four of the six are built by
+    ``Holo_PowerPole_C`` and never name it themselves -- ``mHologramClass`` is
+    inherited, which ``provenance["grid_snap"]["applied_to"]`` records as
+    ``stated_on``.
+    """
     reg = load_registry()
     overrides = {c: b.grid_snap_cm for c, b in reg.buildables.items() if b.grid_snap_cm is not None}
     assert overrides == {
         "Build_PowerPoleMk1_C": 50.0,
+        "Build_PowerPoleMk2_C": 50.0,
+        "Build_PowerPoleMk3_C": 50.0,
         "Build_PowerTower_C": 50.0,
+        "Build_PowerTowerPlatform_C": 50.0,
         "Build_StreetLight_C": 50.0,
     }
     assert reg.buildables["Build_ConstructorMk1_C"].grid_snap_cm is None
+    applied = reg.provenance["grid_snap"]["applied_to"]
+    assert reg.provenance["grid_snap"]["source"] == "assets"
+    assert set(applied) == set(overrides)
+    assert applied["Build_PowerPoleMk1_C"]["stated_on"] == "Build_PowerPoleMk1_C"
+    assert {applied[c]["hologram"] for c in applied} == {"Holo_PowerPole_C", "Holo_StreetLight_C"}
+
+
+def test_every_power_pole_mark_states_its_own_hologram_grid() -> None:
+    """All three marks are built by one hologram, so all three snap at 50.
+
+    ``Build_PowerPoleMk2_C`` and ``Build_PowerPoleMk3_C`` are Blueprint
+    subclasses of ``Build_PowerPoleMk1_C`` and restate no ``mHologramClass``,
+    which in a cooked asset means "the archetype's" -- the Mk1's
+    ``Holo_PowerPole_C``, whose class default object states
+    ``mGridSnapSize = 50``.  Reading only a class's OWN class default object
+    therefore left the two later marks with no grid of their own and the pole
+    placer fell back on the global 100.
+    """
+    reg = load_registry()
+    marks = ("Build_PowerPoleMk1_C", "Build_PowerPoleMk2_C", "Build_PowerPoleMk3_C")
+    grids = {mark: reg.buildables[mark].grid_snap_cm for mark in marks}
+    assert grids == dict.fromkeys(marks, 50.0)
+    applied = reg.provenance["grid_snap"]["applied_to"]
+    for mark in marks:
+        assert applied[mark]["hologram"] == "Holo_PowerPole_C"
+        assert applied[mark]["stated_on"] == "Build_PowerPoleMk1_C"
 
 
 def test_every_limit_names_the_rule_that_governs_it_or_why_none_does():

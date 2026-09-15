@@ -441,7 +441,17 @@ def test_a_gap_in_the_game_data_is_not_reported_as_a_pole_that_will_not_fit() ->
     with pytest.raises(power.PowerError) as missing:
         power.pole_grid_cm(registry, "Build_NotAThing_C")
     assert missing.value.cause == "data"
-    gridless = replace(registry, limits=replace(registry.limits, hologram_grid_cm=None))
+    # Both grids have to go: the pole mark carries its hologram's own 50 since
+    # the extractor started reading `mHologramClass` through the supers, so
+    # emptying the global one alone no longer leaves the class without a grid.
+    gridless = replace(
+        registry,
+        limits=replace(registry.limits, hologram_grid_cm=None),
+        buildables={
+            **registry.buildables,
+            power.POLE_CLASS: replace(registry.buildables[power.POLE_CLASS], grid_snap_cm=None),
+        },
+    )
     with pytest.raises(power.PowerError) as ungridded:
         power.pole_grid_cm(gridless, power.POLE_CLASS)
     assert ungridded.value.cause == "limits"

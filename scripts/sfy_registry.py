@@ -574,6 +574,50 @@ def _subsystem_defaults(assets: dict[str, Any]) -> tuple[dict[str, Any], dict[st
     return values, provenance
 
 
+def _attach_grid_snap(
+    holograms: Mapping[str, Mapping[str, Any]], buildables: dict[str, Any]
+) -> dict[str, Any]:
+    """Put each buildable's own hologram grid on it, and return the provenance.
+
+    A hologram that overrides ``AFGBuildableHologram::mGridSnapSize`` snaps on
+    its own grid rather than the global 100 the constructor stores. The value is
+    the hologram Blueprint's class default object -- so its source is the cooked
+    ``assets``, not the binary ``hologram_grid_cm`` beside it -- and
+    ``stated_on`` is the class whose own class default object named the
+    hologram. The two differ wherever a mark inherits: ``Build_PowerPoleMk2_C``
+    and ``Build_PowerPoleMk3_C`` restate no ``mHologramClass``, which in a cooked
+    asset means the archetype's, so all three pole marks are built by
+    ``Holo_PowerPole_C`` and all three snap at 50.
+
+    ``buildable.grid_snap`` governs this and its effect is ``snap``: the game
+    MOVES a hologram onto the grid and refuses nothing, so a finer grid here
+    costs a nudge rather than a build.
+    """
+    applied: dict[str, Any] = {}
+    for class_name, entry in sorted(buildables.items()):
+        hologram = holograms.get(class_name) or {}
+        grid = hologram.get("mGridSnapSize")
+        entry["grid_snap_cm"] = grid
+        if grid is None:
+            continue
+        applied[class_name] = {
+            "grid_snap_cm": grid,
+            "hologram": hologram.get("class"),
+            "stated_on": hologram.get("stated_on"),
+        }
+    if not applied:
+        raise SystemExit(
+            "assets.json states no mGridSnapSize for any buildable's hologram, so every "
+            "buildable would fall back on the global grid; re-run tools/sfy-extract"
+        )
+    return {
+        "source": "assets",
+        "read_from": "mGridSnapSize on the hologram class default object",
+        "property": "mHologramClass",
+        "applied_to": applied,
+    }
+
+
 def _attach_mesh_bounds(
     mesh_bounds: Mapping[str, Mapping[str, Any]], buildables: dict[str, Any]
 ) -> dict[str, Any]:
@@ -1127,11 +1171,7 @@ def main(out: Path | None = None) -> int:
 
     for class_name, buildable in docs["buildables"].items():
         buildable["ports"] = assets["ports"].get(class_name, [])
-        # A hologram that overrides AFGBuildableHologram::mGridSnapSize snaps on
-        # its own grid rather than the global one; only power poles, power towers
-        # and street lights do, all to 50.
-        hologram = assets["holograms"].get(class_name) or {}
-        buildable["grid_snap_cm"] = hologram.get("mGridSnapSize")
+    grid_snap = _attach_grid_snap(assets["holograms"], docs["buildables"])
     missing_ports = sorted(set(docs["buildables"]) - set(assets["ports"]))
     conveyor_flow = _attach_flow(
         directions, assets.get("conveyor_connections", {}), docs["buildables"]
@@ -1156,6 +1196,7 @@ def main(out: Path | None = None) -> int:
             "lift_geometry": lift_geometry,
             "cost_segment": cost_segments,
             "mesh_bounds": mesh_bounds,
+            "grid_snap": grid_snap,
             "max_connections": connection_links,
             "limits": limit_provenance,
             "port_directions": {
@@ -1202,6 +1243,10 @@ def main(out: Path | None = None) -> int:
     print("port directions resolved from:", direction_counts)
     print("port connection counts resolved from:", connection_links["sources"])
     print(f"mesh boxes on {len(mesh_bounds['applied_to'])} classes")
+    print(
+        "own hologram grid on:",
+        {c: e["grid_snap_cm"] for c, e in grid_snap["applied_to"].items()},
+    )
     print("over every extracted class:", extracted_counts)
     print(f"asset paths: {len(item_paths)} item descriptors, {len(recipe_paths)} recipes")
     return 0

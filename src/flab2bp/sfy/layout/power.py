@@ -184,22 +184,24 @@ def power_port(registry: Registry, class_name: str) -> Port:
 def pole_grid_cm(registry: Registry, class_name: str) -> float:
     """The grid a pole of this class snaps to, in centimetres.
 
-    ``Buildable.grid_snap_cm`` is filled only where the class's own hologram
-    overrides ``AFGBuildableHologram::mGridSnapSize``; in the shipped assets that
-    is ``Holo_PowerPole_C`` (the Mk1 and the Power Tower) and
-    ``Holo_StreetLight_C``, all three at 50.  A class that states none -- and
-    :data:`POLE_CLASS` is one, because the extraction found no ``mHologramClass``
-    on its class default object -- snaps on the global grid instead, which is
-    ``limits.hologram_grid_cm``: 100, read out of the shipped DLL.
+    ``Buildable.grid_snap_cm`` is filled where the class's hologram overrides
+    ``AFGBuildableHologram::mGridSnapSize``; in the shipped assets that is
+    ``Holo_PowerPole_C`` (all three power pole marks, the Power Tower and its
+    platform) and ``Holo_StreetLight_C``, every one of them at 50.
+    :data:`POLE_CLASS` is one of them: the Mk2 restates no ``mHologramClass`` of
+    its own, which in a cooked asset means the archetype's -- the Mk1's
+    ``Holo_PowerPole_C`` -- and the extractor reads it through the class's
+    supers.  A class no hologram in that chain gives a grid snaps on the global
+    one instead, which is ``limits.hologram_grid_cm``: 100, read out of the
+    shipped DLL.
 
-    Taking the global grid where the class is silent is the safe reading in both
+    Taking the global grid where the chain is silent is the safe reading in both
     directions, and ``buildable.grid_snap`` is why.  That rule's effect is
     ``snap``, not ``refuse``: ``SnapToFloor`` loads ``mGridSnapSize`` and passes
     it to ``FHologramHelpers::SnapToFloor``, which MOVES the hologram, and nothing
     in it turns a placement away for standing off the grid.  So being on the
     wrong grid would cost a nudge rather than a build -- and 100 is a multiple of
-    50, so a pole placed on the global grid stands on the 50 cm one as well,
-    whatever the Mk2's own hologram turns out to override.
+    50, so a pole placed on the global grid stands on the 50 cm one as well.
     """
     buildable = registry.buildables.get(class_name)
     if buildable is None:

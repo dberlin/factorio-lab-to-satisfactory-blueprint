@@ -16622,7 +16622,7 @@
    "depth_cm": null,
    "designer_dims": null,
    "display_name": "Power Pole Mk.2",
-   "grid_snap_cm": null,
+   "grid_snap_cm": 50.0,
    "height_cm": null,
    "manufacturing_speed": null,
    "max_potential": null,
@@ -16698,7 +16698,7 @@
    "depth_cm": null,
    "designer_dims": null,
    "display_name": "Power Pole Mk.3",
-   "grid_snap_cm": null,
+   "grid_snap_cm": 50.0,
    "height_cm": null,
    "manufacturing_speed": null,
    "max_potential": null,
@@ -17690,7 +17690,7 @@
    "depth_cm": null,
    "designer_dims": null,
    "display_name": "Power Tower Platform",
-   "grid_snap_cm": null,
+   "grid_snap_cm": 50.0,
    "height_cm": null,
    "manufacturing_speed": null,
    "max_potential": null,
@@ -39584,7 +39584,7 @@
    ],
    "build_version": 502094,
    "cue4parse": "1.2.2.0",
-   "extracted": "2026-09-14",
+   "extracted": "2026-09-15",
    "game_enum": "GAME_UE5_6",
    "native_direction_defaults": {
     "component_defaults": [
@@ -39993,6 +39993,43 @@
    "docs_sha256": "a81d250e96aa13db3c0bf8c332c199ad930b2f15323e2c1a069afa4c07f971bb",
    "extracted": "2026-09-14"
   },
+  "grid_snap": {
+   "applied_to": {
+    "Build_PowerPoleMk1_C": {
+     "grid_snap_cm": 50.0,
+     "hologram": "Holo_PowerPole_C",
+     "stated_on": "Build_PowerPoleMk1_C"
+    },
+    "Build_PowerPoleMk2_C": {
+     "grid_snap_cm": 50.0,
+     "hologram": "Holo_PowerPole_C",
+     "stated_on": "Build_PowerPoleMk1_C"
+    },
+    "Build_PowerPoleMk3_C": {
+     "grid_snap_cm": 50.0,
+     "hologram": "Holo_PowerPole_C",
+     "stated_on": "Build_PowerPoleMk1_C"
+    },
+    "Build_PowerTowerPlatform_C": {
+     "grid_snap_cm": 50.0,
+     "hologram": "Holo_PowerPole_C",
+     "stated_on": "Build_PowerTower_C"
+    },
+    "Build_PowerTower_C": {
+     "grid_snap_cm": 50.0,
+     "hologram": "Holo_PowerPole_C",
+     "stated_on": "Build_PowerTower_C"
+    },
+    "Build_StreetLight_C": {
+     "grid_snap_cm": 50.0,
+     "hologram": "Holo_StreetLight_C",
+     "stated_on": "Build_StreetLight_C"
+    }
+   },
+   "property": "mHologramClass",
+   "read_from": "mGridSnapSize on the hologram class default object",
+   "source": "assets"
+  },
   "hologram_rules": {
    "dll": "FactoryGameEGS-FactoryGame-Win64-Shipping.dll",
    "dll_sha256": "65fc5a6bde6d44782da387976b144a41a6b94e4fa78ec6e1bc49c3dad2d47513",
@@ -40003,7 +40040,7 @@
    "tool": "sfy-native 0.1.0"
   },
   "inputs_sha256": {
-   "assets.json": "0562165b4064d5c424ce2fbc68f94df0a7e39f9acb1edb604324537752ad56ef",
+   "assets.json": "819acece30af61077a21962b97071e0a2469defdd9c94f929955f72bf00c1a93",
    "docs.json": "cf6cc33614d050144e1b869c0e318e9c5413002e26164c91ebb06eb096b1fbbf",
    "hologram_rules.json": "49ad04e2c70ec9540cdfcc43b37fe2d6d5152b95498373f85520fd61d576958a",
    "native.json": "c6b204d7a5ba3fd7c7389ae50d22b8b3f1deafe623b8c4d0a8bb5c028078a11f",

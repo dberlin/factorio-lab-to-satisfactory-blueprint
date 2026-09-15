@@ -220,7 +220,11 @@ through CUE4Parse and writes: every buildable's connection ports (position,
 rotation, kind, direction, clearance, and a power connection's
 `mMaxNumConnectionLinks` with the `max_connections_source` saying which link of
 the archetype chain stated it), each buildable's hologram class and any placement
-limit that hologram's Blueprint overrides, the wire lengths, the full asset
+limit that hologram's Blueprint overrides — found by walking the buildable's own
+Blueprint chain, because a cooked asset carries `mHologramClass` only where a
+class overrides it, and `stated_on` names the class that did (the Mk2 and Mk3
+power poles are built by the Mk1's `Holo_PowerPole_C` and snap on its 50) —
+the wire lengths, the full asset
 path of every class Docs.json states one for — which is how a blueprint names an
 item descriptor or a recipe — and `conveyor_connections`, the component each
 conveyor class's `mConnection0`/`mConnection1` points at, read off its class

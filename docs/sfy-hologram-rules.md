@@ -472,8 +472,11 @@ off `FHologramPathingGrid::PATH_GRID_CELL_SIZE`, which is 100
 | `AFGBuildableHologram::CheckValidFloor` | 291 | `mMaxPlacementFloorAngle`, `mNeedsValidFloor` | — |
 | `AFGBuildableHologram::SnapToFloor` / `SnapToWall` / `SnapToFoundationSide` | — | `mGridSnapSize` (445) | `buildable.grid_snap` |
 
-`mGridSnapSize` is 100.0 by default and three classes override it to 50.0 in
-their Blueprints (both free-standing power poles and the street light);
+`mGridSnapSize` is 100.0 by default and two hologram Blueprints override it to
+50.0 (`Holo_PowerPole_C` and `Holo_StreetLight_C`), which is six buildables:
+all three power pole marks, the Power Tower and its platform, and the street
+light. Only three of the six name their hologram themselves — the rest inherit
+`mHologramClass` from a Blueprint super, which is what the extractor walks.
 `registry.json` carries the overrides per buildable. All three snap functions do
 the same thing with it — hand it to `FHologramHelpers::SnapToFloor` and let the
 callee round — so the grid is a *snap*, not a refusal.
