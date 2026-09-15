@@ -426,6 +426,32 @@ def test_every_rule_a_limit_names_exists_and_states_the_copied_effect():
     assert "mMaxIncline" in rules[named["belt_max_incline_deg"]["rule"]].reads
 
 
+def test_the_lift_clearance_width_names_the_symbol_it_was_read_from():
+    """The one limit whose input is a global's initialiser rather than a constant.
+
+    ``AFGBuildableConveyorLift::FitClearance`` reads two doubles out of
+    ``AFGBuildableConveyorLift::CLEARANCE_EXTENT_2D`` and adds ``-5`` to each,
+    so this is ``binary-derived`` the way the three lift heights are: the
+    formula is the game's, the input is the game's, the arithmetic is ours. The
+    input is quoted -- section, RVA, bytes -- so it can be re-read, and the
+    caveat that an initialiser is not a run-time value travels with it.
+    """
+    reg = load_registry()
+    assert reg.limits.lift_clearance_half_extent_cm == 95.0
+    assert reg.limits_sources["lift_clearance_half_extent_cm"] == "binary-derived"
+    entry = reg.provenance["limits"]["lift_clearance_half_extent_cm"]
+    assert entry["E"] == [100.0, 100.0]
+    assert "AFGBuildableConveyorLift::CLEARANCE_EXTENT_2D" in entry["E_from"]
+    assert "0x19b8118" in entry["E_from"] and ".data" in entry["E_from"]
+    assert "00000000000059400000000000005940" in entry["E_from"]
+    assert "INITIALISER" in entry["caveat"]
+    assert entry["governed_by"] == {
+        "rule": "lift.clearance",
+        "effect": "compute",
+        "status": "partial",
+    }
+
+
 def test_what_the_game_does_with_each_governed_limit():
     """A limit's governance says which of refuse/clamp/snap/none the rule does.
 
@@ -447,6 +473,10 @@ def test_what_the_game_does_with_each_governed_limit():
         "belt_max_incline_deg": "refuse",
         "belt_min_length_cm": "refuse",
         "lift_step_cm": "snap",
+        # The width of the box a lift denies. FitClearance works it out and
+        # nothing there refuses over it: whether the box overlaps anything is
+        # buildable.clearance's question.
+        "lift_clearance_half_extent_cm": "compute",
         "lift_min_cm": "clamp",
         "lift_max_cm": "clamp",
         "lift_min_vertical_cm": "clamp",

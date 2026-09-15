@@ -489,6 +489,22 @@ class Limits:
     lift_min_cm: float | None = None
     lift_max_cm: float | None = None
     lift_min_vertical_cm: float | None = None
+    # Half the width and half the depth of the ONE clearance box
+    # ``AFGBuildableConveyorLift::FitClearance`` builds along a lift -- source
+    # ``binary-derived``, the same standing as the three lift heights above. It
+    # is not a constructor immediate either: ``FitClearance`` reads two doubles
+    # out of the module global ``AFGBuildableConveyorLift::CLEARANCE_EXTENT_2D``
+    # and adds ``-5`` to each, so this is the initialiser that global holds in
+    # the shipped image less that shrink, with the bytes, the doubles and the
+    # PDB symbol in ``provenance["limits"]["lift_clearance_half_extent_cm"]``
+    # and in the ``lift.clearance`` rule's ``data_reads``. The rule's effect is
+    # ``compute``: the game works the box out and refuses nothing over it, and
+    # whether it overlaps anything is ``buildable.clearance``'s question.
+    #
+    # **It is an initialiser**, what the image holds before the game runs, and a
+    # writable global could in principle be stored to at run time; the rule's
+    # interpretation carries that caveat.
+    lift_clearance_half_extent_cm: float | None = None
     pipe_max_spline_cm: float = PIPE_MAX_SPLINE_CM
     pipe_bend_radius_cm: float | None = None
     pipe_bend_radius_2d_cm: float = PIPE_BEND_RADIUS_2D_CM
