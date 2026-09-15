@@ -30,7 +30,9 @@ two belts 100 cm apart lap by 58 cm, and a belt ending or turning on the node
 beside a run reaches 50 cm along its own last segment into the run's 79.
 Adjacent levels never interact.
 
-**Four places this lattice is stricter than the game, and they are ours.**
+**Seven places this lattice is stricter than the game, and they are ours.**
+This list is the whole of it; ``docs/sfy-layout-model.md`` states the same seven
+in prose, with what each one costs.
 
 1. Belt pitch is 200 cm.  The game's own closest legal pitch is 158, which is
    not a multiple of the grid step, so the lattice offers 100 (a lap of 58 cm,
@@ -49,6 +51,17 @@ Adjacent levels never interact.
    promise is the other half: :meth:`Occupancy.commit` never takes OWNERSHIP of
    a node the world already denies, so a repair search can never rip a net up
    in the hope of freeing a node a machine is standing in.
+5. The outermost lines and the topmost level are closed: a centreline there
+   hangs its own clearance outside the designer, which ``geom.bounds`` refuses
+   -- and ``geom.bounds`` is this project's rule, since the designer CLIPS what
+   overhangs rather than turning it away.  :attr:`Lattice.open_lines` and
+   :attr:`Lattice.open_levels` are where that is stated.
+6. A rotated clearance box is blocked by its world-axis bounding box, which is
+   exact for the quarter turns a grid-snapped build places and over-covers any
+   other yaw -- see :func:`_mark_box`.
+7. A belt already in the placement is blocked by one axis-aligned box per spline
+   segment rather than by the game's chain of short boxes along the curve, so
+   the corner a turn never reaches is denied too -- see :func:`_belt_boxes`.
 
 **The loops that flatten a placement onto this lattice are the only per-node
 Python this milestone allows.**  Everything downstream of them is a geometric

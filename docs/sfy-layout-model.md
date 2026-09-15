@@ -538,13 +538,29 @@ level 0 is inside the foundation and level 1 is the band between the slab and th
 ports. Level 2 is the port level and the ground belt level, and nothing routes
 below it.
 
-The topmost level is impassable too, and for the reason `geom.bounds` gives: a
-belt's clearance reaches 15 cm above its centreline, so a centreline at `z =
-height_cm` hangs its own box through the designer's ceiling. The four outermost
-*lines* go the same way — 79 cm of clearance either side of a centreline on the
-wall is 79 cm outside the designer — which is why `Lattice` states the lines and
-levels a belt may stand on at all, once, and both the predicate and the flattened
-array read them from there.
+The topmost level and the four outermost *lines* are impassable too, for the
+reason `geom.bounds` gives — see entry 5 of the list below — which is why
+`Lattice` states the lines and levels a belt may stand on at all, once, and both
+the predicate and the flattened array read them from there.
+
+### What a level costs, and how tall a lift may be
+
+R-M3-3 is not only a floor. A move that lands on level `k` pays `0.01 × (k − 2)`
+on top of its family price, so a belt prefers the port level and climbs only to
+cross something. **That toll is ours**: nothing in the game charges a belt for
+height. It is sized so that it can never reorder two paths of different length —
+a whole grid step costs `1`, so even the full height of a mk3 designer tolls less
+than a third of one extra step. `transitions.level_toll` is the one place it is
+written.
+
+A conveyor lift is a vertical edge of this lattice, and how tall it may be is the
+game's: `lift_min_cm` 400, `lift_max_cm` 4800 and `lift_step_cm` 100, all read
+from the shipped binary, which divided by the grid step is `4 ≤ h ≤ 48` in steps
+of one level. The designer caps it again — a lift may not be taller than the
+lattice above the port level — so the window a router is handed is
+`4 ≤ h ≤ min(48, n − 2)`, which on a mk1 is 4 to 30. Not one of those numbers is
+written down: they are `Registry.limits` divided by `hologram_grid_cm`, clamped
+by `Lattice.n`.
 
 ### What blocks a node
 
@@ -566,10 +582,10 @@ belt ending or turning on the node beside a run reaches 50 cm along its own last
 segment into the run's 79. Adjacent levels never interact — 100 cm of separation
 is more than the 30 cm a belt box is tall.
 
-### The four places the lattice is stricter than the game
+### The seven places the lattice is stricter than the game
 
-Legality is what the hologram allows; where this lattice allows less, it is ours
-and it is named.
+Legality is what the hologram allows; where this lattice allows less, it is ours,
+and this list is the whole of it — every entry says what it costs.
 
 1. **Belt pitch is 200 cm.** The game's own closest legal pitch is 158, which is
    not a multiple of the grid step. The lattice can offer 100, which laps by 58
@@ -590,6 +606,25 @@ and it is named.
    path never takes *ownership* of a node the world already denies, so a repair
    search can never rip a net up in the hope of freeing a node a machine is
    standing in.
+5. **The outermost lines and the topmost level are closed.** A centreline on line
+   `0` or line `n` hangs 79 cm of its own clearance outside the designer, and one
+   at `z = height_cm` hangs 15 cm through the ceiling; `geom.bounds` refuses
+   both, and `geom.bounds` is itself this project's rule — the designer *clips*
+   what overhangs rather than refusing it. The cost is one line in from each
+   wall and the top level, out of `n + 1` per axis.
+6. **A rotated clearance box is blocked by its world-axis bounding box.** A box
+   turned by a quarter turn — which is every box a grid-snapped build places — is
+   its own AABB, so this costs nothing today. A box at any other yaw is
+   over-covered: a Constructor's 800 × 1000 box turned 45° bounds to
+   1273 × 1273, about three extra lines in `X`. It is stricter, never laxer, and
+   `_mark_box` says so.
+7. **A pre-existing belt is blocked by one box per spline segment, not by the
+   game's chain.** `belt.clearance` lays a chain of short boxes hugging the
+   curve; `_belt_boxes` lays one axis-aligned box over the whole segment, sized
+   from the four Bézier control points, which contains the curve exactly and so
+   can never under-block. On a straight run — every run this lattice routes —
+   the two are the same box. On a turn the lattice also denies the corner the arc
+   never reaches: up to `r(1 − 1/√2)`, about 58 cm on a 200 cm quarter turn.
 
 ### The flat array and the predicate must agree
 
