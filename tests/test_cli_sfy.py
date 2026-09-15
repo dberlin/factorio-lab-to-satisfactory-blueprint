@@ -21,13 +21,19 @@ from flab2bp.sfy.layout.validate import Finding, Report, Severity
 
 FLOWS = Path(__file__).resolve().parent / "fixtures" / "sfy_flows"
 FLOW = FLOWS / "iron-plate-60.csv"
+#: A chain whose two rows do NOT pair machine for machine (its smelters and
+#: constructors are not 1:1), so it is laid as two rows with a trunk between
+#: them and wants more band than a Mk.1 has.  ``iron-plate*60`` stopped being
+#: that example when Task 8d paired its rows into one; the corpus pins
+#: ``iron-rod*60`` as ``rows exceed the designer depth`` in mk1 and mk2.
+FLOW_TWO_ROWS = FLOWS / "iron-rod-60.csv"
 
 DSP_URL = "https://factoriolab.github.io/dsp/list?o=iron-ingot*60&v=11"
 
 
-def sfy_url() -> str:
+def sfy_url(flow: Path = FLOW) -> str:
     """The URL the committed export was generated from: its own line 1."""
-    return FLOW.read_text(encoding="utf-8").splitlines()[0].strip().strip('"')
+    return flow.read_text(encoding="utf-8").splitlines()[0].strip().strip('"')
 
 
 def test_the_parser_takes_a_designer_mark_and_defaults_to_mk1() -> None:
@@ -93,7 +99,17 @@ def test_a_build_that_does_not_fit_the_designer_exits_three_with_the_reason(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Two rows want more band than a Mk.1 has; the reason goes to stderr."""
-    code = cli.main([sfy_url(), "--flow", str(FLOW), "--designer", "mk1", "-o", str(tmp_path)])
+    code = cli.main(
+        [
+            sfy_url(FLOW_TWO_ROWS),
+            "--flow",
+            str(FLOW_TWO_ROWS),
+            "--designer",
+            "mk1",
+            "-o",
+            str(tmp_path),
+        ]
+    )
     assert code == 3
     assert "rows exceed the designer depth" in capsys.readouterr().err
     assert list(tmp_path.iterdir()) == []
