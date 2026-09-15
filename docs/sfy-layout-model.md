@@ -505,3 +505,104 @@ so a reject is a real answer and not an approximation. Measured over 40
 full-length (5599 cm, 112 boxes each) belts: **69.2 s → 0.13 s** where the runs
 are parallel and apart, and **70.4 s → 3.3 s** for a 20 × 20 crossing grid at
 one height where all 400 pairs really clash.
+
+## The lattice
+
+A second layout strategy, `grid-routed`, packs machines on the build gun's own 1 m
+hologram grid and finds every belt with a geometric interval router rather than
+with the hand-written corridors above. `flab2bp.sfy.layout.lattice` is the world
+that router searches: `Lattice` says where a node is, `Occupancy` says whether a
+belt centreline may pass one, and `occupancy_for` flattens a placement onto both.
+
+### Where a node is
+
+Node `(i, j, k)` is world `(−half + 100·i, −half + 100·j, 100·k)` for
+`0 ≤ i, j, k ≤ n`, where `half` is `Designer.half_cm`, `n` is the designer's side
+in grid steps (`dims × 8` for every mark the game ships) and the `100` is
+`limits.hologram_grid_cm` — the build gun's own smallest move, read from the game
+and never written here. There is no half-step offset: a node sits on the grid
+line, not in the middle of a cell, because what is being placed is a *centreline*
+and not a tile.
+
+A belt centreline runs along lattice lines between nodes, so a belt at level `k`
+has centreline `z = 100·k`. That is the same lattice the hand-built corridors
+already stand on: 200 cm for a row or corridor belt and 300 for a bridge are
+levels 2 and 3.
+
+### Which levels a belt may stand on
+
+The slab's top is 100 cm — one grid step — and a grid-snapped machine's belt port
+sits one step above that, at 200. So **levels 0 and 1 are impassable everywhere**:
+level 0 is inside the foundation and level 1 is the band between the slab and the
+ports. Level 2 is the port level and the ground belt level, and nothing routes
+below it.
+
+The topmost level is impassable too, and for the reason `geom.bounds` gives: a
+belt's clearance reaches 15 cm above its centreline, so a centreline at `z =
+height_cm` hangs its own box through the designer's ceiling. The four outermost
+*lines* go the same way — 79 cm of clearance either side of a centreline on the
+wall is 79 cm outside the designer — which is why `Lattice` states the lines and
+levels a belt may stand on at all, once, and both the predicate and the flattened
+array read them from there.
+
+### What blocks a node
+
+A node at level `k` is impassable for belts when the 158 × 158 × 30 cm box a belt
+carries there — twice `BELT_CLEARANCE_HALF_WIDTH_CM` square, twice
+`BELT_CLEARANCE_HALF_HEIGHT_CM` tall, and orientation-free because a node does not
+yet know which way the belt through it will run — meets any hard clearance box,
+the designer wall, or a lift's column box. The boxes are `registry.json`'s, placed
+by the one composition `flab2bp.sfy.geometry.placed_box` writes; the lift's is
+`validate.lift_box`; the belt's own half extents are `belt.clearance`'s, read out
+of `AFGBuildableConveyorBelt::CreateClearanceData`. Soft boxes block nothing, on
+the game's own `CT_Soft` marking, so a conveyor attachment — whose only box is
+soft — denies a belt nothing at all.
+
+A committed straight run blocks its own nodes and **the two nodes across the run
+from each of them**, at its level, for every other net. Both halves are real
+collisions rather than simplifications: two belts 100 cm apart lap by 58 cm, and a
+belt ending or turning on the node beside a run reaches 50 cm along its own last
+segment into the run's 79. Adjacent levels never interact — 100 cm of separation
+is more than the 30 cm a belt box is tall.
+
+### The four places the lattice is stricter than the game
+
+Legality is what the hologram allows; where this lattice allows less, it is ours
+and it is named.
+
+1. **Belt pitch is 200 cm.** The game's own closest legal pitch is 158, which is
+   not a multiple of the grid step. The lattice can offer 100, which laps by 58
+   and is refused, or 200, which clears by 42.
+2. **The node beyond a run's last node, along the run, stays free** for a
+   perpendicular belt — and only that node. A run's clearance chain stops at its
+   last node, so a belt crossing 100 cm past it comes no closer than 21 cm.
+3. **R7's one grid step between two machines' hard boxes stays.**
+   `buildable.clearance` is `partial`: `AFGHologram::TestClearanceOverlap` was
+   never read, so the gap two holograms really need is unknown and this project
+   keeps its own.
+4. **A belt's own path out of its port is blocked here like any other node.** A
+   Constructor's `Output0` sits at `(0, 300, 100)` inside a hard box that runs to
+   `y = 500`, so the belt leaving it has to cross its own machine. Opening those
+   nodes is not the occupancy's business: they belong to one port's net alone, so
+   they travel on that terminal's own reach and are handed to the router per
+   query. What the occupancy promises instead is the other half — committing a
+   path never takes *ownership* of a node the world already denies, so a repair
+   search can never rip a net up in the hope of freeing a node a machine is
+   standing in.
+
+### The flat array and the predicate must agree
+
+`Occupancy.free` is the predicate and `Occupancy.flags` is the flat byte array the
+router's kernel actually searches. They must agree node for node. A `free()` that
+knows something the array does not is the DSP router's worst failure mode: the
+search happily returns a path, the committer asks `free()` about each node it is
+about to build on, finds one refused and drops the whole net — every round, having
+learned nothing, because nothing in the search was told. `base` is the array as
+the world alone left it, before any path was committed, and rip-up restores from
+it rather than writing "passable", because a ripped node is not necessarily a free
+one.
+
+The loops that flatten a placement onto the lattice are the only per-node Python
+in the grid-routed strategy. They are written as such: a box's node range is
+computed once per axis and the resulting slab is written a column at a time, never
+one predicate call per node per box.
