@@ -6,11 +6,17 @@ bytes are ``UObject``'s ``HasGuid`` bool and padding), a component writes
 ``int32 0, int32 0`` (the second is ``UCSModifiedProperties``' empty array).
 Two classes break out of that rule: conveyor belts and lifts, which are actors
 writing ``int32 0, int32 item count`` followed by that many items, and
-``Build_PowerLine_C``, whose trailer is ``int32 0``, two ``FObjectReferenceDisc``
-for the wire's two connection components and further wire data -- kept verbatim
-in this milestone and decoded in M4.
+``Build_PowerLine_C``, which writes the actor's ``int32 0`` and then the two
+``FObjectReferenceDisc`` naming the circuit connections the wire joins.
 
-Anything that does not match the shape its kind and class predict is kept
+The wire's layout is the game's, read out of ``AFGBuildableWire::Serialize``;
+``docs/sfy-struct-layouts.md`` records the disassembly and the evidence
+addresses. Because that layout is known in full, a power line is the one class
+whose trailer is decoded strictly: bytes that are not the two references raise
+:class:`~flab2bp.sfy.archive.ArchiveError` rather than surviving as opaque
+bytes, so nothing is silently dropped or invented.
+
+Anything else that does not match the shape its kind and class predict is kept
 verbatim as a :class:`PlainTrailer`, so an unknown class still writes back byte
 for byte. Only an empty item list is decoded for conveyors; a belt carrying
 items stays plain until the item layout is needed.
@@ -23,9 +29,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from flab2bp.sfy.archive import ArchiveError, Reader, Writer
+from flab2bp.sfy.archive import ArchiveError, ObjectRef, Reader, Writer
 
 __all__ = [
+    "POWER_LINE",
     "BuildableTrailer",
     "ComponentTrailer",
     "ConveyorItem",
@@ -75,23 +82,47 @@ class ConveyorTrailer:
 
 @dataclass(frozen=True, slots=True)
 class PowerLineTrailer:
-    """A power line's wire data, kept verbatim."""
+    """The two circuit connections a wire joins, as ``AFGBuildableWire`` saves them.
 
-    raw: bytes
+    ``mConnections[2]`` is replicated rather than ``SaveGame``, so the class's
+    own ``Serialize`` writes it here instead of it appearing in the tagged
+    property list -- where the wire's two ``SaveGame`` members,
+    ``mWireInstances`` and ``mCachedLength``, do appear. Both references are
+    written even when a wire dangles, as two empty strings each.
+    """
+
+    connections: tuple[ObjectRef, ObjectRef]
 
 
 Trailer = PlainTrailer | BuildableTrailer | ComponentTrailer | ConveyorTrailer | PowerLineTrailer
+
+POWER_LINE = "Build_PowerLine_C"
 
 
 def _is_conveyor(class_name: str) -> bool:
     return class_name.startswith(("Build_ConveyorBelt", "Build_ConveyorLift"))
 
 
+def _read_power_line(r: Reader) -> PowerLineTrailer:
+    """``int32 0`` from the base actor, then ``mConnections[0]`` and ``[1]``."""
+    lead = r.i32()
+    if lead != 0:
+        raise ArchiveError(f"a power line's lead int32 is {lead}, and the engine writes 0")
+    connections = (r.object_ref(), r.object_ref())
+    if r.remaining():
+        raise ArchiveError(
+            f"{r.remaining()} bytes left after a power line's two connection references; "
+            "a blueprint saved at save custom version 33 to 39 carries two legacy FVector "
+            "mConnectionLocations there, which this decoder does not read"
+        )
+    return PowerLineTrailer(connections)
+
+
 def read_trailer(r: Reader, class_name: str, kind: int) -> Trailer:
     """Read the rest of an object body as its class-specific trailer."""
+    if class_name == POWER_LINE:
+        return _read_power_line(r)
     raw = r.bytes(r.remaining())
-    if class_name == "Build_PowerLine_C":
-        return PowerLineTrailer(raw)
     if _is_conveyor(class_name):
         if raw == b"\x00" * 8:
             return ConveyorTrailer(())
@@ -105,8 +136,14 @@ def read_trailer(r: Reader, class_name: str, kind: int) -> Trailer:
 
 def write_trailer(w: Writer, t: Trailer) -> None:
     match t:
-        case PlainTrailer(raw) | PowerLineTrailer(raw):
+        case PlainTrailer(raw):
             w.raw(raw)
+        case PowerLineTrailer(connections):
+            if len(connections) != 2:
+                raise ArchiveError(f"a power line joins two connections, not {len(connections)}")
+            w.i32(0)
+            for ref in connections:
+                w.object_ref(ref)
         case BuildableTrailer():
             w.i32(0)
         case ComponentTrailer():
@@ -121,10 +158,22 @@ def write_trailer(w: Writer, t: Trailer) -> None:
             raise ArchiveError(f"unknown trailer {t!r}")
 
 
-def trailer_for_new(class_name: str, kind: int) -> Trailer:
-    """The empty trailer a freshly authored object of this class and kind needs."""
-    if class_name == "Build_PowerLine_C":
-        raise KeyError("power line trailers are copied from a fixture template")
+def trailer_for_new(
+    class_name: str,
+    kind: int,
+    connections: tuple[ObjectRef, ObjectRef] | None = None,
+) -> Trailer:
+    """The trailer a freshly authored object of this class and kind needs.
+
+    Every class but the power line has an empty one; a wire carries the two
+    circuit connections it joins, which only the caller placing it knows.
+    """
+    if class_name == POWER_LINE:
+        if connections is None:
+            raise KeyError(f"{POWER_LINE} needs the two circuit connections the wire joins")
+        return PowerLineTrailer(connections)
+    if connections is not None:
+        raise ArchiveError(f"{class_name} is not a wire and joins no circuit connections")
     if _is_conveyor(class_name):
         return ConveyorTrailer(())
     if kind == _COMPONENT:

@@ -11,10 +11,15 @@ smallest layout.
 from __future__ import annotations
 
 import warnings
-from enum import StrEnum
 from fractions import Fraction
 from math import gcd, lcm
 
+# Re-exported deliberately (the `as` spelling is what marks it explicit for
+# mypy): the policy NAMES moved to a leaf module so the command line can
+# describe --candidate-policy without loading the solver, and every caller
+# that imports them from here keeps working.
+from flab2bp.build_choices import DEFAULT_CANDIDATE_POLICIES as DEFAULT_CANDIDATE_POLICIES
+from flab2bp.build_choices import CandidatePolicy as CandidatePolicy
 from flab2bp.dsp import catalog, rules
 from flab2bp.lab.flow import (
     FlowError,
@@ -43,23 +48,6 @@ from flab2bp.spec import (
     MachineMoveRecord,
     ProliferatorMode,
     SelfLoopSeed,
-)
-
-
-class CandidatePolicy(StrEnum):
-    """One deterministic proliferation policy exposed to callers."""
-
-    NO_PROLIFERATOR = "no-proliferator"
-    ALL_PRODUCTS = "all-products"
-    OUTPUT_PRODUCTS = "output-products"
-
-
-#: Public default and authoritative solver order. Request order is presentation;
-#: candidate construction always normalizes a selected subset to this tuple.
-DEFAULT_CANDIDATE_POLICIES: tuple[CandidatePolicy, ...] = (
-    CandidatePolicy.NO_PROLIFERATOR,
-    CandidatePolicy.ALL_PRODUCTS,
-    CandidatePolicy.OUTPUT_PRODUCTS,
 )
 
 

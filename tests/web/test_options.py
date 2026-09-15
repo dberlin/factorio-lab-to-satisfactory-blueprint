@@ -11,7 +11,14 @@ import pytest
 from flab2bp import pipeline
 from flab2bp.rates import DEFAULT_CANDIDATE_POLICIES, CandidatePolicy
 from flab2bp.rates.machine_choice import MachineRank
-from flab2bp.web.jobs import WARN_TOTAL_SECONDS, InvalidOptions, Options, parse_options
+from flab2bp.sfy import pipeline as sfy_pipeline
+from flab2bp.web.jobs import (
+    WARN_TOTAL_SECONDS,
+    InvalidOptions,
+    Options,
+    _validate_web_fetch_url,
+    parse_options,
+)
 from flab2bp.web.payload import JsonValue
 
 URL = "https://factoriolab.github.io/dsp/flow?o=graphene*60&v=11"
@@ -342,3 +349,49 @@ def test_trace_defaults_off_and_round_trips() -> None:
 def test_trace_must_be_a_boolean() -> None:
     with pytest.raises(InvalidOptions, match="'trace' must be a boolean"):
         parse_options({"url": URL, "trace": "yes"})
+
+
+class TestSatisfactoryIsNotOnTheWebPathYet:
+    """`--designer` and the sfy pages exist here; a Satisfactory BUILD does not.
+
+    M2 wires Satisfactory into the CLI only.  What the web layer gains is the
+    two halves that would otherwise be quietly wrong: `_validate_web_fetch_url`
+    no longer treats `/sfy/list` as navigation off the supported pages, and
+    `designer` is an accepted, validated option rather than an unknown one.
+    Running the build is M3, so an sfy URL is refused in so many words instead
+    of being handed to the DSP pipeline, which would read it against DSP's
+    dataset.
+    """
+
+    SFY_URL = "https://factoriolab.github.io/sfy/list?o=iron-plate*60&v=11"
+
+    def test_a_satisfactory_url_is_refused_with_a_reason(self) -> None:
+        with pytest.raises(InvalidOptions, match="not available in the web UI yet"):
+            parse_options({"url": self.SFY_URL})
+
+    def test_it_is_refused_before_any_dsp_option_is_validated(self) -> None:
+        """A band nobody can use must not be what an sfy request is told about."""
+        with pytest.raises(InvalidOptions, match="not available in the web UI yet"):
+            parse_options({"url": self.SFY_URL, "band": "nonsense"})
+
+    @pytest.mark.parametrize("path", ["/sfy/list", "/sfy/flow", "/dsp/list", "/dsp/flow"])
+    def test_every_game_and_view_is_a_fetchable_page(self, path: str) -> None:
+        """The fetch check is about the PAGE, so it names every game's two views."""
+        url = f"https://factoriolab.github.io{path}?o=x&v=11"
+        _validate_web_fetch_url(url)
+
+    @pytest.mark.parametrize("path", ["/sfy/other", "/sfy", "/nope/list"])
+    def test_a_page_outside_the_two_views_is_still_refused(self, path: str) -> None:
+        url = f"https://factoriolab.github.io{path}?o=x&v=11"
+        with pytest.raises(InvalidOptions, match="FactorioLab HTTPS"):
+            _validate_web_fetch_url(url)
+
+    def test_designer_defaults_to_mk1_and_accepts_the_marks_the_game_ships(self) -> None:
+        assert parse_options({"url": URL}).designer == sfy_pipeline.DEFAULT_DESIGNER_MARK
+        for mark in sfy_pipeline.DESIGNER_MARKS:
+            assert parse_options({"url": URL, "designer": mark}).designer == mark
+
+    @pytest.mark.parametrize("value", ["mk4", "MK1", 1, None, []])
+    def test_an_unknown_designer_is_refused(self, value: JsonValue) -> None:
+        with pytest.raises(InvalidOptions, match="designer"):
+            parse_options({"url": URL, "designer": value})

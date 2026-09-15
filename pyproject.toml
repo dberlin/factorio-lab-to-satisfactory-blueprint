@@ -66,6 +66,7 @@ where = ["src"]
 flab2bp = [
     "py.typed",
     "lab/vendored/*.json",
+    "lab/vendored/*/*.json",
     "dsp/data/*.json",
     "layout/*.pyx",
     "dsp/*.pyx",

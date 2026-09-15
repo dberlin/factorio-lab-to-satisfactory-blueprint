@@ -26,7 +26,12 @@ __all__ = [
     "COST_SEGMENT_SOURCES",
     "FLOW_NAME_SOURCES",
     "FLOW_SOURCES",
+    "LIFT_GEOMETRY_FIELDS",
+    "LIFT_GEOMETRY_SOURCES",
+    "LIFT_NATIVE_CLASS",
     "LIMIT_SOURCES",
+    "MAX_CONNECTIONS_SOURCES",
+    "MESH_BOUNDS_SOURCES",
     "PIPE_BEND_RADIUS_2D_CM",
     "PIPE_MAX_SPLINE_CM",
     "PIPE_MIN_BEND_RADIUS_CM",
@@ -34,6 +39,7 @@ __all__ = [
     "Buildable",
     "ClearanceBox",
     "ConveyorFlow",
+    "LiftGeometry",
     "Limits",
     "Port",
     "Recipe",
@@ -99,6 +105,35 @@ LIMIT_SOURCES = (
 # caller may route to.
 PORT_DIRECTION_SOURCES = ("asset", "asset-inherited", "native", "unknown")
 
+# Where a power port's ``max_connections`` came from. The same four links as a
+# direction, for the same reason: ``mMaxNumConnectionLinks`` is a UPROPERTY on
+# ``UFGCircuitConnectionComponent``, a cooked asset omits it wherever it equals
+# the archetype's value, and the archetype at the end of the chain is that
+# class's C++ constructor.
+#
+# ``asset``            this buildable's own Blueprint states the count
+# ``asset-inherited``  a parent Blueprint's template of the same name states it
+# ``native``           none of the assets do, so it is the constructor's, read
+#                      out of the shipped DLL into ``data/native.json``
+# ``unknown``          the port has no such property at all, which is every belt
+#                      and pipe connection
+#
+# A port's name is not a source here either: a connection called ``PowerInput``
+# is not thereby a connection that takes one wire.
+MAX_CONNECTIONS_SOURCES = ("asset", "asset-inherited", "native", "unknown")
+
+# Where a buildable's ``mesh_bounds_cm`` came from. There is one entry, and it is
+# the cooked ``UStaticMesh``'s own ``RenderData.Bounds``:
+#
+# ``assets``  the mesh the class's ``mMesh`` (belt) or ``mMidMesh`` (lift)
+#             UPROPERTY points at, read through CUE4Parse;
+#             ``provenance["mesh_bounds"]`` names the property and the asset path
+#
+# A box measured off a blueprint is not a mesh bound, and Docs.json states no
+# mesh geometry at all -- only ``mMeshLength``/``mMeshHeight``, which are the
+# repeat pitch and not the cross-section.
+MESH_BOUNDS_SOURCES = ("assets",)
+
 # Where a conveyor's item-flow order was read. Both of a conveyor's connections
 # are ``FCD_ANY``, so ``mDirection`` does not say which end items enter by, and
 # that is a fact a router needs:
@@ -120,6 +155,19 @@ FLOW_SOURCES = ("header", "native")
 # A port name is otherwise a convention and never evidence, which is why there is
 # no second entry here.
 FLOW_NAME_SOURCES = ("asset",)
+
+# Where one field of a conveyor lift's runtime geometry was read. A lift's two
+# ports sit at the actor origin with no rotation in the cooked class default
+# object, so where its ends actually are is decided at runtime and read from:
+#
+# ``header``  a declaration or its comment in ``CommunityResources/Headers.zip``
+# ``native``  the shipped DLL's machine code, quoted by the ``lift.connectors``
+#             and ``lift.top_yaw`` rules in ``data/hologram_rules.json``
+# ``docs``    a class default in the game's own Docs.json dump
+#
+# There is no fourth entry, and a lift measured off a blueprint is not one: a
+# corpus lift says what somebody once placed, not what the game computes.
+LIFT_GEOMETRY_SOURCES = ("header", "native", "docs")
 
 # Where a buildable's cost segment came from. The game's own Docs.json states
 # it as a class default -- ``mMeshLength`` on a conveyor belt, ``mMeshHeight``
@@ -188,11 +236,14 @@ class Port:
     a caller must refuse to route to it rather than assume one.
 
     ``max_connections`` is how many wires may end on a power connection, from
-    ``FGCircuitConnectionComponent::mMaxNumConnectionLinks``. It is ``None`` on
-    every belt and pipe port, which have no such property, and on a power port
-    whose Blueprint does not override the native default -- 53 of the 74 power
-    ports in the content, all of them machine power inputs. The three pole marks
-    say 4, 7 and 10, and their wall variants say the same.
+    ``FGCircuitConnectionComponent::mMaxNumConnectionLinks``, and
+    ``max_connections_source`` says where it was read -- see
+    :data:`MAX_CONNECTIONS_SOURCES`. It is ``None`` (source ``"unknown"``) on
+    every belt and pipe port, which have no such property. The three pole marks
+    state 4, 7 and 10 in their own Blueprints, and their wall variants the same;
+    a machine's power input states nothing anywhere in its asset chain and takes
+    the native constructor's **1**, which is the value the shipped game runs on
+    and not a number this project chose.
     """
 
     name: str
@@ -203,6 +254,7 @@ class Port:
     rotation: Vector
     clearance: float | None
     max_connections: int | None = None
+    max_connections_source: str = "unknown"  # one of MAX_CONNECTIONS_SOURCES
 
 
 @dataclass(frozen=True, slots=True)
@@ -223,6 +275,79 @@ class ConveyorFlow:
     exit: str
     source: str
     name_source: str
+
+
+@dataclass(frozen=True, slots=True)
+class LiftGeometry:
+    """Where a conveyor lift's two ends sit, which way they face, and how far the
+    top may be turned -- the geometry the game computes at runtime.
+
+    :attr:`Port.translation` and :attr:`Port.rotation` are both zero on a lift's
+    two ports, because the cooked class default object puts both connection
+    components at the actor origin and ``AFGBuildableConveyorLift::
+    SetupConnections`` moves them when the lift is built. This is what it moves
+    them to, per the ``lift.connectors`` rule.
+
+    ``bottom_offset`` and ``bottom_facing`` are ``mConnection0``, which is the
+    end items enter by (:attr:`ConveyorFlow.entry` names its port) and which the
+    game puts at the actor transform exactly, facing the actor's own forward.
+
+    The top end is ``mConnection1``, at ``mTopTransform``, whose translation is
+    the lift's signed height along ``top_offset_axis`` -- so
+    :meth:`top_offset` is the ``top_offset_fn`` of the design: the top's offset
+    from the actor for a lift of that height. A *negative* height is a lift
+    whose actor sits at the top; the entry is still ``mConnection0``, which is
+    what ``reversed_swaps_flow`` being false says. ``AFGBuildableConveyorLift::
+    GetConveyorLiftFlowDirection`` reads nothing but the sign of that Z, and the
+    ``mIsReversed`` the save format still carries is marked DEPRECATED in the
+    header and read by nothing that places a connection.
+
+    ``top_yaw_free`` says the top's yaw is chosen independently of the bottom's,
+    in whole ``top_yaw_step_deg`` steps -- four directions, since the lift
+    hologram's rotation step is 90 from the second placement point onward. See
+    the ``lift.top_yaw`` rule.
+
+    ``sources`` maps each of the six fields above to where it was read; every
+    value is one of :data:`LIFT_GEOMETRY_SOURCES`.
+    """
+
+    bottom_offset: Vector
+    bottom_facing: Vector
+    top_offset_axis: Vector
+    top_yaw_free: bool
+    top_yaw_step_deg: float
+    reversed_swaps_flow: bool
+    sources: dict[str, str]
+
+    def top_offset(self, height_cm: float) -> Vector:
+        """The top end's offset from the actor for a lift of ``height_cm``.
+
+        The height is signed the way ``mTopTransform``'s translation is: positive
+        for a lift whose top is above its actor, negative for one whose top is
+        below.
+        """
+        return (
+            self.top_offset_axis[0] * height_cm,
+            self.top_offset_axis[1] * height_cm,
+            self.top_offset_axis[2] * height_cm,
+        )
+
+
+#: The fields of :class:`LiftGeometry` that have to carry a source, which is
+#: every one of them: a number here with nothing behind it would be a guess at
+#: geometry, and geometry is the whole of what this says.
+LIFT_GEOMETRY_FIELDS = (
+    "bottom_offset",
+    "bottom_facing",
+    "top_offset_axis",
+    "top_yaw_free",
+    "top_yaw_step_deg",
+    "reversed_swaps_flow",
+)
+
+#: The native class whose buildables carry a :class:`LiftGeometry`. Docs.json
+#: spells it without UHT's ``A`` prefix.
+LIFT_NATIVE_CLASS = "FGBuildableConveyorLift"
 
 
 @dataclass(frozen=True, slots=True)
@@ -249,8 +374,50 @@ class Buildable:
     height_cm: float | None
     designer_dims: tuple[int, int, int] | None
     max_potential: float | None
+    min_potential: float | None
+    # ``mPotentialShardSlots`` / ``mProductionShardSlotSize`` as the class default
+    # object states them, **which is not what the buildable runs on unless the
+    # matching ``*_override`` flag is true**: ``AFGBuildableFactory::BeginPlay``
+    # copies :attr:`Limits.potential_shard_slots_default` and
+    # :attr:`Limits.production_boost_slots_default` over them otherwise. Every
+    # shipped class leaves ``potential_shard_slots_override`` false, so the three
+    # overclock slots are the subsystem's; the somersloop slot size is overridden
+    # by the Assembler, the Foundry and the Manufacturer and nothing else. The
+    # ``factory.potential`` rule quotes the two branches.
     potential_shard_slots: int | None
     production_boost_slots: int | None
+    potential_shard_slots_override: bool | None
+    production_boost_slots_override: bool | None
+    # ``mBaseProductionBoost`` and ``mProductionShardBoostMultiplier``: the
+    # output multiplier with no somersloop in, and what one somersloop adds to
+    # it once :attr:`Limits.production_boost_per_slot` is scaled by it. See the
+    # ``manufacturer.production_boost`` rule.
+    base_production_boost: float | None
+    production_boost_multiplier: float | None
+    # ``mPowerConsumptionExponent`` and
+    # ``mProductionBoostPowerConsumptionExponent``, per class: the game states no
+    # global exponent, which is why neither is a limit. 1.321929 on every
+    # manufacturer and extractor and 1.6 on everything else; the boost exponent
+    # is 2.0 on all 62 classes that carry one. ``factory.potential`` quotes the
+    # ``powf`` both feed.
+    power_exponent: float | None
+    production_boost_power_exponent: float | None
+    # The local-space axis-aligned box of the static mesh a spline buildable
+    # repeats along itself, as ``(min, max)`` in centimetres:
+    # ``Origin - BoxExtent`` and ``Origin + BoxExtent`` of the cooked
+    # ``UStaticMesh``'s ``RenderData.Bounds``. ``None`` on every class whose
+    # class default object names no such mesh, which is everything but the belt
+    # and lift marks, the pipelines, the hypertube, the railway and the three
+    # foundation passthroughs. ``mesh_bounds_property`` names the UPROPERTY that
+    # was read (``mMesh`` on a belt, ``mMidMesh`` on a lift) and
+    # ``provenance["mesh_bounds"]`` carries the asset path per class.
+    #
+    # **This is the mesh, not the clearance.** What the game refuses a placement
+    # over is the box ``AFGBuildableConveyorBelt::CreateClearanceData`` lays
+    # along the spline, which the ``belt.clearance`` rule states and which is
+    # narrower than the Mk1 mesh.
+    mesh_bounds_cm: tuple[Vector, Vector] | None
+    mesh_bounds_property: str | None
     # This class's hologram overrides ``mGridSnapSize``; ``None`` means it uses
     # the global :attr:`Limits.hologram_grid_cm`. Only power poles, power towers
     # and street lights override it, all to 50.
@@ -259,6 +426,10 @@ class Buildable:
     # The item-flow order of the two conveyor ends, on the belt and lift marks
     # and on nothing else. ``None`` means this class carries no such order.
     flow: ConveyorFlow | None = None
+    # Where a conveyor lift's two ends sit once the game has placed them, on the
+    # six lift marks and on nothing else. ``None`` on every other class;
+    # :func:`load_registry` refuses a lift class that has none.
+    lift: LiftGeometry | None = None
     # How much of a spline buildable one unit of its build recipe pays for, and
     # where that number was read -- see :data:`COST_SEGMENT_SOURCES`. ``None``
     # for everything the game charges its recipe exactly once, which is
@@ -306,6 +477,14 @@ class Limits:
     # :mod:`flab2bp.sfy.rules` as the bound.
     belt_bend_radius_cm: float | None = None
     belt_max_incline_deg: float | None = None
+    # The floor ``AFGConveyorBeltHologram::ValidateMinLength`` compares a belt's
+    # polyline against. It is not a constructor immediate: the instruction is
+    # ``mulss xmm7, 0.5001`` against the belt mark's own ``mMeshLength``
+    # (0xaa58b2), so this is that product -- source ``binary-derived``, the same
+    # standing as the three lift heights, with the multiplier, the mesh length
+    # and the instruction in ``provenance["limits"]["belt_min_length_cm"]``. The
+    # comparison is strict, so a belt of exactly this length is still too short.
+    belt_min_length_cm: float | None = None
     lift_step_cm: float | None = None
     lift_min_cm: float | None = None
     lift_max_cm: float | None = None
@@ -317,6 +496,20 @@ class Limits:
     wire_max_cm: dict[str, float] = field(default_factory=dict)
     hologram_grid_cm: float | None = None
     hologram_rotation_step_deg: float | None = None
+    # What one power shard in a potential slot unlocks, and what one somersloop
+    # in a production-boost slot is worth before the class's own
+    # :attr:`Buildable.production_boost_multiplier` scales it. Both are the
+    # shard descriptor's own ``mExtraPotential``/``mExtraProductionBoost``, which
+    # ``UFGPowerShardDescriptor::GetBoostValue`` returns and
+    # ``AFGBuildableFactory::GetCurrentMaxPotentialForType`` adds once per shard.
+    potential_per_shard: float | None = None
+    production_boost_per_slot: float | None = None
+    # What ``AFGBuildableFactory::BeginPlay`` puts on a buildable that does not
+    # override its own slot counts, from ``AFGBuildableSubsystem``. Every shipped
+    # class takes the potential one, so a machine has three overclock slots and
+    # a maximum potential of ``max_potential + 3 * potential_per_shard``.
+    potential_shard_slots_default: int | None = None
+    production_boost_slots_default: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -397,6 +590,11 @@ def _ports(raw: Iterable[Mapping[str, Any]]) -> tuple[Port, ...]:
     read, so a value outside :data:`PORT_DIRECTION_SOURCES` -- the ``"corpus"``
     and ``"name"`` a Milestone 1 registry carried, say -- is refused rather than
     loaded. So is a direction and a source that disagree about being unknown.
+
+    ``max_connections_source`` is the same claim about the wire count, checked
+    the same way against :data:`MAX_CONNECTIONS_SOURCES`: a count with no source
+    would be a number nothing stands behind, and a source with no count would
+    name a link that answered nothing.
     """
     ports = tuple(
         Port(
@@ -408,6 +606,7 @@ def _ports(raw: Iterable[Mapping[str, Any]]) -> tuple[Port, ...]:
             rotation=_vector(port["rotation"]),
             clearance=None if port.get("clearance") is None else float(port["clearance"]),
             max_connections=_opt_int(port.get("max_connections")),
+            max_connections_source=str(port.get("max_connections_source", "unknown")),
         )
         for port in raw
     )
@@ -419,6 +618,14 @@ def _ports(raw: Iterable[Mapping[str, Any]]) -> tuple[Port, ...]:
     ]
     if wrong:
         raise RegistryError(f"port directions come from no game source: {wrong}")
+    unbacked = [
+        f"{p.name}: max_connections {p.max_connections!r} from {p.max_connections_source!r}"
+        for p in ports
+        if p.max_connections_source not in MAX_CONNECTIONS_SOURCES
+        or (p.max_connections is None) != (p.max_connections_source == "unknown")
+    ]
+    if unbacked:
+        raise RegistryError(f"port connection counts come from no game source: {unbacked}")
     return ports
 
 
@@ -447,6 +654,32 @@ def _cost_segment(class_name: str, entry: Mapping[str, Any]) -> dict[str, Any]:
             f"{class_name} states a cost segment of {length}, which is not a length"
         )
     return {"length_per_cost_cm": length, "length_per_cost_source": source}
+
+
+def _mesh_bounds(class_name: str, entry: Mapping[str, Any]) -> dict[str, Any]:
+    """``mesh_bounds_cm`` and the UPROPERTY it was read from, or neither.
+
+    A box and the property that states it travel together for the same reason a
+    cost segment and its source do: a box with no property named would be
+    geometry nothing stands behind, and a property with no box would name a read
+    that produced nothing. The box has to be a box -- every ``min`` component at
+    or below its ``max`` -- because ``Origin +- BoxExtent`` cannot be otherwise
+    and a pair that is would mean the two were swapped on the way here.
+    """
+    raw = entry.get("mesh_bounds_cm")
+    prop = entry.get("mesh_bounds_property")
+    prop = None if prop is None else str(prop)
+    if (raw is None) != (prop is None):
+        raise RegistryError(
+            f"{class_name} states mesh bounds {raw!r} from {prop!r}: "
+            "a box and the property it was read from travel together"
+        )
+    if raw is None:
+        return {"mesh_bounds_cm": None, "mesh_bounds_property": None}
+    low, high = _vector(raw[0]), _vector(raw[1])
+    if any(a > b for a, b in zip(low, high, strict=True)):
+        raise RegistryError(f"{class_name}'s mesh bounds are inside out: {low} .. {high}")
+    return {"mesh_bounds_cm": (low, high), "mesh_bounds_property": prop}
 
 
 def _flow(raw: Mapping[str, Any] | None, ports: tuple[Port, ...]) -> ConveyorFlow | None:
@@ -478,6 +711,57 @@ def _flow(raw: Mapping[str, Any] | None, ports: tuple[Port, ...]) -> ConveyorFlo
     return flow
 
 
+def _lift(class_name: str, native_class: str, raw: Mapping[str, Any] | None) -> LiftGeometry | None:
+    """Read a lift's runtime connector geometry, refusing one nothing backs.
+
+    A class that is not a conveyor lift may not carry it at all -- this is
+    ``AFGBuildableConveyorLift``'s ``SetupConnections``, and nothing else runs
+    it. That a lift *does* carry it is checked once over the whole registry, by
+    :func:`_require_lift_geometry`, because that is a claim about the merge and
+    not about one entry.
+
+    Every field names where it was read, from :data:`LIFT_GEOMETRY_SOURCES`, and
+    the two direction vectors have to be unit-length along one axis: they are
+    the game's own ``+X`` forward and ``FVector::UpVector``, and a vector that
+    is neither would mean something was converted on the way here.
+    """
+    if raw is None:
+        return None
+    if native_class != LIFT_NATIVE_CLASS:
+        raise RegistryError(
+            f"{class_name} is a {native_class} and carries lift connector geometry, which "
+            f"only a {LIFT_NATIVE_CLASS} has"
+        )
+    sources = {str(k): str(v) for k, v in dict(raw["sources"]).items()}
+    lift = LiftGeometry(
+        bottom_offset=_vector(raw["bottom_offset"]),
+        bottom_facing=_vector(raw["bottom_facing"]),
+        top_offset_axis=_vector(raw["top_offset_axis"]),
+        top_yaw_free=bool(raw["top_yaw_free"]),
+        top_yaw_step_deg=float(raw["top_yaw_step_deg"]),
+        reversed_swaps_flow=bool(raw["reversed_swaps_flow"]),
+        sources=sources,
+    )
+    if sorted(sources) != sorted(LIFT_GEOMETRY_FIELDS):
+        raise RegistryError(
+            f"{class_name}'s lift geometry says where "
+            f"{sorted(sources)} came from, wanted {sorted(LIFT_GEOMETRY_FIELDS)}"
+        )
+    unknown = sorted({v for v in sources.values() if v not in LIFT_GEOMETRY_SOURCES})
+    if unknown:
+        raise RegistryError(f"{class_name}'s lift geometry comes from no game source: {unknown}")
+    axes = (("bottom_facing", lift.bottom_facing), ("top_offset_axis", lift.top_offset_axis))
+    for name, axis in axes:
+        if sorted(abs(c) for c in axis) != [0.0, 0.0, 1.0]:
+            raise RegistryError(f"{class_name}'s {name} is not a unit axis: {axis}")
+    if lift.top_yaw_step_deg <= 0.0 or 360.0 % lift.top_yaw_step_deg != 0.0:
+        raise RegistryError(
+            f"{class_name}'s top yaw step is {lift.top_yaw_step_deg}, which does not "
+            "divide a full turn"
+        )
+    return lift
+
+
 def _buildables(raw: Mapping[str, Mapping[str, Any]]) -> dict[str, Buildable]:
     out: dict[str, Buildable] = {}
     for class_name, entry in raw.items():
@@ -499,16 +783,46 @@ def _buildables(raw: Mapping[str, Mapping[str, Any]]) -> dict[str, Buildable]:
                 height_cm=_opt_float(entry["height_cm"]),
                 designer_dims=None if dims is None else (int(dims[0]), int(dims[1]), int(dims[2])),
                 max_potential=_opt_float(entry["max_potential"]),
+                min_potential=_opt_float(entry["min_potential"]),
                 potential_shard_slots=_opt_int(entry["potential_shard_slots"]),
                 production_boost_slots=_opt_int(entry["production_boost_slots"]),
+                potential_shard_slots_override=_opt_bool(entry["potential_shard_slots_override"]),
+                production_boost_slots_override=_opt_bool(entry["production_boost_slots_override"]),
+                base_production_boost=_opt_float(entry["base_production_boost"]),
+                production_boost_multiplier=_opt_float(entry["production_boost_multiplier"]),
+                power_exponent=_opt_float(entry["power_exponent"]),
+                production_boost_power_exponent=_opt_float(
+                    entry["production_boost_power_exponent"]
+                ),
+                **_mesh_bounds(class_name, entry),
                 **_cost_segment(class_name, entry),
                 grid_snap_cm=_opt_float(entry.get("grid_snap_cm")),
                 ports=ports,
                 flow=_flow(entry.get("flow"), ports),
+                lift=_lift(class_name, str(entry["native_class"]), entry.get("lift")),
             )
         except (KeyError, IndexError, TypeError, ValueError) as exc:
             raise RegistryError(f"buildable {class_name!r} is malformed: {exc}") from exc
     return out
+
+
+def _require_lift_geometry(buildables: Mapping[str, Buildable]) -> None:
+    """Refuse a registry whose conveyor lifts do not say where their ends are.
+
+    A lift's two ports are both at the actor origin with no rotation, so a lift
+    that states no :class:`LiftGeometry` states nothing at all about its own
+    geometry and would leave a placer to invent the one fact it most needs.
+    """
+    silent = sorted(
+        name
+        for name, buildable in buildables.items()
+        if buildable.native_class == LIFT_NATIVE_CLASS and buildable.lift is None
+    )
+    if silent:
+        raise RegistryError(
+            f"{silent} states no connector geometry, and a {LIFT_NATIVE_CLASS}'s ports say "
+            "nothing about where its ends are; re-run scripts/sfy_registry.py"
+        )
 
 
 def _recipes(raw: Mapping[str, Mapping[str, Any]]) -> dict[str, Recipe]:
@@ -540,6 +854,10 @@ def _opt_float(value: Any) -> float | None:
 
 def _opt_int(value: Any) -> int | None:
     return None if value is None else int(value)
+
+
+def _opt_bool(value: Any) -> bool | None:
+    return None if value is None else bool(value)
 
 
 def _paths(raw: Mapping[str, Any], section: str) -> dict[str, str]:
@@ -639,9 +957,11 @@ def load_registry(path: Path | None = None) -> Registry:
     sources = _limits_sources(_require(data, "limits_sources"), limits)
     provenance = dict(_require(data, "provenance"))
     _governance(provenance, limits)
+    buildables = _buildables(_require(data, "buildables"))
+    _require_lift_geometry(buildables)
     return Registry(
         provenance=provenance,
-        buildables=_buildables(_require(data, "buildables")),
+        buildables=buildables,
         recipes=_recipes(_require(data, "recipes")),
         descriptors=dict(_require(data, "descriptors")),
         build_recipes=dict(_require(data, "build_recipes")),

@@ -15,6 +15,15 @@ no game install. **Re-run this whole sequence after a game update**, in the orde
 below: steps 3 and 4 both need step 2's output and refuse without it, step 5
 needs step 4's, and the merge at the end is what the package actually reads.
 
+> **Using it, rather than regenerating it.** Nothing below is needed to build a
+> blueprint. `flab2bp '<factoriolab.github.io/sfy/... URL>' --flow <csv>
+> --designer mk1|mk2|mk3 -o <dir>` writes a `.sbp`/`.sbpcfg` pair from the
+> committed data; FactorioLab's own solved flow is required (`--flow` or
+> `--fetch-flow`), and fluids, a run past the fastest belt the save can build,
+> and anything that does not fit the chosen designer in one level of rows are
+> refused by name. The README's "Satisfactory" section is the fuller account,
+> including the exit codes.
+
 Every command below is run **from the repository root**, and the ones that `cd`
 into a tool directory `cd` back out again.
 
@@ -31,9 +40,10 @@ export FLAB2BP_SATISFACTORY_DIR="$HOME/Satisfactory"   # the default, if unset
 | 5 | `tools/sfy-extract extract` | .NET 10, the paks, the usmap, step 4 | `data/assets.json` |
 | 6 | `tools/sfy-extract structs` | .NET 10 and the usmap | `data/struct_schemas.json` |
 | 7 | `uv run python scripts/sfy_registry.py` | steps 1–5 | `data/registry.json` |
+| 8 | `uv run python scripts/sfy_lab_map.py` (after `--refresh-names`) | steps 1 and 7, the install's Docs dump | `data/lab_item_names.json`, `data/lab_map.json` |
 
 Then re-run the tests, which read the committed files and are the acceptance for
-all seven steps:
+all eight steps:
 
 ```bash
 uv run pytest tests/sfy
@@ -55,7 +65,13 @@ own reflection dump of every buildable, recipe and descriptor class default
 clearance boxes, power draw, manufacturing speed, belt speed, mesh and designer
 dimensions (including `mMeshLength` and `mMeshHeight`, which are what a conveyor
 is charged its build recipe once per — see the `belt.cost` rule), the recipe
-graph and the build recipes. It records the dump's
+graph and the build recipes. It also keeps everything the overclocking rules
+need: each buildable's `mMinPotential`/`mMaxPotential`, its two shard slot counts
+*and the `mOverride*` flags that say whether those counts are the ones it runs
+on*, `mBaseProductionBoost`, `mProductionShardBoostMultiplier` and the two power
+exponents — plus a `power_shards` section, the `FGPowerShardDescriptor` class
+defaults, because what a power shard or a somersloop is worth is stated on the
+item and not on the machine. It records the dump's
 sha256 in the file's provenance.
 
 ## 2. The shipped binary → `native.json`
@@ -80,6 +96,17 @@ shipped header and no Docs.json entry. This disassembles the module DLL, guided
 by its PDB, and traces the constant stores. The PDB must sit beside the DLL and
 match its CodeView GUID, or the tool refuses.
 
+Three more constructor values ride along in the same run, and none of them is a
+hologram's. `UFGCircuitConnectionComponent::mMaxNumConnectionLinks` is how many
+wires may end on a power connection when no Blueprint in the chain overrides it
+— **1**, which is every machine's power input — and
+`AFGBuildableSubsystem::mDefaultPotentialShardSlots` /
+`mDefaultProductionShardSlotSize` are the shard slot counts
+`AFGBuildableFactory::BeginPlay` copies onto every buildable that does not
+override its own (the `factory.potential` rule quotes the two branches). All
+three are archetype defaults the paks do not carry, so without them a machine's
+power input and every machine's overclock slots would ship as unknown.
+
 The `--expect` flags are the oracle: five of the values it reads are also stated
 in the public headers or in Docs.json, and a disagreement fails the run **before**
 anything is written, so a broken extraction cannot replace the committed file.
@@ -98,7 +125,7 @@ Needs cargo and the same game install as step 2 — the shipped DLL, its PDB and
 resolved.
 
 A number in `registry.json` says what the game's data contains; this says what
-the hologram *does* with it. It drives `sfy-native disasm` once per rule over
+the game *does* with it. It drives `sfy-native disasm` once per rule over
 `AFGConveyorBeltHologram::ValidateCurvature` and its siblings (and, for a rule
 the game spreads over several functions, once per function — `ALSO_READ`), and
 writes each one's entry RVA, the members it reads, the `.rdata` constants it
@@ -106,6 +133,14 @@ uses, the calls it makes, and the instructions the comparison was read at. Each
 rule is `extracted`, `partial` or `unextractable`, and a `partial` is a bound the
 placer must not assume it knows. `docs/sfy-hologram-rules.md` is the map, and
 `src/flab2bp/sfy/rules.py` is the reader.
+
+Not every rule is a hologram's. `belt.clearance` and `lift.clearance` are read
+across into the **buildable** that builds the boxes
+(`AFGBuildableConveyorBelt::CreateClearanceData`,
+`AFGBuildableConveyorLift::FitClearance`), and `factory.potential` and
+`manufacturer.production_boost` are read out of `AFGBuildableFactory` and
+`AFGBuildableManufacturer` — what a power shard and a somersloop do, which
+`registry.json`'s four overclocking limits are governed by.
 
 The script fails rather than quoting stale instructions: if a function moved, the
 addresses in its `EVIDENCE` table no longer decode and the run stops, which is
@@ -183,13 +218,26 @@ Needs the .NET 10 SDK and an install carrying
 `CommunityResources/FactoryGame.usmap`. Reads the paks and IoStore containers
 through CUE4Parse and writes: every buildable's connection ports (position,
 rotation, kind, direction, clearance, and a power connection's
-`mMaxNumConnectionLinks`), each buildable's hologram class and any placement
+`mMaxNumConnectionLinks` with the `max_connections_source` saying which link of
+the archetype chain stated it), each buildable's hologram class and any placement
 limit that hologram's Blueprint overrides, the wire lengths, the full asset
 path of every class Docs.json states one for — which is how a blueprint names an
 item descriptor or a recipe — and `conveyor_connections`, the component each
 conveyor class's `mConnection0`/`mConnection1` points at, read off its class
 default object. That last one is what turns step 4's member order into two port
 names without anyone reading a name that ends in 0 as evidence.
+
+It also writes `mesh_bounds` and `subsystem_defaults`. `mesh_bounds` is the
+local-space box of the static mesh a spline buildable repeats along itself —
+`Origin ± BoxExtent` of the cooked `UStaticMesh`'s `RenderData.Bounds` — reached
+through the class default object's `mMesh` (a belt) or `mMidMesh` (a lift's
+repeated mid section), walking up the Blueprint chain because Mk2 to Mk6 restate
+only `mMidMesh`; each entry names the property and the asset path it read.
+`subsystem_defaults` is the cooked `AFGBuildableSubsystem` Blueprint's shard slot
+counts, found by its super chain and not by its package's name: the shipped
+content overrides `mDefaultProductionShardSlotSize` to 1 and leaves
+`mDefaultPotentialShardSlots` to the constructor's 3, which is the same
+asset-beats-binary hand-off `mGridSnapSize` makes.
 
 It also writes `descriptor_paths`: the same item-descriptor asset paths as
 `class_paths`, read the other way round — every cooked package is loaded, and
@@ -234,11 +282,22 @@ uv run python scripts/sfy_registry.py
 
 Joins steps 1–5 into the file `flab2bp.sfy.registry.load_registry` reads. It
 prints where every limit came from, any it could not fill, how each port
-direction was resolved, how many classes got a conveyor flow order, and how many
+direction and each power port's wire count was resolved, how many classes got a
+conveyor flow order or a mesh box, and how many
 asset paths it kept. Each belt and lift mark carries
 `flow: {"entry", "exit", "source"}` — the two port names items enter and leave
 by, from step 4 — and `provenance.conveyor_flow` carries the header line, the
-functions, their RVAs and the instructions behind it. Every limit also gets
+functions, their RVAs and the instructions behind it. Each **lift** mark also
+carries `lift`, the connector geometry `AFGBuildableConveyorLift::
+SetupConnections` gives its two ends: where the bottom sits and which way it
+faces, the axis the top's height runs along, the 90-degree step the top's yaw
+turns in, and that reversing a lift does not swap which end items enter by.
+Every one of those six fields names where it was read, and
+`provenance.lift_geometry` names the two rules — `lift.connectors` and
+`lift.top_yaw` — and the header line behind them. A lift's two ports are both at
+the actor origin with no rotation, so this is the only thing in the registry
+that says where a lift's ends are; `load_registry` refuses a lift mark that
+carries none. Every limit also gets
 `provenance.limits[key].governed_by` —
 `{"rule": <rule id>, "effect": <effect>, "status": <status>}` for the hologram
 rule that governs it, with the effect and the status copied from that rule, or
@@ -250,9 +309,10 @@ is the one in the shipped file. **Only the effect
 and `compute` only works a number out, so a validator that treats any of the
 three as a bound refuses builds the game accepts. A
 rule whose effect is `none` governs nothing and is never named here — the limit
-it was read beside is `ungoverned`, with the rule's id in the reason (this is
-`lift_step_cm` and `lift.step`). The merge refuses to write when a limit's
-copied effect or copied status is not the one its rule states.
+it was read beside is `ungoverned`, with the rule's id in the reason. No shipped
+rule claims `none` today; `lift_step_cm` used to be that case and is now
+governed by `lift.step` with the effect `snap`. The merge refuses to write when
+a limit's copied effect or copied status is not the one its rule states.
 
 It refuses to write when the sources contradict each other: a header against the
 binary, a port whose `direction_source` is not one of the four game sources, an
@@ -264,11 +324,81 @@ than inventing one from the port's name. A refusal means the extraction is
 wrong, not that the registry needs an edit — `registry.json` is generated, never
 hand-edited.
 
+Two of the limits are neither an asset value nor a constructor immediate but a
+**formula the machine code applies**, tagged `binary-derived` and carrying the
+formula, its input and the instruction in `provenance.limits[key]`: the three
+lift heights, and `belt_min_length_cm`, which is
+`AFGConveyorBeltHologram::ValidateMinLength`'s `0.5001 × mMeshLength` (100.02 cm
+on every belt mark). The merge holds that 0.5001 to the `belt.min_length` rule's
+own evidence line and stops if the two ever disagree, and it refuses outright if
+the belt marks stop sharing one `mMeshLength` — a per-mark floor would have to
+move onto the buildable.
+
+The four overclocking limits — `potential_per_shard`,
+`production_boost_per_slot`, `potential_shard_slots_default` and
+`production_boost_slots_default` — are governed by `factory.potential` and
+`manufacturer.production_boost`, whose effect is `compute`: the game works each
+of them out and refuses nothing over any of them. The two per-class numbers they
+need, `mPowerConsumptionExponent` and `mProductionShardBoostMultiplier`, are
+**not** limits: the game states a different exponent for manufacturers and
+extractors (1.321929) than for everything else (1.6), so a single global would be
+a number nobody stated, and both ride on the buildable that states them.
+
+## 8. The lab map → `lab_item_names.json` and `lab_map.json`
+
+```bash
+uv run python scripts/sfy_lab_map.py --refresh-names
+uv run python scripts/sfy_lab_map.py
+```
+
+What a FactorioLab id means in the game: lab item id → `Desc_*_C`, lab recipe id
+→ `Recipe_*_C`, lab machine, belt and pipe id → `Build_*_C`, plus the lab recipes
+the game has no `Recipe_*_C` for and the reason for each.
+`flab2bp.sfy.labmap.load_lab_map` reads the result.
+
+**Order matters: step 1, then `--refresh-names`, then the derive.** The first
+command is the only one here that reads the install. It collects
+`mDisplayName` for every class in `registry.item_paths` that states one, out of
+the same `CommunityResources/Docs/en-US.json` step 1 reads, and writes
+`data/lab_item_names.json`. It is a separate file because `data/docs.json` keeps
+buildables, recipes and the `Desc_X_C → Build_X_C` descriptor map but no item
+display name, and because a *building* descriptor leaves `mDisplayName` empty —
+its buildable carries the name, which is where the machine, belt and pipe rows
+are matched from instead.
+
+Both halves refuse rather than let the two drift apart: `--refresh-names` stops
+if the install's dump is not the one `data/docs.json` was built from, and the
+derive stops if `lab_item_names.json`'s `docs_sha256` is not `docs.json`'s. So
+after a game update, re-run step 1 **before** `--refresh-names`, and step 7
+before the derive.
+
+The derive itself reads only committed files — the registry, the names file and
+FactorioLab's vendored `data.json` — and **guesses nothing**. Items match on
+display name, exactly (case and runs of whitespace aside); a name with no match
+or more than one refuses the run unless a commented override names the class.
+Recipes match on an exact signature over the *mapped* item classes: producer
+`Build_*_C`, duration as a `Fraction`, and the sorted `(Desc_*_C, amount)` pairs
+on both sides, with fluid amounts multiplied by 1000 because the lab states m3
+and the game centilitres. A lab id with no candidate, or with more than one,
+fails the run with the candidates listed; the two item overrides, the one recipe
+override and the twenty unmapped recipes are each spelled out in the script with
+the reason, and each is itself re-checked against game data. The machine table is
+written out by hand — no convention produces `refinery → Build_OilRefinery_C` —
+and then derived a second way, through the item table and
+`registry.descriptors`, with a refusal if the two disagree.
+
+`tests/sfy/test_labmap.py` is the acceptance: it re-runs this step into a
+temporary file and diffs it against what is committed (ignoring `provenance`),
+holds every mapped class to `registry.recipes` / `item_paths` / `buildables`,
+checks that every lab recipe either maps or says why not and that every item a
+mapped recipe names has a class, and doctors the script's own tables in process
+to prove each refusal path still refuses.
+
 ## After a game update
 
-1. Run all seven steps. Step 3 is the one most likely to fail: a validator that
+1. Run all eight steps. Step 3 is the one most likely to fail: a validator that
    moved stops it by name and address, which is the point.
-2. `uv run pytest tests/sfy` — three things in it are the gate:
+2. `uv run pytest tests/sfy` — four things in it are the gate:
    - the **drift test**,
      `test_registry.py::test_the_committed_registry_is_what_the_merge_produces`,
      which re-runs step 7 into a temporary file and diffs it against what is
@@ -281,6 +411,10 @@ hand-edited.
      direction traced to the game link that answered, every conveyor's flow and
      cost segment naming its source, and nothing anywhere coming from the
      blueprint corpus.
+   - the **lab map's drift test**,
+     `test_labmap.py::test_the_committed_map_is_what_the_script_derives`, which
+     does the same for step 8 — and will refuse outright if `--refresh-names`
+     was not re-run against the dump step 1 read.
 3. `git diff --stat src/flab2bp/sfy/data/` — a game update should move the build
    version and whatever the patch notes say it moved, and nothing else.
 4. Rebuild the checkpoint blueprint and load it in the game:

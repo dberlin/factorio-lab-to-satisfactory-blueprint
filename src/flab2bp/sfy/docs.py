@@ -241,6 +241,21 @@ def _integer(entry: Mapping[str, Any], key: str) -> int | None:
     return None if value is None else int(value)
 
 
+def _boolean(entry: Mapping[str, Any], key: str) -> bool | None:
+    """A Docs.json ``"True"``/``"False"`` flag, or ``None`` when the dump has none.
+
+    The dump spells every property as text, so a bare ``bool(raw)`` would read
+    ``"False"`` as true. Anything that is neither spelling is a change in the
+    dump's own format rather than a value to coerce, so it stops the extraction.
+    """
+    raw = entry.get(key)
+    if raw is None or raw == "":
+        return None
+    if raw in ("True", "False"):
+        return bool(raw == "True")
+    raise DocsParseError(f"{entry.get('ClassName')}.{key}: {raw!r} is not True or False")
+
+
 def _designer_dims(entry: Mapping[str, Any]) -> list[int] | None:
     raw = entry.get("mDimensions")
     if raw is None or raw == "":
@@ -290,8 +305,49 @@ def _buildable(entry: Mapping[str, Any], native_class: str) -> dict[str, Any]:
         "height_cm": _number(entry, "mHeight"),
         "designer_dims": _designer_dims(entry),
         "max_potential": _number(entry, "mMaxPotential"),
+        "min_potential": _number(entry, "mMinPotential"),
         "potential_shard_slots": _integer(entry, "mPotentialShardSlots"),
         "production_boost_slots": _integer(entry, "mProductionShardSlotSize"),
+        # Whether this class's own slot counts above are the ones it runs on.
+        # ``AFGBuildableFactory::BeginPlay`` overwrites each with the buildable
+        # subsystem's default whenever the matching bit is clear (0x4d40e6 /
+        # 0x4d40f7, the ``factory.potential`` rule), so a reader that takes the
+        # two numbers above at face value reads a Constructor as taking no
+        # somersloop and a Smelter as taking no power shard.
+        "potential_shard_slots_override": _boolean(entry, "mOverridePotentialShardSlots"),
+        "production_boost_slots_override": _boolean(entry, "mOverrideProductionShardSlotSize"),
+        # What one filled production-boost slot is worth on this class:
+        # ``GetCurrentMaxProductionBoost`` multiplies the somersloop's own
+        # mExtraProductionBoost by it. 1.0 on a Constructor, 0.5 on an Assembler
+        # and 0.25 on a Manufacturer, which is how four slots and one slot both
+        # come to double the output.
+        "base_production_boost": _number(entry, "mBaseProductionBoost"),
+        "production_boost_multiplier": _number(entry, "mProductionShardBoostMultiplier"),
+        # power = mPowerConsumption * potential ^ exponent, per class:
+        # 1.321929 on every manufacturer and extractor, 1.6 on everything else.
+        # There is no global exponent, which is why this is not a limit.
+        "power_exponent": _number(entry, "mPowerConsumptionExponent"),
+        "production_boost_power_exponent": _number(
+            entry, "mProductionBoostPowerConsumptionExponent"
+        ),
+    }
+
+
+def _power_shard(entry: Mapping[str, Any]) -> dict[str, Any]:
+    """One ``FGPowerShardDescriptor`` class default.
+
+    ``UFGPowerShardDescriptor::GetBoostValue`` is what
+    ``AFGBuildableFactory::GetCurrentMaxPotentialForType`` calls once per shard
+    in a slot, and these two floats are what it returns: ``mExtraPotential`` for
+    a ``PST_Overclock`` shard and ``mExtraProductionBoost`` for a
+    ``PST_ProductionBoost`` one (``Resources/FGPowerShardDescriptor.h:32``
+    and ``:36``).
+    """
+    return {
+        "display_name": entry.get("mDisplayName"),
+        "shard_type": entry.get("mPowerShardType"),
+        "extra_potential": _number(entry, "mExtraPotential"),
+        "extra_production_boost": _number(entry, "mExtraProductionBoost"),
     }
 
 
@@ -344,6 +400,10 @@ def extract(
 
     recipes = {entry["ClassName"]: _recipe(entry) for entry in docs.get("FGRecipe", ())}
 
+    power_shards = {
+        entry["ClassName"]: _power_shard(entry) for entry in docs.get("FGPowerShardDescriptor", ())
+    }
+
     descriptors: dict[str, str] = {}
     for entry in docs.get("FGBuildingDescriptor", ()):
         descriptor = entry["ClassName"]
@@ -373,6 +433,10 @@ def extract(
         "recipes": recipes,
         "descriptors": descriptors,
         "build_recipes": build_recipes,
+        # The power shard and somersloop item descriptors, which are what a
+        # filled potential slot is worth. They are item descriptors rather than
+        # buildables, so they are their own section.
+        "power_shards": power_shards,
     }
 
 

@@ -288,17 +288,44 @@ def test_a_rule_read_from_a_function_that_was_cut_short_cannot_stay_extracted():
     assert cut["evidence"] == whole["evidence"]
 
 
-def test_an_effect_of_none_is_an_absence_and_fails_on_a_truncated_function():
-    """``lift.step`` says nothing in the read instructions quantises a height."""
+def test_an_effect_of_none_is_an_absence_and_fails_on_a_truncated_function(monkeypatch):
+    """No shipped rule claims ``none`` any more, and the guard still holds.
+
+    ``lift.step`` was the last one, and it was wrong: ``UpdateTopTransform``
+    snaps the height onto a multiple of ``mStepHeight``, so the rule is
+    ``extracted``/``snap`` now.  The guard it used to exercise is about the
+    claim rather than about that rule, so the claim is made here instead: an
+    effect of ``none`` says the instructions that were read enforce nothing,
+    which cannot be said of a function the tool could not read to its end.
+    """
     rule_id = "lift.step"
     evidence = sfy_native_rules.EVIDENCE[rule_id]
-    assert sfy_native_rules.INTERPRETATIONS[rule_id][:2] == ("partial", "none")
+    status, _effect, comparison, interpretation = sfy_native_rules.INTERPRETATIONS[rule_id]
+    monkeypatch.setitem(
+        sfy_native_rules.INTERPRETATIONS, rule_id, ("partial", "none", comparison, interpretation)
+    )
+    assert status == "extracted"
 
     assert sfy_native_rules._rule(rule_id, _function("pdata", evidence))["effect"] == "none"
     with pytest.raises(SystemExit) as caught:
         sfy_native_rules._rule(rule_id, _function("truncated", evidence))
     assert "an effect of 'none'" in str(caught.value)
     assert "truncated" in str(caught.value)
+
+
+def test_the_step_rule_quotes_the_instructions_that_snap_a_lifts_height():
+    """``lift.step`` is the hologram's own quantisation, read at five addresses.
+
+    ``floor(raw / mStepHeight + 0.5) * mStepHeight``: the divide, the half, the
+    floor and the multiply back, plus the load of ``mStepHeight`` they all use.
+    A rule that no longer quotes them is one this project may not refuse a
+    height on, so the addresses are pinned here as well as in the payload.
+    """
+    rule_id = "lift.step"
+    assert sfy_native_rules.INTERPRETATIONS[rule_id][:2] == ("extracted", "snap")
+    evidence = sfy_native_rules.EVIDENCE[rule_id]
+    for rva in ("0xaa46e8", "0xaa4769", "0xaa476d", "0xaa4776", "0xaa477c"):
+        assert rva in evidence, rva
 
 
 def test_provenance_names_the_matching_pdb():

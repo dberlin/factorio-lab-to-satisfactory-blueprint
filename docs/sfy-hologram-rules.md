@@ -14,10 +14,20 @@ comes from. Line numbers are into `CommunityResources/Headers.zip`, under
 `Source/FactoryGame/Public/`.
 
 Most of what is here is a *validation*: code that turns a placement away, or
-moves it. A few rules are the other kind — code that **works out** a value the
-game then writes, which this project has to reproduce rather than enforce when
-it authors a blueprint. Those carry the effect `compute`; `belt.cost`, `belt.straight_tangents` and
-`manufacturer.inventory_filters` are the three.
+moves it. A good half of the rules are the other kind — code that **works out** a
+value the game then writes, which this project has to reproduce rather than
+enforce when it authors a blueprint. Those carry the effect `compute`:
+`belt.cost`, `belt.straight_tangents`, `manufacturer.inventory_filters`,
+`buildable.rotation_step`, the two clearance builders `belt.clearance` and
+`lift.clearance`, the two that say where a conveyor lift's ends go —
+`lift.connectors` and `lift.top_yaw` — and the two overclocking rules
+`factory.potential` and `manufacturer.production_boost`.
+
+Not every function here is a hologram's. Four of the rules are read out of the
+**buildable** instead — a belt's clearance boxes, a lift's, where a lift's two
+connections end up, and what a power shard or a somersloop does to a machine —
+because that is where the game computes them; the file's name is about what it
+is for, which is deciding what this project may author.
 
 ## How a placement is refused
 
@@ -27,10 +37,11 @@ add a *construct disqualifier* — a `UFGConstructDisqualifier` subclass — to
 refuses while that list is non-empty. So a rule is found by looking for the
 `AddConstructDisqualifier` call and reading the branch that skips it.
 
-Two rules turn out not to work that way at all, which matters more than it
+Some rules turn out not to work that way at all, which matters more than it
 sounds: the grid snap **moves** a hologram rather than refusing it, and a
-conveyor lift's height is **clamped** into its legal range rather than checked.
-Neither can produce an illegal value, and neither has a disqualifier.
+conveyor lift's height is **snapped** onto a multiple of the step and then
+**clamped** into its legal range rather than checked. None of them can produce
+an illegal value, and none has a disqualifier.
 
 ## Conveyor belts — `Hologram/FGConveyorBeltHologram.h`
 
@@ -41,7 +52,7 @@ Neither can produce an illegal value, and neither has a disqualifier.
 | `ValidateIncline` | 103 | `mMaxIncline`, `mSplineData` | `belt.incline` |
 | `ValidateMinLength` | 104 | `mMeshLength`, `mSplineData` | `belt.min_length` |
 | `ValidateCurvature` | 105 | `mBendRadius`, `mSplineComponent` | `belt.curvature` |
-| `UpdateClearanceData` | 84 | `mMaxSplineLength`, `mSplineComponent`, `mSplineData` | `belt.clearance` |
+| `UpdateClearanceData` | 84 | `mMaxSplineLength`, `mSplineComponent`, `mSplineData` | `belt.clearance`, with `AFGBuildableConveyorBelt::CreateClearanceData` |
 | `SetupSnappedConnectionDirections` | 79 | `mConnectionComponents`, `mSnappedWallPassthrough` | `belt.snap_directions` |
 | `GenerateAndUpdateSpline` | 87 | `mUpgradedConveyorBelt` | construction |
 | `AutoRouteSpline` | 97 | `mBendRadius`, `mMaxSplineLength`, `mSplineData` | construction |
@@ -92,6 +103,35 @@ So `mBendRadius` is two things, and neither is "the tightest legal turn":
 Validation is the binding one, and it binds only in the curve build mode. See
 the `belt.curvature` rule for the instructions.
 
+### Four details of `ValidateCurvature` that have to be copied exactly
+
+The rule's `interpretation` now states them, because reproducing the loop from
+the prose alone gets three of the four wrong:
+
+- **The numerator is `step`.** `0xaa5300` sets `xmm14` to `length / n` and
+  `0xaa54da` reloads it before `0xaa54de divsd xmm1, xmm0` — so the radius is the
+  sample *spacing* over the angle, not the distance between the two sampled
+  points.
+- **`RoundToInt` is the doubling trick, and the doubling is load-bearing.**
+  `addss xmm2,xmm2; addss 0.5; cvtss2si; sar esi,1` is UE's SSE form.
+  `cvtss2si` rounds half to *even* under the default `MXCSR`, which alone would
+  send 0.5 to 0; doubling first puts the tie on `2n + 0.5` instead of on `n`, so
+  the shift back recovers `floor(n + 0.5)` — half **up**. A ceiling or a C cast
+  gives a different sample count on exactly the lengths where it matters.
+- **A straight pair passes by arithmetic, not by a guard.** `theta == 0` makes
+  `divsd` yield `+inf`, and `0xaa54f9 jb` is not taken. There is no
+  "skip a straight segment" branch to reproduce.
+- **A vertical tangent is refused by this rule.** `0xaa53a4` compares the
+  squared 2-D length against `1e-8` and, under it, `0xaa53ab` loads
+  `FVector::ZeroVector` through the global at `0xee7288` (`movups` +
+  `movsd [rax+10h]`, the three doubles) and uses it as the normalised tangent.
+  The dot product is then 0, `acos(0)` is `PI/2`, and the radius comes out
+  `step / (PI/2)` — about 32 cm at the 50 cm sampling, far inside the 283.5 cm
+  floor. So `GetSafeNormal2D` zeroing `Z` means a climb does not *count* as
+  curvature, **not** that a climbing sample is passed over: a belt going
+  straight up is refused here, and `belt.incline` refuses it separately on the
+  chord.
+
 ### What a straight run's tangents are — `belt.straight_tangents`
 
 `AutoRouteSpline` (97) builds `mSplineData` through an `FSplineBuilder`:
@@ -130,6 +170,39 @@ this extraction did not unpick. Nothing refuses a spline for leaving off-facing
 either — `ValidateConveyorBelt`'s four checks are length, minimum length,
 incline and curvature. So "a belt leaves a port along the port's facing" is this
 project's own authoring rule, and `flab2bp.sfy.geometry.port_forward` says so.
+
+### What a belt's clearance is — `belt.clearance`
+
+The hologram only supplies the inputs: `UpdateClearanceData` empties
+`mClearanceData` and hands the spline component, `mSplineData`, the root
+component's transform and `mMaxSplineLength` to
+`AFGBuildableConveyorBelt::CreateClearanceData` (`0x4d78c0`, four chained
+`.pdata` chunks, 1894 bytes). That function is where the boxes are, and it is
+now read whole, so the rule is `extracted` with the effect `compute` rather than
+the `partial`/`none` it used to be.
+
+It walks the spline, one segment per call to
+`UFGSplineMeshGenerationLibrary::GetNextDistanceExceedingTolerance` with the
+tolerances 0.5, 20.0 and 50.0, and stops once the distance reaches
+`mMaxSplineLength`. Each segment gets one `FFGClearanceData` (0xC0 bytes),
+appended to the array the hologram passed in:
+
+| | X | Y | Z |
+| --- | --- | --- | --- |
+| `Min` | `-length/2` | **-79** | **-15** |
+| `Max` | `+length/2` | **+79** | **+15** |
+
+in the segment's own frame, placed by that segment's transform relative to the
+belt's root (`TTransform<double>::GetRelativeTransform`). So a belt's clearance
+is **158 cm wide and 30 cm tall**, and it is *narrower* than the belt's own mesh
+— `registry.json`'s `mesh_bounds_cm` gives the Mk1 mesh 178.25 cm across. The
+two are different facts and the registry carries both; a placer that used the
+mesh box as the clearance would refuse placements the game accepts.
+
+What is still unread: the two flag bytes of `FFGClearanceData` (where a
+`CT_Soft` marking would live) and the tolerance arithmetic inside
+`GetNextDistanceExceedingTolerance`, so the *number* of boxes on a given spline
+cannot be reproduced from this rule.
 
 ### What a belt costs — `belt.cost`
 
@@ -172,8 +245,10 @@ constructor stores its primary vtable `0xF79290` (`0x1b9ccf`), and the qword at
 | Declaration | Line | Reads | Rule |
 | --- | --- | --- | --- |
 | `CheckValidPlacement` | 62 | `mActivePointIdx`, `mSnappedConnectionComponents`, `mUpgradedConveyorLift` | `lift.placement` |
-| `UpdateTopTransform` | 65 | `mStepHeight`, `mMinimumHeight`, `mMaximumHeight`, `mMinimumHeightWithVerticalConnection` | `lift.height_range`, `lift.step` |
-| `UpdateClearance` | 70 | `mMeshHeight`, `mSnappedPassthroughs` | `lift.clearance` |
+| `UpdateTopTransform` | 65 | `mStepHeight`, `mMinimumHeight`, `mMaximumHeight`, `mMinimumHeightWithVerticalConnection` | `lift.height_range`, `lift.step`, and the `mTopTransform` half of `lift.top_yaw` |
+| `SetHologramLocationAndRotation` | 25 | `mActivePointIdx`, `mFirstStepYaw`, `mConnectionComponents` | `lift.top_yaw` |
+| `mFirstStepYaw` | 157 | — | the bottom's yaw, kept for the top |
+| `UpdateClearance` | 70 | `mMeshHeight`, `mSnappedPassthroughs` | `lift.clearance`, with `AFGBuildableConveyorLift::FitClearance` |
 | `GetClearanceData` | 38 | `mClearance` | hands out the one box |
 | `GetRotationStep` | 54 | `mActivePointIdx`, `mSnappedConnectionComponents`, `mSnappedBuilding` | corroborates `buildable.rotation_step` |
 | `IsValidHitResult` | 24 | `mActivePointIdx` | — |
@@ -186,13 +261,169 @@ them from the lift buildable's mesh height H, which `tools/sfy-native` read as
 `LIFT_HEIGHT_FORMULAS` in `scripts/sfy_registry.py`). `mStepHeight` is the one
 stored constant, 100.0.
 
-`UpdateTopTransform` then *clamps* the wanted height between the minimum — the
-vertical-connection one when the lift meets a passthrough, the ordinary one
-otherwise — and `mMaximumHeight`. There is no disqualifier because there is
-nothing to refuse. Note what is **not** there: no instruction in that function
-rounds a free height to a multiple of `mStepHeight`, so "every legal height is a
-whole number of steps" is arithmetic on the `BeginPlay` values rather than a rule
-read from the binary. `lift.step` says so and stays `partial`.
+`UpdateTopTransform` *snaps* the wanted height onto a multiple of `mStepHeight`
+and then *clamps* it between the minimum — the vertical-connection one when the
+lift meets a passthrough, the ordinary one otherwise — and `mMaximumHeight`.
+There is no disqualifier for either, because neither refuses anything.
+
+`mMinimumHeight` itself is not always the `BeginPlay` value while that call
+runs. When the connection the top snapped to has a **vertical normal**, the
+function overwrites it with 2.5 or 3.5 times `mStepHeight` — 250 or 350 cm
+rather than 400 — and puts the saved value back on the way out (`0xaa4871` the
+snapped connection, `0xaa4885` `GetConnectorNormal`, `0xaa4896`/`0xaa489d` the
+`|Z| > 0.5` test, `0xaa48b2`/`0xaa48a8` the two constants at `0x12bd258` and
+`0x12d6478`, `0xaa48ba`/`0xaa48c2` the multiply and the store, `0xaa4a6f` the
+restore). A validator that keeps to 400 is therefore *stricter* than the game
+for a lift that meets a vertical connection, which is the safe direction and is
+said out loud in the `lift.height` check.
+
+The snap is `lift.step`, `extracted`/`snap`:
+`FHologramHelpers::CalcPoleHeight` hands the raw height back (`0xaa474f`) and
+`0xaa4769`–`0xaa477c` compute `floor(raw / mStepHeight + 0.5) * mStepHeight` —
+`divss` by the step, `addss` the 0.5 at `0xf6dee8`, `roundps ..., 1` (floor) and
+`mulss` back. That rounded value in `xmm6` is what the zero test (`0xaa48ca`),
+the sign agreement (`0xaa48db`) and both ends of the clamp (`0xaa4965`,
+`0xaa4979`, `0xaa497d`) read. So a height that is not a whole number of steps is
+one the game **moves**, not one it refuses: a validator that turns such a lift
+away is stating this project's own rule, with this snap as its reason. The one
+exception is a lift snapped to a passthrough, which carries that passthrough's
+thickness modulo 100 through the clamp (`0xaa4830`…`0xaa4867`, back in at
+`0xaa4981` / out at `0xaa49a3`) and so lands off the lattice by that remainder.
+
+This rule was `partial`/`none` until Task 8e: the earlier reading looked at the
+three `comiss`/`ucomiss` uses of `mStepHeight` and concluded nothing quantised
+the height, which was an absence claim over a function that contains the
+quantisation twelve bytes away.
+
+### Where a lift's two connections sit — `lift.connectors`
+
+A lift's two ports are both at the actor origin with **no rotation** in
+`registry.json`, because that is what its cooked class default object holds. The
+geometry is set at runtime, by `AFGBuildableConveyorLift::SetupConnections`
+(`Buildables/FGBuildableConveyorLift.h:148`, `0x505a90`, 1950 bytes over four
+chained `.pdata` chunks — read whole).
+
+It starts by assigning the directions outright, neither store behind a branch:
+
+```
+0x505b0d  mov byte ptr [rax+258h],0   ; mConnection0 = FCD_INPUT
+0x505b1b  mov byte ptr [rax+258h],1   ; mConnection1 = FCD_OUTPUT
+```
+
+`+258h` is `mDirection` because that is the byte
+`UFGFactoryConnectionComponent::SetDirection` writes (`0x197e50`, in the rule's
+`also_read`), and 0 and 1 are the first two of `EFactoryConnectionDirection`.
+
+Then it places them. The unnamed helper at `0x4f9850` — the PDB gives it only a
+templated mangling, which is why the rule asks for it by address — copies a
+transform whole and adds its third argument times the rotation's forward row to
+the translation. `SetupConnections` calls it twice, with `FTransform::Identity`
+(`0x505b22`, a data import the module's own import table names) and with
+`mTopTransform` (`0x505ba5`), passing a zeroed `xmm2` both times (`0x505b03`,
+`0x505b9b`) — `AFGBuildableConveyorLift::CONNECTION_RELATIVE_FORWARD`, which the
+header declares `static constexpr float ... = 0.f` (line 212). So both copies are
+their inputs unchanged, and:
+
+| End | Member | Direction | Relative transform |
+| --- | --- | --- | --- |
+| bottom | `mConnection0` | `FCD_INPUT` | the identity — the actor transform, facing `+X` |
+| top | `mConnection1` | `FCD_OUTPUT` | `mTopTransform` — `(0, 0, height)` at the top's yaw |
+
+`SetRelativeTransform` at `0x505e7e` and `0x506155`, each behind a test that the
+matching `mSnappedPassthroughs` entry is null. Where one is **not** null the end
+is turned to face straight up or straight down instead: `0x505bdf` compares the
+two transforms' Z and picks `FVector::UpVector` (`0x505bad`) or
+`FVector::DownVector` (`0x505bfb`), and `mConnection1` gets that vector negated
+first (`0x505f4f` loads `-1.0`). All three globals are named by the DLL's import
+table, not guessed.
+
+**Reversal does not swap which end items enter by.** `mIsReversed` is still a
+`SaveGame` bool, and the header marks it `DEPRECATED 2023-01-30 / Instead build
+lifts where mConnector0 is always input, and the other always output`
+(lines 269–272); `GetIsReversed()` is documented `LEGACY` and returns
+`IsFlowUpwards()` (line 134). `SetupConnections`, read whole, never touches it.
+What reversal means is the *sign of the height*:
+`AFGBuildableConveyorLift::GetConveyorLiftFlowDirection` (`0x4ed5e0`, 56 bytes)
+reads nothing but `mTopTransform`'s translation Z at `+7E0h` and returns
+`LD_Upwards` for `>= 0`, `LD_Downwards` for `< 0`. Items still come in through
+`mConnection0`, which `AFGBuildableConveyorBase::Factory_Tick` — a lift does not
+override it — grabs through at `0x4e1611`, pushing out through `mConnection1` at
+`0x4e1743`.
+
+A placer that wants a lift to carry items upward puts the actor at the bottom;
+one that wants it to carry them downward puts the actor at the top and gives
+`mTopTransform` a negative Z. Either way the input is `mConnection0` at the
+actor.
+
+`registry.json` carries all of this as `Buildable.lift`, a `LiftGeometry` on each
+of the six marks, with a source per field.
+
+### How the top's yaw is chosen — `lift.top_yaw`
+
+A lift is placed in two clicks, counted by `mActivePointIdx`.
+`AFGConveyorLiftHologram::SetHologramLocationAndRotation` (`0xa87800`) branches on
+it at `0xa87932` and calls `UpdateTopTransform` from either arm:
+
+- **first point** (`0xa880a3`): with the **zero rotator** (`0xa8808e`,
+  `0xa88095`). The bottom's own yaw is the hologram actor's, and
+  `DoMultiStepPlacement` saves it into `mFirstStepYaw` at the end of that step
+  (`0xa72f72`) before incrementing the counter (`0xa72f7a`).
+- **second point** (`0xa88733`): with `FRotator(0, yaw, 0)` where
+  `yaw = AFGHologram::ApplyScrollRotationTo(mFirstStepYaw)` (`0xa886e8` reads
+  the member, `0xa886fa` calls).
+
+`ApplyScrollRotationTo` (`0xaafe10`) asks the hologram for its rotation step
+through the vtable (`0xaafe2c`), floors it at 1 (`0xaafe4f`), splits the base
+yaw into whole steps and a residue (`0xaafe5e`/`0xaafe64`/`0xaafe68`), adds the
+player's `mScrollRotation` (`0xaafe3d`, `0xaafe71`) and rounds the sum back onto
+the lattice (`0xaafe85` `addss 0.5`, `0xaafe8d` `roundps`, `0xaafe93` `mulss`,
+`0xaafe97` adds the residue back).
+
+And `AFGConveyorLiftHologram::GetRotationStep` (`0xa7c140`) returns **0 only
+while the first point is still live** — `cmp dword ptr [rcx+984h], 0; jg` at
+`0xa7c15b`/`0xa7c162` — and **90** otherwise (`0xa7c1a2` `mov eax,5Ah`). So the
+top's yaw is the bottom's plus whatever multiple of 90 the player has scrolled
+to: four directions, chosen independently of the bottom.
+
+`UpdateTopTransform` then writes what it was handed:
+
+```
+mTopTransform.Rotation    = rotation.Quaternion()        ; 0xaa49d1, stored 0xaa49ee/0xaa4a01
+mTopTransform.Translation = clamped height * UpVector    ; 0xaa49a7 names the import,
+                                                         ;   0xaa4a0c..0xaa4a14 multiply
+mTopTransform.Scale3D     = (1, 1, 1)                    ; 0xaa4a36/0xaa4a3d
+```
+
+— so the top end is directly above or below the bottom, never offset sideways,
+and the height is `lift.height_range`'s business rather than this rule's.
+
+### What a lift's clearance is — `lift.clearance`
+
+`UpdateClearance` builds the three doubles `(-5, -5, -5)`, tests both
+`mSnappedPassthroughs` and hands the lift's height, `mMeshHeight`, a module
+global and that `-5` vector to `AFGBuildableConveyorLift::FitClearance`
+(`0x4e5dd0`, 375 bytes, `.pdata`). Both functions are now read whole, and the
+**span** between the lift's two ends comes out of them:
+
+```
+bottom = (|height| + mMeshHeight + 100 - P) / 2 - 30
+top    = (height  + mMeshHeight - 100 - P) / 2 + Q
+```
+
+with `P = 200` when the first passthrough flag is set and `Q = 50` when the
+second is. The box is then `centre ± extent`, where the centre is `top` scaled
+by a vector and the extent is that module global shrunk by 5 cm per axis.
+
+**The rule is still `partial`, and not because of a callee.** Both globals live
+in `.data`, and `sfy-native` refuses to quote a mutable global as a constant, so
+the box's half-width and its axis are not in the evidence. `FitClearance` reads
+exactly two doubles from the first, and the class declares one static
+two-component constant, `CLEARANCE_EXTENT_2D`
+(`Buildables/FGBuildableConveyorLift.h:211`) — a consistent reading, not a value
+the rule states. A placer must take a lift's footprint from the boxes
+`registry.json` carries, or from `mesh_bounds_cm`, and treat the width here as
+unknown. The effect is `compute`: nothing in either function turns a placement
+away.
 
 ## Pipelines — `Hologram/FGPipelineHologram.h`
 
@@ -305,6 +536,77 @@ the slot count belongs to the machine and never changes, and
 spare slot is written with the wildcard rather than left as it was, and an oil
 refinery keeps the slot a solid recipe does not fill.
 
+## What a power shard and a somersloop do — `factory.potential`, `manufacturer.production_boost`
+
+Two more `compute` rules, and the ones M2's rates code reproduces. Neither
+refuses anything: a potential the game does not like is not turned away, it is
+simply never offered.
+
+`AFGBuildableFactory::GetCurrentMaxPotential`
+(`Buildables/FGBuildableFactory.h:244`, `0x4ed7c0`) is a forward into
+`GetCurrentMaxPotentialForType(type, minValue, maxValue, perShardMultiplier)`
+(`0x4ed7f0`), which is the whole accumulator:
+
+```
+total = maxValue
+for each slot GetSlotsForPowerShardType(type) names:
+    stack = mInventoryPotential[slot]
+    if stack's class is a UFGPowerShardDescriptor of that type:
+        total += UFGPowerShardDescriptor::GetBoostValue(class)
+                 * stack.NumItems * perShardMultiplier
+return max(total, minValue)
+```
+
+`GetSlotsForPowerShardType` gives `PST_Overclock` the indices
+`[0, mPotentialShardSlots)` and `PST_ProductionBoost` the single index
+`mPotentialShardSlots`. **`mPotentialShardSlots` is not the class default**:
+`AFGBuildableFactory::BeginPlay` copies `AFGBuildableSubsystem`'s
+`mDefaultPotentialShardSlots` (and `mDefaultProductionShardSlotSize`) over it
+whenever the buildable's own `mOverridePotentialShardSlots` /
+`mOverrideProductionShardSlotSize` bit is clear (`0x4d40eb`, `0x4d40fc`). Docs.json
+dumps `mPotentialShardSlots = 0` on all 62 classes and *no* class sets the
+override, so every machine has the subsystem's **3** overclock slots and a
+maximum potential of `1.0 + 3 × 0.5 = 2.5`.
+
+What the potential then does, in both places, first rounds it to a whole percent
+(`RoundToInt(p × 100) × 0.01`, UE's SSE form):
+
+| | function | arithmetic |
+| --- | --- | --- |
+| cycle time | `AFGBuildableManufacturer::CalcProductionCycleTimeForPotential` | `duration / mManufacturingSpeed / p` |
+| power | `AFGBuildableFactory::CalcProducingPowerConsumptionForPotential` | `GetProducingPowerConsumption() × p ^ mPowerConsumptionExponent` |
+
+`mPowerConsumptionExponent` is **per class** — 1.321929 on every manufacturer and
+extractor, 1.6 on everything else — which is why `registry.json` carries it on
+each buildable and there is no global exponent in `limits`.
+
+The production-boost half is the same accumulator with different arguments.
+`GetCurrentMaxProductionBoost` (`0x4eda10`) passes `PST_ProductionBoost`,
+`mBaseProductionBoost` as both bounds and the class's own
+`mProductionShardBoostMultiplier` as the per-shard multiplier, so
+
+```
+boost = mBaseProductionBoost + N × mExtraProductionBoost × mProductionShardBoostMultiplier
+```
+
+for N somersloops in the one slot. `AFGBuildableManufacturer::SetCurrentProductionBoost`
+(`0x547800`) is what that multiplier *does*: for each of the recipe's products
+it takes `RoundToInt(amount × mCurrentProductionBoost)` and asks the output
+inventory whether a stack that size would fit. **A somersloop multiplies the
+product amounts, not the cycle time.**
+
+| machine | slot size | multiplier | full boost |
+| --- | --- | --- | --- |
+| Constructor, Smelter | 1 (the subsystem default) | 1.0 | 2.0 |
+| Assembler, Foundry | 2 (own override) | 0.5 | 2.0 |
+| Manufacturer | 4 (own override) | 0.25 | 2.0 |
+
+The two shard values are Docs.json class defaults on the descriptors themselves:
+`Desc_CrystalShard_C.mExtraPotential = 0.5` and
+`Desc_WAT1_C.mExtraProductionBoost = 1.0`
+(`Resources/FGPowerShardDescriptor.h:32` and `:36`). They are
+`limits.potential_per_shard` and `limits.production_boost_per_slot`.
+
 ## What each rule does with the number: `effect`
 
 A rule's `status` says how well it was read; its `effect` says what the hologram
@@ -323,15 +625,15 @@ anything. Five values:
 `flab2bp.sfy.rules.load_rules` refuses it on an `extracted` rule, because a
 branch that was read says what it does. `compute` is the opposite case and is
 allowed beside `extracted`: the code was read in full, and it does nothing to a
-placement because it is not a validator. The shipped twenty:
+placement because it is not a validator. The shipped twenty-four:
 
 | `effect` | rules |
 | --- | --- |
 | `refuse` | `belt.curvature`, `belt.incline`, `belt.min_length`, `belt.max_length`, `pipe.min_length`, `pipe.curvature`, `pipe.max_length`, `pipe.fluid_requirements`, `lift.placement`, `buildable.clearance` |
 | `clamp` | `lift.height_range` |
-| `snap` | `belt.snap_directions`, `buildable.grid_snap` |
-| `none` | `belt.clearance`, `lift.step`, `lift.clearance` |
-| `compute` | `belt.cost`, `belt.straight_tangents`, `buildable.rotation_step`, `manufacturer.inventory_filters` |
+| `snap` | `belt.snap_directions`, `buildable.grid_snap`, `lift.step` |
+| `none` | — (no shipped rule claims one) |
+| `compute` | `belt.cost`, `belt.clearance`, `lift.clearance`, `lift.connectors`, `lift.top_yaw`, `belt.straight_tangents`, `buildable.rotation_step`, `manufacturer.inventory_filters`, `factory.potential`, `manufacturer.production_boost` |
 
 Two of those deserve their own sentence. `buildable.clearance` is `partial` —
 the box-against-box test is in `AFGHologram::TestClearanceOverlap`, which was
@@ -348,29 +650,36 @@ disagrees with the rule. That replaced an `enforced_by` field which claimed the
 grid, the rotation step, the lift heights and the lift step were all *enforced*,
 when the rules behind them clamp and snap.
 
-`lift.step` governs nothing: a rule whose effect is `none` does nothing to the
-number, so `lift_step_cm` is *ungoverned* in `registry.json` and carries the
-reason "AFGConveyorLiftHologram compares mStepHeight (lift.step evidence) but
-never quantises a height to it; the multiple is this project's own stricter rule
-(spec section 10)". Its source stays `binary` — the constructor value is real
-game data; what is not game data is the claim that a lift's height has to be a
-multiple of it.
+`lift.step` governs `lift_step_cm` with the effect `snap`: `UpdateTopTransform`
+rounds a lift's height onto a multiple of it, and rounding is not refusing. So
+the registry carries the number, its source `binary` and its governance, and a
+placer reads all three — the height it authors has to be a multiple of 100 cm
+because the game would otherwise move the lift, which is a reason of ours built
+on a fact of theirs.
 
 ## What was extracted, and what was not
 
-`hologram_rules.json` carries twenty rules; fifteen are `extracted` and five
-`partial`. A `partial` rule is a **bound the placer must not assume it knows** —
-its `comparison` names where the comparison actually is, and its
+`hologram_rules.json` carries twenty-four rules; twenty-one are `extracted` and
+three `partial`. A `partial` rule is a **bound the placer must not assume it
+knows** — its `comparison` names where the comparison actually is, and its
 `interpretation` is a lead for the next extraction, not a constraint.
 
 The two reasons a rule is only `partial`:
 
-- **the comparison is in a callee** — `belt.clearance`
-  (`AFGBuildableConveyorBelt::CreateClearanceData`), `buildable.clearance`
+- **the comparison is in a callee** — `buildable.clearance`
   (`AFGHologram::TestClearanceOverlap`), `buildable.grid_snap`
-  (`FHologramHelpers::SnapToFloor`), `lift.clearance`;
-- **the rule may not exist** — `lift.step`, where nothing in
-  `UpdateTopTransform` quantises a height to `mStepHeight`.
+  (`FHologramHelpers::SnapToFloor`);
+- **a number is in `.data`** — `lift.clearance`, whose two functions were both
+  read whole and whose box half-extent is a mutable module global
+  `sfy-native` will not quote as a constant.
+
+There used to be a third — "the rule may not exist", claimed for `lift.step` —
+and it was a misreading rather than a reason: the quantisation is in the
+function, and the rule is `extracted` now.
+
+`belt.clearance` used to be in the first list and is not any more: its callee
+`AFGBuildableConveyorBelt::CreateClearanceData` was read whole, so the boxes it
+lays are `extracted`.
 
 **Where a function ends is now game data in every case** (Task 5). Three
 sources, in that order:

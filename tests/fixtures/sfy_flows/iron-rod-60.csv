@@ -1,0 +1,5 @@
+"https://factoriolab.github.io/sfy/list?o=iron-rod*60&v=11"
+Item,Items,Inputs,Outputs,Targets,Belts,Belt,Wagons,Wagon,Recipe,Machines,Machine,Modules,Power
+iron-rod,=60,"iron-ingot:1","iron-rod:1","",=1,conveyor-belt-mk1,=3/320,freight-car,iron-rod,=4,constructor-id,"1 ",=16000
+iron-ingot,=60,"iron-ore:1","iron-ingot:1","iron-rod:1",=1,conveyor-belt-mk1,=3/160,freight-car,iron-ingot,=2,smelter,"1 ",=8000
+iron-ore,=60,,"iron-ore:1","iron-ingot:1",=1,conveyor-belt-mk1,=3/160,freight-car,iron-ore,=1,miner-mk1,"1 purity-1",=5000

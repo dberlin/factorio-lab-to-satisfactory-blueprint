@@ -1,0 +1,159 @@
+{
+ "note": "FactorioLab Satisfactory flow exports, committed byte for byte as FactorioLab wrote them.  Captured through a headless browser with flab2bp.lab.capture.capture_flow_csv; never hand-written.  'requested_url' is the URL the browser was driven to -- FactorioLab silently drops moc/e/m unless it carries v=11 -- and 'exported_url' is line 1 of the CSV, which is the URL flab2bp.lab.flow.verify_provenance compares against.  'sha256' and 'bytes' are of the committed file; tests/sfy/test_rates.py checks every one.",
+ "generated": "2026-09-14",
+ "flows": [
+  {
+   "file": "iron-plate-60.csv",
+   "requested_url": "https://factoriolab.github.io/sfy/list?v=11&o=iron-plate*60",
+   "exported_url": "https://factoriolab.github.io/sfy/list?o=iron-plate*60&v=11",
+   "captured": "2026-09-14",
+   "note": "whole machine counts at clock 1",
+   "sha256": "22e9159d7f1e9bc1ef37ae7501c16b862002742b3a8711daab08a031cc8b4b69",
+   "bytes": 552
+  },
+  {
+   "file": "reinforced-iron-plate-10.csv",
+   "requested_url": "https://factoriolab.github.io/sfy/list?v=11&o=reinforced-iron-plate*10",
+   "exported_url": "https://factoriolab.github.io/sfy/list?o=reinforced-iron-plate*10&v=11",
+   "captured": "2026-09-14",
+   "note": "a five-row chain, all counts whole",
+   "sha256": "b006a962f57bf7f04e82cf544e6ef03e2054388d7304c4c46e69c156c591e660",
+   "bytes": 1040
+  },
+  {
+   "file": "iron-plate-50.csv",
+   "requested_url": "https://factoriolab.github.io/sfy/list?v=11&o=iron-plate*50",
+   "exported_url": "https://factoriolab.github.io/sfy/list?o=iron-plate*50&v=11",
+   "captured": "2026-09-14",
+   "note": "fractional machine counts (2.5, 2.5, 1.25)",
+   "sha256": "80b2df906e180a9832a6ef3f2d66153589654a514bb6396af2438a36d6054624",
+   "bytes": 561
+  },
+  {
+   "file": "plastic-10.csv",
+   "requested_url": "https://factoriolab.github.io/sfy/list?v=11&o=plastic*10",
+   "exported_url": "https://factoriolab.github.io/sfy/list?o=plastic*10&v=11",
+   "captured": "2026-09-14",
+   "note": "a fluid input and a fluid surplus",
+   "sha256": "1bba3ca2409009c06083d842161e0a1fb4633142f4d4c3e48ced33cfc4ce07e9",
+   "bytes": 505
+  },
+  {
+   "file": "iron-plate-60-overclock-250.csv",
+   "requested_url": "https://factoriolab.github.io/sfy/list?v=11&o=iron-plate*60&moc=250",
+   "exported_url": "https://factoriolab.github.io/sfy/list?o=iron-plate*60&moc=250&v=11",
+   "captured": "2026-09-14",
+   "note": "build-wide overclock 250%",
+   "sha256": "2062176bc5b747a22f06d927d3ca5d4947b5c01290b4794dd20ef734d6da888a",
+   "bytes": 609
+  },
+  {
+   "file": "iron-plate-60-somersloop.csv",
+   "requested_url": "https://factoriolab.github.io/sfy/list?v=11&o=iron-plate*60&e=1*somersloop&m=constructor-id*0",
+   "exported_url": "https://factoriolab.github.io/sfy/list?o=iron-plate*60&e=1*somersloop&m=constructor-id*0&v=11",
+   "captured": "2026-09-14",
+   "note": "one somersloop in every constructor",
+   "sha256": "c0687dc7564c9c109f03f5b3969ba52d917bb78f875e8d04807c7b51aa9fae61",
+   "bytes": 601
+  },
+  {
+   "file": "iron-plate-60-belt-mk3.csv",
+   "requested_url": "https://factoriolab.github.io/sfy/list?v=11&o=iron-plate*60&ibe=conveyor-belt-mk3",
+   "exported_url": "https://factoriolab.github.io/sfy/list?o=iron-plate*60&ibe=conveyor-belt-mk3&v=11",
+   "captured": "2026-09-14",
+   "note": "an explicit belt floor above the dataset default",
+   "sha256": "fe759115c49be549db3c70965cca994610499b9e3544cc30f3947fc60c199d22",
+   "bytes": 576
+  },
+  {
+   "file": "iron-rod-60.csv",
+   "requested_url": "https://factoriolab.github.io/sfy/list?v=11&o=iron-rod*60",
+   "exported_url": "https://factoriolab.github.io/sfy/list?o=iron-rod*60&v=11",
+   "captured": "2026-09-14",
+   "note": "corpus: a two-row chain, smelter then constructor",
+   "sha256": "f40ebbd093ef996f7f37c0ed969537ae5f01bd7c72be5592898d6a22c1b291a5",
+   "bytes": 534
+  },
+  {
+   "file": "screw-120.csv",
+   "requested_url": "https://factoriolab.github.io/sfy/list?v=11&o=screw*120",
+   "exported_url": "https://factoriolab.github.io/sfy/list?o=screw*120&v=11",
+   "captured": "2026-09-14",
+   "note": "corpus: a three-row chain at a higher rate",
+   "sha256": "69f98a953f4cbef6af2048d7266094f4bc0bac5481897a8f7608f22b98e0c482",
+   "bytes": 660
+  },
+  {
+   "file": "wire-120-cable-60.csv",
+   "requested_url": "https://factoriolab.github.io/sfy/list?v=11&o=wire*120&o=cable*60",
+   "exported_url": "https://factoriolab.github.io/sfy/list?o=wire*120&o=cable*60&v=11",
+   "captured": "2026-09-14",
+   "note": "corpus: two objectives, one feeding the other",
+   "sha256": "d57de214793ba385d8e5e88abf871221b5745d774040f47e1cd5113c1d4bef4c",
+   "bytes": 666
+  },
+  {
+   "file": "concrete-60.csv",
+   "requested_url": "https://factoriolab.github.io/sfy/list?v=11&o=concrete*60",
+   "exported_url": "https://factoriolab.github.io/sfy/list?o=concrete*60&v=11",
+   "captured": "2026-09-14",
+   "note": "corpus: limestone to concrete, a single constructor row",
+   "sha256": "915f5128509d8d7451a467c2a754773d784bfba4d90bc66544531fd1c146ef05",
+   "bytes": 406
+  },
+  {
+   "file": "modular-frame-5.csv",
+   "requested_url": "https://factoriolab.github.io/sfy/list?v=11&o=modular-frame*5",
+   "exported_url": "https://factoriolab.github.io/sfy/list?o=modular-frame*5&v=11",
+   "captured": "2026-09-14",
+   "note": "corpus: an Assembler fed by two sub-chains",
+   "sha256": "23f10d6716472795f3f539f68e2d8e06e5b6879759812391c6bd78a12fffbca0",
+   "bytes": 1257
+  },
+  {
+   "file": "rotor-10.csv",
+   "requested_url": "https://factoriolab.github.io/sfy/list?v=11&o=rotor*10",
+   "exported_url": "https://factoriolab.github.io/sfy/list?o=rotor*10&v=11",
+   "captured": "2026-09-14",
+   "note": "corpus: rod and screw converging on an Assembler",
+   "sha256": "947ffd701b81de44df6840f89efb81ea8e1b8189ca493550509b038dcd10d6da",
+   "bytes": 832
+  },
+  {
+   "file": "steel-beam-20.csv",
+   "requested_url": "https://factoriolab.github.io/sfy/list?v=11&o=steel-beam*20",
+   "exported_url": "https://factoriolab.github.io/sfy/list?o=steel-beam*20&v=11",
+   "captured": "2026-09-14",
+   "note": "corpus: the Foundry, steel ingot from ore and coal",
+   "sha256": "2b534286cdb7cd060351c0a25e3a647ffa8e38f1d5022a2f964f93099a62ad2a",
+   "bytes": 688
+  },
+  {
+   "file": "smart-plating-5.csv",
+   "requested_url": "https://factoriolab.github.io/sfy/list?v=11&o=smart-plating*5",
+   "exported_url": "https://factoriolab.github.io/sfy/list?o=smart-plating*5&v=11",
+   "captured": "2026-09-14",
+   "note": "corpus: a project-part Assembler product over rotor and plate",
+   "sha256": "8abb774fb8c08f060f878749e79105e3a87eaeb3873fdb6b6a3b7680af9ade8e",
+   "bytes": 1443
+  },
+  {
+   "file": "heavy-modular-frame-2.csv",
+   "requested_url": "https://factoriolab.github.io/sfy/list?v=11&o=heavy-modular-frame*2",
+   "exported_url": "https://factoriolab.github.io/sfy/list?o=heavy-modular-frame*2&v=11",
+   "captured": "2026-09-14",
+   "note": "corpus: the Manufacturer, a four-input machine",
+   "sha256": "e2b1909ab389d93b046b4294c86598e24dabdaacd9a6414c9e717dcea14b955d",
+   "bytes": 2607
+  },
+  {
+   "file": "plastic-20.csv",
+   "requested_url": "https://factoriolab.github.io/sfy/list?v=11&o=plastic*20",
+   "exported_url": "https://factoriolab.github.io/sfy/list?o=plastic*20&v=11",
+   "captured": "2026-09-14",
+   "note": "corpus: a fluid chain, expected to refuse under R4",
+   "sha256": "fb9a4629884ff4892c0d35653e3e48f390274f9f3860c4d06be28869a8b9968c",
+   "bytes": 502
+  }
+ ]
+}

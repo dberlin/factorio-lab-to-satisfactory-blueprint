@@ -5,9 +5,18 @@ from __future__ import annotations
 import math
 
 from flab2bp.sfy.objects import Transform
-from flab2bp.sfy.registry import Port
+from flab2bp.sfy.registry import ClearanceBox, Port
 
-__all__ = ["distance", "port_forward", "quat_rotate", "snap_zeros", "world_port"]
+__all__ = [
+    "box_bounds",
+    "distance",
+    "placed_box",
+    "port_forward",
+    "quat_rotate",
+    "rotator_axes",
+    "snap_zeros",
+    "world_port",
+]
 
 Vector = tuple[float, float, float]
 Quaternion = tuple[float, float, float, float]
@@ -76,3 +85,70 @@ def snap_zeros(v: Vector, epsilon: float = 1e-9) -> Vector:
 def distance(a: Vector, b: Vector) -> float:
     """Euclidean distance in centimetres."""
     return math.dist(a, b)
+
+
+def rotator_axes(rotation: Vector) -> tuple[Vector, Vector, Vector]:
+    """``FRotationMatrix``'s three axes for an ``FRotator`` in degrees.
+
+    :attr:`~flab2bp.sfy.registry.ClearanceBox.rotation` is a ``(pitch, yaw,
+    roll)`` rotator -- ``flab2bp.sfy.docs.quaternion_to_rotator`` converts the
+    game's exported quaternion into one, so that a box's rotation is spelled the
+    same way a port's ``RelativeRotation`` is.
+    """
+    pitch, yaw, roll = (math.radians(angle) for angle in rotation)
+    cp, sp = math.cos(pitch), math.sin(pitch)
+    cy, sy = math.cos(yaw), math.sin(yaw)
+    cr, sr = math.cos(roll), math.sin(roll)
+    return (
+        (cp * cy, cp * sy, sp),
+        (sr * sp * cy - cr * sy, sr * sp * sy + cr * cy, -sr * cp),
+        (-(cr * sp * cy + sr * sy), cy * sr - cr * sp * sy, cr * cp),
+    )
+
+
+def placed_box(
+    box: ClearanceBox, transform: Transform
+) -> tuple[Vector, tuple[Vector, Vector, Vector], Vector]:
+    """``(centre, axes, half)`` of one clearance box on an actor, in world space.
+
+    **The one place this composition is written.**  An ``FFGClearanceData`` is a
+    ``Min``/``Max`` box in the frame of its own ``RelativeTransform``, which is
+    itself relative to the actor, so the two transforms compose: the box's scale,
+    then its ``(pitch, yaw, roll)`` rotator, then its offset, then the actor's
+    rotation and translation.  Getting any step of that in a different order puts
+    a box somewhere the game does not, which is why the validator that judges a
+    build, the pole placer that dodges boxes and the row builder that measures a
+    band all ask here rather than each doing it again.
+
+    ``axes`` are the box's own three unit axes in world space and ``half`` its
+    half extent along each of them, so a corner is
+    ``centre + sum(+-half[k] * axes[k])``.
+    """
+    rel = rotator_axes(box.rotation)
+    half = tuple((box.max[i] - box.min[i]) / 2.0 * abs(box.scale[i]) for i in range(3))
+    mid = tuple((box.max[i] + box.min[i]) / 2.0 * box.scale[i] for i in range(3))
+    local = tuple(box.translation[i] + sum(mid[k] * rel[k][i] for k in range(3)) for i in range(3))
+    turned = quat_rotate(transform.rotation, (local[0], local[1], local[2]))
+    centre = tuple(turned[i] + transform.translation[i] for i in range(3))
+    axes = tuple(quat_rotate(transform.rotation, axis) for axis in rel)
+    return (
+        (centre[0], centre[1], centre[2]),
+        (axes[0], axes[1], axes[2]),
+        (half[0], half[1], half[2]),
+    )
+
+
+def box_bounds(box: ClearanceBox, transform: Transform) -> tuple[Vector, Vector]:
+    """An axis-aligned ``(min, max)`` around one clearance box on an actor.
+
+    :func:`placed_box`'s oriented box, projected onto the world axes -- which is
+    what a caller wants when it is measuring a band or asking whether two things
+    are anywhere near each other, and never what it wants when it is judging an
+    overlap.
+    """
+    centre, axes, half = placed_box(box, transform)
+    reach = [sum(half[k] * abs(axes[k][i]) for k in range(3)) for i in range(3)]
+    return (
+        (centre[0] - reach[0], centre[1] - reach[1], centre[2] - reach[2]),
+        (centre[0] + reach[0], centre[1] + reach[1], centre[2] + reach[2]),
+    )

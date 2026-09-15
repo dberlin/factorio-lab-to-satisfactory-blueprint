@@ -60,6 +60,16 @@ out about each instruction:
   disasm AFGConveyorBeltHologram::ValidateCurvature --out vc.json
 ```
 
+The argument is a case-sensitive substring of a `Class::Method` name, **or** a
+hexadecimal RVA. The second form is the only way to reach a function the PDB
+publishes under a mangling with no `Class::Method` form — a free function, an
+operator, or a templated member such as `UE::Math::TTransform<double>`'s — since
+no demangler is in the crate graph. An RVA the PDB publishes *nothing* at is
+still read: `.pdata` bounds it just the same, and the output names it by the
+address it was asked for rather than by a guess at what it is. That is how
+`AFGBuildableConveyorLift::SetupConnections`' transform helper at `0x4f9850` was
+read for the `lift.connectors` rule.
+
 ```json
 [{"symbol": "AFGConveyorBeltHologram::ValidateCurvature",
   "mangled": "?ValidateCurvature@AFGConveyorBeltHologram@@AEAA_NXZ",
@@ -242,8 +252,22 @@ Offsets are decimal, from the PDB's type stream; RVAs are into the DLL.
 | `pipe_bend_radius_2d_cm` | `AFGPipelineHologram` | `mBendRadius2D` | 2052 | 199.0 | constructor | `mov dword ptr [rbx+804h],43470000h @ 0x3551b6` |
 | `pipe_min_bend_radius_cm` | `AFGPipelineHologram` | `mMinBendRadius` | 2056 | 75.0 | constructor | `mov dword ptr [rbx+808h],42960000h @ 0x3551c0` |
 | `pipe_max_spline_cm` | `AFGPipelineHologram` | `mMaxSplineLength` | 2060 | 5600.1 | constructor | `mov dword ptr [rbx+80Ch],45AF00CDh @ 0x3551ca` |
+| `Port.max_connections` | `UFGCircuitConnectionComponent` | `mMaxNumConnectionLinks` | 640 | **1** | constructor | `mov dword ptr [rbx+280h],1 @ 0x6f41c1` |
+| `potential_shard_slots_default` | `AFGBuildableSubsystem` | `mDefaultPotentialShardSlots` | 848 | **3** | constructor | `mov dword ptr [rdi+350h],3 @ 0x667003` |
+| `production_boost_slots_default` | `AFGBuildableSubsystem` | `mDefaultProductionShardSlotSize` | 852 | 4 | constructor | `mov dword ptr [rdi+354h],4 @ 0x66700d` |
 
-The **bold** rows are the ones no other source has. `pipe_bend_radius_cm` is
+The **bold** rows are the ones no other source has. The last three are not
+hologram members, and they are here for the same reason the rest are: they are
+archetype defaults the cooked assets omit. A power connection's
+`mMaxNumConnectionLinks` is serialised only where a Blueprint overrides it, so
+every machine's power input would otherwise ship with an unknown wire count;
+`UFGPowerConnectionComponent`'s own constructor (0x8f1160, `.pdata`-bounded)
+writes nothing at offset 640, so the circuit connection's **1** is what a machine
+runs on. The two subsystem defaults are what `AFGBuildableFactory::BeginPlay`
+copies onto a buildable whose `mOverride*` bit is clear (0x4d40eb, 0x4d40fc);
+the cooked `BP_BuildableSubsystem_C` overrides the production one to 1, which
+`tools/sfy-extract` reads and the merge prefers, so only the **3** survives into
+`registry.json` as `binary`. `pipe_bend_radius_cm` is
 listed because `Holo_Pipeline_C` overrides the native 199 down to 100 and the
 asset wins; the binary is its fallback.
 
@@ -430,6 +454,8 @@ static function annotating nothing against `rcx`, an sret function's return
 slot in `rdx` staying unannotated, a `call rel32` against a fake symbol map, a
 `.rdata` constant and the `.data` global it refuses, an indirect call named from
 a seeded import table (and the `mov` off the same slot that is not), the
+hexadecimal-RVA selector (a named function, a templated one no name reaches, an
+address the PDB publishes nothing at, and a needle that only looks like one), the
 `.pdata`/`ret`/`truncated` bounds, a leaf with two `ret`s that only the PDB's
 stated length gets right (with `.pdata` still winning where it has an entry,
 and an over-long stated length still saying `truncated`), and a synthetic

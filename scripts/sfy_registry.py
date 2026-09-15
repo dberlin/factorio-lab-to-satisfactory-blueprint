@@ -54,6 +54,9 @@ from flab2bp.sfy.registry import (
     COST_SEGMENT_SOURCES,
     FLOW_NAME_SOURCES,
     FLOW_SOURCES,
+    LIFT_GEOMETRY_FIELDS,
+    LIFT_GEOMETRY_SOURCES,
+    LIFT_NATIVE_CLASS,
     PORT_DIRECTION_SOURCES,
     Limits,
 )
@@ -105,7 +108,20 @@ NATIVE_LIMITS: dict[str, tuple[str, str]] = {
     "pipe_min_bend_radius_cm": ("AFGPipelineHologram", "mMinBendRadius"),
     "pipe_max_spline_cm": ("AFGPipelineHologram", "mMaxSplineLength"),
     "hologram_grid_cm": ("AFGBuildableHologram", "mGridSnapSize"),
+    # Not hologram members: what AFGBuildableFactory::BeginPlay copies onto a
+    # buildable that does not override its own shard slot counts (0x4d40eb and
+    # 0x4d40fc -- the factory.potential rule). The cooked Blueprint subclass of
+    # the subsystem may override either, and ``assets.json`` carries that, so
+    # these are the fallback exactly as ``hologram_grid_cm`` is.
+    "potential_shard_slots_default": ("AFGBuildableSubsystem", "mDefaultPotentialShardSlots"),
+    "production_boost_slots_default": (
+        "AFGBuildableSubsystem",
+        "mDefaultProductionShardSlotSize",
+    ),
 }
+
+#: The limits above that are ``int32`` members rather than floats.
+INT_LIMITS = frozenset({"potential_shard_slots_default", "production_boost_slots_default"})
 
 # The three the binary states no constant for. ``AFGConveyorLiftHologram``
 # works all three out in ``BeginPlay`` from the lift buildable's own mesh height
@@ -130,6 +146,26 @@ LIFT_HEIGHT_FORMULAS: dict[str, tuple[str, float, float]] = {
     "lift_min_vertical_cm": ("H - 50", 1.0, -50.0),
 }
 LIFT_CLASS_PREFIX = "Build_ConveyorLift"
+BELT_CLASS_PREFIX = "Build_ConveyorBelt"
+
+# The belt's minimum length is the same shape as the three lift heights: a
+# formula the machine code applies to a Docs.json input rather than a constant
+# anything stores. ``AFGConveyorBeltHologram::ValidateMinLength`` compares the
+# belt's polyline against the product of the belt mark's own ``mMeshLength`` and
+# one ``.rdata`` float::
+#
+#     0xaa589b  movss xmm7,[rsi+8A0h]      ; mMeshLength, cached in BeginPlay
+#     0xaa58b2  mulss xmm7,[132F848h]      ;   constant 0.5001f
+#     0xaa59ed  comiss xmm8,xmm7           ; total > that -> long enough
+#
+# so the floor follows the mark being placed. All six belt marks ship 200 cm, and
+# ``_belt_mesh_length`` refuses rather than pick one if that stops being true.
+# ``_check_belt_min_length`` holds the 0.5001 below to the ``belt.min_length``
+# rule's own evidence, so a game update that changes the multiplier fails the
+# merge instead of shipping a stale floor.
+BELT_MIN_LENGTH_FACTOR = 0.5001
+BELT_MIN_LENGTH_EVIDENCE = "0xaa58b2"
+BELT_MIN_LENGTH_RULE = "belt.min_length"
 
 # The one source a port *name* may come from. ``flab2bp.sfy.registry`` re-checks
 # it on load: which component sits in ``mConnection0`` is stated by the cooked
@@ -157,6 +193,61 @@ COST_SEGMENT_PROPERTY: dict[str, tuple[str, str]] = {
 COST_SEGMENT_SOURCE = "docs"
 COST_SEGMENT_RULE = "belt.cost"
 assert COST_SEGMENT_SOURCE in COST_SEGMENT_SOURCES
+
+# Where a conveyor lift's two ends sit once the game has placed them.
+#
+# A lift's cooked class default object puts both connection components at the
+# actor origin with no rotation, so the registry's two ports say nothing about
+# where a lift's ends are. ``AFGBuildableConveyorLift::SetupConnections`` is
+# where they go, and the ``lift.connectors`` rule in
+# ``data/hologram_rules.json`` quotes all of it:
+#
+#     0x505b0d  mov byte ptr [rax+258h],0   ; mConnection0 = FCD_INPUT
+#     0x505b1b  mov byte ptr [rax+258h],1   ; mConnection1 = FCD_OUTPUT
+#     0x505b96  call 0x4f9850               ;   with FTransform::Identity
+#     0x505ba8  call 0x4f9850               ;   with mTopTransform
+#     0x505e7e  mConnection0->SetRelativeTransform(the first)
+#     0x506155  mConnection1->SetRelativeTransform(the second)
+#
+# and 0x4f9850 moves its input along its own forward by
+# ``CONNECTION_RELATIVE_FORWARD``, which the header declares ``0.f`` and
+# SetupConnections passes as a zeroed xmm2 (0x505b03, 0x505b9b). So the bottom
+# is the actor transform itself and the top is ``mTopTransform``, whose
+# translation ``AFGConveyorLiftHologram::UpdateTopTransform`` builds as the
+# clamped height times ``FVector::UpVector`` (0xaa49a7 names the import,
+# 0xaa4a0c..0xaa4a14 multiply). ``lift.top_yaw`` quotes the yaw, which comes
+# out of ``ApplyScrollRotationTo(mFirstStepYaw)`` on a rotation step of 90
+# (0xa7c1a2) from the second placement point onward.
+#
+# ``reversed_swaps_flow`` is false and that is a reading, not an assumption:
+# SetupConnections is 1950 bytes over four chained ``.pdata`` chunks, all of
+# them read, and it never touches ``mIsReversed`` at +810h. The header says the
+# same outright, which is why this one field's source is the header.
+LIFT_GEOMETRY: dict[str, tuple[Any, str]] = {
+    # field -> (value, where it was read)
+    "bottom_offset": ([0.0, 0.0, 0.0], "native"),
+    "bottom_facing": ([1.0, 0.0, 0.0], "native"),
+    "top_offset_axis": ([0.0, 0.0, 1.0], "native"),
+    "top_yaw_free": (True, "native"),
+    "top_yaw_step_deg": (90.0, "native"),
+    "reversed_swaps_flow": (False, "header"),
+}
+assert tuple(LIFT_GEOMETRY) == LIFT_GEOMETRY_FIELDS
+assert all(source in LIFT_GEOMETRY_SOURCES for _value, source in LIFT_GEOMETRY.values())
+
+# The two rules the geometry above was read out of, and one instruction from
+# each that has to still be there. A game update that moves either fails the
+# merge here rather than shipping geometry read from a function that has gone.
+LIFT_GEOMETRY_RULES: dict[str, tuple[str, str]] = {
+    # rule id -> (an evidence address it must carry, what that address is)
+    "lift.connectors": ("0x505b0d", "mConnection0's direction, set to FCD_INPUT"),
+    "lift.top_yaw": ("0xa7c1a2", "the lift hologram's rotation step of 90 degrees"),
+}
+LIFT_GEOMETRY_HEADER = "Buildables/FGBuildableConveyorLift.h:269"
+LIFT_GEOMETRY_HEADER_TEXT = (
+    "DEPRECATED 2023-01-30 / Instead build lifts where mConnector0 is always input, "
+    "and the other always output."
+)
 
 # Binary values that are not what their name suggests, with the caveat recorded
 # in ``registry.json``'s provenance next to the number. ``mBendRadius`` is two
@@ -188,10 +279,11 @@ BINARY_NOTES: dict[str, str] = {
 # ``buildable.grid_snap`` (a snap) and ``buildable.rotation_step`` (which
 # quantises nothing at all: it works a step out and returns it, effect
 # ``compute``) as things that "turn the value away". It also named
-# ``lift.step``, where nothing was found to be enforced at all; that limit is in
-# :data:`NOT_GOVERNED` now, because a rule whose effect is ``none`` governs
-# nothing. A ``compute`` rule does govern: it says where the number comes from,
-# and it says the game never refuses over it.
+# ``lift.step``, which does govern ``lift_step_cm`` -- ``UpdateTopTransform``
+# rounds a lift's height onto a multiple of it -- but with the effect ``snap``:
+# the game moves the height rather than refusing it. A ``compute`` rule governs
+# the same way: it says where the number comes from, and it says the game never
+# refuses over it.
 #
 # Every key of :class:`Limits` is in this table or in :data:`NOT_GOVERNED`, and
 # ``_check_rules`` holds the named ids, the copied effects and the copied
@@ -201,6 +293,12 @@ GOVERNED_BY: dict[str, str] = {
     "belt_max_spline_cm": "belt.max_length",
     "belt_bend_radius_cm": "belt.curvature",
     "belt_max_incline_deg": "belt.incline",
+    "belt_min_length_cm": "belt.min_length",
+    "potential_per_shard": "factory.potential",
+    "potential_shard_slots_default": "factory.potential",
+    "production_boost_per_slot": "manufacturer.production_boost",
+    "production_boost_slots_default": "manufacturer.production_boost",
+    "lift_step_cm": "lift.step",
     "lift_min_cm": "lift.height_range",
     "lift_max_cm": "lift.height_range",
     "lift_min_vertical_cm": "lift.height_range",
@@ -213,11 +311,6 @@ GOVERNED_BY: dict[str, str] = {
 # The limits no hologram rule governs at all, with the reason. A number here is
 # still game data; what it is not is a bound the game applies to a placement.
 NOT_GOVERNED: dict[str, str] = {
-    "lift_step_cm": (
-        "AFGConveyorLiftHologram compares mStepHeight (lift.step evidence) but "
-        "never quantises a height to it; the multiple is this project's own "
-        "stricter rule (spec section 10)."
-    ),
     "pipe_bend_radius_cm": (
         "AFGPipelineHologram::mBendRadius is the radius AutoRouteSpline builds "
         "its bends on, not a bound anything compares against. The bound on a "
@@ -272,9 +365,15 @@ def _first(holograms: dict[str, dict[str, Any]], prefix: str, key: str) -> Any:
     return None
 
 
-def _from_native(native: dict[str, Any]) -> dict[str, float]:
-    """Every limit the binary states a constant for, by registry key."""
-    values: dict[str, float] = {}
+def _from_native(native: dict[str, Any]) -> dict[str, float | int]:
+    """Every limit the binary states a constant for, by registry key.
+
+    ``native.json`` reports every traced store as a JSON number; the two slot
+    counts are ``int32`` members and are kept as integers, because a count of
+    ``3.0`` in the registry would read as a measurement rather than a number of
+    slots.
+    """
+    values: dict[str, float | int] = {}
     for key, (class_name, member_name) in NATIVE_LIMITS.items():
         try:
             member = native["classes"][class_name]["members"][member_name]
@@ -284,7 +383,7 @@ def _from_native(native: dict[str, Any]) -> dict[str, float]:
                 "re-run tools/sfy-native"
             ) from None
         if member["value"] is not None:
-            values[key] = float(member["value"])
+            values[key] = int(member["value"]) if key in INT_LIMITS else float(member["value"])
     return values
 
 
@@ -339,6 +438,244 @@ def _mesh_height(docs: dict[str, Any]) -> float:
             f"are no longer global: {heights}"
         )
     return float(distinct.pop())
+
+
+def _belt_mesh_length(docs: dict[str, Any]) -> float:
+    """The conveyor belts' Docs.json ``mMeshLength``, the same for every mark.
+
+    ``AFGConveyorBeltHologram::BeginPlay`` caches it from the belt being placed
+    and ``ValidateMinLength`` multiplies it, so a mark with a different mesh
+    would have a different floor and the limit would have to move onto the
+    buildable. All six share 200 cm today; this refuses rather than pick one
+    silently, exactly as :func:`_mesh_height` does for the lifts.
+    """
+    lengths = {
+        cls: entry["mesh_length_cm"]
+        for cls, entry in sorted(docs["buildables"].items())
+        if cls.startswith(BELT_CLASS_PREFIX)
+    }
+    if not lengths:
+        raise SystemExit(
+            f"docs.json has no {BELT_CLASS_PREFIX}* buildable to take a mesh length from"
+        )
+    distinct = set(lengths.values())
+    if len(distinct) != 1 or None in distinct:
+        raise SystemExit(
+            "the conveyor belt marks disagree on mMeshLength, so the minimum belt length "
+            f"is no longer global: {lengths}"
+        )
+    return float(distinct.pop())
+
+
+def _check_belt_min_length(rules: Mapping[str, Any]) -> str:
+    """Hold :data:`BELT_MIN_LENGTH_FACTOR` to the rule's own evidence line.
+
+    The factor is transcribed from the machine code into this script, the way
+    the lift height formulas are, and a transcription can go stale. The
+    ``belt.min_length`` rule carries the instruction it was read at, copied out
+    of ``sfy-native disasm`` by address, so this looks the multiplier up there
+    and stops the merge if the two no longer agree. The line it found is
+    returned, and travels into the registry's provenance beside the number.
+    """
+    rule = rules.get(BELT_MIN_LENGTH_RULE)
+    if rule is None:
+        raise SystemExit(
+            f"hologram_rules.json has no {BELT_MIN_LENGTH_RULE} rule, so nothing states what "
+            "a belt's minimum length is compared against; re-run scripts/sfy_native_rules.py"
+        )
+    found = [line for line in rule.evidence if line.startswith(f"{BELT_MIN_LENGTH_EVIDENCE}:")]
+    wanted = f"f32={BELT_MIN_LENGTH_FACTOR}"
+    if len(found) != 1 or wanted not in found[0]:
+        raise SystemExit(
+            f"{BELT_MIN_LENGTH_RULE} no longer multiplies mMeshLength by "
+            f"{BELT_MIN_LENGTH_FACTOR} at {BELT_MIN_LENGTH_EVIDENCE}: {found}. "
+            "Re-read ValidateMinLength before this limit can be written."
+        )
+    return found[0]
+
+
+def _power_shard_values(docs: dict[str, Any]) -> tuple[dict[str, float], dict[str, Any]]:
+    """What one shard in a potential slot unlocks, per shard type, and its evidence.
+
+    ``UFGPowerShardDescriptor::GetBoostValue`` is what
+    ``AFGBuildableFactory::GetCurrentMaxPotentialForType`` adds once per shard,
+    and it returns the descriptor's own ``mExtraPotential`` or
+    ``mExtraProductionBoost`` -- Docs.json class defaults, which
+    ``flab2bp.sfy.docs`` keeps in its ``power_shards`` section. Exactly one
+    descriptor of each type is expected: two would mean the value is not a
+    single number and a caller would have to ask which shard is in the slot.
+    """
+    wanted = {
+        "potential_per_shard": ("PST_Overclock", "extra_potential"),
+        "production_boost_per_slot": ("PST_ProductionBoost", "extra_production_boost"),
+    }
+    shards = docs.get("power_shards") or {}
+    values: dict[str, float] = {}
+    provenance: dict[str, Any] = {}
+    for key, (shard_type, field_name) in wanted.items():
+        found = {
+            cls: entry
+            for cls, entry in sorted(shards.items())
+            if entry.get("shard_type") == shard_type and entry.get(field_name) is not None
+        }
+        if len(found) != 1:
+            raise SystemExit(
+                f"docs.json states {len(found)} {shard_type} power shard descriptors with a "
+                f"{field_name} ({sorted(found)}), wanted one; re-run flab2bp.sfy.docs"
+            )
+        ((cls, entry),) = found.items()
+        values[key] = float(entry[field_name])
+        provenance[key] = {
+            "descriptor": cls,
+            "display_name": entry.get("display_name"),
+            "property": "mExtraPotential"
+            if field_name == "extra_potential"
+            else "mExtraProductionBoost",
+            "shard_type": shard_type,
+            "consumed_in": (
+                "AFGBuildableFactory::GetCurrentMaxPotentialForType @ 0x4ed988 "
+                "(UFGPowerShardDescriptor::GetBoostValue), added once per shard in a slot"
+            ),
+        }
+    return values, provenance
+
+
+def _subsystem_defaults(assets: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """The shard slot counts the cooked buildable subsystem overrides, if any.
+
+    ``tools/sfy-extract`` finds the Blueprint by its super chain reaching the
+    native ``FGBuildableSubsystem`` and reads its class default object; a
+    property it does not override comes back ``None`` and falls through to the
+    constructor value in ``native.json``. The shipped content overrides one of
+    the two, which is the same shape as the three hologram grid snap overrides.
+    """
+    stated = assets.get("subsystem_defaults") or {}
+    values = {
+        "potential_shard_slots_default": stated.get("mDefaultPotentialShardSlots"),
+        "production_boost_slots_default": stated.get("mDefaultProductionShardSlotSize"),
+    }
+    provenance = {
+        key: {
+            "class": stated.get("class"),
+            "package": stated.get("package"),
+            "property": prop,
+            "overridden_by_the_blueprint": values[key] is not None,
+            "applied_in": (
+                "AFGBuildableFactory::BeginPlay at 0x4d40eb / 0x4d40fc, when the buildable's "
+                "own mOverridePotentialShardSlots / mOverrideProductionShardSlotSize is clear "
+                "(the factory.potential rule)"
+            ),
+        }
+        for key, prop in (
+            ("potential_shard_slots_default", "mDefaultPotentialShardSlots"),
+            ("production_boost_slots_default", "mDefaultProductionShardSlotSize"),
+        )
+    }
+    return values, provenance
+
+
+def _attach_mesh_bounds(
+    mesh_bounds: Mapping[str, Mapping[str, Any]], buildables: dict[str, Any]
+) -> dict[str, Any]:
+    """Put each spline buildable's own static-mesh box on it, and return the provenance.
+
+    The box is ``Origin -+ BoxExtent`` of the cooked ``UStaticMesh``'s render
+    bounds, which is the game's own axis-aligned box for that mesh; the
+    extractor followed the class's ``mMesh`` (a belt) or ``mMidMesh`` (a lift)
+    to get there and says which. A class the extractor found no such mesh for
+    keeps ``None``: nothing here falls back to ``mMeshLength``, which is the
+    repeat pitch along one axis and says nothing about the other two.
+    """
+    applied: dict[str, Any] = {}
+    for class_name, entry in sorted(buildables.items()):
+        record = mesh_bounds.get(class_name)
+        if record is None:
+            continue
+        origin, extent = record.get("origin"), record.get("box_extent")
+        if origin is None or extent is None:
+            raise SystemExit(
+                f"{class_name}'s {record.get('property')} mesh {record.get('mesh')} carries no "
+                f"render bounds ({record.get('reason')}); re-run tools/sfy-extract"
+            )
+        entry["mesh_bounds_cm"] = [
+            [o - e for o, e in zip(origin, extent, strict=True)],
+            [o + e for o, e in zip(origin, extent, strict=True)],
+        ]
+        entry["mesh_bounds_property"] = record["property"]
+        applied[class_name] = {
+            "property": record["property"],
+            "mesh": record["mesh"],
+            "stated_on": record.get("stated_on"),
+        }
+    if not applied:
+        raise SystemExit(
+            "assets.json states no mesh bounds for any buildable, so no conveyor would carry "
+            "its own mesh box; re-run tools/sfy-extract"
+        )
+    return {
+        "source": "assets",
+        "read_from": "the cooked UStaticMesh's RenderData.Bounds (Origin -+ BoxExtent)",
+        "properties": {"belt": "mMesh", "lift": "mMidMesh"},
+        "applied_to": applied,
+    }
+
+
+def _fill_native_connection_links(
+    buildables: dict[str, Any], native: dict[str, Any]
+) -> dict[str, Any]:
+    """Give every power port whose asset chain is silent the constructor's count.
+
+    ``mMaxNumConnectionLinks`` is a UPROPERTY on
+    ``UFGCircuitConnectionComponent``, and a cooked asset omits it wherever it
+    equals the archetype's value -- so a machine's power input says nothing
+    anywhere in its chain and the answer is the C++ constructor's, which
+    ``tools/sfy-native`` read out of the shipped DLL. This is the same hand-off
+    the grid snap size makes: the asset wins where it speaks, the binary answers
+    where it does not, and a port with neither stays ``unknown`` rather than
+    being given a number nobody stated.
+    """
+    member = native["classes"].get("UFGCircuitConnectionComponent", {}).get("members", {})
+    entry = member.get("mMaxNumConnectionLinks")
+    if entry is None or entry.get("value") is None:
+        raise SystemExit(
+            "native.json states no UFGCircuitConnectionComponent::mMaxNumConnectionLinks, so "
+            "every machine's power input would ship with an unknown wire count; re-run "
+            "tools/sfy-native"
+        )
+    value = int(entry["value"])
+    counts: dict[str, int] = {}
+    for buildable in buildables.values():
+        for port in buildable["ports"]:
+            if port["kind"] == "power" and port.get("max_connections") is None:
+                port["max_connections"] = value
+                port["max_connections_source"] = "native"
+            source = port["max_connections_source"]
+            counts[source] = counts.get(source, 0) + 1
+    klass = native["classes"]["UFGCircuitConnectionComponent"]
+    bodies = klass.get("ctor_rva", {}).get(
+        "UFGCircuitConnectionComponent::UFGCircuitConnectionComponent", []
+    )
+    return {
+        "native_default": value,
+        "class": "UFGCircuitConnectionComponent",
+        "member": "mMaxNumConnectionLinks",
+        "offset": entry["offset"],
+        "set_in": entry["set_in"],
+        "evidence": entry["evidence"],
+        "size_source": entry["size_source"],
+        "ctor_bodies": list(bodies),
+        "note": (
+            "The constructor symbol "
+            "UFGCircuitConnectionComponent::UFGCircuitConnectionComponent resolves to "
+            f"{len(bodies)} bodies in the PDB ({', '.join(bodies)}), which is what the "
+            "compiler emits for a complete-object and a base-object constructor. Only the "
+            f"second stores mMaxNumConnectionLinks -- the evidence {entry['evidence']!r} is "
+            "an address inside it -- so the value is read from that body and the first is "
+            "not evidence of anything. Anyone re-reading this member must check both bodies "
+            "rather than the first the symbol resolves to."
+        ),
+        "sources": dict(sorted(counts.items())),
+    }
 
 
 def _check_rules(entries: Mapping[str, Any]) -> None:
@@ -402,12 +739,14 @@ def _limits(
     provenance: dict[str, Any] = {}
     from_binary = _from_native(native)
     _check_headers(from_binary)
+    subsystem, subsystem_provenance = _subsystem_defaults(assets)
     _fill(
         limits,
         sources,
-        {"pipe_bend_radius_cm": _first(holograms, "Build_Pipeline", "mBendRadius")},
+        {"pipe_bend_radius_cm": _first(holograms, "Build_Pipeline", "mBendRadius"), **subsystem},
         "assets",
     )
+    provenance.update(subsystem_provenance)
     _fill(limits, sources, from_binary, "binary")
     for key, note in BINARY_NOTES.items():
         provenance[key] = {"note": note, "is_a_proven_minimum": False}
@@ -422,7 +761,24 @@ def _limits(
             "H_from": f"Docs.json mMeshHeight on {LIFT_CLASS_PREFIX}Mk1_C and its five siblings",
             "evaluated_in": "AFGConveyorLiftHologram::BeginPlay at 0xa64e70 (see native.json)",
         }
+    mesh_length = _belt_mesh_length(docs)
+    belt_min_evidence = _check_belt_min_length(load_rules())
+    derived["belt_min_length_cm"] = BELT_MIN_LENGTH_FACTOR * mesh_length
+    provenance["belt_min_length_cm"] = {
+        "formula": f"{BELT_MIN_LENGTH_FACTOR} * L",
+        "L": mesh_length,
+        "L_from": f"Docs.json mMeshLength on {BELT_CLASS_PREFIX}Mk1_C and its five siblings",
+        "evaluated_in": (
+            "AFGConveyorBeltHologram::ValidateMinLength at 0xaa5870 "
+            f"({belt_min_evidence}); the comparison is strict, so a belt of exactly this "
+            "length is still too short"
+        ),
+    }
     _fill(limits, sources, derived, "binary-derived")
+
+    shard_values, shard_provenance = _power_shard_values(docs)
+    _fill(limits, sources, shard_values, "docs")
+    provenance.update(shard_provenance)
 
     # The wire lengths are AFGBuildableWire::mMaxLength, a native default that
     # the cooked Build_PowerLine_C CDO omits. tools/sfy-extract reads them out
@@ -536,6 +892,60 @@ def _attach_flow(
         **flow,
         "name_source": FLOW_NAME_SOURCE,
         "components": components,
+        "applied_to": applied,
+    }
+
+
+def _attach_lift_geometry(
+    rules: dict[str, Any], buildables: dict[str, Any]
+) -> dict[str, Any]:
+    """Put the lift connector geometry on every lift mark, and return it.
+
+    The values are :data:`LIFT_GEOMETRY`, which is the same for all six marks
+    because it is ``AFGBuildableConveyorLift``'s own code and not a class
+    default: nothing in ``SetupConnections`` or ``UpdateTopTransform`` reads
+    anything a mark could differ in. What is checked here is that the two rules
+    it was read from are still the rules that were read -- present, ``extracted``
+    and still carrying the instruction the geometry turns on -- so a game build
+    that moved either stops the merge instead of shipping the old numbers under
+    a new binary.
+    """
+    for rule_id, (address, what) in LIFT_GEOMETRY_RULES.items():
+        rule = rules.get(rule_id)
+        if rule is None:
+            raise SystemExit(
+                f"the lift connector geometry was read from {rule_id}, which "
+                "data/hologram_rules.json does not carry; re-run scripts/sfy_native_rules.py"
+            )
+        if rule.status != "extracted":
+            raise SystemExit(
+                f"{rule_id} is {rule.status}, so the lift connector geometry it states is "
+                "not a reading of the whole function and cannot be attached"
+            )
+        if not any(line.startswith(f"{address}:") for line in rule.evidence):
+            raise SystemExit(
+                f"{rule_id} no longer quotes {address} ({what}), so the lift connector "
+                "geometry has to be re-read before it can be written"
+            )
+    geometry = {field: value for field, (value, _source) in LIFT_GEOMETRY.items()}
+    geometry["sources"] = {field: source for field, (_value, source) in LIFT_GEOMETRY.items()}
+    applied = []
+    for class_name, entry in sorted(buildables.items()):
+        if entry["native_class"] != LIFT_NATIVE_CLASS:
+            continue
+        entry["lift"] = json.loads(json.dumps(geometry))
+        applied.append(class_name)
+    if not applied:
+        raise SystemExit(
+            f"no buildable is a {LIFT_NATIVE_CLASS}, so the lift connector geometry has "
+            "nothing to attach to; re-run tools/sfy-extract"
+        )
+    return {
+        **geometry,
+        "native_class": LIFT_NATIVE_CLASS,
+        "rules": sorted(LIFT_GEOMETRY_RULES),
+        "header": LIFT_GEOMETRY_HEADER,
+        "header_text": LIFT_GEOMETRY_HEADER_TEXT,
         "applied_to": applied,
     }
 
@@ -726,7 +1136,11 @@ def main(out: Path | None = None) -> int:
     conveyor_flow = _attach_flow(
         directions, assets.get("conveyor_connections", {}), docs["buildables"]
     )
-    cost_segments = _attach_cost_segments(load_rules(), docs["buildables"])
+    rules = load_rules()
+    cost_segments = _attach_cost_segments(rules, docs["buildables"])
+    lift_geometry = _attach_lift_geometry(rules, docs["buildables"])
+    mesh_bounds = _attach_mesh_bounds(assets.get("mesh_bounds", {}), docs["buildables"])
+    connection_links = _fill_native_connection_links(docs["buildables"], native)
     direction_counts = _shipped_direction_counts(docs["buildables"])
     item_paths = _asset_paths(assets["class_paths"], _item_classes(docs), "item descriptor")
     recipe_paths = _asset_paths(assets["class_paths"], set(docs["recipes"]), "recipe")
@@ -739,7 +1153,10 @@ def main(out: Path | None = None) -> int:
             "native": native["provenance"],
             "hologram_rules": rules_provenance,
             "conveyor_flow": conveyor_flow,
+            "lift_geometry": lift_geometry,
             "cost_segment": cost_segments,
+            "mesh_bounds": mesh_bounds,
+            "max_connections": connection_links,
             "limits": limit_provenance,
             "port_directions": {
                 "sources": list(PORT_DIRECTION_SOURCES),
@@ -775,7 +1192,16 @@ def main(out: Path | None = None) -> int:
         f"({conveyor_flow['source']}), named by the {conveyor_flow['name_source']}",
         f"on {len(conveyor_flow['applied_to'])} classes",
     )
+    print(
+        "lift connectors:",
+        f"bottom at {lift_geometry['bottom_offset']} facing {lift_geometry['bottom_facing']},",
+        f"top along {lift_geometry['top_offset_axis']} at a"
+        f" {lift_geometry['top_yaw_step_deg']:g} degree yaw step,",
+        f"on {len(lift_geometry['applied_to'])} classes",
+    )
     print("port directions resolved from:", direction_counts)
+    print("port connection counts resolved from:", connection_links["sources"])
+    print(f"mesh boxes on {len(mesh_bounds['applied_to'])} classes")
     print("over every extracted class:", extracted_counts)
     print(f"asset paths: {len(item_paths)} item descriptors, {len(recipe_paths)} recipes")
     return 0

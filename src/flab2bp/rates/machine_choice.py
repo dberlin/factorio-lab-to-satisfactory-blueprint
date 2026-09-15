@@ -16,24 +16,17 @@ from __future__ import annotations
 
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass
-from enum import StrEnum
 from fractions import Fraction
 
+# Re-exported deliberately; see `flab2bp.build_choices` for why the name
+# lives in a leaf module and the `as` spelling for why it is spelled twice.
+from flab2bp.build_choices import MachineRank as MachineRank
 from flab2bp.dsp import catalog
 from flab2bp.lab.schema import Dataset, Recipe
 from flab2bp.lab.techs import unlocked_recipe_ids
 from flab2bp.lab.url import LabRequest
 from flab2bp.rates.adjust import AdjustedRecipe, ProliferatorTier, adjust
 from flab2bp.spec import ProliferatorMode
-
-
-class MachineRank(StrEnum):
-    """How the URL's machine rank is read."""
-
-    #: FactorioLab's ``bestMatch``: the ranked machine, always.
-    EXACT = "exact"
-    #: The ranked machine is a ceiling; take the slowest producer that ties.
-    UP_TO = "up-to"
 
 
 def machine_speed(data: Dataset, machine_item_id: str) -> Fraction:

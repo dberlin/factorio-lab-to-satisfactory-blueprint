@@ -409,7 +409,12 @@ def test_the_cli_prints_the_stats_of_every_refused_attempt(
             attempt_failures=(failure,),
         )
 
-    monkeypatch.setattr(cli.pipeline, "build", refuse)
+    # The module itself, not `cli.pipeline`: the CLI imports `flab2bp.pipeline`
+    # inside its DSP branch now, so that a Satisfactory build loads none of the
+    # eighteen DSP modules behind it, and there is no `cli.pipeline` attribute
+    # to reach through. `main` resolves `pipeline.build` at call time, so
+    # patching the module is what it always really meant.
+    monkeypatch.setattr(pipeline, "build", refuse)
     exit_code = cli.main(
         ["https://factoriolab.github.io/dsp/flow?o=iron-ingot*60&v=11", "--budget", "1"]
     )

@@ -27,10 +27,11 @@ from collections import OrderedDict
 from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Literal, cast
+from typing import Final, Literal, cast
 from urllib.parse import urlsplit
 
 from flab2bp import pipeline
+from flab2bp.lab.games import Game
 from flab2bp.layout.band_policy import BAND_SELECTIONS, BandPolicy, BandSelection
 from flab2bp.layout.base import (
     ATOMIC_COMPLETION_GRACE_S,
@@ -49,6 +50,7 @@ from flab2bp.layout.strategy_race import RACE_COMPLETION_GRACE_S
 from flab2bp.rates import DEFAULT_CANDIDATE_POLICIES, CandidatePolicy
 from flab2bp.rates.adjust import ProliferatorTier
 from flab2bp.rates.machine_choice import MachineRank
+from flab2bp.sfy import pipeline as sfy_pipeline
 from flab2bp.web.payload import Json, JsonValue, describe, projection_failure, refusal
 from flab2bp.web.trace import TraceCollector, TraceRing
 
@@ -80,6 +82,11 @@ class Options:
     proliferator_tier: ProliferatorTier | None = None
     machine_rank: MachineRank = MachineRank.EXACT
     power_tower: str | None = None
+    #: Which Blueprint Designer a Satisfactory build would be laid out in.
+    #: Carried and validated, but not yet acted on: the web build path for
+    #: Satisfactory is M3, and until then :func:`parse_options` refuses an sfy
+    #: URL outright rather than running it through the DSP pipeline.
+    designer: str = sfy_pipeline.DEFAULT_DESIGNER_MARK
     name: str = ""
     #: Mirrors ``--allow-invalid``.  Off by default: a blueprint that pastes
     #: cleanly and then does not run is the worst outcome available here.
@@ -167,30 +174,59 @@ class InvalidOptions(ValueError):
     """The request could not be turned into a build."""
 
 
+#: The FactorioLab pages a server may be driven to, built from :class:`Game`
+#: rather than written out: the two views are the same solved state seen twice
+#: and the download button is reachable from both, and a game added to the enum
+#: is fetchable without a second edit here.
+_FETCHABLE_PATHS: Final = frozenset(
+    f"/{game.value}/{view}" for game in Game for view in ("list", "flow")
+)
+
+#: One message for every way the URL can be wrong, so a refusal never tells a
+#: caller WHICH of the authority checks it tripped.
+_NOT_FETCHABLE: Final = (
+    "automatic flow fetch requires a FactorioLab HTTPS URL on one of: "
+    + ", ".join(sorted(_FETCHABLE_PATHS))
+)
+
+
+def _game_named_by(url: str) -> Game | None:
+    """The game this URL's first path segment names, or ``None`` for neither.
+
+    Deliberately not :func:`flab2bp.lab.url.parse_url`: this runs before any
+    build and must answer "which game" for a URL that may be malformed in some
+    entirely different way, which ``parse_url`` would report as its own error.
+    """
+    try:
+        segments = [segment for segment in urlsplit(url).path.split("/") if segment]
+    except ValueError:
+        return None
+    if not segments:
+        return None
+    try:
+        return Game(segments[0])
+    except ValueError:
+        return None
+
+
 def _validate_web_fetch_url(url: str) -> None:
     if "\\" in url:
-        raise InvalidOptions(
-            "automatic flow fetch requires a FactorioLab HTTPS /dsp/list or /dsp/flow URL"
-        )
+        raise InvalidOptions(_NOT_FETCHABLE)
     try:
         parsed = urlsplit(url)
         hostname = parsed.hostname
         port = parsed.port
     except ValueError as exc:
-        raise InvalidOptions(
-            "automatic flow fetch requires a FactorioLab HTTPS /dsp/list or /dsp/flow URL"
-        ) from exc
+        raise InvalidOptions(_NOT_FETCHABLE) from exc
     if (
         parsed.scheme != "https"
         or hostname != "factoriolab.github.io"
         or port not in (None, 443)
         or parsed.username is not None
         or parsed.password is not None
-        or parsed.path not in ("/dsp/list", "/dsp/flow")
+        or parsed.path not in _FETCHABLE_PATHS
     ):
-        raise InvalidOptions(
-            "automatic flow fetch requires a FactorioLab HTTPS /dsp/list or /dsp/flow URL"
-        )
+        raise InvalidOptions(_NOT_FETCHABLE)
 
 
 def parse_options(raw: JsonValue) -> Options:
@@ -217,6 +253,7 @@ def parse_options(raw: JsonValue) -> Options:
         "proliferator_tier",
         "machine_rank",
         "power_tower",
+        "designer",
         "name",
         "allow_invalid",
         "flow",
@@ -231,6 +268,13 @@ def parse_options(raw: JsonValue) -> Options:
     url = raw.get("url")
     if not isinstance(url, str) or not url.strip():
         raise InvalidOptions("'url' is required")
+
+    # Refused here rather than later: everything below this point validates a
+    # DSP search, and `run_build` would hand an sfy URL to `pipeline.build`,
+    # which reads it against DSP's dataset. Wiring `flab2bp.sfy.pipeline` into
+    # the job runner is M3; until it is, saying so is the honest answer.
+    if _game_named_by(url.strip()) is Game.SFY:
+        raise InvalidOptions("Satisfactory builds are not available in the web UI yet")
 
     strategy = raw.get("strategy", "best")
     match strategy:
@@ -314,6 +358,10 @@ def parse_options(raw: JsonValue) -> Options:
             "'power_tower' must be one of auto, " + ", ".join(pipeline.POWER_TOWER_CHOICES)
         )
 
+    designer = raw.get("designer", sfy_pipeline.DEFAULT_DESIGNER_MARK)
+    if not isinstance(designer, str) or designer not in sfy_pipeline.DESIGNER_MARKS:
+        raise InvalidOptions("'designer' must be one of " + ", ".join(sfy_pipeline.DESIGNER_MARKS))
+
     allow_invalid = raw.get("allow_invalid", False)
     if not isinstance(allow_invalid, bool):
         raise InvalidOptions("'allow_invalid' must be a boolean")
@@ -347,6 +395,7 @@ def parse_options(raw: JsonValue) -> Options:
         proliferator_tier=proliferator_tier,
         machine_rank=machine_rank,
         power_tower=power_tower,
+        designer=designer,
         name=name,
         allow_invalid=allow_invalid,
         flow=flow.strip(),

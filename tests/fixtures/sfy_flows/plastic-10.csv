@@ -1,0 +1,5 @@
+"https://factoriolab.github.io/sfy/list?o=plastic*10&v=11"
+Item,Items,Surplus,Inputs,Outputs,Targets,Belts,Belt,Wagons,Wagon,Recipe,Machines,Machine,Modules,Power
+plastic,=10,,"crude-oil:1","plastic:1,heavy-oil-residue:1","",=1/6,conveyor-belt-mk1,=1/640,freight-car,plastic,=0.5,refinery,"2 ",=30000
+crude-oil,=15,,,"crude-oil:1","plastic:1",=0.05,pipeline-mk1,=3/320,freight-car,crude-oil,=0.125,oil-extractor,"1 purity-1",=40000
+heavy-oil-residue,=0,=5,,,,=1/60,pipeline-mk1,=1/320,freight-car,,,,,

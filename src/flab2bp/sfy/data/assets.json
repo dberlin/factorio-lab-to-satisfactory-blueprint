@@ -281,7 +281,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PowerConnection",
@@ -299,7 +300,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_AssemblerMk1_C": [
@@ -319,7 +321,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Input1",
@@ -337,7 +340,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Output0",
@@ -355,7 +359,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PowerInput",
@@ -373,7 +378,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_AutomatedWorkBench_C": [],
@@ -412,7 +418,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Input1",
@@ -430,7 +437,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Output1",
@@ -448,7 +456,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PipeInputFactory1",
@@ -466,7 +475,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PipeInputFactory",
@@ -484,7 +494,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PipeOutputFactory",
@@ -502,7 +513,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PowerConnection",
@@ -520,7 +532,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_BlueprintDesigner_C": [],
@@ -551,7 +564,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": 2
+        "max_connections": 2,
+        "max_connections_source": "asset"
       }
     ],
     "Build_CentralStorage_C": [
@@ -571,7 +585,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_ChainLinkFence_C": [],
@@ -592,7 +607,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Connection1",
@@ -610,7 +626,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PowerInput",
@@ -628,7 +645,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_CheatPowerSource_C": [
@@ -648,7 +666,8 @@
           1.2489085E-14
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_CheatTrainTeleportStation_C": [
@@ -668,7 +687,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_ConcreteConcaveRoundFoundation_8x1_C": [],
@@ -690,7 +710,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Output0",
@@ -708,7 +729,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PowerInput",
@@ -726,7 +748,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_Converter_C": [
@@ -746,7 +769,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Input0",
@@ -764,7 +788,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Input1",
@@ -782,7 +807,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Output0",
@@ -800,7 +826,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PowerInput",
@@ -818,7 +845,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_ConveyorAttachmentMergerLift_C": [
@@ -838,7 +866,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Input1",
@@ -856,7 +885,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Input2",
@@ -874,7 +904,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "TopConnection",
@@ -892,7 +923,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_ConveyorAttachmentMergerPriorityLift_C": [
@@ -912,7 +944,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Input1",
@@ -930,7 +963,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Input2",
@@ -948,7 +982,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "TopConnection",
@@ -966,7 +1001,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_ConveyorAttachmentMergerPriority_C": [
@@ -986,7 +1022,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Input2",
@@ -1004,7 +1041,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Input3",
@@ -1022,7 +1060,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Output1",
@@ -1040,7 +1079,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_ConveyorAttachmentMerger_C": [
@@ -1060,7 +1100,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Input2",
@@ -1078,7 +1119,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Input3",
@@ -1096,7 +1138,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Output1",
@@ -1114,7 +1157,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_ConveyorAttachmentSplitterLift_C": [
@@ -1134,7 +1178,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Output1",
@@ -1152,7 +1197,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Output2",
@@ -1170,7 +1216,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "TopConnection",
@@ -1188,7 +1235,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_ConveyorAttachmentSplitterProgrammableLift_C": [
@@ -1208,7 +1256,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Output1",
@@ -1226,7 +1275,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Output2",
@@ -1244,7 +1294,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "TopConnection",
@@ -1262,7 +1313,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_ConveyorAttachmentSplitterProgrammable_C": [
@@ -1282,7 +1334,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Output1",
@@ -1300,7 +1353,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Output2",
@@ -1318,7 +1372,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Output3",
@@ -1336,7 +1391,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_ConveyorAttachmentSplitterSmartLift_C": [
@@ -1356,7 +1412,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Output1",
@@ -1374,7 +1431,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Output2",
@@ -1392,7 +1450,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "TopConnection",
@@ -1410,7 +1469,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_ConveyorAttachmentSplitterSmart_C": [
@@ -1430,7 +1490,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Output1",
@@ -1448,7 +1509,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Output2",
@@ -1466,7 +1528,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Output3",
@@ -1484,7 +1547,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_ConveyorAttachmentSplitter_C": [
@@ -1504,7 +1568,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Output1",
@@ -1522,7 +1587,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Output2",
@@ -1540,7 +1606,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Output3",
@@ -1558,7 +1625,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_ConveyorBeltMk1_C": [
@@ -1578,7 +1646,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "ConveyorAny1",
@@ -1596,7 +1665,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_ConveyorBeltMk2_C": [
@@ -1616,7 +1686,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "ConveyorAny1",
@@ -1634,7 +1705,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_ConveyorBeltMk3_C": [
@@ -1654,7 +1726,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "ConveyorAny1",
@@ -1672,7 +1745,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_ConveyorBeltMk4_C": [
@@ -1692,7 +1766,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "ConveyorAny1",
@@ -1710,7 +1785,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_ConveyorBeltMk5_C": [
@@ -1730,7 +1806,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "ConveyorAny1",
@@ -1748,7 +1825,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_ConveyorBeltMk6_C": [
@@ -1768,7 +1846,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "ConveyorAny1",
@@ -1786,7 +1865,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_ConveyorCeilingAttachment_C": [
@@ -1806,7 +1886,8 @@
           -180.0
         ],
         "clearance": 0.0,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_ConveyorLiftMk1_C": [
@@ -1826,7 +1907,8 @@
           0.0
         ],
         "clearance": 200.0,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "ConveyorAny1",
@@ -1844,7 +1926,8 @@
           0.0
         ],
         "clearance": 200.0,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_ConveyorLiftMk2_C": [
@@ -1864,7 +1947,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "ConveyorAny1",
@@ -1882,7 +1966,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_ConveyorLiftMk3_C": [
@@ -1902,7 +1987,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "ConveyorAny1",
@@ -1920,7 +2006,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_ConveyorLiftMk4_C": [
@@ -1940,7 +2027,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "ConveyorAny1",
@@ -1958,7 +2046,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_ConveyorLiftMk5_C": [
@@ -1978,7 +2067,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "ConveyorAny1",
@@ -1996,7 +2086,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_ConveyorLiftMk6_C": [
@@ -2016,7 +2107,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "ConveyorAny1",
@@ -2034,7 +2126,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_ConveyorMonitor_C": [],
@@ -2055,7 +2148,8 @@
           0.0
         ],
         "clearance": 0.0,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_ConveyorPoleWall_C": [
@@ -2075,7 +2169,8 @@
           0.0
         ],
         "clearance": 0.0,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_ConveyorPole_C": [
@@ -2095,7 +2190,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_ConveyorWallHole_C": [
@@ -2115,7 +2211,8 @@
           0.0
         ],
         "clearance": 0.0,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_DoorMiddle_C": [],
@@ -2148,7 +2245,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Input1",
@@ -2166,7 +2264,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Output0",
@@ -2184,7 +2283,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PowerConnection",
@@ -2202,7 +2302,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_ElevatorFloorStop_C": [
@@ -2222,7 +2323,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_Elevator_C": [
@@ -2242,7 +2344,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_FenceRamp_8x1_L_C": [],
@@ -2270,7 +2373,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": 2
+        "max_connections": 2,
+        "max_connections_source": "asset"
       }
     ],
     "Build_FloodlightWall_C": [
@@ -2290,7 +2394,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": 2
+        "max_connections": 2,
+        "max_connections_source": "asset"
       }
     ],
     "Build_FluidTruckStation_C": [
@@ -2310,7 +2415,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PipeInput0",
@@ -2328,7 +2434,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PipeInput1",
@@ -2346,7 +2453,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PipeOutput0",
@@ -2364,7 +2472,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PipeOutput1",
@@ -2382,7 +2491,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PowerInput",
@@ -2400,7 +2510,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_FoundationGlass_01_C": [],
@@ -2441,7 +2552,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Input1",
@@ -2459,7 +2571,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Output2",
@@ -2477,7 +2590,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PowerConnection",
@@ -2495,7 +2609,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_FrackingExtractor_C": [
@@ -2515,7 +2630,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_FrackingSmasher_C": [
@@ -2535,7 +2651,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_Gate_Automated_8x4_C": [],
@@ -2556,7 +2673,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PowerConnection",
@@ -2574,7 +2692,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_GeneratorBiomass_C": [
@@ -2594,7 +2713,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_GeneratorCoal_C": [
@@ -2614,7 +2734,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Input0",
@@ -2632,7 +2753,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PowerConnection",
@@ -2650,7 +2772,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_GeneratorFuel_C": [
@@ -2670,7 +2793,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PowerConnection",
@@ -2688,7 +2812,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_GeneratorGeoThermal_C": [
@@ -2708,7 +2833,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_GeneratorIntegratedBiomass_C": [
@@ -2728,7 +2854,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_GeneratorNuclear_C": [
@@ -2748,7 +2875,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Input0",
@@ -2766,7 +2894,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Output0",
@@ -2784,7 +2913,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PowerConnection",
@@ -2802,7 +2932,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_HadronCollider_C": [
@@ -2822,7 +2953,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Input0",
@@ -2840,7 +2972,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Input1",
@@ -2858,7 +2991,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Output0",
@@ -2876,7 +3010,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PowerInput",
@@ -2894,7 +3029,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_HubTerminal_C": [],
@@ -2920,7 +3056,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "ConnectionAny1",
@@ -2938,7 +3075,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_InvertedRamp_Asphalt_8x1_C": [],
@@ -2995,7 +3133,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_JumpPadTilted_C": [
@@ -3015,7 +3154,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_JumpPad_C": [
@@ -3035,7 +3175,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_Ladder_C": [],
@@ -3056,7 +3197,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_LargeFan_C": [],
@@ -3078,7 +3220,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "UpstreamConnection",
@@ -3096,7 +3239,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_Locker_MK1_C": [],
@@ -3119,7 +3263,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Input1",
@@ -3137,7 +3282,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Input2",
@@ -3155,7 +3301,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Input3",
@@ -3173,7 +3320,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Output0",
@@ -3191,7 +3339,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PowerConnection",
@@ -3209,7 +3358,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_MinerMk1_C": [
@@ -3229,7 +3379,8 @@
           0.0
         ],
         "clearance": 110.0,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PowerInput",
@@ -3247,7 +3398,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_MinerMk2_C": [
@@ -3267,7 +3419,8 @@
           0.0
         ],
         "clearance": 120.0,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PowerInput",
@@ -3285,7 +3438,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_MinerMk3_C": [
@@ -3305,7 +3459,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PowerInput",
@@ -3323,7 +3478,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_OilPump_C": [
@@ -3343,7 +3499,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PowerInput",
@@ -3361,7 +3518,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_OilRefinery_C": [
@@ -3381,7 +3539,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Output1",
@@ -3399,7 +3558,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PipeInputFactory",
@@ -3417,7 +3577,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PipeOutputFactory",
@@ -3435,7 +3596,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PowerConnection",
@@ -3453,7 +3615,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_Packager_C": [
@@ -3473,7 +3636,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Output1",
@@ -3491,7 +3655,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PipeInputFactory",
@@ -3509,7 +3674,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PipeOutputFactory",
@@ -3527,7 +3693,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PowerConnection",
@@ -3545,7 +3712,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_PillarBase_C": [],
@@ -3574,7 +3742,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_PipeHyperSupport_C": [],
@@ -3596,7 +3765,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "ConnectionAny1",
@@ -3614,7 +3784,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_PipeSupportStackable_C": [
@@ -3634,7 +3805,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_PipelineFlowIndicator_C": [],
@@ -3655,7 +3827,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Connection1",
@@ -3673,7 +3846,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Connection2",
@@ -3691,7 +3865,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Connection3",
@@ -3709,7 +3884,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_PipelineJunction_T_C": [
@@ -3729,7 +3905,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Connection1",
@@ -3747,7 +3924,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Connection2",
@@ -3765,7 +3943,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_PipelineMK2_C": [
@@ -3785,7 +3964,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PipelineConnection1",
@@ -3803,7 +3983,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_PipelineMK2_NoIndicator_C": [
@@ -3823,7 +4004,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PipelineConnection1",
@@ -3841,7 +4023,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_PipelinePumpMk2_C": [
@@ -3861,7 +4044,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Connection1",
@@ -3879,7 +4063,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PowerInput",
@@ -3897,7 +4082,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_PipelinePump_C": [
@@ -3917,7 +4103,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Connection1",
@@ -3935,7 +4122,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PowerInput",
@@ -3953,7 +4141,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_PipelineSupportWallHole_C": [
@@ -3973,7 +4162,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_PipelineSupportWall_C": [
@@ -3993,7 +4183,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_PipelineSupport_C": [
@@ -4013,7 +4204,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_Pipeline_C": [
@@ -4033,7 +4225,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PipelineConnection1",
@@ -4051,7 +4244,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_Pipeline_NoIndicator_C": [
@@ -4071,7 +4265,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PipelineConnection1",
@@ -4089,7 +4284,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_PortalPotty_C": [],
@@ -4110,7 +4306,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_Portal_C": [
@@ -4130,7 +4327,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PowerInput",
@@ -4148,7 +4346,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_PowerLine_C": [],
@@ -4169,7 +4368,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": 4
+        "max_connections": 4,
+        "max_connections_source": "asset"
       }
     ],
     "Build_PowerPoleMk2_C": [
@@ -4189,7 +4389,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": 7
+        "max_connections": 7,
+        "max_connections_source": "asset"
       }
     ],
     "Build_PowerPoleMk3_C": [
@@ -4209,7 +4410,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": 10
+        "max_connections": 10,
+        "max_connections_source": "asset"
       }
     ],
     "Build_PowerPoleWallDouble_C": [
@@ -4229,7 +4431,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": 4
+        "max_connections": 4,
+        "max_connections_source": "asset"
       },
       {
         "name": "PowerConnection2",
@@ -4247,7 +4450,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": 4
+        "max_connections": 4,
+        "max_connections_source": "asset"
       }
     ],
     "Build_PowerPoleWallDouble_Mk2_C": [
@@ -4267,7 +4471,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": 7
+        "max_connections": 7,
+        "max_connections_source": "asset"
       },
       {
         "name": "PowerConnection2",
@@ -4285,7 +4490,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": 7
+        "max_connections": 7,
+        "max_connections_source": "asset"
       }
     ],
     "Build_PowerPoleWallDouble_Mk3_C": [
@@ -4305,7 +4511,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": 10
+        "max_connections": 10,
+        "max_connections_source": "asset"
       },
       {
         "name": "PowerConnection2",
@@ -4323,7 +4530,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": 10
+        "max_connections": 10,
+        "max_connections_source": "asset"
       }
     ],
     "Build_PowerPoleWall_C": [
@@ -4343,7 +4551,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": 4
+        "max_connections": 4,
+        "max_connections_source": "asset"
       }
     ],
     "Build_PowerPoleWall_Mk2_C": [
@@ -4363,7 +4572,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": 7
+        "max_connections": 7,
+        "max_connections_source": "asset"
       }
     ],
     "Build_PowerPoleWall_Mk3_C": [
@@ -4383,7 +4593,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": 10
+        "max_connections": 10,
+        "max_connections_source": "asset"
       }
     ],
     "Build_PowerStorageMk1_C": [
@@ -4403,7 +4614,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": 2
+        "max_connections": 2,
+        "max_connections_source": "asset"
       }
     ],
     "Build_PowerSwitch_C": [
@@ -4423,7 +4635,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PowerConnection2",
@@ -4441,7 +4654,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_PowerTowerPlatform_C": [
@@ -4461,7 +4675,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": 4
+        "max_connections": 4,
+        "max_connections_source": "asset"
       },
       {
         "name": "PowerTowerConnection",
@@ -4479,7 +4694,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": 3
+        "max_connections": 3,
+        "max_connections_source": "asset"
       }
     ],
     "Build_PowerTower_C": [
@@ -4499,7 +4715,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": 4
+        "max_connections": 4,
+        "max_connections_source": "asset"
       },
       {
         "name": "PowerTowerConnection",
@@ -4517,7 +4734,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": 3
+        "max_connections": 3,
+        "max_connections_source": "asset"
       }
     ],
     "Build_PriorityPowerSwitch_C": [
@@ -4537,7 +4755,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PowerConnection2",
@@ -4555,7 +4774,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_QuantumEncoder_C": [
@@ -4575,7 +4795,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Input2",
@@ -4593,7 +4814,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Input3",
@@ -4611,7 +4833,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Output0",
@@ -4629,7 +4852,8 @@
           -0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PipeInput1",
@@ -4647,7 +4871,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PipeOutput1",
@@ -4665,7 +4890,8 @@
           -0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PowerInput",
@@ -4683,7 +4909,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_QuarterPipeCorner_01_C": [],
@@ -4766,7 +4993,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_Railing_01_C": [],
@@ -4865,7 +5093,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Input0",
@@ -4883,7 +5112,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_Roof_A_01_C": [],
@@ -4952,7 +5182,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Output2",
@@ -4970,7 +5201,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PowerConnection",
@@ -4988,7 +5220,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_SnowCannon_C": [],
@@ -5011,7 +5244,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Input1",
@@ -5029,7 +5263,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Input2",
@@ -5047,7 +5282,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Input4",
@@ -5065,7 +5301,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Input5",
@@ -5083,7 +5320,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Input6",
@@ -5101,7 +5339,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_StackableShelf_C": [],
@@ -5167,7 +5406,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Output1",
@@ -5185,7 +5425,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_StorageContainerMk2_C": [
@@ -5205,7 +5446,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Input1",
@@ -5223,7 +5465,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Output1",
@@ -5241,7 +5484,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Output2",
@@ -5259,7 +5503,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_StorageHazard_C": [],
@@ -5283,7 +5528,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": 2
+        "max_connections": 2,
+        "max_connections_source": "asset"
       }
     ],
     "Build_TarpFence_C": [],
@@ -5306,7 +5552,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PipeFactoryInput0",
@@ -5324,7 +5571,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PipeFactoryInput1",
@@ -5342,7 +5590,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PipeFactoryOutput0",
@@ -5360,7 +5609,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PipeFactoryOutput1",
@@ -5378,7 +5628,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_TrainDockingStation_C": [
@@ -5398,7 +5649,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Input0",
@@ -5416,7 +5668,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Input1",
@@ -5434,7 +5687,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Output0",
@@ -5452,7 +5706,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Output1",
@@ -5470,7 +5725,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_TrainPlatformEmpty_02_C": [],
@@ -5492,7 +5748,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_TreeGiftProducer_C": [
@@ -5512,7 +5769,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_TruckStation_C": [
@@ -5532,7 +5790,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Input1",
@@ -5550,7 +5809,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Input2",
@@ -5568,7 +5828,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Output0",
@@ -5586,7 +5847,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Output1",
@@ -5604,7 +5866,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PowerInput",
@@ -5622,7 +5885,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_Valve_C": [
@@ -5642,7 +5906,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "Connection1",
@@ -5660,7 +5925,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_VehiclePathNode_Default_C": [],
@@ -5699,7 +5965,8 @@
           0.0
         ],
         "clearance": 0.0,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_Wall_Concrete_8x4_ConveyorHole_02_C": [
@@ -5719,7 +5986,8 @@
           0.0
         ],
         "clearance": 0.0,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "SnapOnly1",
@@ -5737,7 +6005,8 @@
           0.0
         ],
         "clearance": 0.0,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_Wall_Concrete_8x4_ConveyorHole_03_C": [
@@ -5757,7 +6026,8 @@
           0.0
         ],
         "clearance": 0.0,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "SnapOnly1",
@@ -5775,7 +6045,8 @@
           0.0
         ],
         "clearance": 0.0,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "SnapOnly2",
@@ -5793,7 +6064,8 @@
           0.0
         ],
         "clearance": 0.0,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_Wall_Concrete_8x4_Corner_01_C": [],
@@ -5836,7 +6108,8 @@
           0.0
         ],
         "clearance": 0.0,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "SnapOnly1",
@@ -5854,7 +6127,8 @@
           0.0
         ],
         "clearance": 0.0,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "SnapOnly2",
@@ -5872,7 +6146,8 @@
           0.0
         ],
         "clearance": 0.0,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_Wall_Conveyor_8x4_01_Steel_C": [
@@ -5892,7 +6167,8 @@
           0.0
         ],
         "clearance": 0.0,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "SnapOnly1",
@@ -5910,7 +6186,8 @@
           0.0
         ],
         "clearance": 0.0,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "SnapOnly2",
@@ -5928,7 +6205,8 @@
           0.0
         ],
         "clearance": 0.0,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_Wall_Conveyor_8x4_02_C": [
@@ -5948,7 +6226,8 @@
           0.0
         ],
         "clearance": 0.0,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "SnapOnly1",
@@ -5966,7 +6245,8 @@
           0.0
         ],
         "clearance": 0.0,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_Wall_Conveyor_8x4_02_Steel_C": [
@@ -5986,7 +6266,8 @@
           0.0
         ],
         "clearance": 0.0,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "SnapOnly1",
@@ -6004,7 +6285,8 @@
           0.0
         ],
         "clearance": 0.0,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_Wall_Conveyor_8x4_03_C": [
@@ -6024,7 +6306,8 @@
           0.0
         ],
         "clearance": 0.0,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_Wall_Conveyor_8x4_03_Steel_C": [
@@ -6044,7 +6327,8 @@
           0.0
         ],
         "clearance": 0.0,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_Wall_Conveyor_8x4_04_C": [
@@ -6064,7 +6348,8 @@
           0.0
         ],
         "clearance": 0.0,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_Wall_Conveyor_8x4_04_Steel_C": [
@@ -6084,7 +6369,8 @@
           0.0
         ],
         "clearance": 0.0,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_Wall_Door_8x4_01_C": [],
@@ -6139,7 +6425,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       },
       {
         "name": "PowerConnection",
@@ -6157,7 +6444,8 @@
           0.0
         ],
         "clearance": null,
-        "max_connections": null
+        "max_connections": null,
+        "max_connections_source": "unknown"
       }
     ],
     "Build_WorkBenchIntegrated_C": [],
@@ -12606,6 +12894,366 @@
       "mConnection0": "PipelineConnection0",
       "mConnection1": "PipelineConnection1"
     }
+  },
+  "mesh_bounds": {
+    "Build_ConveyorBeltMk1_C": {
+      "property": "mMesh",
+      "mesh": "/Game/FactoryGame/Buildable/Factory/ConveyorBeltMk1/Mesh/SM_ConveyorBelt_Mk1.SM_ConveyorBelt_Mk1",
+      "stated_on": "Build_ConveyorBeltMk1_C",
+      "origin": [
+        100.0,
+        0.0,
+        -4.263819694519043
+      ],
+      "box_extent": [
+        100.0,
+        89.1260986328125,
+        13.911524772644043
+      ],
+      "sphere_radius": 134.10231018066406
+    },
+    "Build_ConveyorBeltMk2_C": {
+      "property": "mMesh",
+      "mesh": "/Game/FactoryGame/Buildable/Factory/ConveyorBeltMk2/Mesh/SM_ConveyorBelt_Mk2.SM_ConveyorBelt_Mk2",
+      "stated_on": "Build_ConveyorBeltMk2_C",
+      "origin": [
+        99.9785385131836,
+        -7.62939453125E-06,
+        -0.9148988723754883
+      ],
+      "box_extent": [
+        100.02141571044922,
+        89.3849105834961,
+        17.260459899902344
+      ],
+      "sphere_radius": 134.26100158691406
+    },
+    "Build_ConveyorBeltMk3_C": {
+      "property": "mMesh",
+      "mesh": "/Game/FactoryGame/Buildable/Factory/ConveyorBeltMk3/Mesh/SM_ConveyorBelt_Mk3.SM_ConveyorBelt_Mk3",
+      "stated_on": "Build_ConveyorBeltMk3_C",
+      "origin": [
+        100.00000762939453,
+        0.00019073486328125,
+        3.0867013931274414
+      ],
+      "box_extent": [
+        100.00000762939453,
+        89.66912078857422,
+        24.457866668701172
+      ],
+      "sphere_radius": 135.76986694335938
+    },
+    "Build_ConveyorBeltMk4_C": {
+      "property": "mMesh",
+      "mesh": "/Game/FactoryGame/Buildable/Factory/ConveyorBeltMk4/Mesh/SM_ConveyorBelt_Mk4.SM_ConveyorBelt_Mk4",
+      "stated_on": "Build_ConveyorBeltMk4_C",
+      "origin": [
+        99.99999237060547,
+        0.0,
+        -14.066400527954102
+      ],
+      "box_extent": [
+        100.00006866455078,
+        99.16556549072266,
+        43.71670913696289
+      ],
+      "sphere_radius": 147.46177673339844
+    },
+    "Build_ConveyorBeltMk5_C": {
+      "property": "mMesh",
+      "mesh": "/Game/FactoryGame/Buildable/Factory/ConveyorBeltMk5/Mesh/SM_ConveyorBelt_Mk5.SM_ConveyorBelt_Mk5",
+      "stated_on": "Build_ConveyorBeltMk5_C",
+      "origin": [
+        99.99995422363281,
+        -3.814697265625E-06,
+        -7.665998458862305
+      ],
+      "box_extent": [
+        100.00010681152344,
+        98.90240478515625,
+        50.11698913574219
+      ],
+      "sphere_radius": 148.6728057861328
+    },
+    "Build_ConveyorBeltMk6_C": {
+      "property": "mMesh",
+      "mesh": "/Game/FactoryGame/Buildable/Factory/ConveyorBeltMk6/Mesh/SM_ConveyorBelt_Mk6.SM_ConveyorBelt_Mk6",
+      "stated_on": "Build_ConveyorBeltMk6_C",
+      "origin": [
+        99.9988021850586,
+        7.62939453125E-06,
+        -4.352390289306641
+      ],
+      "box_extent": [
+        100.3028793334961,
+        99.20016479492188,
+        22.10426902770996
+      ],
+      "sphere_radius": 141.9478302001953
+    },
+    "Build_ConveyorLiftMk1_C": {
+      "property": "mMidMesh",
+      "mesh": "/Game/FactoryGame/Buildable/Factory/ConveyorLiftMk1/Mesh/SM_ConveyorLiftMid_MK1_01.SM_ConveyorLiftMid_MK1_01",
+      "stated_on": "Build_ConveyorLiftMk1_C",
+      "origin": [
+        -72.02611541748047,
+        5.43189811706543,
+        109.96813201904297
+      ],
+      "box_extent": [
+        33.70361328125,
+        94.55799865722656,
+        109.9682388305664
+      ],
+      "sphere_radius": 148.896484375
+    },
+    "Build_ConveyorLiftMk2_C": {
+      "property": "mMidMesh",
+      "mesh": "/Game/FactoryGame/Buildable/Factory/ConveyorLiftMk2/Mesh/ConveyorLiftMid_Mk2_static_LOD0.ConveyorLiftMid_Mk2_static_LOD0",
+      "stated_on": "Build_ConveyorLiftMk2_C",
+      "origin": [
+        -72.02611541748047,
+        5.43189811706543,
+        109.96813201904297
+      ],
+      "box_extent": [
+        33.70361328125,
+        94.55799865722656,
+        109.9682388305664
+      ],
+      "sphere_radius": 148.896484375
+    },
+    "Build_ConveyorLiftMk3_C": {
+      "property": "mMidMesh",
+      "mesh": "/Game/FactoryGame/Buildable/Factory/ConveyorLiftMk3/Mesh/ConveyorLiftMid_Mk3_static_LOD0.ConveyorLiftMid_Mk3_static_LOD0",
+      "stated_on": "Build_ConveyorLiftMk3_C",
+      "origin": [
+        -66.24478149414062,
+        5.43189811706543,
+        109.96813201904297
+      ],
+      "box_extent": [
+        39.48494338989258,
+        94.55799865722656,
+        109.9682388305664
+      ],
+      "sphere_radius": 150.31063842773438
+    },
+    "Build_ConveyorLiftMk4_C": {
+      "property": "mMidMesh",
+      "mesh": "/Game/FactoryGame/Buildable/Factory/ConveyorLiftMk4/Mesh/ConveyorLiftMid_Mk4_static_LOD0.ConveyorLiftMid_Mk4_static_LOD0",
+      "stated_on": "Build_ConveyorLiftMk4_C",
+      "origin": [
+        -57.595611572265625,
+        0.0,
+        109.96815490722656
+      ],
+      "box_extent": [
+        48.134117126464844,
+        100.30139923095703,
+        109.96821594238281
+      ],
+      "sphere_radius": 156.2921600341797
+    },
+    "Build_ConveyorLiftMk5_C": {
+      "property": "mMidMesh",
+      "mesh": "/Game/FactoryGame/Buildable/Factory/ConveyorLiftMk5/Mesh/ConveyorLiftMid_Mk5_static_LOD0.ConveyorLiftMid_Mk5_static_LOD0",
+      "stated_on": "Build_ConveyorLiftMk5_C",
+      "origin": [
+        -51.526424407958984,
+        0.0,
+        109.96815490722656
+      ],
+      "box_extent": [
+        54.203304290771484,
+        100.30139923095703,
+        109.96821594238281
+      ],
+      "sphere_radius": 157.0806884765625
+    },
+    "Build_ConveyorLiftMk6_C": {
+      "property": "mMidMesh",
+      "mesh": "/Game/FactoryGame/Buildable/Factory/ConveyorLiftMk6/Mesh/ConveyorLiftMid_Mk6_static_LOD0.ConveyorLiftMid_Mk6_static_LOD0",
+      "stated_on": "Build_ConveyorLiftMk6_C",
+      "origin": [
+        -3.814697265625E-06,
+        0.0,
+        105.8877182006836
+      ],
+      "box_extent": [
+        95.95315551757812,
+        87.9010238647461,
+        105.89786529541016
+      ],
+      "sphere_radius": 167.21701049804688
+    },
+    "Build_FoundationPassthrough_Hypertube_C": {
+      "property": "mMidMesh",
+      "mesh": "/Game/FactoryGame/Buildable/Factory/PipeHyper/Mesh/SM_HyperTube_01_Static.SM_HyperTube_01_Static",
+      "stated_on": "Build_FoundationPassthrough_Hypertube_C",
+      "origin": [
+        50.0000114440918,
+        0.0,
+        0.0
+      ],
+      "box_extent": [
+        50.00001907348633,
+        80.15345001220703,
+        80.15345001220703
+      ],
+      "sphere_radius": 98.6854019165039
+    },
+    "Build_FoundationPassthrough_Lift_C": {
+      "property": "mMidMesh",
+      "mesh": "/Game/FactoryGame/Buildable/Factory/ConveyorFloorHole/Mesh/SM_BlackBox_01.SM_BlackBox_01",
+      "stated_on": "Build_FoundationPassthrough_Lift_C",
+      "origin": [
+        -7.62939453125E-06,
+        -3.814697265625E-06,
+        -12.499999046325684
+      ],
+      "box_extent": [
+        97.15194702148438,
+        97.15196228027344,
+        12.500016212463379
+      ],
+      "sphere_radius": 123.078857421875
+    },
+    "Build_FoundationPassthrough_Pipe_C": {
+      "property": "mMidMesh",
+      "mesh": "/Game/FactoryGame/Buildable/Factory/Pipeline/Mesh/SM_Pipe_Static.SM_Pipe_Static",
+      "stated_on": "Build_FoundationPassthrough_Pipe_C",
+      "origin": [
+        49.986148834228516,
+        0.0,
+        0.0
+      ],
+      "box_extent": [
+        50.013851165771484,
+        74.99998474121094,
+        74.99998474121094
+      ],
+      "sphere_radius": 90.15263366699219
+    },
+    "Build_PipeHyper_C": {
+      "property": "mMesh",
+      "mesh": "/Game/FactoryGame/Buildable/Factory/PipeHyper/Mesh/SM_HyperTube_01.SM_HyperTube_01",
+      "stated_on": "Build_PipeHyper_C",
+      "origin": [
+        50.0,
+        0.11641311645507812,
+        0.2714366912841797
+      ],
+      "box_extent": [
+        50.00001525878906,
+        79.93576049804688,
+        79.94088745117188
+      ],
+      "sphere_radius": 94.38833618164062
+    },
+    "Build_PipelineMK2_C": {
+      "property": "mMesh",
+      "mesh": "/Game/FactoryGame/Buildable/Factory/Pipeline/Mesh/SM_Pipe.SM_Pipe",
+      "stated_on": "Build_PipelineMK2_C",
+      "origin": [
+        49.986148834228516,
+        0.0,
+        0.0
+      ],
+      "box_extent": [
+        50.013851165771484,
+        74.99998474121094,
+        74.99998474121094
+      ],
+      "sphere_radius": 90.15263366699219
+    },
+    "Build_PipelineMK2_NoIndicator_C": {
+      "property": "mMesh",
+      "mesh": "/Game/FactoryGame/Buildable/Factory/Pipeline/Mesh/SM_Pipe.SM_Pipe",
+      "stated_on": "Build_PipelineMK2_C",
+      "origin": [
+        49.986148834228516,
+        0.0,
+        0.0
+      ],
+      "box_extent": [
+        50.013851165771484,
+        74.99998474121094,
+        74.99998474121094
+      ],
+      "sphere_radius": 90.15263366699219
+    },
+    "Build_Pipeline_C": {
+      "property": "mMesh",
+      "mesh": "/Game/FactoryGame/Buildable/Factory/Pipeline/Mesh/SM_Pipe.SM_Pipe",
+      "stated_on": "Build_Pipeline_C",
+      "origin": [
+        49.986148834228516,
+        0.0,
+        0.0
+      ],
+      "box_extent": [
+        50.013851165771484,
+        74.99998474121094,
+        74.99998474121094
+      ],
+      "sphere_radius": 90.15263366699219
+    },
+    "Build_Pipeline_NoIndicator_C": {
+      "property": "mMesh",
+      "mesh": "/Game/FactoryGame/Buildable/Factory/Pipeline/Mesh/SM_Pipe.SM_Pipe",
+      "stated_on": "Build_Pipeline_C",
+      "origin": [
+        49.986148834228516,
+        0.0,
+        0.0
+      ],
+      "box_extent": [
+        50.013851165771484,
+        74.99998474121094,
+        74.99998474121094
+      ],
+      "sphere_radius": 90.15263366699219
+    },
+    "Build_RailroadTrackIntegrated_C": {
+      "property": "mMesh",
+      "mesh": "/Game/FactoryGame/Buildable/Factory/Train/Track/Mesh/SM_TrainTrack_02.SM_TrainTrack_02",
+      "stated_on": "Build_RailroadTrackIntegrated_C",
+      "origin": [
+        600.0028076171875,
+        -1.52587890625E-05,
+        67.50640869140625
+      ],
+      "box_extent": [
+        600.003173828125,
+        282.99481201171875,
+        67.65060424804688
+      ],
+      "sphere_radius": 662.9544067382812
+    },
+    "Build_RailroadTrack_C": {
+      "property": "mMesh",
+      "mesh": "/Game/FactoryGame/Buildable/Factory/Train/Track/Mesh/SM_TrainTrack_02.SM_TrainTrack_02",
+      "stated_on": "Build_RailroadTrack_C",
+      "origin": [
+        600.0028076171875,
+        -1.52587890625E-05,
+        67.50640869140625
+      ],
+      "box_extent": [
+        600.003173828125,
+        282.99481201171875,
+        67.65060424804688
+      ],
+      "sphere_radius": 662.9544067382812
+    }
+  },
+  "subsystem_defaults": {
+    "class": "BP_BuildableSubsystem_C",
+    "package": "FactoryGame/Content/FactoryGame/-Shared/Blueprint/BP_BuildableSubsystem.uasset",
+    "mDefaultPotentialShardSlots": null,
+    "mDefaultProductionShardSlotSize": 1
   },
   "wires": {
     "Build_PowerLine_C": {

@@ -260,8 +260,54 @@ blueprints (`.sbp`/`.sbpcfg`) byte-for-byte, and carries a game-data registry �
 recipe, connection port and placement limit — extracted from an installed copy of the game into
 `src/flab2bp/sfy/data/`. Nothing in it is typed in by hand. Milestone 1 is the format, the
 registry and a first authored blueprint: `uv run python scripts/sfy_checkpoint1.py` builds one
-into `out/sfy/` (not committed) and checks it; its docstring says how to load it in game. Layout
-and routing for this target are not written yet.
+into `out/sfy/` (not committed) and checks it; its docstring says how to load it in game.
+
+Milestone 2 makes it a build. The same `flab2bp` command takes a Satisfactory URL:
+
+```bash
+flab2bp 'https://factoriolab.github.io/sfy/list?o=iron-plate*60&v=11' \
+    --flow plates.csv --designer mk1 -o blueprints/
+```
+
+It lays the flow out as *manifold rows* — one row of machines per recipe, stacked along `Y`,
+with a corridor of belt columns down each side — validates the placement against the rules
+extracted from the game, and writes `<name>.sbp` and `<name>.sbpcfg` into the directory `-o`
+names (created if missing; the report goes to stdout, since the blueprint is two binary files).
+Copy both into a save's `blueprints/<session>` folder and load them from inside a Blueprint
+Designer. `--designer` picks the designer to fit inside — `mk1`, `mk2` or `mk3`, sized from the
+game's own designer buildable — and defaults to `mk1`.
+
+**FactorioLab's own solved flow is required**, unlike the DSP path, which re-derives a recipe
+selection when none is given. Pass `--flow` with the CSV the list view's "download as CSV"
+button writes, or `--fetch-flow` to have it captured from the URL; without one the build refuses
+rather than solving a selection the player did not choose. Exit codes are the DSP command's: `0`
+written, `1` the validator found errors and the blueprint was withheld (`--allow-invalid`
+overrides), `2` a bad URL, spec or missing flow, `3` no layout.
+
+What M2 refuses, rather than guessing at: **fluids** (`fluids are M4` — nothing pipes yet, so a
+flow carrying one is refused before any geometry), a **run past the fastest belt the save can
+build** (`run exceeds the belt ceiling`), and anything that **does not fit the chosen designer**
+in a single level of rows (`rows exceed the designer depth`/`width`).
+
+What fits is the sum of four things, measured rather than assumed, against the designer's own
+32 m (Mk.1), 40 m (Mk.2) or 48 m (Mk.3):
+
+- **each row's own band, 15.6–22.6 m** over the corpus — the machine's hard clearance boxes and
+  the chains that feed and drain it, every distance the game's;
+- **a margin at each wall of what the turn there costs**, 1.01 m today — *this project's choice*,
+  and derived rather than picked: a turn made by a conveyor attachment spends its own soft box
+  and one shortest legal belt, less whatever the row's band already covers;
+- **a gap between two rows of what their trunk's two turns still want**, 2.02 m today, and 1 m
+  between two rows of ONE group, which no trunk turns between — *ours*, same derivation;
+- **nothing at all between two rows the spec's own rates pair** — where one group makes exactly
+  what another eats, machine for machine, the two are laid facing each other with one straight
+  belt per pair and no chains and no trunk between them.
+
+So `iron-plate*60` is 27.6 m and fits a **Mk.1**, because its three Smelters and three
+Constructors pair; `concrete*60` is two halves of one group at 34.2 m and needs a **Mk.2**;
+`reinforced-iron-plate*10` is 95 m and fits none of the three. Every refusal names its cause,
+says the centimetres it wanted, and exits 3.
+[docs/sfy-layout-model.md](docs/sfy-layout-model.md) has each number and where it comes from.
 
 The committed data files mean neither the tests nor a build need a game install.
 [docs/sfy-regenerating-game-data.md](docs/sfy-regenerating-game-data.md) is the runbook for

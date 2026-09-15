@@ -56,6 +56,10 @@ class _RawBelt(_RawModel):
     speed: RawNumber | None = None
 
 
+class _RawPipe(_RawModel):
+    speed: RawNumber | None = None
+
+
 class _RawFuel(_RawModel):
     category: str | None = None
     value: RawNumber | None = None
@@ -76,6 +80,7 @@ class _RawItem(_RawModel):
     machine: _RawMachine | None = None
     module: _RawModule | None = None
     belt: _RawBelt | None = None
+    pipe: _RawPipe | None = None
     fuel: _RawFuel | None = None
     technology: _RawTechnology | None = None
 
@@ -105,6 +110,8 @@ class _RawDefaults(_RawModel):
     excluded_recipes: list[str] | None = Field(None, alias="excludedRecipes")
     min_belt: str | None = Field(None, alias="minBelt")
     max_belt: str | None = Field(None, alias="maxBelt")
+    min_pipe: str | None = Field(None, alias="minPipe")
+    max_pipe: str | None = Field(None, alias="maxPipe")
     min_machine_rank: list[str] | None = Field(None, alias="minMachineRank")
     max_machine_rank: list[str] | None = Field(None, alias="maxMachineRank")
     module_rank: list[str] | None = Field(None, alias="moduleRank")
@@ -282,6 +289,18 @@ class Belt:
 
 
 @dataclass(frozen=True, slots=True)
+class Pipe:
+    """A fluid carrier.  Parsed exactly like :class:`Belt`; ``speed`` is m^3/s."""
+
+    speed: Fraction
+
+    @classmethod
+    def parse(cls, raw: _RawPipe) -> Pipe:
+        speed = _frac(raw.speed)
+        return cls(speed=speed if speed is not None else Fraction(0))
+
+
+@dataclass(frozen=True, slots=True)
 class Fuel:
     category: str | None = None
     value: Fraction | None = None
@@ -320,6 +339,7 @@ class Item:
     machine: Machine | None = None
     module: Module | None = None
     belt: Belt | None = None
+    pipe: Pipe | None = None
     fuel: Fuel | None = None
     technology: Technology | None = None
 
@@ -335,6 +355,7 @@ class Item:
             machine=Machine.parse(raw.machine) if raw.machine is not None else None,
             module=Module.parse(raw.id, raw.module) if raw.module is not None else None,
             belt=Belt.parse(raw.belt) if raw.belt is not None else None,
+            pipe=Pipe.parse(raw.pipe) if raw.pipe is not None else None,
             fuel=Fuel.parse(raw.fuel) if raw.fuel is not None else None,
             technology=(Technology.parse(raw.technology) if raw.technology is not None else None),
         )
@@ -413,6 +434,8 @@ class Defaults:
     excluded_recipes: frozenset[str] = frozenset()
     min_belt: str | None = None
     max_belt: str | None = None
+    min_pipe: str | None = None
+    max_pipe: str | None = None
     min_machine_rank: tuple[str, ...] = ()
     max_machine_rank: tuple[str, ...] = ()
     module_rank: tuple[str, ...] = ()
@@ -427,6 +450,8 @@ class Defaults:
             excluded_recipes=frozenset(raw.excluded_recipes or ()),
             min_belt=raw.min_belt,
             max_belt=raw.max_belt,
+            min_pipe=raw.min_pipe,
+            max_pipe=raw.max_pipe,
             min_machine_rank=_tuple(raw.min_machine_rank),
             max_machine_rank=_tuple(raw.max_machine_rank),
             module_rank=_tuple(raw.module_rank),
@@ -566,6 +591,13 @@ class Dataset:
             raise KeyError(f"item {item_id!r} is not a belt")
         return belt.speed
 
+    def pipe_speed(self, item_id: str) -> Fraction:
+        """Pipe throughput in cubic metres/second."""
+        pipe = self.item(item_id).pipe
+        if pipe is None:
+            raise KeyError(f"item {item_id!r} is not a pipe")
+        return pipe.speed
+
     def limitation(self, name: str) -> frozenset[str]:
         """The recipe whitelist a limited module may be applied to."""
         return self.limitations.get(name, frozenset())
@@ -638,6 +670,7 @@ __all__: Sequence[str] = (
     "Item",
     "Machine",
     "Module",
+    "Pipe",
     "Recipe",
     "Technology",
 )

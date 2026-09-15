@@ -1,5 +1,10 @@
 # Struct layouts from the game
 
+Two kinds of bytes in a blueprint carry no tags and so cannot be read off the
+file: a `StructProperty` whose struct serialises itself, and the class trailer
+an object writes after its property list. Both sections below are the game's
+own answer, read out of the headers and the shipped binary.
+
 Every `StructProperty` in a blueprint file is one of three things: a nested
 tagged property list, a fixed engine layout (`Vector`, `Quat`, `Box`, …), or a
 struct the game serialises itself, member by member, with no tags at all. The
@@ -192,3 +197,162 @@ reference no fixture exercises.
 The pre-43 branch — an `FObjectReferenceDisc` for `LegacyItemStateActor` in
 place of the dynamic struct — is not decoded either: the oldest fixture is save
 version 46, and such a value would keep its bytes as a `BinaryStruct`.
+
+## `AFGBuildableWire` — the `Build_PowerLine_C` class trailer
+
+**Sources:** `Source/FactoryGame/Public/Buildables/FGBuildableWire.h` from
+`CommunityResources/Headers.zip` for the members and their names;
+`AFGBuildableWire::Serialize` in
+`FactoryGame/Binaries/Win64/FactoryGameEGS-FactoryGame-Win64-Shipping.dll` for
+the wire layout, because the header only declares the override (line 39,
+`virtual void Serialize( FArchive& ar ) override;`). Read with
+`tools/sfy-native`:
+
+```bash
+cd tools/sfy-native
+cargo run --release --quiet -- <dll> <pdb> disasm "AFGBuildableWire::Serialize" --out wire.json
+```
+
+### What the header says to expect
+
+```cpp
+class FACTORYGAME_API AFGBuildableWire : public AFGBuildable   // line 32
+{
+    virtual void Serialize( FArchive& ar ) override;           // line 39
+
+    UPROPERTY( ReplicatedUsing = OnRep_Connections )           // line 150
+    TWeakObjectPtr< class UFGCircuitConnectionComponent > mConnections[ 2 ];
+
+    UPROPERTY( Replicated )                                    // line 153
+    FVector mConnectionLocations[ 2 ];
+
+    UPROPERTY( SaveGame )                                      // line 156
+    TArray< FWireInstance > mWireInstances;
+
+    UPROPERTY( SaveGame )                                      // line 159
+    float mCachedLength;
+};
+```
+
+That split is the whole reason the trailer exists. `mWireInstances` and
+`mCachedLength` are `SaveGame`, so they go in the tagged property list like any
+other saved member — and every one of the corpus's 508 wires carries exactly
+those two names in its property list. `mConnections` is `Replicated` and *not*
+`SaveGame`, so no tag ever names it; the class's own `Serialize` has to write
+it, and that is what lands after the property list.
+
+### What the disassembly says is written
+
+`AFGBuildableWire::Serialize` is at RVA `0x586900`, 420 bytes from
+`.pdata-chained` in four chunks, 94 instructions. (The 42-byte function at
+`0x216700` is the `FStructuredArchive` thunk: it calls
+`FSlotBase::GetUnderlyingArchive` and tail-calls `0x586900`.) `rcx` is `this`
+(moved to `rdi`), `rdx` is the `FArchive&` (moved to `rbx`); annotations are the
+tool's, except the `;` comments.
+
+```
+0x58690d  call 00000000004B7300h  CALL AFGBuildable::Serialize  ; the property list and the actor's int32 0
+0x586912  test byte ptr [rbx+2Bh],20h                           ; ar.IsSaveGame()
+0x586916  je 0000000000586A9Dh                                  ; not a save archive: nothing more
+0x586921  lea rcx,[rdi+630h]                                    ; mConnections[0]
+0x586928  call qword ptr [0EE8A78h]  IMP ?Get@FWeakObjectPtr@@QEBAPEAVUObject@@XZ
+0x586933  lea rcx,[rdi+638h]                                    ; mConnections[1]
+0x586942  call qword ptr [0EE8A78h]  IMP ?Get@FWeakObjectPtr@@QEBAPEAVUObject@@XZ
+0x58695b  call qword ptr [rax+160h]                             ; ar << (UObject*&)mConnections[0]
+0x58696c  call qword ptr [rax+160h]                             ; ar << (UObject*&)mConnections[1]
+0x5869a8  call qword ptr [0EE8A88h]  IMP ??4FWeakObjectPtr@@QEAAXUFObjectPtr@@@Z   ; mConnections[0] =
+0x5869e6  call qword ptr [0EE8A88h]  IMP ??4FWeakObjectPtr@@QEAAXUFObjectPtr@@@Z   ; mConnections[1] =
+0x5869ec  test byte ptr [rbx+28h],1                             ; ar.IsLoading()
+0x5869f5  je 0000000000586A9Dh                                  ; saving: that is the whole trailer
+0x5869fb  lea rdx,[0F17818h]      CONST 2f3e0421d61fe613519d3b5130a23636
+0x586a05  call qword ptr [0EE6E38h]  IMP ?CustomVer@FArchiveState@@QEBAHAEBUFGuid@@@Z
+0x586a0b  cmp eax,21h                                           ; 33 = AddedCachedLocationsForWire
+0x586a0e  jl short 0000000000586A33h
+0x586a10  cmp eax,28h                                           ; 40 = MultipleWireMeshRefactor
+0x586a13  jge 0000000000586A9Dh
+0x586a21  call 000000000055CDA0h  CALL ??6Math@UE@@YAAEAVFArchive@@AEAV2@AEAU?$TVector@N@01@@Z
+0x586a2e  call 000000000055CDA0h  CALL ??6Math@UE@@YAAEAVFArchive@@AEAV2@AEAU?$TVector@N@01@@Z
+0x586a65  call 0000000000568BC0h  CALL AFGBuildableWire::DestroyWireInstances
+0x586a98  call 0000000000567730h  CALL AFGBuildableWire::CreateWireInstancesBetweenConnections
+```
+
+So the writer's whole contribution is two object references, and everything
+after `0x5869ec` is the load side rebuilding the wire meshes.
+
+Four things in that listing had to be pinned down before it could be read, and
+each was pinned down from game data rather than assumed:
+
+- **`[ar+0x2B] & 0x20` is `ArIsSaveGame`.** Both save archives set exactly that
+  bit in their constructors — `FObjectWriterFName::FObjectWriterFName` at RVA
+  `0xb39280` does `or byte ptr [r14+2Bh],20h` at `0xb3931a`, and
+  `FObjectReaderFName::FObjectReaderFName` at `0xb39000` does the same at
+  `0xb39097` — while calling the imported `SetIsSaving` / `SetIsLoading` for
+  those two flags separately, so the bit is neither of them. Its name comes
+  from `FProperty::ShouldSerializeValue` in
+  `Engine/Binaries/Win64/FactoryGameEGS-CoreUObject-Win64-Shipping.dll` at RVA
+  `0x27b670`, which is the engine's
+  `if( !(PropertyFlags & CPF_SaveGame) && Ar.IsSaveGame() ) return false;`:
+  `0x27b697` loads `PropertyFlags`, `0x27b69e`-`0x27b6a4` tests bit 24
+  (`CPF_SaveGame`) inverted, and `0x27b6a8` is `test byte ptr [rbx+2Bh],20h`.
+  Blueprint object bodies are written with `FObjectWriterFName`, so this branch
+  is always taken and the two references are always present.
+- **`[ar+0x28] & 0x01` is `ArIsLoading`.** `FArchiveState::SetIsLoading` in
+  `Engine/Binaries/Win64/FactoryGameEGS-Core-Win64-Shipping.dll` at RVA
+  `0x314d50` is twelve bytes and writes precisely that bit:
+  `movzx eax,byte ptr [rcx+28h]; and al,0FEh; or al,dl; mov byte ptr [rcx+28h],al`.
+- **`[archive vtable + 0x160]` is the save archive's `operator<<(UObject*&)`.**
+  `FObjectWriterFName`'s constructor installs its final vtable at `0x13333C8`
+  (`lea rax,[13333C8h]` at `0xb3931f`), whose `+0x160` slot holds
+  `0x180b3b2b0`, inside the FactoryGame module rather than the engine's
+  `FArchive`. That override builds an `FObjectReferenceDisc` — it calls
+  `FObjectReferenceDisc::Set` (RVA `0x8db300`) with the `UObject*`, then the
+  free `operator<<(FArchive&, FObjectReferenceDisc&)` at RVA `0x8b4260`, which
+  is six instructions: `ar << r.LevelName` (the struct at `+0x00`) then
+  `ar << r.PathName` (at `+0x10`, one `FString` further on), both through the
+  imported `??6@YAAEAVFArchive@@AEAV0@AEAVFString@@@Z`. A level `FString` then a
+  path `FString` — the same pair `Reader.object_ref` already reads.
+- **The `CustomVer` GUID at `0xf17818`** is the 16 bytes
+  `2f 3e 04 21 d6 1f e6 13 51 9d 3b 51 30 a2 36 36`, which is
+  `flab2bp.sfy.versions.SAVE_CUSTOM_VERSION_GUID` exactly, so `0x21` and `0x28`
+  are `AddedCachedLocationsForWire` (33) and `MultipleWireMeshRefactor` (40) —
+  the two enum members that bracket the life of the old cached locations, named
+  for exactly this.
+
+`AFGBuildable::Serialize` itself (RVA `0x4b7300`, 58 bytes) adds nothing to the
+bytes: it registers one custom version and tail-calls `AActor::Serialize`. The
+`int32 0` that opens the trailer is therefore the same four bytes
+`UObject::Serialize` writes for every other actor — the ones `BuildableTrailer`
+models — and not something the wire contributes.
+
+### The layout
+
+| field | bytes |
+| --- | --- |
+| (the base actor's) | `int32 0` |
+| `mConnections[0]` | `FObjectReferenceDisc`: level `FString`, path `FString` |
+| `mConnections[1]` | `FObjectReferenceDisc`: level `FString`, path `FString` |
+
+`flab2bp.sfy.trailers.PowerLineTrailer` is that, and
+`trailer_for_new("Build_PowerLine_C", ACTOR, connections)` authors one.
+Because the layout is now known in full, the power line is decoded strictly:
+bytes that are not this raise `ArchiveError` instead of surviving as opaque
+bytes.
+
+### What the corpus shows
+
+All 508 wires in the 49 fixtures decode into the two references and re-encode
+byte for byte (`tests/sfy/test_trailers.py`), across save versions 46 (67
+wires), 52 (131) and 60 (310). Every reference names `Persistent_Level`, and
+the connection components they name are `PowerConnection` (848), `PowerInput`
+(158), `FGPowerConnection` (5), `PowerConnection2` (4) and `PowerConnection1`
+(1) — all `UFGCircuitConnectionComponent` subobjects of the buildable at that
+end, which is what the member's declared type says they must be. Not one wire
+has bytes left over.
+
+The legacy branch — two `FVector` in place of nothing, at save custom version
+33 to 39 — is not decoded, and does not need to be twice over: it is guarded by
+`ar.IsLoading()`, so no writer has ever emitted it (the values are read into
+stack slots at `[rsp+20h]` and `[rsp+38h]` and then never used, which is what
+reading a field the game has since dropped looks like), and the oldest fixture
+is save version 46. A blueprint saved by a build in that range would raise
+`ArchiveError` naming those bytes rather than being silently re-encoded wrong.

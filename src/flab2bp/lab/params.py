@@ -31,6 +31,8 @@ from typing import Final
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
+from flab2bp.lab.games import Game
+
 type ParamValue = str | list[str]
 
 __all__ = [
@@ -428,7 +430,7 @@ _VENDORED = Path(__file__).parent / "vendored"
 def _candidate_paths(mod_id: str) -> Iterable[Path]:
     yield _VENDORED / mod_id / "hash.json"
     yield _VENDORED / f"{mod_id}-hash.json"
-    if mod_id == "dsp":
+    if mod_id == Game.DSP.value:
         # The single-dataset layout currently vendored in this package.
         yield _VENDORED / "hash.json"
 
@@ -448,7 +450,7 @@ def _load_vendored_mod_hash(mod_id: str) -> ModHash:
     return _load_mod_hash_path(source)
 
 
-def load_mod_hash(mod_id: str = "dsp", *, path: Path | None = None) -> ModHash:
+def load_mod_hash(mod_id: str = Game.DSP.value, *, path: Path | None = None) -> ModHash:
     """Load a dataset's ``hash.json`` from the vendored copy.
 
     Kept local and cached: the tables are needed to decode any compressed URL

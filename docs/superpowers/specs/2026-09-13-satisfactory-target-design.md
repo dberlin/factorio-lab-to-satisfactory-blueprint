@@ -53,7 +53,7 @@ than from hand-typed tables.
 
 `dotnet 10` is installed, so a CUE4Parse extractor can read the paks.
 
-## 4. Blueprint file format (decoded from headers and 19 community fixtures)
+## 4. Blueprint file format (decoded from headers and 49 community fixtures)
 
 All integers are little-endian. `FString` is `int32 n` then `n` bytes
 (ANSI, NUL-terminated) or, when `n < 0`, `-n` UTF-16 code units.
@@ -262,7 +262,10 @@ blueprints, then total occupied volume, then belt length).
    chain and drained by a merger chain along the row. Levels are a 1D packing of
    rows; blueprints are a 1D packing of levels. Trunk belts between rows, the
    bus wall and the external faces are routed on a 1 m lattice. Rows longer than
-   the wall are split.
+   the wall are split. **The levels sentence is M3's, not M2's**: getting a belt
+   from a row on one level to a row on another is a lift, and M2 ships no lifts,
+   so what M2 lays out is a single level of rows in one designer (R10, and
+   section 14 for what that cost).
 2. **Grid-routed placement.** Machines are packed per level on the hologram
    grid (greedy then CP-SAT rectangle packing on integer grid cells), every belt
    is routed by a 3D orthogonal router on the lattice with lifts as vertical
@@ -309,10 +312,18 @@ may not invent one in its place. The first consequence is concrete —
   through belts are refused.
 - Per belt run: length <= max spline length, incline <= max incline, and
   horizontal radius of curvature >= the `belt.curvature` floor (not
-  `mBendRadius`). Per lift: height within min/max and the vertical-connection
-  minimum when attached to a port; the step multiple is our own stricter rule,
-  because `lift.step` is `partial` and no quantisation was found in the game.
-  `lift_step_cm` is therefore *ungoverned* in the registry and says so.
+  `mBendRadius`). Per lift: height within min/max, where the minimum is
+  `mMinimumHeight` — `mMinimumHeightWithVerticalConnection` is the floor only
+  when the lift meets a **passthrough**, which is the gate
+  `UpdateTopTransform` reads (`mSnappedPassthroughs`, `0xaa4946`..`0xaa495d`;
+  see `docs/sfy-hologram-rules.md`), and this project authors no passthroughs.
+  Height a multiple of `lift_step_cm`, and a top yaw that is a whole number of
+  90 degree steps. The
+  multiple is the **game's own snap** — `UpdateTopTransform` rounds the height
+  onto a multiple of `mStepHeight` (`lift.step`, `extracted`/`snap`, and
+  `lift_step_cm` is governed by it in the registry) — and the *refusal* is
+  still ours, because a snap moves a lift rather than turning it away: a lift
+  we author off the step is one the game would silently build somewhere else.
 - Every port is connected exactly once with matching direction; every net's
   throughput <= its tier; pipes: flow <= tier and head lift within pump limits.
 - Wires <= max length and pole connection counts respected; every machine is
@@ -372,3 +383,74 @@ Milestones, each with its own plan:
 
 Horizontal tiling, trains and drones, generators, resource extraction,
 customization (paint), signs, and any mod content.
+
+## 14. Status after M2 (2026-09-15)
+
+What M2 actually shipped, against what this document asked for. Every number
+below is a measurement out of the branch -- the corpus audit's own report, or the
+strategy's own refusal text -- and not a figure written here by hand.
+
+**R10: M2 is single-level.** Section 9.1's "levels are a 1D packing of rows"
+needs vertical transport between rows on different levels, which is a lift, and
+`section 8.4`'s lifts are M3. So `ManifoldRows` lays one level of rows in one
+Blueprint Designer and refuses a chain that does not fit it. That ruling is what
+most of the corpus refusals below are.
+
+**How deep a row band is.** Measured over the 30 rows the corpus builds, one
+row's own band is 1560 to 2260 cm deep -- the machine's hard box, its splitter
+and merger chains, and the feeder belts between them, all from `registry.json`.
+Add the two wall margins (101 cm each, which is what a turn made by a conveyor
+attachment costs there) and the 202 cm gap a trunk turns out of one row and into
+the next, against designers 3200 (Mk1), 4000 (Mk2) and 4800 (Mk3) cm deep.
+
+Task 8d took 1437 cm out of the smallest build. `iron-plate*60` is **2763 cm and
+fits a Mk1**, where the manifold wanted 4200 and a Mk3: its three Smelters make
+exactly what its three Constructors eat, so `flab2bp.sfy.spec.direct_pairs`
+reports the pair from the rates alone and the two groups are laid as ONE row
+facing itself -- one straight belt per pair of machines, no merger chain, no
+splitter chain and no trunk between them. Where the rates do NOT pair, two rows
+and the gap their trunk turns in is what a build costs: `iron-rod*60` is 3524 cm
+and still wants a Mk3. Two SIBLING rows of ONE split group sit between the two --
+no trunk turns between them, so their gap is one grid step -- and `concrete*60`
+is 3422 cm of band and builds in a Mk2.
+
+**The corpus, measured at `f85afe3f`.** 36 cells (12 entries x 3 marks): 7 CLEAN, 25
+refused `rows exceed the designer depth`, 3 refused `fluids are M4`, 1 refused
+`corridor needs a bridge that does not fit`. Both gates pass and no cell is off
+its pin; `docs/superpowers/evidence/sfy-m2-audit-2026-09-14.md` is the table,
+cell by cell, with the centimetres each depth refusal measured -- the run at
+`6a35a02b` and, appended under it, the re-take after Task 8d.
+
+**The refusal inventory.** `flab2bp.sfy.layout.strategy.REFUSALS` is 24 named
+causes and the only ones the strategy may raise -- `_refuse` raises `ValueError`
+on anything else, and the mapping tables that turn a `RowError`, a
+`CorridorError` or a `PowerError` into one are pinned by a test. Three of the 24
+ever fire over the corpus -- the depth, the fluids and, since Task 8d made a Mk2
+deep enough for `steel-beam*20`'s two rows, the bridge its ore trunk needs to
+ride over its coal trunk. That is the honest reading of the list: it is a
+vocabulary for the failures this build form CAN have, not a claim that they
+happen. `docs/sfy-layout-model.md` says which bound each one comes from.
+
+**Checkpoint 2.** Three `.sbp`/`.sbpcfg` pairs, all `iron-plate*60` and all
+written for a **Mk1** since Task 8d -- `scripts/sfy_checkpoint2.py` tries the
+three marks in order and writes each pair into the first that holds it, because
+a blueprint a player can paste into the designer they already own is worth more
+than one that needs the biggest. Each asks one question a paste test can
+answer: the plain two-row chain (does
+it run at the flow's rate), the somersloop flow (does the same rate come out of
+fewer machines), and the 250 % overclock. The last one settles what section 7
+left open -- a blueprint writes each machine's saved potential but puts no Power
+Shard in any slot, so if a machine pasted at 250 % shows 100 % the game does not
+keep an overclock nothing paid for, and the `.sbpcfg` description becomes the
+only carrier of the clock. The in-game report is still outstanding.
+
+**Untouched by M2.** The stacking contract (section 8.3) and the bus wall
+(section 9.1) are as this document left them: M2 emits one blueprint, so nothing
+has yet had to stack, and no build has yet needed a bus.
+
+**Two gaps in the extractor, for M3.** `HologramLimits` reads `mHologramClass`
+without walking the class's supers, so a Mk2 or Mk3 power pole comes out with no
+`grid_snap_cm` of its own and the pole placer falls back on the general hologram
+grid. And `flab2bp.bench.sfy_corpus` still reaches `flab2bp.rates.CandidatePolicy`
+for its policy type, which drags the DSP catalog -- and `Tier` -- into a
+Satisfactory-only import; moving `Tier` out is a small M3 chore.

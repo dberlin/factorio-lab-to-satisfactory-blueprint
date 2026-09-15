@@ -100,7 +100,6 @@ from types import MappingProxyType
 from typing import Final
 from urllib.parse import parse_qsl, urlsplit
 
-from flab2bp.dsp import catalog
 from flab2bp.lab.schema import Dataset, Item, Recipe
 from flab2bp.lab.url import DisplayRate, LabRequest, ObjectiveType
 
@@ -124,11 +123,51 @@ __all__ = [
     "verify_provenance",
 ]
 
+#: FactorioLab's prefix for the Dark Fog-era spelling of a Dyson Sphere Program
+#: item or recipe.  It is DSP's alone -- no other dataset this tool reads spells
+#: an id this way -- which is what makes the two shims below able to answer
+#: without the DSP catalog for every id that does not carry it.
+_DARK_FOG_PREFIX: Final = "df-"
+
+
+def _canonical_item_id(item_id: str) -> str:
+    """:func:`flab2bp.dsp.catalog.canonical_item_id`, imported only when it can matter.
+
+    The catalog's own first act is to hand back any id that does not start with
+    ``df-``, so DSP's answers are unchanged: the same ids reach the same
+    function and every other id takes the early return it always took.  What
+    changes is WHEN ``flab2bp.dsp.catalog`` is imported.
+
+    This module is the FactorioLab CSV parser for every game -- spec §6 keeps
+    flow capture and parsing unchanged for Satisfactory -- and a module-level
+    DSP import made ``flab2bp.sfy.pipeline`` drag in DSP's catalog, registry,
+    colliders and geometry kernel to parse a Satisfactory flow that cannot
+    carry a ``df-`` id at all.  ``tests/sfy/test_rates.py`` guards that.
+    """
+    if not item_id.startswith(_DARK_FOG_PREFIX):
+        return item_id
+    from flab2bp.dsp import catalog
+
+    return catalog.canonical_item_id(item_id)
+
+
+def _canonical_recipe_id(recipe_id: str) -> str:
+    """:func:`flab2bp.dsp.catalog.canonical_recipe_id`, imported only when it can matter.
+
+    The recipe half of :func:`_canonical_item_id`, for the same reason and with
+    the same early return.
+    """
+    if not recipe_id.startswith(_DARK_FOG_PREFIX):
+        return recipe_id
+    from flab2bp.dsp import catalog
+
+    return catalog.canonical_recipe_id(recipe_id)
+
 
 def _canonical_rates(values: Mapping[str, Fraction]) -> Mapping[str, Fraction]:
     merged: dict[str, Fraction] = {}
     for item_id, rate in values.items():
-        canonical = catalog.canonical_item_id(item_id)
+        canonical = _canonical_item_id(item_id)
         merged[canonical] = merged.get(canonical, Fraction()) + rate
     return MappingProxyType(merged)
 
@@ -137,20 +176,18 @@ def canonicalize_dataset(data: Dataset) -> Dataset:
     """Return the dataset with alias and canonical production identity merged."""
     items_by_id: dict[str, Item] = {}
     for item in data.items:
-        item_id = catalog.canonical_item_id(item.id)
+        item_id = _canonical_item_id(item.id)
         machine = item.machine
         if machine is not None:
             machine = replace(machine, consumption=_canonical_rates(machine.consumption))
         module = item.module
         if module is not None and module.proliferator is not None:
-            module = replace(module, proliferator=catalog.canonical_item_id(module.proliferator))
+            module = replace(module, proliferator=_canonical_item_id(module.proliferator))
         technology = item.technology
         if technology is not None:
             technology = replace(
                 technology,
-                recipe_unlock=tuple(
-                    catalog.canonical_recipe_id(r) for r in technology.recipe_unlock
-                ),
+                recipe_unlock=tuple(_canonical_recipe_id(r) for r in technology.recipe_unlock),
             )
         normalized_item = replace(
             item,
@@ -164,13 +201,13 @@ def canonicalize_dataset(data: Dataset) -> Dataset:
 
     recipes_by_id: dict[str, Recipe] = {}
     for recipe in data.recipes:
-        recipe_id = catalog.canonical_recipe_id(recipe.id)
+        recipe_id = _canonical_recipe_id(recipe.id)
         normalized_recipe = replace(
             recipe,
             id=recipe_id,
             inputs=_canonical_rates(recipe.inputs),
             outputs=_canonical_rates(recipe.outputs),
-            producers=tuple(catalog.canonical_item_id(p) for p in recipe.producers),
+            producers=tuple(_canonical_item_id(p) for p in recipe.producers),
         )
         if recipe_id not in recipes_by_id or recipe.id == recipe_id:
             recipes_by_id[recipe_id] = normalized_recipe
@@ -178,16 +215,12 @@ def canonicalize_dataset(data: Dataset) -> Dataset:
     defaults = replace(
         data.defaults,
         excluded_recipes=frozenset(
-            catalog.canonical_recipe_id(recipe_id) for recipe_id in data.defaults.excluded_recipes
+            _canonical_recipe_id(recipe_id) for recipe_id in data.defaults.excluded_recipes
         ),
-        min_machine_rank=tuple(
-            catalog.canonical_item_id(i) for i in data.defaults.min_machine_rank
-        ),
-        max_machine_rank=tuple(
-            catalog.canonical_item_id(i) for i in data.defaults.max_machine_rank
-        ),
-        module_rank=tuple(catalog.canonical_item_id(i) for i in data.defaults.module_rank),
-        fuel_rank=tuple(catalog.canonical_item_id(i) for i in data.defaults.fuel_rank),
+        min_machine_rank=tuple(_canonical_item_id(i) for i in data.defaults.min_machine_rank),
+        max_machine_rank=tuple(_canonical_item_id(i) for i in data.defaults.max_machine_rank),
+        module_rank=tuple(_canonical_item_id(i) for i in data.defaults.module_rank),
+        fuel_rank=tuple(_canonical_item_id(i) for i in data.defaults.fuel_rank),
     )
     return Dataset(
         version=data.version,
@@ -196,7 +229,7 @@ def canonicalize_dataset(data: Dataset) -> Dataset:
         recipes=tuple(recipes_by_id.values()),
         limitations=MappingProxyType(
             {
-                name: frozenset(catalog.canonical_recipe_id(r) for r in recipes)
+                name: frozenset(_canonical_recipe_id(r) for r in recipes)
                 for name, recipes in data.limitations.items()
             }
         ),
@@ -207,7 +240,7 @@ def canonicalize_dataset(data: Dataset) -> Dataset:
 
 
 def _canonical_mapping[T](values: Mapping[str, T], identity: object) -> dict[str, T]:
-    canonical = catalog.canonical_item_id if identity == "item" else catalog.canonical_recipe_id
+    canonical = _canonical_item_id if identity == "item" else _canonical_recipe_id
     out: dict[str, T] = {}
     for value_id, value in values.items():
         out.setdefault(canonical(value_id), value)
@@ -217,7 +250,7 @@ def _canonical_mapping[T](values: Mapping[str, T], identity: object) -> dict[str
 def _canonical_set(values: set[str] | None, *, recipes: bool = False) -> set[str] | None:
     if values is None:
         return None
-    canonical = catalog.canonical_recipe_id if recipes else catalog.canonical_item_id
+    canonical = _canonical_recipe_id if recipes else _canonical_item_id
     return {canonical(value) for value in values}
 
 
@@ -229,9 +262,9 @@ def canonicalize_request(request: LabRequest) -> LabRequest:
             replace(
                 objective,
                 target_id=(
-                    catalog.canonical_recipe_id(objective.target_id)
+                    _canonical_recipe_id(objective.target_id)
                     if objective.is_recipe_objective
-                    else catalog.canonical_item_id(objective.target_id)
+                    else _canonical_item_id(objective.target_id)
                 ),
             )
             for objective in request.objectives
@@ -245,22 +278,22 @@ def canonicalize_request(request: LabRequest) -> LabRequest:
         machine_rank_ids=(
             None
             if request.machine_rank_ids is None
-            else [catalog.canonical_item_id(i) for i in request.machine_rank_ids]
+            else [_canonical_item_id(i) for i in request.machine_rank_ids]
         ),
         fuel_rank_ids=(
             None
             if request.fuel_rank_ids is None
-            else [catalog.canonical_item_id(i) for i in request.fuel_rank_ids]
+            else [_canonical_item_id(i) for i in request.fuel_rank_ids]
         ),
         module_rank_ids=(
             None
             if request.module_rank_ids is None
-            else [catalog.canonical_item_id(i) for i in request.module_rank_ids]
+            else [_canonical_item_id(i) for i in request.module_rank_ids]
         ),
         proliferator_spray_id=(
             None
             if request.proliferator_spray_id is None
-            else catalog.canonical_item_id(request.proliferator_spray_id)
+            else _canonical_item_id(request.proliferator_spray_id)
         ),
     )
 
@@ -662,10 +695,10 @@ def parse_flow_csv(text: str) -> FlowSelection:
         original_item_id = cell.get("Item", "").strip()
         rows.append(
             FlowRow(
-                item_id=catalog.canonical_item_id(original_item_id),
-                recipe_id=catalog.canonical_recipe_id(cell.get("Recipe", "").strip()),
-                machine_item_id=catalog.canonical_item_id(cell.get("Machine", "").strip()),
-                belt_item_id=catalog.canonical_item_id(cell.get("Belt", "").strip()),
+                item_id=_canonical_item_id(original_item_id),
+                recipe_id=_canonical_recipe_id(cell.get("Recipe", "").strip()),
+                machine_item_id=_canonical_item_id(cell.get("Machine", "").strip()),
+                belt_item_id=_canonical_item_id(cell.get("Belt", "").strip()),
                 items=None if parsed["Items"] is None else parsed["Items"][0],
                 surplus=None if parsed["Surplus"] is None else parsed["Surplus"][0],
                 machines=None if parsed["Machines"] is None else parsed["Machines"][0],

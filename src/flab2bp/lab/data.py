@@ -1,4 +1,4 @@
-"""Locating, caching and loading the FactorioLab DSP dataset.
+"""Locating, caching and loading a FactorioLab dataset.
 
 Resolution order is: an explicit path, then the on-disk HTTP cache, then the
 network, then the copy vendored in this package.  The vendored copy is what
@@ -21,10 +21,24 @@ from typing import Final
 
 from pydantic import BaseModel, ConfigDict, TypeAdapter
 
+from flab2bp.lab.games import Game
 from flab2bp.lab.schema import Dataset, HashIndex
 
-DATA_URL: Final = "https://factoriolab.github.io/data/dsp/data.json"
-HASH_URL: Final = "https://factoriolab.github.io/data/dsp/hash.json"
+
+def data_url(game: Game) -> str:
+    """Where FactorioLab serves ``data.json`` for ``game``."""
+    return f"https://factoriolab.github.io/data/{game.value}/data.json"
+
+
+def hash_url(game: Game) -> str:
+    """Where FactorioLab serves ``hash.json`` for ``game``."""
+    return f"https://factoriolab.github.io/data/{game.value}/hash.json"
+
+
+#: The DSP URLs under their long-standing names, for callers that predate
+#: :func:`data_url`.  Derived so the two spellings cannot drift apart.
+DATA_URL: Final = data_url(Game.DSP)
+HASH_URL: Final = hash_url(Game.DSP)
 
 VENDORED_DIR: Path = Path(__file__).parent / "vendored"
 
@@ -182,25 +196,36 @@ def _resolve_text(
         ) from exc
 
 
+def _vendored_name(game: Game, filename: str) -> str:
+    """Where ``game``'s copy of ``filename`` sits under :data:`VENDORED_DIR`.
+
+    DSP predates the per-game layout and stays flat, so that the paths every
+    existing caller and every packaging glob already know keep working.
+    """
+    return filename if game is Game.DSP else f"{game.value}/{filename}"
+
+
 def load_dataset(
     path: Path | str | None = None,
     *,
+    game: Game = Game.DSP,
     allow_network: bool = True,
     cache_dir: Path | None = None,
     force_refresh: bool = False,
 ) -> Dataset:
-    """Load the DSP dataset.
+    """Load a game's dataset.
 
     Args:
         path: Read this file instead of consulting cache, network or vendor.
+        game: Which FactorioLab dataset to load.
         allow_network: Whether a cache miss may fetch from FactorioLab.
         cache_dir: Override the on-disk cache location.
         force_refresh: Skip the cached body and re-fetch.
     """
     text = _resolve_text(
-        DATA_URL,
+        data_url(game),
         path=Path(path) if path is not None else None,
-        vendored_name="data.json",
+        vendored_name=_vendored_name(game, "data.json"),
         allow_network=allow_network,
         cache_dir=cache_dir,
         force_refresh=force_refresh,
@@ -211,15 +236,16 @@ def load_dataset(
 def load_hash_index(
     path: Path | str | None = None,
     *,
+    game: Game = Game.DSP,
     allow_network: bool = True,
     cache_dir: Path | None = None,
     force_refresh: bool = False,
 ) -> HashIndex:
     """Load ``hash.json``, the id tables that ``z=``-compressed URLs index into."""
     text = _resolve_text(
-        HASH_URL,
+        hash_url(game),
         path=Path(path) if path is not None else None,
-        vendored_name="hash.json",
+        vendored_name=_vendored_name(game, "hash.json"),
         allow_network=allow_network,
         cache_dir=cache_dir,
         force_refresh=force_refresh,
@@ -228,7 +254,20 @@ def load_hash_index(
 
 
 @cache
-def load_vendored() -> Dataset:
+def _vendored_dataset(game: Game) -> Dataset:
+    """One parsed ``Dataset`` per game, however ``load_vendored`` was spelled.
+
+    `functools.cache` keys on the argument tuple, so a cache on
+    `load_vendored` alone would hand out two distinct objects for
+    `load_vendored()` and `load_vendored(Game.DSP)`.  Keying here, where the
+    game is always explicit, keeps one instance per game.
+    """
+    source = VENDORED_DIR / _vendored_name(game, "data.json")
+    return Dataset.parse(_parse_json(source.read_text(encoding="utf-8")))
+
+
+@cache
+def load_vendored(game: Game | str = Game.DSP) -> Dataset:
     """Load the in-repo copy directly, bypassing cache and network.
 
     `@cache`d because `bench/runner.py` calls it TWICE per corpus URL --
@@ -236,12 +275,22 @@ def load_vendored() -> Dataset:
     re-parsed an unchanged `data.json` 24 times and rebuilt
     `Dataset.__post_init__`'s indexes 24 times. `Dataset` is
     `@dataclass(frozen=True, slots=True)`, so sharing one instance is safe.
+
+    ``game`` is coerced here rather than trusted: a caller that passes the bare
+    string `"sfy"` gets the right dataset, and one that passes a typo gets
+    `ValueError: 'sdy' is not a valid Game` instead of a silent miss. Without
+    the coercion :func:`_vendored_name`'s ``game is Game.DSP`` is False for the
+    *string* `"dsp"`, so `load_vendored("dsp")` would look under `dsp/` --
+    where DSP's flat layout keeps nothing -- and raise an unrelated `OSError`.
+    `Game` is a `StrEnum`, so the two spellings hash and compare equal and
+    share one cache entry.
     """
-    return Dataset.parse(_parse_json((VENDORED_DIR / "data.json").read_text(encoding="utf-8")))
+    return _vendored_dataset(Game(game))
 
 
-def load_vendored_hash_index() -> HashIndex:
-    return HashIndex.parse(_parse_json((VENDORED_DIR / "hash.json").read_text(encoding="utf-8")))
+def load_vendored_hash_index(game: Game | str = Game.DSP) -> HashIndex:
+    source = VENDORED_DIR / _vendored_name(Game(game), "hash.json")
+    return HashIndex.parse(_parse_json(source.read_text(encoding="utf-8")))
 
 
 __all__ = (
@@ -249,8 +298,11 @@ __all__ = (
     "HASH_URL",
     "VENDORED_DIR",
     "DatasetNotAvailable",
+    "Game",
     "cache_path_for",
+    "data_url",
     "default_cache_dir",
+    "hash_url",
     "load_dataset",
     "load_hash_index",
     "load_vendored",

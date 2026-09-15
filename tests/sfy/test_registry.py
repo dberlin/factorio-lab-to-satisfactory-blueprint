@@ -15,7 +15,11 @@ import pytest
 from flab2bp.sfy import docs
 from flab2bp.sfy.registry import (
     FLOW_SOURCES,
+    LIFT_GEOMETRY_FIELDS,
+    LIFT_GEOMETRY_SOURCES,
+    LIFT_NATIVE_CLASS,
     LIMIT_SOURCES,
+    MAX_CONNECTIONS_SOURCES,
     PORT_DIRECTION_SOURCES,
     Limits,
     RegistryError,
@@ -35,16 +39,25 @@ BINARY = (
     "pipe_bend_radius_2d_cm",
     "pipe_max_spline_cm",
     "pipe_min_bend_radius_cm",
+    # Not a hologram member: AFGBuildableSubsystem's constructor, which is what
+    # every factory's overclock slot count comes from because no shipped class
+    # overrides it and the cooked subsystem Blueprint does not either.
+    "potential_shard_slots_default",
 )
 
 # The three the binary states no constant for: ``AFGConveyorLiftHologram``
 # computes all three in ``BeginPlay`` from the lift buildable's mesh height H.
 # The formula is in the machine code, H is in Docs.json, so the merge evaluates
 # it rather than falling back to the corpus.
-BINARY_DERIVED = ("lift_max_cm", "lift_min_cm", "lift_min_vertical_cm")
+LIFT_DERIVED = ("lift_max_cm", "lift_min_cm", "lift_min_vertical_cm")
+BINARY_DERIVED = ("belt_min_length_cm", *LIFT_DERIVED)
 
 # Every lift mark's Docs.json mMeshHeight, and the three heights that follow.
 MESH_HEIGHT_CM = 200.0
+
+# Every belt mark's Docs.json mMeshLength, which is what
+# AFGConveyorBeltHologram::ValidateMinLength multiplies by 0.5001.
+MESH_LENGTH_CM = 200.0
 
 
 def test_registry_has_ports_for_the_core_machines():
@@ -127,12 +140,179 @@ def test_conveyor_lift_heights_come_from_the_formula_in_the_binary():
     # merge applies that arithmetic to Docs.json's mMeshHeight.
     assert reg.limits_sources["lift_step_cm"] == "binary"
     assert lim.lift_step_cm == 100.0
-    for key in BINARY_DERIVED:
+    for key in LIFT_DERIVED:
         assert reg.limits_sources[key] == "binary-derived", key
         assert reg.provenance["limits"][key]["H"] == MESH_HEIGHT_CM
     assert lim.lift_min_cm == 2.0 * MESH_HEIGHT_CM
     assert lim.lift_max_cm == 24.0 * MESH_HEIGHT_CM
     assert lim.lift_min_vertical_cm == MESH_HEIGHT_CM - 50.0
+
+
+def test_the_minimum_belt_length_is_what_validate_min_length_compares_against():
+    """The floor is a product, not a constant: 0.5001 times the mark's mMeshLength.
+
+    ``AFGConveyorBeltHologram::ValidateMinLength`` loads the belt's cached
+    ``mMeshLength`` and multiplies it by the ``.rdata`` float 0.5001 before the
+    ``comiss`` that decides (``mulss xmm7,[132F848h]`` at 0xaa58b2), so there is
+    no centimetre immediate anywhere in the binary to read -- the limit has the
+    same standing as the three lift heights, ``binary-derived``, and the merge
+    holds the multiplier to the ``belt.min_length`` rule's own evidence line.
+    """
+    reg = load_registry()
+    assert reg.limits_sources["belt_min_length_cm"] == "binary-derived"
+    assert reg.limits.belt_min_length_cm == 0.5001 * MESH_LENGTH_CM
+    where = reg.provenance["limits"]["belt_min_length_cm"]
+    assert where["formula"] == "0.5001 * L"
+    assert where["L"] == MESH_LENGTH_CM
+    assert "mMeshLength" in where["L_from"]
+    assert "0xaa58b2" in where["evaluated_in"] and "f32=0.5001" in where["evaluated_in"]
+    # Every belt mark is charged against the same mesh length, which is why one
+    # global floor is honest; a mark that differed would fail the merge.
+    marks = {
+        c: b.mesh_length_cm for c, b in reg.buildables.items() if c.startswith("Build_ConveyorBelt")
+    }
+    assert len(marks) == 6 and set(marks.values()) == {MESH_LENGTH_CM}
+
+
+def test_the_conveyor_mesh_boxes_are_the_cooked_static_meshes_own_bounds():
+    """``mesh_bounds_cm`` is ``Origin -+ BoxExtent`` of the mesh the class points at.
+
+    A belt states its mesh in ``mMesh`` and a lift its repeated mid section in
+    ``mMidMesh``, and the box is the cooked ``UStaticMesh``'s own
+    ``RenderData.Bounds`` -- game data, never a box measured off a blueprint.
+    The Mk1 belt's mesh runs the full 200 cm of one segment along X and is
+    178.25 cm wide, which is **wider than the clearance the game actually
+    tests**: ``belt.clearance`` lays boxes 158 cm wide along the spline. The two
+    are different facts and the registry carries them separately.
+    """
+    reg = load_registry()
+    belt = reg.buildables["Build_ConveyorBeltMk1_C"]
+    assert belt.mesh_bounds_property == "mMesh"
+    low, high = belt.mesh_bounds_cm
+    assert (low[0], high[0]) == (0.0, MESH_LENGTH_CM)
+    assert high[1] == pytest.approx(89.1260986328125) and low[1] == -high[1]
+    lift = reg.buildables["Build_ConveyorLiftMk1_C"]
+    assert lift.mesh_bounds_property == "mMidMesh"
+    assert lift.mesh_bounds_cm[1][2] == pytest.approx(219.93637084960938)
+    # Every belt and lift mark carries one, and each says which asset it read.
+    marks = [f"Build_Conveyor{kind}Mk{n}_C" for kind in ("Belt", "Lift") for n in range(1, 7)]
+    assert all(reg.buildables[c].mesh_bounds_cm is not None for c in marks)
+    paths = reg.provenance["mesh_bounds"]["applied_to"]
+    assert paths["Build_ConveyorBeltMk1_C"]["mesh"].endswith("SM_ConveyorBelt_Mk1")
+    assert all(paths[c]["mesh"].startswith("/Game/") for c in marks)
+    assert reg.provenance["mesh_bounds"]["source"] == "assets"
+
+
+def test_a_machine_power_input_takes_the_wire_count_its_archetype_sets():
+    """An absent ``mMaxNumConnectionLinks`` is the constructor's 1, not "unknown".
+
+    A cooked asset omits the property wherever it equals the component
+    archetype's value, and for a machine's power input the archetype is
+    ``UFGCircuitConnectionComponent``'s own C++ constructor, which the pak does
+    not carry. ``tools/sfy-native`` reads the store out of the shipped DLL, and
+    the merge fills every silent power port from it -- the same hand-off the
+    port directions make, and the reason a machine now says "one wire" instead
+    of saying nothing.
+    """
+    reg = load_registry()
+    native = reg.provenance["max_connections"]
+    assert native["native_default"] == 1
+    assert native["class"] == "UFGCircuitConnectionComponent"
+    assert native["member"] == "mMaxNumConnectionLinks"
+    assert "mov dword ptr [rbx+280h],1" in native["evidence"]
+    assert native["size_source"] == "pdata"
+    for machine in (
+        "Build_ConstructorMk1_C",
+        "Build_AssemblerMk1_C",
+        "Build_SmelterMk1_C",
+        "Build_FoundryMk1_C",
+        "Build_ManufacturerMk1_C",
+    ):
+        (power,) = [p for p in reg.buildables[machine].ports if p.kind == "power"]
+        assert (power.max_connections, power.max_connections_source) == (1, "native"), machine
+    # The poles still win with their own Blueprint's number.
+    (pole,) = [p for p in reg.buildables["Build_PowerPoleMk3_C"].ports if p.kind == "power"]
+    assert (pole.max_connections, pole.max_connections_source) == (10, "asset")
+
+
+def test_the_overclock_and_somersloop_numbers_come_from_the_games_own_data():
+    """What a shard unlocks, and how many slots there are to put one in.
+
+    ``UFGPowerShardDescriptor::GetBoostValue`` returns the descriptor's own
+    ``mExtraPotential``/``mExtraProductionBoost``, which Docs.json states; the
+    slot counts are the buildable subsystem's defaults, because
+    ``AFGBuildableFactory::BeginPlay`` copies them onto every class whose
+    ``mOverride*`` bit is clear, and no shipped class sets the overclock one.
+    The class's own ``potential_shard_slots`` is 0 everywhere and is *not* the
+    number of slots -- reading it as one would say nothing can be overclocked.
+    """
+    reg = load_registry()
+    lim = reg.limits
+    assert (lim.potential_per_shard, reg.limits_sources["potential_per_shard"]) == (0.5, "docs")
+    assert (lim.production_boost_per_slot, reg.limits_sources["production_boost_per_slot"]) == (
+        1.0,
+        "docs",
+    )
+    shard = reg.provenance["limits"]["potential_per_shard"]
+    assert (shard["descriptor"], shard["property"]) == ("Desc_CrystalShard_C", "mExtraPotential")
+    sloop = reg.provenance["limits"]["production_boost_per_slot"]
+    assert (sloop["descriptor"], sloop["property"]) == ("Desc_WAT1_C", "mExtraProductionBoost")
+    # Three overclock slots from the native constructor, one somersloop slot
+    # because the cooked subsystem Blueprint overrides the native four down to 1.
+    assert lim.potential_shard_slots_default == 3
+    assert reg.limits_sources["potential_shard_slots_default"] == "binary"
+    assert lim.production_boost_slots_default == 1
+    assert reg.limits_sources["production_boost_slots_default"] == "assets"
+    where = reg.provenance["limits"]["production_boost_slots_default"]
+    assert where["class"] == "BP_BuildableSubsystem_C" and where["overridden_by_the_blueprint"]
+    assert not reg.provenance["limits"]["potential_shard_slots_default"][
+        "overridden_by_the_blueprint"
+    ]
+    ctor = reg.buildables["Build_ConstructorMk1_C"]
+    assert ctor.potential_shard_slots == 0 and ctor.potential_shard_slots_override is False
+    # The ceiling the game works out: 1.0 + three shards of half a potential each.
+    assert ctor.max_potential + lim.potential_shard_slots_default * lim.potential_per_shard == 2.5
+
+
+def test_the_power_and_boost_exponents_are_per_class_and_not_a_limit():
+    """The game states no global exponent, so neither exponent is in ``limits``.
+
+    ``mPowerConsumptionExponent`` is 1.321929 on every manufacturer and
+    extractor and 1.6 on everything else, so a single number in ``limits`` would
+    be an invented one; both exponents ride on the buildable that states them.
+    The somersloop multiplier is per class for the same reason, and it is what
+    makes one slot and four slots both double a machine's output.
+    """
+    reg = load_registry()
+    assert not any(f.name.endswith("exponent") for f in fields(Limits))
+    ctor = reg.buildables["Build_ConstructorMk1_C"]
+    assert ctor.power_exponent == pytest.approx(1.321929)
+    assert ctor.production_boost_power_exponent == 2.0
+    assert reg.buildables["Build_TradingPost_C"].power_exponent == 1.6
+    boost = {
+        c: (
+            reg.buildables[c].production_boost_multiplier,
+            reg.buildables[c].production_boost_slots,
+            reg.buildables[c].production_boost_slots_override,
+        )
+        for c in (
+            "Build_ConstructorMk1_C",
+            "Build_AssemblerMk1_C",
+            "Build_FoundryMk1_C",
+            "Build_ManufacturerMk1_C",
+        )
+    }
+    assert boost == {
+        "Build_ConstructorMk1_C": (1.0, 1, False),
+        "Build_AssemblerMk1_C": (0.5, 2, True),
+        "Build_FoundryMk1_C": (0.5, 2, True),
+        "Build_ManufacturerMk1_C": (0.25, 4, True),
+    }
+    # A full set of somersloops doubles the output whatever the slot count.
+    for class_name, (multiplier, slots, override) in boost.items():
+        filled = slots if override else reg.limits.production_boost_slots_default
+        base = reg.buildables[class_name].base_production_boost
+        assert base + filled * reg.limits.production_boost_per_slot * multiplier == 2.0
 
 
 def test_the_lift_height_ladder_is_self_consistent():
@@ -216,9 +396,10 @@ def test_what_the_game_does_with_each_governed_limit():
 
     ``enforced_by`` used to claim every one of these was turned away, which the
     rules themselves contradict: a lift's height is clamped into range, the grid
-    and the rotation step are snapped to. ``lift_step_cm`` is not here at all:
-    no instruction was seen quantising a lift's height to ``mStepHeight``, so
-    nothing governs it and it says so under ``ungoverned``.
+    and the rotation step are snapped to, and so is the lift's height before the
+    clamp -- ``UpdateTopTransform`` rounds it onto a multiple of ``mStepHeight``
+    (``lift.step``), which is why ``lift_step_cm`` is governed with the effect
+    ``snap`` and not refused by anything in the game.
     """
     governed = {
         key: entry["governed_by"]["effect"]
@@ -229,6 +410,8 @@ def test_what_the_game_does_with_each_governed_limit():
         "belt_max_spline_cm": "refuse",
         "belt_bend_radius_cm": "refuse",
         "belt_max_incline_deg": "refuse",
+        "belt_min_length_cm": "refuse",
+        "lift_step_cm": "snap",
         "lift_min_cm": "clamp",
         "lift_max_cm": "clamp",
         "lift_min_vertical_cm": "clamp",
@@ -236,6 +419,12 @@ def test_what_the_game_does_with_each_governed_limit():
         "pipe_min_bend_radius_cm": "refuse",
         "hologram_grid_cm": "snap",
         "hologram_rotation_step_deg": "compute",
+        # The four overclock and somersloop numbers: the game works each of them
+        # out and refuses nothing over any of them.
+        "potential_per_shard": "compute",
+        "potential_shard_slots_default": "compute",
+        "production_boost_per_slot": "compute",
+        "production_boost_slots_default": "compute",
     }
 
 
@@ -268,16 +457,15 @@ def test_the_limits_no_rule_governs_say_why():
         if not entry["governed_by"]
     }
     assert set(ungoverned) == {
-        "lift_step_cm",
         "pipe_bend_radius_cm",
         "pipe_bend_radius_2d_cm",
         "wire_max_cm",
     }
     assert all(reason for reason in ungoverned.values())
-    # The lift step is still read out of the binary; what it is not is a bound
-    # the game applies. The multiple this project keeps to is its own rule.
-    assert "mStepHeight" in ungoverned["lift_step_cm"]
-    assert "never quantises" in ungoverned["lift_step_cm"]
+    # The lift step is no longer one of them: lift.step governs it with the
+    # effect ``snap``, because UpdateTopTransform rounds the height onto a
+    # multiple of mStepHeight before it clamps it.
+    assert reg.provenance["limits"]["lift_step_cm"]["governed_by"]["rule"] == "lift.step"
     assert load_registry().limits_sources["lift_step_cm"] == "binary"
 
 
@@ -383,9 +571,9 @@ def test_the_conveyor_flow_order_carries_the_game_it_was_read_from():
     assert "caveat" not in flow
     if flow["source"] == "native":
         # The grab that makes mConnection0 the entry, and the function it is in.
-        assert any(
-            "Factory_GrabOutput" in line for line in flow["instructions"]
-        ), flow["instructions"]
+        assert any("Factory_GrabOutput" in line for line in flow["instructions"]), flow[
+            "instructions"
+        ]
         assert {f["symbol"] for f in flow["functions"]} >= {
             "AFGBuildableConveyorBase::Factory_Tick",
             "UFGFactoryConnectionComponent::Factory_GrabOutput",
@@ -530,24 +718,23 @@ def test_the_power_poles_carry_the_connection_counts_the_assets_state():
 def test_only_power_ports_can_carry_a_connection_count():
     """The property is on the circuit connection; a belt or pipe has no such thing.
 
-    A power port whose Blueprint does not override the native default carries
-    ``None``: the value then lives in a native constructor the pak does not
-    ship, and nothing here invents one. Every wall-mounted pole repeats its
-    free-standing mark's count, which is how the null ones can be told from a
-    number that went missing.
+    So a belt or pipe port carries ``None`` and says ``unknown``, and every
+    power port carries a number and says which link of the archetype chain
+    answered -- the Blueprint, a parent Blueprint, or the native constructor.
+    Every wall-mounted pole repeats its free-standing mark's count.
     """
     reg = load_registry()
     ports = [(c, p) for c, b in reg.buildables.items() for p in b.ports]
     assert [f"{c}.{p.name}" for c, p in ports if p.kind != "power" and p.max_connections] == []
+    assert [
+        f"{c}.{p.name}"
+        for c, p in ports
+        if (p.kind == "power") != (p.max_connections_source != "unknown")
+    ] == []
+    assert {p.max_connections_source for _, p in ports} <= set(MAX_CONNECTIONS_SOURCES)
     stated = {f"{c}.{p.name}": p.max_connections for c, p in ports if p.max_connections}
     assert stated["Build_PowerPoleWall_Mk2_C.PowerConnection"] == 7
     assert stated["Build_PowerTower_C.PowerTowerConnection"] == 3
-    assert reg.buildables["Build_AssemblerMk1_C"].ports  # a machine has ports
-    assert all(
-        p.max_connections is None
-        for p in reg.buildables["Build_AssemblerMk1_C"].ports
-        if p.kind == "power"
-    )
 
 
 def test_the_direction_provenance_counts_the_ports_the_registry_ships():
@@ -734,6 +921,103 @@ def test_the_registry_says_which_extraction_it_was_merged_from():
     assert set(committed) == set(sfy_registry.MERGE_INPUTS)
     for name, digest in committed.items():
         assert digest == hashlib.sha256((data / name).read_bytes()).hexdigest(), name
+
+
+def test_every_lift_mark_says_where_its_two_ends_sit():
+    """The ports on a lift are both at the origin; this is what the game moves them to.
+
+    ``AFGBuildableConveyorLift::SetupConnections`` puts ``mConnection0`` at the
+    actor transform itself and ``mConnection1`` at ``mTopTransform``, which is
+    the height along ``FVector::UpVector``. Both stores are read out of the
+    binary by the ``lift.connectors`` rule, and the six marks carry the same
+    geometry because it is the class's code and not a class default.
+    """
+    reg = load_registry()
+    marks = sorted(c for c, b in reg.buildables.items() if b.native_class == LIFT_NATIVE_CLASS)
+    assert len(marks) == 6, marks
+    for class_name in marks:
+        buildable = reg.buildables[class_name]
+        # The two ports really do say nothing: this is why the geometry exists.
+        assert [p.translation for p in buildable.ports] == [(0.0, 0.0, 0.0)] * 2, class_name
+        assert [p.rotation for p in buildable.ports] == [(0.0, 0.0, 0.0)] * 2, class_name
+        lift = buildable.lift
+        assert lift is not None, class_name
+        assert lift.bottom_offset == (0.0, 0.0, 0.0), class_name
+        assert lift.bottom_facing == (1.0, 0.0, 0.0), class_name
+        assert lift.top_offset_axis == (0.0, 0.0, 1.0), class_name
+        assert lift.top_yaw_free is True, class_name
+        assert lift.top_yaw_step_deg == 90.0, class_name
+        # mIsReversed is DEPRECATED and SetupConnections never reads it: the
+        # entry is mConnection0 whichever way the lift runs.
+        assert lift.reversed_swaps_flow is False, class_name
+        # The bottom is the end items enter by, which is the flow's entry port.
+        assert buildable.flow is not None and buildable.flow.entry == "ConveyorAny0", class_name
+        assert sorted(lift.sources) == sorted(LIFT_GEOMETRY_FIELDS), class_name
+        assert all(s in LIFT_GEOMETRY_SOURCES for s in lift.sources.values()), class_name
+    # Nothing that is not a conveyor lift claims any of this.
+    assert sorted(c for c, b in reg.buildables.items() if b.lift) == marks
+
+
+def test_a_lifts_top_offset_is_the_height_along_the_up_vector():
+    """``top_offset_fn``: the top end's offset from the actor, for a signed height.
+
+    A negative height is a lift whose actor sits at the top --
+    ``GetConveyorLiftFlowDirection`` reads nothing but that sign -- and the
+    offset follows it rather than flipping which end is the input.
+    """
+    lift = load_registry().buildables["Build_ConveyorLiftMk1_C"].lift
+    assert lift is not None
+    assert lift.top_offset(0.0) == (0.0, 0.0, 0.0)
+    assert lift.top_offset(400.0) == (0.0, 0.0, 400.0)
+    assert lift.top_offset(-400.0) == (0.0, 0.0, -400.0)
+
+
+def test_the_lift_geometry_carries_the_game_it_was_read_from():
+    """The claim travels with its evidence: the two rules and the header line."""
+    geometry = load_registry().provenance["lift_geometry"]
+    assert geometry["native_class"] == LIFT_NATIVE_CLASS
+    assert geometry["rules"] == ["lift.connectors", "lift.top_yaw"]
+    rules = load_rules()
+    for rule_id in geometry["rules"]:
+        assert rules[rule_id].status == "extracted", rule_id
+    assert geometry["header"].endswith("FGBuildableConveyorLift.h:269")
+    assert "mConnector0 is always input" in geometry["header_text"]
+    assert len(geometry["applied_to"]) == 6
+    # Each field says where it was read, and the one the header states is the
+    # one the header is quoted for.
+    assert geometry["sources"]["reversed_swaps_flow"] == "header"
+    assert geometry["sources"]["bottom_offset"] == "native"
+
+
+def test_a_lift_whose_geometry_comes_from_no_game_source_is_refused(tmp_path):
+    """A number here with nothing behind it would be a guess at geometry."""
+    payload = json.loads((Path(docs.__file__).parent / "data" / "registry.json").read_text())
+    payload["buildables"]["Build_ConveyorLiftMk1_C"]["lift"]["sources"]["bottom_offset"] = "corpus"
+    path = tmp_path / "registry.json"
+    path.write_text(json.dumps(payload))
+    with pytest.raises(RegistryError, match="corpus"):
+        load_registry(path)
+
+
+def test_a_lift_with_no_connector_geometry_is_refused(tmp_path):
+    """A lift's ports say nothing, so a lift that states no geometry states nothing."""
+    payload = json.loads((Path(docs.__file__).parent / "data" / "registry.json").read_text())
+    del payload["buildables"]["Build_ConveyorLiftMk1_C"]["lift"]
+    path = tmp_path / "registry.json"
+    path.write_text(json.dumps(payload))
+    with pytest.raises(RegistryError, match="states no connector geometry"):
+        load_registry(path)
+
+
+def test_something_that_is_not_a_lift_may_not_carry_lift_geometry(tmp_path):
+    """This is one class's own code, and nothing else runs it."""
+    payload = json.loads((Path(docs.__file__).parent / "data" / "registry.json").read_text())
+    lift = payload["buildables"]["Build_ConveyorLiftMk1_C"]["lift"]
+    payload["buildables"]["Build_ConveyorBeltMk1_C"]["lift"] = lift
+    path = tmp_path / "registry.json"
+    path.write_text(json.dumps(payload))
+    with pytest.raises(RegistryError, match="only a FGBuildableConveyorLift has"):
+        load_registry(path)
 
 
 def test_boxes_the_game_ignores_when_snapping_are_marked():

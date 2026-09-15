@@ -92,22 +92,26 @@ def test_the_effects_the_shipped_rules_state():
         "belt.incline": "refuse",
         "belt.min_length": "refuse",
         "belt.max_length": "refuse",
-        "belt.clearance": "none",
+        "belt.clearance": "compute",
         "belt.snap_directions": "snap",
         "pipe.min_length": "refuse",
         "pipe.curvature": "refuse",
         "pipe.max_length": "refuse",
         "pipe.fluid_requirements": "refuse",
         "lift.height_range": "clamp",
-        "lift.step": "none",
+        "lift.step": "snap",
         "lift.placement": "refuse",
-        "lift.clearance": "none",
+        "lift.connectors": "compute",
+        "lift.top_yaw": "compute",
+        "lift.clearance": "compute",
         "buildable.grid_snap": "snap",
         "buildable.rotation_step": "compute",
         "buildable.clearance": "refuse",
         "belt.cost": "compute",
         "manufacturer.inventory_filters": "compute",
         "belt.straight_tangents": "compute",
+        "factory.potential": "compute",
+        "manufacturer.production_boost": "compute",
     }
 
 
@@ -148,9 +152,19 @@ def test_the_cost_rule_names_every_function_it_was_read_across():
     assert "AFGBuildableConveyorBelt::GetDismantleRefundReturnsMultiplier @ 0x4edf70" in (
         rule.also_read
     )
-    # Every rule that was read from one function says so.
+    # Every rule the game spreads over more than one function says which.
     spread = {r.id for r in load_rules().values() if r.also_read}
-    assert spread == {"belt.cost", "manufacturer.inventory_filters", "belt.straight_tangents"}
+    assert spread == {
+        "belt.cost",
+        "manufacturer.inventory_filters",
+        "belt.straight_tangents",
+        "belt.clearance",
+        "lift.clearance",
+        "lift.connectors",
+        "lift.top_yaw",
+        "factory.potential",
+        "manufacturer.production_boost",
+    }
 
 
 def test_the_cost_rules_evidence_carries_the_rounding_and_the_multiply():
@@ -285,36 +299,181 @@ def test_a_rule_that_stays_partial_says_which_callee_hides_the_comparison():
     for rule_id, callee in [
         ("buildable.grid_snap", "FHologramHelpers::SnapToFloor"),
         ("buildable.clearance", "TestClearanceOverlap"),
-        ("belt.clearance", "CreateClearanceData"),
     ]:
         r = load_rules()[rule_id]
         assert r.status == "partial", rule_id
         assert callee in r.comparison, rule_id
 
 
-def test_the_fourth_partial_rule_is_partial_for_a_different_reason():
-    """``lift.clearance`` names no callee: the function makes no decision at all.
+def test_the_belt_clearance_rule_states_the_box_it_lays_along_the_spline():
+    """``belt.clearance`` is no longer partial: the callee was read too.
 
-    The other three are ``partial`` because the comparison is inside something
-    they call. ``AFGConveyorLiftHologram::UpdateClearance`` was read to its end
-    and has no comparison in it to hide -- it builds one ``FFGClearanceData``
-    from two constants and the lift's own mesh height and stores it, and the
-    hologram that later tests an overlap is somewhere else. That is why the
-    effect is ``none`` (these instructions turn no placement away) while the
-    status stays ``partial`` (what the game does with the box is unread), and
-    why a validator must not read this rule as "a lift's clearance is not
-    checked".
+    ``AFGConveyorBeltHologram::UpdateClearanceData`` only supplies the inputs,
+    so the box is in ``AFGBuildableConveyorBelt::CreateClearanceData``, which
+    ``also_read`` now names and which the tool reads whole through its four
+    chained ``.pdata`` chunks. One ``FFGClearanceData`` per sampled segment,
+    ``+-(length/2, 79, 15)`` about that segment's own axis, and no comparison in
+    either function -- so the effect is ``compute``, not a bound.
+    """
+    r = load_rules()["belt.clearance"]
+    assert (r.status, r.effect) == ("extracted", "compute")
+    assert r.also_read == ("AFGBuildableConveyorBelt::CreateClearanceData @ 0x4d78c0",)
+    assert "Min = (-length/2, -79, -15)" in r.comparison
+    assert "Max = (length/2, 79, 15)" in r.comparison
+    # The two half-extents are .rdata constants the tool reported, not numbers
+    # anybody typed into the script.
+    assert any("f64=79.0" in line for line in r.evidence)
+    assert any("f64=-79.0" in line for line in r.evidence)
+    assert any("GetNextDistanceExceedingTolerance" in line for line in r.evidence)
+    assert "158 cm wide" in r.interpretation
+
+
+def test_the_lift_clearance_rule_is_partial_because_two_globals_are_unreadable():
+    """``lift.clearance`` reads both functions whole and still cannot state the box.
+
+    ``UpdateClearance`` and ``AFGBuildableConveyorLift::FitClearance`` are both
+    bounded by ``.pdata``, and the span between the lift's two ends is in the
+    evidence. What is not is the half-extent: it comes from a module global in
+    ``.data``, which ``sfy-native`` refuses to quote because a mutable global is
+    not a constant. So the status is ``partial`` for a reason that is not a
+    callee, the effect is ``compute`` (nothing here turns a placement away), and
+    a placer must not take a lift's footprint from this rule.
     """
     r = load_rules()["lift.clearance"]
-    assert (r.status, r.effect) == ("partial", "none")
+    assert (r.status, r.effect) == ("partial", "compute")
     assert r.function == "UpdateClearance"
-    assert "no overlap decision is made here" in r.comparison
-    # The box it does build, out of the constants the evidence quotes.
+    assert r.also_read == ("AFGBuildableConveyorLift::FitClearance @ 0x4e5dd0",)
+    assert "No comparison is made in either function" in r.comparison
+    assert "THE TWO VECTORS ARE NOT IN THE EVIDENCE" in r.comparison
+    assert "0x19B8118" in r.comparison
     assert "mMeshHeight" in r.comparison and "-5" in r.comparison
     assert not any(
         callee in r.comparison
         for callee in ("SnapToFloor", "TestClearanceOverlap", "CreateClearanceData")
     )
+
+
+def test_the_potential_rule_states_what_a_power_shard_and_an_exponent_do():
+    """``factory.potential`` is where overclocking comes from, end to end.
+
+    The ceiling, the slot count, what the potential divides and what it costs
+    are four separate facts, and the rule quotes the instruction for each:
+    nothing in the path refuses anything, which is why the effect is
+    ``compute`` and a validator must not treat a potential as a bound.
+    """
+    r = load_rules()["factory.potential"]
+    assert (r.status, r.effect) == ("extracted", "compute")
+    assert r.cls == "AFGBuildableFactory" and r.function == "GetCurrentMaxPotential"
+    assert "Buildables/FGBuildableFactory.h" in r.header
+    read = {name.split(" @ ")[0] for name in r.also_read}
+    assert "AFGBuildableFactory::GetCurrentMaxPotentialForType" in read
+    assert "AFGBuildableFactory::GetSlotsForPowerShardType" in read
+    assert "AFGBuildableFactory::BeginPlay" in read
+    assert "AFGBuildableManufacturer::CalcProductionCycleTimeForPotential" in read
+    assert "mMaxPotential" in r.reads and "mPotentialShardSlots" in r.reads
+    assert "mPowerConsumptionExponent" in r.reads
+    # The shard's own boost value is a call, and the exponent is a powf.
+    assert any("UFGPowerShardDescriptor::GetBoostValue" in line for line in r.evidence)
+    assert any("powf" in line for line in r.evidence)
+    # Where the slot count really comes from when the class does not override it.
+    assert any("mDefaultPotentialShardSlots" in line or "+350h" in line for line in r.evidence) or (
+        "350h" in r.comparison
+    )
+    assert "rounded to a whole percent" in r.interpretation
+
+
+def test_the_production_boost_rule_states_what_n_somersloops_multiply():
+    """``manufacturer.production_boost`` is the product amounts, not the cycle time.
+
+    The multiplier for N somersloops out of S is
+    ``mBaseProductionBoost + N * mExtraProductionBoost *
+    mProductionShardBoostMultiplier``, and what it multiplies is each of the
+    recipe's product amounts, rounded to a whole item.
+    """
+    r = load_rules()["manufacturer.production_boost"]
+    assert (r.status, r.effect) == ("extracted", "compute")
+    assert r.cls == "AFGBuildableManufacturer"
+    assert r.function == "SetCurrentProductionBoost"
+    read = {name.split(" @ ")[0] for name in r.also_read}
+    assert "AFGBuildableFactory::GetCurrentMaxProductionBoost" in read
+    assert "mBaseProductionBoost" in r.reads
+    assert "mProductionShardBoostMultiplier" in r.reads
+    assert "mCurrentProductionBoost" in r.reads
+    assert "RoundToInt(amount * boost)" in r.interpretation
+    assert "not its cycle time" in r.interpretation
+
+
+def test_the_connector_rule_says_where_a_lifts_two_ends_sit_and_which_is_the_input():
+    """``lift.connectors`` is where a lift's ports go once the game places them.
+
+    The registry's two lift ports are both at the actor origin with no rotation,
+    because that is what the cooked class default object holds;
+    ``AFGBuildableConveyorLift::SetupConnections`` is what moves them, and this
+    rule is that function read whole. It has to carry the two direction stores,
+    the transform each end is given and the helper that proves neither is moved
+    along its forward.
+    """
+    r = load_rules()["lift.connectors"]
+    assert (r.status, r.effect) == ("extracted", "compute")
+    assert r.cls == "AFGBuildableConveyorLift"
+    assert r.function == "SetupConnections"
+    assert r.header == "Buildables/FGBuildableConveyorLift.h:148"
+    assert "mConnection0" in r.reads and "mConnection1" in r.reads
+    assert "mTopTransform" in r.reads
+    evidence = {line.split(":", 1)[0]: line for line in r.evidence}
+    # mConnection0 is FCD_INPUT and mConnection1 is FCD_OUTPUT, unconditionally.
+    assert "mov byte ptr [rax+258h],0" in evidence["0x505b0d"]
+    assert "mov byte ptr [rax+258h],1" in evidence["0x505b1b"]
+    # And +258h is mDirection because that is the byte SetDirection writes.
+    assert "mov byte ptr [rcx+258h],dl" in evidence["0x197e50"]
+    assert "UFGFactoryConnectionComponent::mDirection @600" in evidence["0x197e50"]
+    # Each end gets a whole transform: the identity for the bottom and
+    # mTopTransform for the top.
+    assert "SetRelativeTransform" in evidence["0x505e7e"]
+    assert "SetRelativeTransform" in evidence["0x506155"]
+    read = {name.split(" @ ")[0] for name in r.also_read}
+    assert "AFGBuildableConveyorLift::GetConveyorLiftFlowDirection" in read
+    assert "AFGBuildableConveyorBase::Factory_Tick" in read
+    assert "UFGFactoryConnectionComponent::SetDirection" in read
+    # The helper the PDB gives no Class::Method name, read by address instead.
+    assert "0x4f9850" in read
+    # Reversal is about which way the top transform points, never about which
+    # connection items enter by.
+    assert "Reversal does not swap them" in r.interpretation
+    assert "DEPRECATED 2023-01-30" in r.interpretation
+
+
+def test_the_top_yaw_rule_says_the_top_turns_in_quarter_turns_off_the_bottom():
+    """``lift.top_yaw`` is how the second placement point picks the top's facing.
+
+    The yaw handed to ``UpdateTopTransform`` is
+    ``ApplyScrollRotationTo(mFirstStepYaw)``, and the lift hologram's rotation
+    step is 90 from the second point onward -- so the top faces any of four
+    directions, relative to the bottom.
+    """
+    r = load_rules()["lift.top_yaw"]
+    assert (r.status, r.effect) == ("extracted", "compute")
+    assert r.cls == "AFGConveyorLiftHologram"
+    assert r.function == "SetHologramLocationAndRotation"
+    assert r.header == "Hologram/FGConveyorLiftHologram.h:157"
+    assert "mFirstStepYaw" in r.reads
+    assert "mActivePointIdx" in r.reads
+    assert "mScrollRotation" in r.reads
+    evidence = {line.split(":", 1)[0]: line for line in r.evidence}
+    # The rotation step, which is what makes the four directions four.
+    assert "mov eax,5Ah" in evidence["0xa7c1a2"]
+    # mFirstStepYaw goes in, and what comes back is the top's rotator.
+    assert "mFirstStepYaw" in evidence["0xa886e8"]
+    assert "AFGHologram::ApplyScrollRotationTo" in evidence["0xa886fa"]
+    assert "AFGConveyorLiftHologram::UpdateTopTransform" in evidence["0xa88733"]
+    read = {name.split(" @ ")[0] for name in r.also_read}
+    assert read >= {
+        "AFGConveyorLiftHologram::UpdateTopTransform",
+        "AFGConveyorLiftHologram::GetRotationStep",
+        "AFGHologram::ApplyScrollRotationTo",
+        "AFGConveyorLiftHologram::DoMultiStepPlacement",
+    }
+    assert "any of the four compass directions" in r.interpretation
 
 
 def test_every_rules_evidence_is_in_address_order():

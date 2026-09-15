@@ -1,0 +1,5 @@
+"https://factoriolab.github.io/sfy/list?o=iron-plate*60&e=1*somersloop&m=constructor-id*0&v=11"
+Item,Items,Inputs,Outputs,Targets,Belts,Belt,Wagons,Wagon,Recipe,Machines,Machine,Modules,Power
+iron-plate,=60,"iron-ingot:1","iron-plate:1","",=1,conveyor-belt-mk1,=3/320,freight-car,iron-plate,=1.5,constructor-id,"1 somersloop",=32000
+iron-ingot,=45,"iron-ore:1","iron-ingot:1","iron-plate:1",=0.75,conveyor-belt-mk1,=9/640,freight-car,iron-ingot,=1.5,smelter,"1 ",=8000
+iron-ore,=45,,"iron-ore:1","iron-ingot:1",=0.75,conveyor-belt-mk1,=9/640,freight-car,iron-ore,=0.75,miner-mk1,"1 purity-1",=5000

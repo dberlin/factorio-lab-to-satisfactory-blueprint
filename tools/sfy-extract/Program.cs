@@ -4,6 +4,7 @@ using System.Text.RegularExpressions;
 using CUE4Parse.FileProvider;
 using CUE4Parse.MappingsProvider.Usmap;
 using CUE4Parse.UE4.Assets.Exports;
+using CUE4Parse.UE4.Assets.Exports.StaticMesh;
 using CUE4Parse.UE4.Objects.Core.Math;
 using CUE4Parse.UE4.Objects.UObject;
 using CUE4Parse.UE4.Versions;
@@ -125,6 +126,7 @@ Console.Error.WriteLine(
 var ports = new SortedDictionary<string, List<object>>(StringComparer.Ordinal);
 var holograms = new SortedDictionary<string, Dictionary<string, object?>>(StringComparer.Ordinal);
 var conveyorConnections = new SortedDictionary<string, Dictionary<string, string>>(StringComparer.Ordinal);
+var meshBounds = new SortedDictionary<string, Dictionary<string, object?>>(StringComparer.Ordinal);
 var unmodelled = new SortedSet<string>(StringComparer.Ordinal);
 
 foreach (var pkg in buildPackages)
@@ -141,6 +143,8 @@ foreach (var pkg in buildPackages)
     var className = generatedClass.Name;
 
     ports[className] = CollectPorts(generatedClass, exports);
+    var bounds = MeshBounds(generatedClass, exports);
+    if (bounds is not null) meshBounds[className] = bounds;
 
     var cdo = exports.FirstOrDefault(e => e.Name == "Default__" + className);
     if (cdo is null) continue;
@@ -154,7 +158,7 @@ foreach (var pkg in buildPackages)
 // UTF-16 LE, not the UTF-8 the extension suggests.
 var docsText = File.ReadAllText(DocsPath(gameDir));
 var (classPaths, ambiguousClasses) = ClassPaths(docsText);
-var (descriptorPaths, ambiguousDescriptors) = DescriptorPaths();
+var (descriptorPaths, ambiguousDescriptors) = DescriptorPaths(out var subsystemDefaults);
 
 var output = new
 {
@@ -180,6 +184,13 @@ var output = new
     // called, so the flow order can be attached to named ports without anyone
     // inferring the pairing from a name that ends in 0.
     conveyor_connections = conveyorConnections,
+    // The local-space box of the static mesh each spline buildable repeats along
+    // itself, straight off the cooked `UStaticMesh`. See `MeshBounds`.
+    mesh_bounds = meshBounds,
+    // What `AFGBuildableSubsystem::BeginPlay` hands a factory that does not
+    // override its own shard slot counts, as the cooked Blueprint states it.
+    // See `DescriptorPaths`'s `out` parameter.
+    subsystem_defaults = subsystemDefaults,
     wires = WireLengths(docsText),
     class_paths = classPaths,
     class_paths_ambiguous = ambiguousClasses,
@@ -209,6 +220,7 @@ File.WriteAllText(outPath, JsonConvert.SerializeObject(output, Formatting.Indent
 Console.Error.WriteLine($"wrote {outPath}: {ports.Count} classes with ports, {holograms.Count} with a hologram class");
 Console.Error.WriteLine($"{classPaths.Count} class asset paths, {ambiguousClasses.Count} class names left out as ambiguous");
 Console.Error.WriteLine($"{descriptorPaths.Count} cooked item-descriptor classes, {ambiguousDescriptors.Count} left out as ambiguous");
+Console.Error.WriteLine($"{meshBounds.Count} classes with a spline mesh box; subsystem defaults: {JsonConvert.SerializeObject(subsystemDefaults)}");
 Console.Error.WriteLine($"connection classes left out on purpose: {string.Join(", ", unmodelled)}");
 return 0;
 
@@ -237,13 +249,28 @@ return 0;
 /// nothing narrower than "every Blueprint in the content" can answer which
 /// classes derive from a native one. A class name two packages both define
 /// cannot be resolved by name and is listed as ambiguous instead of guessed at.
-(SortedDictionary<string, string>, SortedSet<string>) DescriptorPaths()
+///
+/// The same scan answers a second question, which is why it has an `out`
+/// parameter rather than a scan of its own: **what a factory that does not
+/// override its shard slot counts gets**. `AFGBuildableFactory::BeginPlay`
+/// copies `AFGBuildableSubsystem::mDefaultPotentialShardSlots` and
+/// `mDefaultProductionShardSlotSize` onto every buildable whose own
+/// `mOverride*` bit is clear, and the subsystem is a Blueprint, not a
+/// buildable, so neither Docs.json nor the `Build_*` packages carry it. The
+/// class is found the way an item descriptor is -- by its super chain reaching
+/// the native `FGBuildableSubsystem` -- never by the package's name, and a
+/// property the Blueprint does not override comes back null so that the merge
+/// falls through to the native constructor value `tools/sfy-native` read.
+(SortedDictionary<string, string>, SortedSet<string>) DescriptorPaths(
+    out Dictionary<string, object?>? subsystemDefaults)
 {
     const string Root = "FGItemDescriptor";
+    const string SubsystemRoot = "FGBuildableSubsystem";
     var types = usmapMappings.MappingsForGame?.Types
         ?? throw new InvalidDataException($"{mappings} parsed to no mappings at all");
     var paths = new SortedDictionary<string, SortedSet<string>>(StringComparer.Ordinal);
     var supers = new Dictionary<string, string?>(StringComparer.Ordinal);
+    var packageOf = new SortedDictionary<string, string>(StringComparer.Ordinal);
     var packages = provider.Files.Keys
         .Where(k => k.EndsWith(".uasset", StringComparison.OrdinalIgnoreCase))
         .OrderBy(k => k, StringComparer.Ordinal)
@@ -261,17 +288,18 @@ return 0;
                 paths[name] = found = new SortedSet<string>(StringComparer.Ordinal);
             found.Add($"{outer}.{name}");
             supers[name] = NativeSuperName(export);
+            packageOf[name] = pkg;
         }
     }
 
     // The chain, Blueprint links first and native ones after, with a seen-set so
     // a cycle in either stops rather than spins.
-    bool IsDescriptor(string name)
+    bool Reaches(string name, string root)
     {
         var seen = new HashSet<string>(StringComparer.Ordinal);
         for (var current = name; seen.Add(current);)
         {
-            if (current == Root) return true;
+            if (current == root) return true;
             var next = supers.TryGetValue(current, out var blueprint)
                 ? blueprint
                 : types.TryGetValue(current, out var native) ? native.SuperType : null;
@@ -285,11 +313,106 @@ return 0;
     var ambiguous = new SortedSet<string>(StringComparer.Ordinal);
     foreach (var (name, found) in paths)
     {
-        if (!IsDescriptor(name)) continue;
+        if (!Reaches(name, Root)) continue;
         if (found.Count == 1) resolved[name] = found.First();
         else ambiguous.Add(name);
     }
+
+    var subsystems = paths.Keys.Where(name => Reaches(name, SubsystemRoot)).ToList();
+    subsystemDefaults = null;
+    if (subsystems.Count != 1)
+    {
+        Console.Error.WriteLine(
+            $"{subsystems.Count} cooked classes derive from {SubsystemRoot} ({string.Join(", ", subsystems)}); " +
+            "the shard slot defaults stay unread and the merge falls back to the binary");
+    }
+    else
+    {
+        var className = subsystems[0];
+        var package = packageOf[className];
+        var cdo = Exports(package).FirstOrDefault(e => e.Name == "Default__" + className);
+        subsystemDefaults = new Dictionary<string, object?>
+        {
+            ["class"] = className,
+            ["package"] = package,
+            // Absent means the Blueprint does not override the native default,
+            // which is the usual case for a UPROPERTY on a cooked CDO.
+            ["mDefaultPotentialShardSlots"] = cdo is null ? null : Integer(cdo, "mDefaultPotentialShardSlots"),
+            ["mDefaultProductionShardSlotSize"] = cdo is null ? null : Integer(cdo, "mDefaultProductionShardSlotSize"),
+        };
+    }
     return (resolved, ambiguous);
+}
+
+/// The local-space box of the static mesh a spline buildable repeats along itself.
+///
+/// A conveyor belt carries `mMesh` (`Buildables/FGBuildableConveyorBelt.h:146`)
+/// and a conveyor lift carries `mMidMesh`
+/// (`Buildables/FGBuildableConveyorLift.h:224`) -- the mid section, which is the
+/// piece repeated up the shaft and the one `mMeshHeight` measures, where a lift's
+/// other six meshes are its ends, its bellows and its shelves. Both are
+/// `EditDefaultsOnly` UPROPERTYs on the class default object, so a mark that does
+/// not restate one inherits its parent Blueprint's, which is why the CDO chain is
+/// walked rather than only the class's own: Mk2 through Mk6 state only `mMidMesh`.
+///
+/// The box itself is the cooked `UStaticMesh`'s own render bounds -- `Origin` and
+/// `BoxExtent` of `RenderData.Bounds`, the axis-aligned box the game builds the
+/// mesh's bounds from -- never anything measured off a blueprint. `property` says
+/// which UPROPERTY answered and `mesh` the asset path it pointed at, so the claim
+/// can be checked against the install.
+Dictionary<string, object?>? MeshBounds(UObject generatedClass, List<UObject> exports)
+{
+    var current = generatedClass;
+    var currentExports = exports;
+    for (var depth = 0; depth < 16 && current is not null; depth++)
+    {
+        var cdo = currentExports.FirstOrDefault(e => e.Name == "Default__" + current.Name);
+        // `mMesh` before `mMidMesh` is an ASSUMPTION about today's classes, not a
+        // rule the game states: no buildable in this build carries both, so the
+        // order has never had to decide anything. A class that did carry both
+        // would silently take `mMesh` here, and that is the case to revisit --
+        // for a conveyor the mid mesh is the repeating span and the wrong pick
+        // would measure one segment instead of the piece.
+        foreach (var property in new[] { "mMesh", "mMidMesh" })
+        {
+            UStaticMesh? mesh;
+            try { mesh = cdo?.GetOrDefault<UStaticMesh?>(property, null); }
+            catch (Exception error)
+            {
+                // Never swallowed: a mesh that will not load is a bounds box
+                // this tool cannot state, and the buildable then ships with no
+                // `mesh_bounds_cm` at all. Saying so on stderr is the only way
+                // that shows up as anything but a silently missing number.
+                Console.Error.WriteLine(
+                    $"warning: {current.Name}.{property} would not load "
+                    + $"({error.GetType().Name}: {error.Message}); its bounds are unavailable");
+                continue;
+            }
+            if (mesh is null) continue;
+            var record = new Dictionary<string, object?>
+            {
+                ["property"] = property,
+                ["mesh"] = $"{mesh.Owner?.Name}.{mesh.Name}",
+                ["stated_on"] = current.Name,
+            };
+            var bounds = mesh.RenderData?.Bounds;
+            if (bounds is null)
+            {
+                record["origin"] = null;
+                record["box_extent"] = null;
+                record["reason"] = "the cooked UStaticMesh carries no RenderData.Bounds";
+                return record;
+            }
+            record["origin"] = new[] { (double)bounds.Origin.X, bounds.Origin.Y, bounds.Origin.Z };
+            record["box_extent"] =
+                new[] { (double)bounds.BoxExtent.X, bounds.BoxExtent.Y, bounds.BoxExtent.Z };
+            record["sphere_radius"] = (double)bounds.SphereRadius;
+            return record;
+        }
+        current = SuperClass(current);
+        currentExports = current?.Owner?.GetExports().ToList() ?? [];
+    }
+    return null;
 }
 
 IEnumerable<UObject> Exports(string pkg)
@@ -374,10 +497,14 @@ static string? NativeSuperName(UObject generatedClass)
 ///
 /// `max_connections` is `FGCircuitConnectionComponent::mMaxNumConnectionLinks`,
 /// how many wires may end on this connection. The UPROPERTY is on the circuit
-/// connection, so only a power port can carry one, and it is serialised only
-/// where the Blueprint overrides the native default: the three power poles say
-/// 4, 7 and 10, and a machine's power input says nothing, which is emitted as
-/// null rather than as a number this tool made up.
+/// connection, so only a power port can carry one, and -- like `mDirection` --
+/// it is serialised only where a Blueprint in the chain overrides the archetype,
+/// so the chain is walked the same way `DirectionOf` walks it: the three power
+/// poles say 4, 7 and 10, and a machine's power input says nothing anywhere in
+/// its asset chain. That last case is emitted as null with the source
+/// `"unknown"`, never as a number this tool made up; `scripts/sfy_registry.py`
+/// fills it from the native constructor default in `native.json` and retags it
+/// `"native"`, which is the same hand-off the grid snap size makes.
 object Port(string name, List<UObject> chain, string? nativeSuper)
 {
     var template = chain[0];
@@ -385,6 +512,7 @@ object Port(string name, List<UObject> chain, string? nativeSuper)
     var rotation = template.GetOrDefault("RelativeRotation", FRotator.ZeroRotator);
     var kind = KindOf(template)!;
     var (direction, source) = DirectionOf(chain, kind, nativeSuper);
+    var (links, linksSource) = MaxConnectionsOf(chain, kind);
     return new
     {
         name,
@@ -394,8 +522,23 @@ object Port(string name, List<UObject> chain, string? nativeSuper)
         translation = new[] { location.X, location.Y, location.Z },
         rotation = new[] { rotation.Pitch, rotation.Yaw, rotation.Roll },
         clearance = Number(template, "mConnectorClearance"),
-        max_connections = kind == "power" ? Integer(template, "mMaxNumConnectionLinks") : null,
+        max_connections = links,
+        max_connections_source = linksSource,
     };
+}
+
+/// How many wires may end on this connection, and where in the asset chain it was
+/// stated. A belt or a pipe connection has no such property at all, so both
+/// answers are `null`/`"unknown"` for them and stay that way through the merge.
+(int?, string) MaxConnectionsOf(List<UObject> chain, string kind)
+{
+    if (kind != "power") return (null, "unknown");
+    for (var depth = 0; depth < chain.Count; depth++)
+    {
+        if (Integer(chain[depth], "mMaxNumConnectionLinks") is not { } stated) continue;
+        return (stated, depth == 0 ? "asset" : "asset-inherited");
+    }
+    return (null, "unknown");
 }
 
 /// The port kind a connection component becomes, or null if it is not one.

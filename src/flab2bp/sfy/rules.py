@@ -86,6 +86,8 @@ REQUIRED_RULE_IDS = (
     "belt.cost",
     "manufacturer.inventory_filters",
     "belt.straight_tangents",
+    "factory.potential",
+    "manufacturer.production_boost",
 )
 
 RULE_STATUSES = ("extracted", "partial", "unextractable")
@@ -197,7 +199,7 @@ def load_rules(path: Path | None = None) -> dict[str, HologramRule]:
         raise RulesError(f"hologram rules at {path} are not JSON: {exc}") from exc
     try:
         raw_rules = data["rules"]
-    except (KeyError, TypeError):
+    except KeyError, TypeError:
         raise RulesError(f"hologram rules at {path} have no 'rules' section") from None
     rules = {}
     for raw in raw_rules:
