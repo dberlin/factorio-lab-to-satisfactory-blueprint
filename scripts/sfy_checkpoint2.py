@@ -281,7 +281,16 @@ def _check_cost(case: Case, build: pipeline.SfyBuild, registry: Registry) -> Non
 
 
 def refusal(case: Case, *, time_budget_s: float) -> dict[str, str]:
-    """Why a case refuses, per designer mark.  A refusal is a finding, not a crash."""
+    """Why a case refuses, per designer mark.  A refusal is a finding, not a crash.
+
+    A :data:`REFUSED_CASES` entry that BUILDS fails the script, the way every
+    other self-check here does.  The instructions this script writes tell a
+    player that this flow fits no designer, and a flow that has started fitting
+    makes that a false statement -- and one nobody would notice, because a build
+    where a refusal was expected looks like nothing happening at all.  The entry
+    belongs in :data:`CASES` at that point, where it earns a blueprint and a
+    paste test.
+    """
     out: dict[str, str] = {}
     for mark in case.designer.split():
         try:
@@ -291,7 +300,11 @@ def refusal(case: Case, *, time_budget_s: float) -> dict[str, str]:
         except Exception as exc:  # noqa: BLE001 -- every refusal shape is a finding here
             out[mark] = f"{type(exc).__name__}: {exc}"
         else:
-            out[mark] = "built (this flow no longer refuses; it belongs in CASES)"
+            raise CheckFailed(
+                f"{case.name}: the {mark} designer built it, but it is in REFUSED_CASES, "
+                "whose whole content is that it refuses -- move it to CASES and give it a "
+                "paste test"
+            )
     return out
 
 

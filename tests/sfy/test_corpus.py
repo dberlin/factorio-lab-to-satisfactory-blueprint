@@ -15,6 +15,7 @@ import json
 import subprocess
 import sys
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -23,6 +24,7 @@ from flab2bp.bench.corpus import Tier
 from flab2bp.bench.sfy_corpus import (
     CLEAN,
     DESIGNER_MARKS,
+    EVIDENCE_DIR,
     FLOWS_DIR,
     RULED_CAUSES,
     SFY_CORPUS,
@@ -435,6 +437,61 @@ def test_the_report_says_FAIL_and_names_the_cell_when_one_misses() -> None:
     assert "dirty" in text
 
 
+# --- where the report lands -------------------------------------------------
+
+
+def _whole_matrix() -> list[sfy_audit.Cell]:
+    """A verdict on every corpus square, without building any of them."""
+    return [
+        sfy_audit.Cell(url_id=item.url_id, designer=mark, verdict="CLEAN")
+        for item in SFY_CORPUS
+        for mark in item.designers
+    ]
+
+
+def test_a_run_over_the_whole_matrix_writes_the_committed_evidence() -> None:
+    path, committed = sfy_audit.report_path(_whole_matrix(), today=date(2026, 9, 14))
+    assert committed
+    assert path == EVIDENCE_DIR / "sfy-m2-audit-2026-09-14.md"
+
+
+def test_a_run_over_one_mark_leaves_the_committed_evidence_alone() -> None:
+    """A partial report is not a claim about the matrix, so it writes untracked."""
+    cells = [cell for cell in _whole_matrix() if cell.designer == "mk1"]
+    path, committed = sfy_audit.report_path(cells, marks=["mk1"], today=date(2026, 9, 14))
+    assert not committed
+    assert path.parent.parts[-2:] == ("out", "sfy")
+    assert path.name == "audit-2026-09-14-mk1-all-entries.md"
+    assert EVIDENCE_DIR not in path.parents
+
+
+def test_a_run_over_one_entry_names_the_entry_in_the_untracked_file() -> None:
+    cells = [cell for cell in _whole_matrix() if cell.url_id == "plastic-20"]
+    path, committed = sfy_audit.report_path(cells, only=["plastic-20"], today=date(2026, 9, 14))
+    assert not committed
+    assert path.name == "audit-2026-09-14-all-marks-plastic-20.md"
+
+
+def test_a_run_the_wall_clock_cap_cut_off_does_not_count_as_the_whole_matrix() -> None:
+    """The overwrite this rule exists to stop: NOT RUN cells over the evidence."""
+    cells = _whole_matrix()
+    cells[-1] = sfy_audit.Cell(
+        url_id=cells[-1].url_id, designer=cells[-1].designer, verdict="NOT RUN"
+    )
+    assert not sfy_audit.covers_matrix(cells)
+    path, committed = sfy_audit.report_path(cells, today=date(2026, 9, 14))
+    assert not committed
+    assert path.name == "audit-2026-09-14-all-marks-all-entries.md"
+
+
+def test_an_explicit_report_path_wins_over_either_default() -> None:
+    asked = Path("somewhere/else.md")
+    for cells in (_whole_matrix(), []):
+        path, committed = sfy_audit.report_path(cells, requested=asked)
+        assert path == asked
+        assert not committed, "a named path is never the committed evidence by default"
+
+
 def test_the_marks_a_cell_may_be_run_in_are_the_designers_the_spec_can_size() -> None:
     assert DESIGNER_MARKS == ("mk1", "mk2", "mk3")
 
@@ -474,15 +531,23 @@ print(json.dumps({
 
 
 def test_importing_the_satisfactory_corpus_adds_no_dsp_module_of_its_own() -> None:
-    """The Satisfactory corpus must not drag the DSP stack behind it.
+    """The Satisfactory corpus must not drag MORE of the DSP stack behind it.
 
-    It reuses exactly one thing from the DSP side -- ``Tier``, out of
+    Said plainly, because this test is easy to read as more than it is:
+    importing ``flab2bp.bench.sfy_corpus`` today loads NINE ``flab2bp.dsp``
+    modules.  It reuses exactly one thing from the DSP side -- ``Tier``, out of
     ``flab2bp.bench.corpus`` -- and THAT module imports
-    ``flab2bp.rates.CandidatePolicy``, which is the DSP rate solver and brings
-    ``flab2bp.dsp.catalog`` with it.  That one seam is not this module's to
-    sever (it would mean moving ``Tier`` or ``CandidatePolicy``), so this test
-    pins it exactly there: after ``bench.corpus`` is in, importing
-    ``sfy_corpus`` must add no DSP module at all.
+    ``flab2bp.rates.CandidatePolicy``, the DSP rate solver, which brings
+    ``dsp.catalog``, ``registry``, ``rules``, ``colliders``, ``provenance``,
+    ``quaternion`` and the two geometry kernels with it.
+
+    This test pins that seam where it is; it does not close it.  After
+    ``bench.corpus`` is in, reading ``sfy_corpus`` must add no FURTHER DSP
+    module -- so a new import here is caught, while the nine already on the
+    other side of ``Tier`` stay.  Closing it means moving ``Tier`` into a leaf
+    module that imports nothing, which is an M3 chore: ``Tier`` is a name the
+    DSP corpus reads too, so moving it is a change to the other game's gate and
+    does not belong in a Satisfactory fix round.
     """
     probe = _import_probe()
     assert probe["added"] == [], (

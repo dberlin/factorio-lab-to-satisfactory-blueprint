@@ -9,6 +9,14 @@
 
 Exits non-zero if any cell misses, so it works as a gate.
 
+WHERE THE REPORT LANDS
+----------------------
+The committed evidence under ``docs/`` is a claim about the whole matrix, so
+only a run that covered the whole matrix writes it.  A narrower run -- one mark,
+one entry, or one the ``--max-seconds`` cap stopped partway -- writes an
+untracked ``out/sfy/audit-<date>-<marks>-<entries>.md`` and says on stdout that
+it left the evidence alone.  ``--report PATH`` overrides either.
+
 TWO GATES OVER ONE RUN
 ----------------------
 The default gate asks only whether each cell is CLEAN or refuses for a reason a
@@ -459,6 +467,47 @@ def _marks(entry: SfyCorpusEntry, asked: Sequence[str]) -> tuple[str, ...]:
     return tuple(mark for mark in entry.designers if not asked or mark in asked)
 
 
+def covers_matrix(cells: Sequence[Cell]) -> bool:
+    """Whether these cells are a verdict on every entry in every mark it pins.
+
+    Asked of the cells rather than of the command line on purpose, so that the
+    two ways a run can come up short -- ``--only``/``--designer`` narrowing it,
+    and ``--max-seconds`` cutting it off partway -- answer the same question.
+    A ``NOT RUN`` cell is the absence of a verdict, so it does not cover its
+    square.
+    """
+    ran = {(cell.url_id, cell.designer) for cell in cells if cell.verdict != "NOT RUN"}
+    whole = {(entry.url_id, mark) for entry in SFY_CORPUS for mark in entry.designers}
+    return ran >= whole
+
+
+def report_path(
+    cells: Sequence[Cell],
+    *,
+    requested: Path | None = None,
+    marks: Sequence[str] = (),
+    only: Sequence[str] = (),
+    today: date | None = None,
+) -> tuple[Path, bool]:
+    """Where this run's report goes, and whether that is the committed evidence.
+
+    The committed evidence is a claim about the whole matrix, so only a run that
+    covered the whole matrix may write it.  Anything narrower -- one mark, one
+    entry, a run the wall-clock cap stopped -- lands under ``out/``, which this
+    repository does not track, named for what it actually measured.  An explicit
+    ``--report`` beats both: somebody who names a path has said where they want
+    it.
+    """
+    if requested is not None:
+        return requested, False
+    stamp = (today or date.today()).isoformat()
+    if covers_matrix(cells):
+        return EVIDENCE_DIR / f"sfy-m2-audit-{stamp}.md", True
+    mark_part = "+".join(marks) if marks else "all-marks"
+    only_part = "+".join(only) if only else "all-entries"
+    return _ROOT / "out" / "sfy" / f"audit-{stamp}-{mark_part}-{only_part}.md", False
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument(
@@ -476,7 +525,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=0.0,
         help="cap the whole run; the cells left over are NOT RUN",
     )
-    ap.add_argument("--report", type=Path, default=None, help="where to write the report")
+    ap.add_argument(
+        "--report",
+        type=Path,
+        default=None,
+        help="where to write the report; the default depends on whether the run was whole",
+    )
     ap.add_argument(
         "--head",
         default="",
@@ -536,10 +590,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         strict=args.strict,
     )
     if not args.no_report:
-        path = args.report or EVIDENCE_DIR / f"sfy-m2-audit-{date.today().isoformat()}.md"
+        path, committed = report_path(
+            cells, requested=args.report, marks=args.designer, only=args.only
+        )
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
         print(f"\nreport: {path}")
+        if args.report is None and not committed:
+            print(
+                "this run did not cover the whole matrix, so it left the committed "
+                "evidence alone -- only a full run writes that"
+            )
 
     code = exit_code(cells, strict=args.strict)
     tally = Counter(cell.verdict for cell in cells)

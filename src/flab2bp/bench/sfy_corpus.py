@@ -23,9 +23,10 @@ What the gate accepts, and why it is not simply "no exceptions"
 Legality is what the hologram does; the audit reports what the validator says.
 A refusal is therefore a RESULT, not an error -- but only when its cause is one
 the plan already ruled on.  :data:`RULED_CAUSES` is that list, and it is
-deliberately a subset of :data:`~flab2bp.sfy.layout.strategy.REFUSALS`: three of
-the strategy's causes are excluded on purpose, because a build that ran out of
-seconds, or whose rows contradict the spec, is a build nobody has shown fits.
+deliberately a subset of :data:`~flab2bp.sfy.layout.strategy.REFUSALS`: several
+of the strategy's causes are excluded on purpose, because a build that ran out
+of seconds or of passes, or whose rows contradict the spec, is a build nobody
+has shown fits.  The comment above :data:`RULED_CAUSES` names each exclusion.
 
 A width refusal is a missing feature, not a wall
 ------------------------------------------------
@@ -33,7 +34,7 @@ A width refusal is a missing feature, not a wall
 unbroken row wider than the mark -- which is a shape M2 had not written yet, not
 a designer that is too small: the same machines sit on the same floor perfectly
 well split across two rows.  Row splitting is spec 9.1, and it landed as Task 8c
-(``ec01f672``): every one of the corpus's fifteen width refusals turned into a
+(``bdd1e8dc``): every one of the corpus's fifteen width refusals turned into a
 depth refusal, and ``concrete-60`` in mk2 turned into a build.  The cause stays
 in :data:`RULED_CAUSES` because the strategy can still raise it, and this
 paragraph stays because the lesson does: a reader who takes a width refusal for
@@ -49,6 +50,22 @@ The DSP corpus makes :class:`~flab2bp.bench.corpus.Tier` set the CP-SAT budget.
 There is no CP-SAT here: the manifold strategy either lays the rows out in well
 under a second or refuses on arithmetic, so the audit's budget is the one number
 its ``--budget`` flag carries and the tier says only how big the chain is.
+
+What importing this module still costs
+--------------------------------------
+Nine ``flab2bp.dsp`` modules, and they are not free-standing: importing ``Tier``
+imports :mod:`flab2bp.bench.corpus`, which imports
+:class:`flab2bp.rates.CandidatePolicy`, which is the DSP rate solver and brings
+``flab2bp.dsp.catalog``, ``registry``, ``rules``, ``colliders``, ``provenance``,
+``quaternion`` and the two geometry kernels with it.  A list of twelve
+Satisfactory URLs has no use for any of them.
+
+``tests/sfy/test_corpus.py`` pins exactly that and no more: with
+``bench.corpus`` already imported, reading this module must add no further DSP
+module.  The guard therefore holds the seam where it is rather than closing it
+-- closing it means moving ``Tier`` into a leaf module that imports nothing,
+which is an M3 chore and deliberately not done here, because moving a name the
+DSP corpus reads is a change to the other game's gate.
 """
 
 from __future__ import annotations
@@ -103,13 +120,15 @@ _LIST: Final = "https://factoriolab.github.io/sfy/list?v=11&o="
 #:   designer's roof there is no lift to fall back on.
 #: * ``fluids are M4`` -- R4.
 #:
-#: Three of the strategy's causes are deliberately absent.  ``corridor
+#: Four of the strategy's causes are deliberately absent.  ``corridor
 #: assignment exceeded the budget`` is a clock running out, not a shape being
-#: impossible.  ``a row makes something the spec never sends out`` and ``a row
-#: is fed from the corridor on the other side of the build`` are the spec and
-#: the placement contradicting each other, which is a defect wherever it
-#: appears.  So are the three power causes: a build whose poles cannot be stood
-#: or wired is a build this project must fix, not one it may excuse.
+#: impossible, and ``row splitting did not converge`` is the same in passes
+#: rather than seconds: the row/corridor walk gave up, which says nothing about
+#: whether the build fits.  ``a row makes something the spec never sends out``
+#: and ``a row is fed from the corridor on the other side of the build`` are the
+#: spec and the placement contradicting each other, which is a defect wherever
+#: it appears.  So are the three power causes: a build whose poles cannot be
+#: stood or wired is a build this project must fix, not one it may excuse.
 RULED_CAUSES: Final = (
     "rows exceed the designer depth",
     "rows exceed the designer width",
