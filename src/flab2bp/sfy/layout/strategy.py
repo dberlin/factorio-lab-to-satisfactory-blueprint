@@ -55,7 +55,7 @@ from flab2bp.sfy.layout.corridors import (
     turn_radius_cm,
 )
 from flab2bp.sfy.layout.laying import CorridorLayer
-from flab2bp.sfy.layout.manifold import SPLITTER_CLASS, RowError
+from flab2bp.sfy.layout.manifold import SPLITTER_CLASS, RowError, shortest_belt_cm
 from flab2bp.sfy.layout.model import (
     AttachmentObj,
     BeltRun,
@@ -68,7 +68,7 @@ from flab2bp.sfy.layout.model import (
 from flab2bp.sfy.layout.nets import NetPlanner
 from flab2bp.sfy.layout.power import PowerError, PowerPlan, PowerRow
 from flab2bp.sfy.layout.power import place as place_power
-from flab2bp.sfy.layout.rows import RowPlan, RowPlanner, _grid_ceil
+from flab2bp.sfy.layout.rows import RowPlan, RowPlanner
 from flab2bp.sfy.registry import Registry, load_registry
 from flab2bp.sfy.spec import FOUNDATION_CLASS, Designer, SfyBuildSpec
 
@@ -447,14 +447,13 @@ def _measure(registry: Registry, designer: Designer) -> Measures:
     all of them come out of ``registry.json``; nothing below this line reads a
     limit again.
     """
-    grid = _grid(registry)
     return Measures(
-        grid=grid,
+        grid=_grid(registry),
         radius=turn_radius_cm(registry),
         pitch=belt_pitch_cm(registry),
         node_pitch=attachment_pitch_cm(registry),
-        lead=_lead_cm(registry, grid),
-        lead_in=_lead_in_cm(registry, grid),
+        lead=_lead_cm(registry),
+        lead_in=_lead_in_cm(registry),
         half=designer.half_cm,
     )
 
@@ -466,34 +465,29 @@ def _grid(registry: Registry) -> float:
     return grid
 
 
-def _lead_cm(registry: Registry, grid: float) -> float:
+def _lead_cm(registry: Registry) -> float:
     """The shortest run between a corridor attachment's port and a turn or another.
 
-    The port stands 100 cm out of the attachment and ``belt.min_length`` refuses a
-    belt at or under ``belt_min_length_cm``, so this is the sum of the two on the
-    grid, and both numbers are the registry's.
+    The port stands 100 cm out of the attachment and the shortest belt the game
+    allows is :func:`~flab2bp.sfy.layout.manifold.shortest_belt_cm`, so this is
+    the sum of the two, and both numbers are the registry's.  Not rounded to the
+    grid: a belt is a spline between two ports, not a hologram on a cell.
     """
-    floor = registry.limits.belt_min_length_cm
-    if floor is None:
-        raise RowError("the registry states no minimum belt length, so no run can be sized")
     splitter = registry.buildables[SPLITTER_CLASS]
     reach = max(abs(port.translation[0]) for port in splitter.ports if port.kind == "belt")
-    return _grid_ceil(reach + floor, grid)
+    return reach + shortest_belt_cm(registry.limits)
 
 
-def _lead_in_cm(registry: Registry, grid: float) -> float:
+def _lead_in_cm(registry: Registry) -> float:
     """How far a belt runs flat out of a port before it starts to climb.
 
-    One minimum belt length on the grid, which is the row builder's own
-    ``LEAD_IN_MULTIPLE`` rule and for its reason: ``ports.position`` refuses a
-    belt that leaves a port more than ``PORT_ANGLE_RAD`` off the port's facing,
-    and every belt port in this build faces along the ground.  The shortest flat
-    piece the game would let stand on its own is the smallest honest answer.
+    The shortest belt the game allows, which is the row builder's own rule and
+    for its reason: ``ports.position`` refuses a belt that leaves a port more
+    than ``PORT_ANGLE_RAD`` off the port's facing, and every belt port in this
+    build faces along the ground.  The shortest piece the game would let stand on
+    its own is the smallest honest answer.
     """
-    floor = registry.limits.belt_min_length_cm
-    if floor is None:
-        raise RowError("the registry states no minimum belt length, so no run can be sized")
-    return _grid_ceil(floor, grid)
+    return shortest_belt_cm(registry.limits)
 
 
 @cache

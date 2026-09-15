@@ -38,6 +38,7 @@ from flab2bp.sfy.layout.manifold import (
     grid_ceil,
     hard_footprint_cm,
     machine_pitch_cm,
+    shortest_belt_cm,
     slab_top_cm,
 )
 from flab2bp.sfy.layout.model import (
@@ -403,22 +404,80 @@ def test_a_row_refuses_a_demand_no_belt_in_the_spec_carries() -> None:
     assert str(too_fast) in message
 
 
+# --- how short a belt this project will author ------------------------------
+
+
+def test_the_shortest_belt_is_the_first_whole_centimetre_the_game_allows() -> None:
+    """``belt.min_length`` compares STRICTLY, so the bound itself is too short.
+
+    The registry states 100.02 cm, extracted from
+    ``AFGConveyorBeltHologram::ValidateMinLength``; the first whole centimetre
+    above it is 101, and it is deliberately not a multiple of the 100 cm hologram
+    grid -- rounding a belt up to the grid would double it.
+    """
+    assert REGISTRY.limits.belt_min_length_cm == 100.02
+    assert shortest_belt_cm(REGISTRY.limits) == 101.0
+
+
+def test_a_feeder_is_as_short_as_the_machine_line_leaves_room_for() -> None:
+    """101 cm is the floor; the machine's own clearance box is what settles it.
+
+    A chain has to clear the whole machine LINE, so it stands at least a belt's
+    79 cm half width outside the machine's hard box -- 500 cm for a Constructor,
+    and one centimetre more so the two boxes do not share a face, which
+    ``belt.capsule`` calls a lap of 0.0 cm.  That puts the chain at y = -580, its
+    side port at -480, and the machine's input port is at -300: a feeder of
+    180 cm.  Rounding the same feeder up to the grid, which is what this module
+    used to do, put the chain at -600 and cost 20 cm of band at each side of
+    every row.
+    """
+    row = _row(_rods(3), "mk3")
+    splitters = sorted({a.pose.y for a in row.attachments if a.class_name.endswith("Splitter_C")})
+    assert splitters == [-580.0]
+    feeders = sorted({round(_length(belt), 6) for belt in row.belts if _is_feeder(row, belt)})
+    assert feeders == [180.0]
+    assert min(feeders) > REGISTRY.limits.belt_min_length_cm
+
+
+def _length(belt: BeltRun) -> float:
+    return sum(
+        math.dist(belt.points[i][0], belt.points[i + 1][0]) for i in range(len(belt.points) - 1)
+    )
+
+
+def _is_feeder(row: RowGeometry, belt: BeltRun) -> bool:
+    """A belt that ends on a machine's input port, which is what a feeder is."""
+    inputs = {
+        (machine.id, port.name)
+        for machine in row.machines
+        for port in REGISTRY.buildables[machine.class_name].ports
+        if port.kind == "belt" and port.direction == "input"
+    }
+    return any(link.a[0] == belt.id and link.b in inputs for link in row.links)
+
+
 # --- the frame Task 8 composes ---------------------------------------------
 
 
-def test_every_object_stands_on_the_hologram_grid_or_on_a_registry_port() -> None:
+def test_every_object_stands_on_the_grid_across_the_row_and_on_a_centimetre_along_it() -> None:
+    """``X`` and ``Z`` are the grid's; ``Y`` is the centimetre's, and deliberately.
+
+    A machine stands where the pitch puts it and a chain stands at the height a
+    crossing gap puts it, and both of those are grid multiples.  How far OUT a
+    chain stands is neither: it is the shortest belt the game allows
+    (:func:`~flab2bp.sfy.layout.manifold.shortest_belt_cm`, 101 cm) out of a port
+    whose own offset the registry states, and then however much further the
+    machine line's own clearance box pushes it -- 500 cm of box plus a belt's
+    79 cm half width is 579, which is not on a 100 cm grid and has no reason to
+    be.  ``buildable.grid_snap`` SNAPS a hologram the player drags; it refuses
+    nothing, and a metre of designer floor per chain is what rounding to it cost.
+    """
     grid = GRID
     row = _row(_batteries(1), "mk2")
-    machine_port_y = {
-        round(port.translation[1], 6)
-        for port in REGISTRY.buildables[MANUFACTURER].ports
-        if port.kind == "belt"
-    }
     for placed in _standing(row):
         assert placed.pose.x % grid == 0
         assert placed.pose.z % grid == 0
-        offsets = {round((placed.pose.y - y) % grid, 3) for y in machine_port_y}
-        assert placed.pose.y % grid == 0 or 0.0 in offsets
+        assert placed.pose.y == round(placed.pose.y), "an object stands on a whole centimetre"
     for belt in row.belts:
         for location, _, _ in belt.points:
             assert location[0] % grid == 0 or _on_a_port(row, location)

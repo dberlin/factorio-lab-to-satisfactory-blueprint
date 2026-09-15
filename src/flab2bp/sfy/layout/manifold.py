@@ -16,10 +16,11 @@ this project's own and each says so where it is computed:
 * :func:`crossing_gap_cm`, the height one chain stands above the next, which is
   twice the ``belt.clearance`` box's own height so that two crossing belts have
   a full belt box of air between their centrelines;
-* :data:`LEAD_IN_MULTIPLE`, the flat piece a feeder leaves its splitter by
-  before it starts to descend, because :mod:`flab2bp.sfy.layout.validate`'s
-  ``ports.position`` holds this project to belts that leave a port along the
-  port's own facing, and a port's facing is horizontal;
+* the flat piece a feeder leaves its splitter by before it starts to descend,
+  which is :func:`shortest_belt_cm`, because
+  :mod:`flab2bp.sfy.layout.validate`'s ``ports.position`` holds this project to
+  belts that leave a port along the port's own facing, and a port's facing is
+  horizontal;
 * the rule that a chain clears the whole machine LINE rather than the one
   machine beside it, so that a row of one stands where a row of ten would;
 * the choice to lay chains outward in the order the input ports run along ``X``.
@@ -60,7 +61,6 @@ from flab2bp.sfy.spec import FOUNDATION_CLASS, Designer, SfyMachineGroup
 from flab2bp.spec import BeltTier
 
 __all__ = [
-    "LEAD_IN_MULTIPLE",
     "MERGER_CLASS",
     "SPLITTER_CLASS",
     "ChainEnd",
@@ -72,6 +72,7 @@ __all__ = [
     "grid_floor",
     "hard_footprint_cm",
     "machine_pitch_cm",
+    "shortest_belt_cm",
     "slab_top_cm",
 ]
 
@@ -81,18 +82,6 @@ __all__ = [
 #: number about it -- where its ports are, how big its box is -- is read.
 SPLITTER_CLASS = "Build_ConveyorAttachmentSplitter_C"
 MERGER_CLASS = "Build_ConveyorAttachmentMerger_C"
-
-LEAD_IN_MULTIPLE = 1
-"""How many ``belt_min_length_cm``, rounded up to the grid, a feeder runs flat
-out of its splitter before it descends.
-
-Ours.  ``ports.position`` refuses a belt that leaves a port more than
-``PORT_ANGLE_RAD`` off the port's own facing, and a splitter's side port faces
-along the ground, so a feeder that dropped straight out of the port would be a
-belt this project refuses to author.  One minimum belt length is the shortest
-flat piece the game would let stand on its own, which makes it the smallest
-honest answer.
-"""
 
 _EPS = 1e-9
 """Slack for a grid comparison, so that a value already on the grid stays there
@@ -222,11 +211,21 @@ class _Band:
     z1: float
 
     def hits(self, y: float, z: float, half_y: float, half_z: float) -> bool:
+        """Whether a belt box centred at ``(y, z)`` reaches this box AT ALL.
+
+        Touching counts.  ``belt.capsule`` reports a lap of ``0.0 cm`` as a
+        fault -- two boxes that share a face are two boxes that overlap -- so a
+        lane that just grazes the machine line is a lane this module must not
+        lay.  The comparison was strict while every chain stood on the hologram
+        grid and no lane could land exactly on a box's face; a chain placed at
+        the centimetre lands on one the moment the box's own face is a whole
+        number of centimetres out, which every hard box in the registry is.
+        """
         return (
-            y + half_y > self.y0
-            and y - half_y < self.y1
-            and z + half_z > self.z0
-            and z - half_z < self.z1
+            y + half_y >= self.y0
+            and y - half_y <= self.y1
+            and z + half_z >= self.z0
+            and z - half_z <= self.z1
         )
 
 
@@ -519,7 +518,7 @@ def _lay_input_chain(
     chain_z = belt_z + depth * gap
 
     drop = _descent_run(depth * gap, limits, grid)
-    lead = _lead_in(limits, grid)
+    lead = shortest_belt_cm(limits)
     # Whether this chain's feeder clears the chains inside it does NOT depend on
     # where the chain stands, so it is settled once, before the walk: the feeder
     # is flat until its last ``drop`` centimetres, and moving the chain outward
@@ -535,7 +534,12 @@ def _lay_input_chain(
             "Standing this chain further out does not change that -- the feeder is flat "
             f"until its last {drop:.0f} cm -- so the row is refused rather than walked."
         )
-    y = grid_floor(port_y - abs(side.translation[1]) - drop - lead, grid)
+    # Where the feeder alone would put the chain: its side port stands one
+    # ``side`` out of the attachment towards the machines, and the belt from
+    # there into the machine port is the shortest one the game allows.  A whole
+    # centimetre, rounded outwards, because a belt is not a hologram on a grid
+    # cell -- see :func:`shortest_belt_cm`.
+    y = float(math.floor(port_y - abs(side.translation[1]) - drop - lead))
     if placed:
         y = min(y, placed[-1][0] - grid)
     while True:
@@ -548,7 +552,10 @@ def _lay_input_chain(
             )
         if _lane_is_clear(y, chain_z, bands):
             break
-        y -= grid
+        # A centimetre at a time, not a grid step: what the chain has to clear is
+        # the machine line's own box plus a belt's half width, which is no more a
+        # multiple of the grid than the ports are.
+        y -= 1.0
 
     per_machine = _per_machine(group.inputs_per_machine[item_id], group)
     tail = [sum(per_machine[index:], Fraction(0)) for index in range(group.count)]
@@ -633,9 +640,12 @@ def _lay_output_chain(
     item_id = sorted(group.outputs_per_machine)[0]
     port_y = port.translation[1]
 
-    y = grid_ceil(port_y + abs(side.translation[1]) + _lead_in(limits, grid), grid)
+    # The mirror of the input chain's: the machine's output port drains into the
+    # merger's side port, one ``side`` out of it towards the machines, over the
+    # shortest belt the game allows.
+    y = float(math.ceil(port_y - abs(side.translation[1]) + shortest_belt_cm(limits)))
     while not _lane_is_clear(y, belt_z, bands):
-        y += grid
+        y += 1.0
 
     per_machine = _per_machine(group.outputs_per_machine[item_id], group)
     head = [sum(per_machine[: index + 1], Fraction(0)) for index in range(group.count)]
@@ -725,10 +735,29 @@ def _per_machine(rate: Fraction, group: SfyMachineGroup) -> list[Fraction]:
     return [rate if index < group.count - 1 else rate * share for index in range(group.count)]
 
 
-def _lead_in(limits: Limits, grid: float) -> float:
-    if limits.belt_min_length_cm is None:
+def shortest_belt_cm(limits: Limits) -> float:
+    """The shortest belt this project will author, in whole centimetres.
+
+    ``belt.min_length`` refuses a belt at or under ``belt_min_length_cm`` --
+    ``AFGConveyorBeltHologram::ValidateMinLength`` compares strictly -- so the
+    shortest legal run is the next length above it.  **Not rounded to the
+    hologram grid**: the grid is where an ATTACHMENT snaps, and a belt is a
+    spline between two ports rather than a hologram on a cell, so rounding a belt
+    up to the grid spends up to a metre of floor the game never asked for.  Whole
+    centimetres, because that is the resolution every other distance in this
+    project is stated at and because a belt a hundredth of a centimetre over the
+    bound is a belt nobody can reproduce by hand.
+
+    It is also the flat piece a feeder runs out of its splitter before it
+    descends: ``ports.position`` refuses a belt that leaves a port more than
+    ``PORT_ANGLE_RAD`` off the port's own facing and a side port faces along the
+    ground, so a feeder needs a flat piece, and the shortest legal belt is the
+    smallest honest answer for it.
+    """
+    floor = limits.belt_min_length_cm
+    if floor is None:
         raise RowError("the registry states no minimum belt length, so no run can be sized")
-    return grid_ceil(LEAD_IN_MULTIPLE * limits.belt_min_length_cm, grid)
+    return math.floor(floor) + 1.0
 
 
 def _descent_run(fall: float, limits: Limits, grid: float) -> float:
@@ -818,7 +847,7 @@ def _shape(start: Vector, finish: Vector, descend: float) -> tuple[SplinePoint, 
     """The spline one feeder or chain belt runs along.
 
     A belt at one height is a straight run.  A belt that has to come down runs
-    flat out of its port first -- see :data:`LEAD_IN_MULTIPLE` -- and descends
+    flat out of its port first -- see :func:`shortest_belt_cm` -- and descends
     over the last ``descend`` centimetres, which is the steepest descent
     ``belt.incline`` allows and so the shortest.  Both pieces are straight, so
     the spline never bends and ``belt.curvature`` has nothing to measure.
