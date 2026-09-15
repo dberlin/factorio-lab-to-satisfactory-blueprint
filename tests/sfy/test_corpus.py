@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -19,6 +21,7 @@ import pytest
 
 from flab2bp.bench.corpus import Tier
 from flab2bp.bench.sfy_corpus import (
+    CLEAN,
     DESIGNER_MARKS,
     FLOWS_DIR,
     RULED_CAUSES,
@@ -86,37 +89,53 @@ def test_every_ruled_cause_is_one_the_strategy_can_actually_raise() -> None:
 
 def test_an_entry_that_expects_a_refusal_must_name_a_cause_the_rulings_allow() -> None:
     with pytest.raises(ValueError, match="no ruling allows"):
-        SfyCorpusEntry(
-            "invented",
-            "https://factoriolab.github.io/sfy/list?v=11&o=iron-plate*60",
-            "iron-plate-60.csv",
-            Tier.TRIVIAL,
-            expected="refuse",
-            expected_cause="the solver did not feel like it",
-        )
+        _made(expects=(("mk3", "the solver did not feel like it"),), designers=("mk3",))
 
 
-def test_an_entry_that_expects_a_clean_build_may_not_also_name_a_cause() -> None:
-    with pytest.raises(ValueError, match="expects a clean build"):
-        SfyCorpusEntry(
-            "contradictory",
-            "https://factoriolab.github.io/sfy/list?v=11&o=iron-plate*60",
-            "iron-plate-60.csv",
-            Tier.TRIVIAL,
-            expected="clean",
-            expected_cause="fluids are M4",
-        )
+def test_an_entry_must_pin_exactly_the_marks_it_is_built_in() -> None:
+    """``--strict`` compares a cell with its pin, so a mark with none is silent."""
+    with pytest.raises(ValueError, match="one expectation per mark"):
+        _made(expects=(("mk1", CLEAN),), designers=("mk1", "mk3"))
+    with pytest.raises(ValueError, match="one expectation per mark"):
+        _made(expects=(("mk1", CLEAN), ("mk3", CLEAN)), designers=("mk1",))
+
+
+def test_an_entry_may_not_pin_the_same_mark_twice() -> None:
+    with pytest.raises(ValueError, match="same mark twice"):
+        _made(expects=(("mk1", CLEAN), ("mk1", "fluids are M4")), designers=("mk1",))
 
 
 def test_an_entry_may_only_ask_for_designer_marks_that_exist() -> None:
     with pytest.raises(ValueError, match="mk9"):
-        SfyCorpusEntry(
-            "impossible",
-            "https://factoriolab.github.io/sfy/list?v=11&o=iron-plate*60",
-            "iron-plate-60.csv",
-            Tier.TRIVIAL,
-            designers=("mk9",),
-        )
+        _made(expects=(("mk9", CLEAN),), designers=("mk9",))
+
+
+def test_the_summary_expectation_is_the_largest_marks_pin() -> None:
+    """``expected`` / ``expected_cause`` read the best chance the entry has."""
+    built = _made(expects=(("mk1", "fluids are M4"), ("mk3", CLEAN)), designers=("mk1", "mk3"))
+    assert built.largest == "mk3"
+    assert (built.expected, built.expected_cause) == ("clean", None)
+    refusing = _made(
+        expects=(("mk1", "fluids are M4"), ("mk3", "row too deep")), designers=("mk1", "mk3")
+    )
+    assert (refusing.expected, refusing.expected_cause) == ("refuse", "row too deep")
+
+
+def test_every_corpus_entry_pins_every_mark_it_is_run_in() -> None:
+    """The regression pin only pins what it names, so it must name all of them."""
+    for item in SFY_CORPUS:
+        assert {mark for mark, _ in item.expects} == set(item.designers), item.url_id
+
+
+def _made(*, expects: tuple[tuple[str, str], ...], designers: tuple[str, ...]) -> SfyCorpusEntry:
+    return SfyCorpusEntry(
+        "invented",
+        "https://factoriolab.github.io/sfy/list?v=11&o=iron-plate*60",
+        "iron-plate-60.csv",
+        Tier.TRIVIAL,
+        expects=expects,
+        designers=designers,
+    )
 
 
 def test_a_cause_no_ruling_names_is_not_ruled() -> None:
@@ -298,6 +317,82 @@ def test_a_cell_that_never_ran_is_never_mistaken_for_a_clean_one() -> None:
     assert not cell.gate_ok
 
 
+# --- the strict gate: did the cell do what the corpus pins it to do? ---------
+
+
+def _clean_cell(url_id: str, mark: str) -> sfy_audit.Cell:
+    return sfy_audit.run_cell(
+        entry(url_id),
+        mark,
+        15.0,
+        build=_returns(_Built(report=Report(findings=()), placement=_placement())),
+    )
+
+
+def _refusing_cell(url_id: str, mark: str, cause: str) -> sfy_audit.Cell:
+    return sfy_audit.run_cell(entry(url_id), mark, 15.0, build=_raises(NoValidLayout(cause)))
+
+
+def test_a_cell_that_did_what_the_corpus_pins_it_to_do_passes_both_gates() -> None:
+    clean = _clean_cell("iron-plate-60", "mk3")  # pinned clean
+    refused = _refusing_cell("plastic-20", "mk1", "fluids are M4")  # pinned that cause
+    for cell in (clean, refused):
+        assert cell.as_pinned, cell
+        assert cell.gate_ok and cell.strict_ok
+
+
+def test_a_cell_that_starts_building_where_the_corpus_pins_a_refusal_only_fails_strict() -> None:
+    """Progress must not turn the default gate red, and must not go unnoticed."""
+    cell = _clean_cell("screw-120", "mk3")  # pinned `rows exceed the designer depth`
+    assert cell.verdict == "CLEAN"
+    assert cell.gate_ok
+    assert not cell.as_pinned
+    assert not cell.strict_ok
+    assert sfy_audit.exit_code([cell]) == 0
+    assert sfy_audit.exit_code([cell], strict=True) != 0
+
+
+def test_a_refusal_whose_cause_changed_to_another_ruled_one_only_fails_strict() -> None:
+    cell = _refusing_cell("screw-120", "mk3", "rows exceed the designer width")
+    assert cell.gate_ok and not cell.as_pinned
+    assert sfy_audit.exit_code([cell]) == 0
+    assert sfy_audit.exit_code([cell], strict=True) != 0
+
+
+def test_a_cell_that_starts_refusing_where_the_corpus_pins_a_clean_build_fails_strict() -> None:
+    cell = _refusing_cell("iron-plate-60", "mk3", "rows exceed the designer depth")
+    assert cell.gate_ok and not cell.as_pinned
+    assert sfy_audit.exit_code([cell], strict=True) != 0
+
+
+def test_strict_only_ever_narrows_the_gate() -> None:
+    """A cell the default gate already fails cannot be rescued by a pin."""
+    crashed = sfy_audit.run_cell(_entry(), "mk3", 15.0, build=_raises(KeyError("x")))
+    assert not crashed.gate_ok and not crashed.strict_ok
+    for cell in (_clean_cell("iron-plate-60", "mk3"), crashed):
+        assert cell.strict_ok <= cell.gate_ok
+
+
+def test_a_cell_with_nothing_pinned_is_not_reported_as_drift() -> None:
+    """``--designer`` can ask for a mark an entry does not pin; say nothing."""
+    cell = sfy_audit.Cell(url_id="x", designer="mk3", verdict="CLEAN")
+    assert cell.expected == ""
+    assert cell.as_pinned
+
+
+def test_the_report_names_the_cells_that_moved_off_their_pin() -> None:
+    moved = _clean_cell("screw-120", "mk3")
+    text = sfy_audit.render_report([moved], head="abc1234", budget_s=15.0, dirty=False)
+    assert "What moved off its pin" in text
+    assert "screw-120" in text
+    assert "PASS" in text, "the default gate is blind to a pin moving"
+    strict = sfy_audit.render_report(
+        [moved], head="abc1234", budget_s=15.0, dirty=False, strict=True
+    )
+    assert "FAIL" in strict
+    assert "--strict" in strict
+
+
 def test_the_exit_code_is_zero_only_when_every_cell_passes_the_gate() -> None:
     clean = sfy_audit.run_cell(
         _entry(),
@@ -342,3 +437,105 @@ def test_the_report_says_FAIL_and_names_the_cell_when_one_misses() -> None:
 
 def test_the_marks_a_cell_may_be_run_in_are_the_designers_the_spec_can_size() -> None:
     assert DESIGNER_MARKS == ("mk1", "mk2", "mk3")
+
+
+# --- what importing the corpus costs ----------------------------------------
+
+
+def _import_probe() -> dict[str, list[str]]:
+    """Import the corpus in a fresh interpreter and report what came with it.
+
+    A fresh one is the only honest check: inside this interpreter the DSP
+    modules are long since imported by other tests.  Two questions are asked at
+    once -- what the bake-off package costs, and what ``sfy_corpus`` adds on top
+    of the one module it genuinely needs (``bench.corpus``, for ``Tier``).
+    """
+    probe = """
+import importlib, json, sys
+importlib.import_module("flab2bp.bench.corpus")
+before = {m for m in sys.modules if m.startswith("flab2bp.dsp")}
+importlib.import_module("flab2bp.bench.sfy_corpus")
+after = {m for m in sys.modules if m.startswith("flab2bp.dsp")}
+print(json.dumps({
+    "added": sorted(after - before),
+    "bench": sorted(m for m in sys.modules if m.startswith("flab2bp.bench.")),
+    "layout": sorted(m for m in sys.modules if m.startswith("flab2bp.layout")),
+}))
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=FLOWS_DIR.parents[2],
+    )
+    parsed: dict[str, list[str]] = json.loads(result.stdout.strip().splitlines()[-1])
+    return parsed
+
+
+def test_importing_the_satisfactory_corpus_adds_no_dsp_module_of_its_own() -> None:
+    """The Satisfactory corpus must not drag the DSP stack behind it.
+
+    It reuses exactly one thing from the DSP side -- ``Tier``, out of
+    ``flab2bp.bench.corpus`` -- and THAT module imports
+    ``flab2bp.rates.CandidatePolicy``, which is the DSP rate solver and brings
+    ``flab2bp.dsp.catalog`` with it.  That one seam is not this module's to
+    sever (it would mean moving ``Tier`` or ``CandidatePolicy``), so this test
+    pins it exactly there: after ``bench.corpus`` is in, importing
+    ``sfy_corpus`` must add no DSP module at all.
+    """
+    probe = _import_probe()
+    assert probe["added"] == [], (
+        "importing flab2bp.bench.sfy_corpus pulled DSP modules that "
+        f"flab2bp.bench.corpus had not already pulled: {probe['added']}"
+    )
+
+
+def test_importing_the_satisfactory_corpus_loads_no_placer_or_router() -> None:
+    """Shared layout primitives are fine; the DSP search is not.
+
+    ``flab2bp.layout.budget`` and ``friends`` are the vocabulary both games
+    share and the Satisfactory strategy genuinely uses.  The placer, the router
+    and their Cython kernels are the DSP bake-off, which a list of URLs has no
+    use for and which used to arrive through this package's ``__init__``.
+    """
+    loaded = set(_import_probe()["layout"])
+    for heavy in (
+        "flab2bp.layout.freeform",
+        "flab2bp.layout.routing_domain",
+        "flab2bp.layout.geometric_router",
+        "flab2bp.layout.finalize",
+        "flab2bp.layout._geometric_kernel",
+        "flab2bp.layout._sequence_kernel",
+    ):
+        assert heavy not in loaded, f"{heavy} was imported by reading the corpus"
+
+
+def test_importing_the_satisfactory_corpus_does_not_run_the_bake_off_package() -> None:
+    """``flab2bp/bench/__init__.py`` re-exports lazily, and must keep doing so.
+
+    Eagerly, that ``__init__`` imported ``runner`` -> ``layout.freeform`` ->
+    ``routing_domain`` and the Cython kernels: 44 modules, none of which a list
+    of Satisfactory URLs has any use for.
+    """
+    loaded = set(_import_probe()["bench"])
+    for heavy in (
+        "flab2bp.bench.runner",
+        "flab2bp.bench.crossvalidate",
+        "flab2bp.bench.metrics",
+        "flab2bp.bench.regression",
+        "flab2bp.bench.report",
+        "flab2bp.bench.scoring",
+    ):
+        assert heavy not in loaded, f"{heavy} was imported by reading the corpus"
+
+
+def test_the_bake_off_package_still_re_exports_every_name_it_used_to() -> None:
+    """Lazy must be invisible: the same names, from the same place."""
+    import flab2bp.bench as bench
+
+    assert set(bench.__all__) == set(dir(bench))
+    assert bench.Tier is Tier
+    assert callable(bench.measure)
+    with pytest.raises(AttributeError, match="no attribute 'not_a_thing'"):
+        bench.not_a_thing  # noqa: B018 - the point is the attribute access

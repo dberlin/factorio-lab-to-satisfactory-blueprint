@@ -4,9 +4,24 @@
     uv run python scripts/sfy_audit.py --designer mk1      # one mark
     uv run python scripts/sfy_audit.py --budget 15         # seconds per cell
     uv run python scripts/sfy_audit.py --only plastic-20   # one entry
+    uv run python scripts/sfy_audit.py --strict            # also pin every outcome
     uv run python scripts/sfy_audit.py --no-report         # do not write evidence
 
 Exits non-zero if any cell misses, so it works as a gate.
+
+TWO GATES OVER ONE RUN
+----------------------
+The default gate asks only whether each cell is CLEAN or refuses for a reason a
+ruling allows.  It is deliberately blind to WHICH ruled reason: a build that
+starts fitting where it used to refuse, or refuses on width where it used to
+refuse on depth, is progress or a wash, and a gate that went red on either
+would be a gate against improvement.
+
+``--strict`` asks the other question -- did each cell do what the corpus says it
+does -- against a per-mark pin that is a measurement rather than a wish.  That
+makes the same run a regression pin, and the two together are what a change
+should be read against: the default one says nothing broke, the strict one says
+what moved.
 
 WHY THIS IS A SCRIPT AND NOT A TEST
 -----------------------------------
@@ -62,6 +77,7 @@ sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_ROOT / "src"))
 
 from flab2bp.bench.sfy_corpus import (  # noqa: E402
+    CLEAN,
     DESIGNER_MARKS,
     EVIDENCE_DIR,
     RULED_CAUSES,
@@ -129,12 +145,14 @@ class Cell:
     poles: int = 0
     wires: int = 0
     seconds: float = 0.0
-    #: What the corpus expected of this entry's largest mark, for the report.
+    #: What the corpus pins THIS mark to do: ``CLEAN`` or a refusal cause.
+    #: Empty when the entry pins nothing for it, which makes ``--strict`` say
+    #: nothing rather than guess.
     expected: str = ""
 
     @property
     def gate_ok(self) -> bool:
-        """Whether this cell leaves the gate green.
+        """Whether this cell leaves the default gate green.
 
         The plan's rule, verbatim: CLEAN, or REFUSED with a cause a ruling
         allows.  ``INVALID``, ``CRASH``, ``NOT RUN`` and an unruled refusal all
@@ -143,6 +161,32 @@ class Cell:
         if self.verdict == "CLEAN":
             return True
         return self.verdict == "REFUSED" and is_ruled_cause(self.cause)
+
+    @property
+    def as_pinned(self) -> bool:
+        """Whether this cell did what the corpus pins it to do.
+
+        Deliberately not part of :attr:`gate_ok`: an entry that starts BUILDING
+        where it used to refuse is progress, and a gate that went red on it
+        would be a gate against improvement.  ``--strict`` asks this question
+        instead, which turns the same corpus into a regression pin -- a cause
+        that changed, a clean build that started refusing, a refusal that
+        started building.
+        """
+        if not self.expected:
+            return True
+        if self.expected == CLEAN:
+            return self.verdict == "CLEAN"
+        return self.verdict == "REFUSED" and self.cause == self.expected
+
+    @property
+    def strict_ok(self) -> bool:
+        """Both gates at once: ``--strict`` narrows, it never widens."""
+        return self.gate_ok and self.as_pinned
+
+    def ok(self, *, strict: bool) -> bool:
+        """Whether this cell passes the gate the run was asked for."""
+        return self.strict_ok if strict else self.gate_ok
 
     @property
     def summary(self) -> str:
@@ -221,15 +265,15 @@ def not_run(entry: SfyCorpusEntry, designer: str, why: str) -> Cell:
         designer=designer,
         verdict="NOT RUN",
         detail=why,
-        expected=_expected(entry),
+        expected=_expected(entry, designer),
     )
 
 
-def exit_code(cells: Sequence[Cell]) -> int:
+def exit_code(cells: Sequence[Cell], *, strict: bool = False) -> int:
     """0 only when there is at least one cell and every one of them passes."""
     if not cells:
         return 1
-    return 0 if all(cell.gate_ok for cell in cells) else 1
+    return 0 if all(cell.ok(strict=strict) for cell in cells) else 1
 
 
 def render_report(
@@ -240,26 +284,29 @@ def render_report(
     dirty: bool,
     cpu_load: float | None = None,
     marks: Sequence[str] = DESIGNER_MARKS,
+    strict: bool = False,
 ) -> str:
     """The evidence report: every cell, the gate verdict, and what refuses."""
-    passed = exit_code(cells) == 0
+    passed = exit_code(cells, strict=strict) == 0
     tally = Counter(cell.verdict for cell in cells)
     ruled = sum(1 for cell in cells if cell.verdict == "REFUSED" and cell.gate_ok)
     unruled = tally["REFUSED"] - ruled
+    drifted = [cell for cell in cells if not cell.as_pinned]
 
     lines = [
         f"# Satisfactory M2 corpus audit, {date.today().isoformat()}",
         "",
-        f"**Gate: {'PASS' if passed else 'FAIL'}** -- "
+        f"**Gate{' (--strict)' if strict else ''}: {'PASS' if passed else 'FAIL'}** -- "
         f"{tally['CLEAN']} CLEAN, {ruled} expected REFUSED, "
         f"{unruled + tally['INVALID'] + tally['CRASH'] + tally['NOT RUN']} other "
         f"({unruled} unruled refusal, {tally['INVALID']} INVALID, "
         f"{tally['CRASH']} CRASH, {tally['NOT RUN']} NOT RUN) over "
-        f"{len(cells)} cells.",
+        f"{len(cells)} cells; {len(drifted)} off their pin.",
         "",
         f"* head: `{head}`{' (working tree dirty)' if dirty else ''}",
         f"* budget: {budget_s:g} s per cell; marks: {', '.join(marks)}",
-        f"* command: `uv run python scripts/sfy_audit.py --budget {budget_s:g}`",
+        f"* command: `uv run python scripts/sfy_audit.py --budget {budget_s:g}"
+        f"{' --strict' if strict else ''}`",
     ]
     if cpu_load is not None:
         lines.append(f"* CPU load while timing: {cpu_load:.1f} mean runnable procs")
@@ -267,17 +314,22 @@ def render_report(
         "",
         "A cell passes the gate when it is CLEAN, or REFUSED with a cause one of",
         "the plan's R-rulings allows: " + ", ".join(f"`{c}`" for c in RULED_CAUSES) + ".",
+        "`--strict` also asks whether the cell still does what the corpus pins it",
+        "to do, which makes the same run a regression pin.",
         "",
         "## Every cell",
         "",
-        "| entry | mark | verdict | cause or checks | machines | belts | poles | wires | s |",
-        "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: |",
+        "| entry | mark | verdict | cause or checks | pinned | machines | belts | poles "
+        "| wires | s |",
+        "| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: |",
     ]
     for cell in cells:
         detail = cell.cause if cell.verdict in {"REFUSED", "CRASH"} else ", ".join(cell.checks)
+        mark = "" if cell.ok(strict=strict) else "**"
+        pin = cell.expected or "--"
         lines.append(
-            f"| {cell.url_id} | {cell.designer} | {'' if cell.gate_ok else '**'}"
-            f"{cell.verdict}{'' if cell.gate_ok else '**'} | {detail or '--'} "
+            f"| {cell.url_id} | {cell.designer} | {mark}{cell.verdict}{mark} "
+            f"| {detail or '--'} | {'as pinned' if cell.as_pinned else f'**{pin}**'} "
             f"| {cell.machines} | {cell.belts} | {cell.poles} | {cell.wires} "
             f"| {cell.seconds:.2f} |"
         )
@@ -307,6 +359,24 @@ def render_report(
             for cell in missed
         ]
         lines.append("")
+
+    lines += ["## What moved off its pin", ""]
+    if not drifted:
+        lines += ["Nothing: every cell did what the corpus says it does.", ""]
+    else:
+        lines += [
+            f"* `{cell.url_id}` in {cell.designer}: pinned "
+            f"{'CLEAN' if cell.expected == CLEAN else f'REFUSED({cell.expected})'}, "
+            f"got {cell.summary}"
+            for cell in drifted
+        ]
+        lines += [
+            "",
+            "A pin moving is not by itself a defect -- a cell that starts BUILDING "
+            "where it used to refuse is progress -- but it is always a thing to "
+            "look at, and under `--strict` it fails the gate.",
+            "",
+        ]
     return "\n".join(lines) + "\n"
 
 
@@ -336,14 +406,16 @@ def _cell(
         poles=len(placement.poles) if placement else 0,
         wires=len(placement.wires) if placement else 0,
         seconds=perf_counter() - started,
-        expected=_expected(entry),
+        expected=_expected(entry, designer),
     )
 
 
-def _expected(entry: SfyCorpusEntry) -> str:
-    if entry.expected == "refuse":
-        return f"refuse({entry.expected_cause})"
-    return "clean"
+def _expected(entry: SfyCorpusEntry, designer: str) -> str:
+    """What THIS mark is pinned to do, or empty when the entry does not say."""
+    try:
+        return entry.expectation(designer)
+    except KeyError:  # a mark asked for on the command line the entry does not pin
+        return ""
 
 
 def _by_cause(cells: Iterable[Cell]) -> list[tuple[str, list[Cell]]]:
@@ -415,6 +487,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     ap.add_argument("--no-report", action="store_true", help="do not write a report")
     ap.add_argument("--no-cpu-load", action="store_true", help="skip the five-second vmstat sample")
+    ap.add_argument(
+        "--strict",
+        action="store_true",
+        help=(
+            "also fail on any cell that did not do what the corpus pins it to do, "
+            "which turns the run into a regression pin"
+        ),
+    )
     args = ap.parse_args(argv)
 
     wanted = tuple(args.only) or tuple(e.url_id for e in SFY_CORPUS)
@@ -434,8 +514,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 continue
             cell = run_cell(entry, mark, args.budget)
             cells.append(cell)
-            flag = "  " if cell.gate_ok else "<-"
-            print(f"{flag} {cell.url_id:26} {cell.designer} {cell.summary} [{cell.seconds:5.2f}s]")
+            flag = "  " if cell.ok(strict=args.strict) else "<-"
+            pin = "" if cell.as_pinned else f"  (pinned {cell.expected or 'nothing'})"
+            print(
+                f"{flag} {cell.url_id:26} {cell.designer} {cell.summary} "
+                f"[{cell.seconds:5.2f}s]{pin}"
+            )
             if args.max_seconds and perf_counter() - started > args.max_seconds:
                 stopped = f"the {args.max_seconds:g}s wall-clock cap expired"
 
@@ -449,6 +533,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         dirty=dirty,
         cpu_load=cpu_load,
         marks=args.designer or DESIGNER_MARKS,
+        strict=args.strict,
     )
     if not args.no_report:
         path = args.report or EVIDENCE_DIR / f"sfy-m2-audit-{date.today().isoformat()}.md"
@@ -456,13 +541,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         path.write_text(text, encoding="utf-8")
         print(f"\nreport: {path}")
 
-    code = exit_code(cells)
+    code = exit_code(cells, strict=args.strict)
     tally = Counter(cell.verdict for cell in cells)
     ruled = sum(1 for cell in cells if cell.verdict == "REFUSED" and cell.gate_ok)
+    drifted = sum(1 for cell in cells if not cell.as_pinned)
     print(
-        f"\n=== gate {'PASS' if code == 0 else 'FAIL'}: {tally['CLEAN']} CLEAN, "
+        f"\n=== gate{' (--strict)' if args.strict else ''} "
+        f"{'PASS' if code == 0 else 'FAIL'}: {tally['CLEAN']} CLEAN, "
         f"{ruled} expected REFUSED, {len(cells) - tally['CLEAN'] - ruled} other, "
-        f"of {len(cells)} cells"
+        f"{drifted} off their pin, of {len(cells)} cells"
     )
     return code
 

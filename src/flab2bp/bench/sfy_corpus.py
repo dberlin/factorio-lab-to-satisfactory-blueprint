@@ -27,6 +27,17 @@ deliberately a subset of :data:`~flab2bp.sfy.layout.strategy.REFUSALS`: three of
 the strategy's causes are excluded on purpose, because a build that ran out of
 seconds, or whose rows contradict the spec, is a build nobody has shown fits.
 
+A width refusal is a missing feature, not a wall
+------------------------------------------------
+Fifteen of the corpus's refusals are ``rows exceed the designer width`` and a
+reader should not take them for a designer that is simply too small.  M2 lays
+each recipe group out as ONE unbroken row, so a group wide enough to overrun the
+mark refuses even where the same machines would fit the floor perfectly well
+split across two rows.  Splitting a row is spec 9.1 and a follow-up task; until
+it lands, a width refusal says "M2 has no shape for this yet", not "no Blueprint
+Designer holds this".  The depth refusals are the real ceiling (R10, one level
+of rows); the width ones are a feature that has not been written.
+
 Tier is orientation, not a budget
 ---------------------------------
 The DSP corpus makes :class:`~flab2bp.bench.corpus.Tier` set the CP-SAT budget.
@@ -46,6 +57,7 @@ from flab2bp.sfy.layout.strategy import REFUSALS
 from flab2bp.sfy.pipeline import DESIGNER_MARKS
 
 __all__ = [
+    "CLEAN",
     "DESIGNER_MARKS",
     "FLOWS_DIR",
     "RULED_CAUSES",
@@ -54,6 +66,11 @@ __all__ = [
     "entry",
     "is_ruled_cause",
 ]
+
+#: What an expectation says when the mark is expected to BUILD rather than
+#: refuse.  A plain string beside the causes, so one field says both things and
+#: nothing has to carry a cause and a flag that could disagree.
+CLEAN: Final = "clean"
 
 #: Where the committed FactorioLab exports live.  The same directory
 #: ``tests/sfy/test_rates.py`` reads, because there is one set of captures and
@@ -105,48 +122,99 @@ def is_ruled_cause(cause: str) -> bool:
 
 @dataclass(frozen=True, slots=True)
 class SfyCorpusEntry:
-    """One URL, its captured flow, and what it is expected to do.
+    """One URL, its captured flow, and what each designer mark is expected to do.
 
-    ``expected`` and ``expected_cause`` describe the LARGEST mark in
-    ``designers`` -- the one with the best chance of holding the chain -- and
-    they are documentation of a measurement rather than the gate's rule.  The
-    gate's rule is :data:`RULED_CAUSES`, applied to every mark: an entry that
-    starts building where it used to refuse must not turn the gate red, and an
-    expectation that gated would do exactly that.
+    ``expects`` pins one outcome per mark -- :data:`CLEAN`, or the ruled cause
+    that mark refuses with -- and every one of them is a MEASUREMENT taken by
+    ``scripts/sfy_audit.py``, not a wish.  That makes the pair of gates mean two
+    different things:
+
+    * the default gate asks only whether each cell is CLEAN or refuses for a
+      ruled reason.  An entry that starts BUILDING where it used to refuse is
+      progress and must not turn it red, which is exactly what an expectation
+      that always gated would do.
+    * ``--strict`` asks whether each cell still does what it did, so the same
+      corpus doubles as a regression pin: a cause that changes, a clean build
+      that starts refusing, and a refusal that starts building are all reported.
+
+    A pin is not an endorsement.  ``steel-beam-20`` in mk3 is pinned CLEAN and
+    is INVALID today; both gates report it, which is the point.
     """
 
     url_id: str
     url: str
     flow_file: str
     tier: Tier
-    expected: Literal["clean", "refuse"] = "clean"
-    expected_cause: str | None = None
+    #: ``(mark, CLEAN or a ruled cause)`` for every mark in ``designers``.  A
+    #: tuple of pairs rather than a mapping because the entry is frozen and
+    #: hashable, the way ``CorpusEntry.budget_floors`` already is.
+    expects: tuple[tuple[str, str], ...] = ()
     designers: tuple[str, ...] = DESIGNER_MARKS
     note: str = ""
 
     def __post_init__(self) -> None:
-        if self.expected == "refuse" and not is_ruled_cause(self.expected_cause or ""):
-            raise ValueError(
-                f"{self.url_id} expects to refuse with {self.expected_cause!r}, which "
-                "no ruling allows; an expected refusal must name one of "
-                f"{', '.join(RULED_CAUSES)}"
-            )
-        if self.expected == "clean" and self.expected_cause is not None:
-            raise ValueError(
-                f"{self.url_id} expects a clean build and also names the cause "
-                f"{self.expected_cause!r}; it can only be one of the two"
-            )
         unknown = tuple(m for m in self.designers if m not in DESIGNER_MARKS)
         if unknown:
             raise ValueError(
                 f"{self.url_id} asks to be built in {', '.join(unknown)}, which is "
                 f"not a Blueprint Designer; the marks are {', '.join(DESIGNER_MARKS)}"
             )
+        pinned = dict(self.expects)
+        if len(pinned) != len(self.expects):
+            raise ValueError(f"{self.url_id} pins the same mark twice in `expects`")
+        if set(pinned) != set(self.designers):
+            raise ValueError(
+                f"{self.url_id} is built in {', '.join(self.designers)} but pins "
+                f"{', '.join(sorted(pinned)) or 'nothing'}; --strict needs exactly "
+                "one expectation per mark, so a mark with none would be pinned to "
+                "nothing at all"
+            )
+        stray = tuple(
+            f"{mark}={outcome!r}"
+            for mark, outcome in self.expects
+            if outcome != CLEAN and not is_ruled_cause(outcome)
+        )
+        if stray:
+            raise ValueError(
+                f"{self.url_id} expects to refuse with {', '.join(stray)}, which "
+                f"no ruling allows; an expected refusal must name one of "
+                f"{', '.join(RULED_CAUSES)}"
+            )
 
     @property
     def flow_path(self) -> Path:
         """The committed export this entry is built from."""
         return FLOWS_DIR / self.flow_file
+
+    def expectation(self, mark: str) -> str:
+        """What ``mark`` is pinned to do: :data:`CLEAN`, or a refusal cause."""
+        return dict(self.expects)[mark]
+
+    @property
+    def largest(self) -> str:
+        """The biggest mark this entry is run in -- its best chance of fitting."""
+        return [m for m in DESIGNER_MARKS if m in self.designers][-1]
+
+    @property
+    def expected(self) -> Literal["clean", "refuse"]:
+        """What the largest mark is expected to do, for a one-line summary."""
+        return "clean" if self.expectation(self.largest) == CLEAN else "refuse"
+
+    @property
+    def expected_cause(self) -> str | None:
+        """The largest mark's expected refusal cause, or ``None`` if it builds."""
+        outcome = self.expectation(self.largest)
+        return None if outcome == CLEAN else outcome
+
+
+#: The two shapes almost every refusal takes, spelled once.
+_DEPTH: Final = "rows exceed the designer depth"
+_WIDTH: Final = "rows exceed the designer width"
+
+
+def _pins(mk1: str, mk2: str, mk3: str) -> tuple[tuple[str, str], ...]:
+    """One expectation per mark, in mark order, as ``expects`` wants them."""
+    return (("mk1", mk1), ("mk2", mk2), ("mk3", mk3))
 
 
 SFY_CORPUS: Final[tuple[SfyCorpusEntry, ...]] = (
@@ -155,6 +223,7 @@ SFY_CORPUS: Final[tuple[SfyCorpusEntry, ...]] = (
         _LIST + "iron-plate*60",
         "iron-plate-60.csv",
         Tier.TRIVIAL,
+        expects=_pins(_DEPTH, _DEPTH, CLEAN),
         note="the first thing anyone builds: two rows, smelter then constructor",
     ),
     SfyCorpusEntry(
@@ -162,6 +231,7 @@ SFY_CORPUS: Final[tuple[SfyCorpusEntry, ...]] = (
         _LIST + "iron-rod*60",
         "iron-rod-60.csv",
         Tier.TRIVIAL,
+        expects=_pins(_WIDTH, _DEPTH, CLEAN),
         note="the other half of the first hour, and a wider constructor row",
     ),
     SfyCorpusEntry(
@@ -169,6 +239,7 @@ SFY_CORPUS: Final[tuple[SfyCorpusEntry, ...]] = (
         _LIST + "concrete*60",
         "concrete-60.csv",
         Tier.TRIVIAL,
+        expects=_pins(_WIDTH, _WIDTH, CLEAN),
         note="limestone: the shortest chain in the corpus",
     ),
     SfyCorpusEntry(
@@ -176,8 +247,7 @@ SFY_CORPUS: Final[tuple[SfyCorpusEntry, ...]] = (
         _LIST + "screw*120",
         "screw-120.csv",
         Tier.SMALL,
-        expected="refuse",
-        expected_cause="rows exceed the designer depth",
+        expects=_pins(_DEPTH, _DEPTH, _DEPTH),
         note="three rows at double rate: the first chain no mark holds",
     ),
     SfyCorpusEntry(
@@ -185,8 +255,7 @@ SFY_CORPUS: Final[tuple[SfyCorpusEntry, ...]] = (
         _LIST + "wire*120&o=cable*60",
         "wire-120-cable-60.csv",
         Tier.SMALL,
-        expected="refuse",
-        expected_cause="rows exceed the designer width",
+        expects=_pins(_WIDTH, _WIDTH, _WIDTH),
         note="two objectives, one feeding the other: the only multi-objective URL",
     ),
     SfyCorpusEntry(
@@ -194,6 +263,11 @@ SFY_CORPUS: Final[tuple[SfyCorpusEntry, ...]] = (
         _LIST + "steel-beam*20",
         "steel-beam-20.csv",
         Tier.SMALL,
+        # mk3 is pinned CLEAN and is INVALID today: `flow.capacity` compares the
+        # belt feeding a group's underclocked last machine against the group's
+        # FULL-clock demand.  Pinning the defect instead would make the gate go
+        # green on it, so the pin stays at what this cell must do.
+        expects=_pins(_DEPTH, _DEPTH, CLEAN),
         note="the Foundry: two ores into one machine, a footprint no other entry has",
     ),
     SfyCorpusEntry(
@@ -201,8 +275,7 @@ SFY_CORPUS: Final[tuple[SfyCorpusEntry, ...]] = (
         _LIST + "rotor*10",
         "rotor-10.csv",
         Tier.SMALL,
-        expected="refuse",
-        expected_cause="rows exceed the designer width",
+        expects=_pins(_WIDTH, _WIDTH, _WIDTH),
         note="rod and screw converging on one Assembler",
     ),
     SfyCorpusEntry(
@@ -210,8 +283,7 @@ SFY_CORPUS: Final[tuple[SfyCorpusEntry, ...]] = (
         _LIST + "reinforced-iron-plate*10",
         "reinforced-iron-plate-10.csv",
         Tier.SMALL,
-        expected="refuse",
-        expected_cause="rows exceed the designer depth",
+        expects=_pins(_DEPTH, _DEPTH, _DEPTH),
         note="five rows: measured at 11000 cm of band against mk3's 4800",
     ),
     SfyCorpusEntry(
@@ -219,8 +291,7 @@ SFY_CORPUS: Final[tuple[SfyCorpusEntry, ...]] = (
         _LIST + "modular-frame*5",
         "modular-frame-5.csv",
         Tier.MID,
-        expected="refuse",
-        expected_cause="rows exceed the designer depth",
+        expects=_pins(_WIDTH, _DEPTH, _DEPTH),
         note="six rows: an Assembler over two sub-chains",
     ),
     SfyCorpusEntry(
@@ -228,8 +299,7 @@ SFY_CORPUS: Final[tuple[SfyCorpusEntry, ...]] = (
         _LIST + "smart-plating*5",
         "smart-plating-5.csv",
         Tier.MID,
-        expected="refuse",
-        expected_cause="rows exceed the designer depth",
+        expects=_pins(_WIDTH, _WIDTH, _DEPTH),
         note="seven rows: a project part, rotor and plate together",
     ),
     SfyCorpusEntry(
@@ -237,8 +307,7 @@ SFY_CORPUS: Final[tuple[SfyCorpusEntry, ...]] = (
         _LIST + "heavy-modular-frame*2",
         "heavy-modular-frame-2.csv",
         Tier.LARGE,
-        expected="refuse",
-        expected_cause="rows exceed the designer width",
+        expects=_pins(_WIDTH, _WIDTH, _WIDTH),
         note=(
             "the Manufacturer: four inputs, the deepest chain in the corpus, and "
             "wide before it is deep -- one row reaches x = 5660 cm, past the "
@@ -250,8 +319,7 @@ SFY_CORPUS: Final[tuple[SfyCorpusEntry, ...]] = (
         _LIST + "plastic*20",
         "plastic-20.csv",
         Tier.TRIVIAL,
-        expected="refuse",
-        expected_cause="fluids are M4",
+        expects=_pins("fluids are M4", "fluids are M4", "fluids are M4"),
         note="the fluid URL, here to be refused: crude oil into a Refinery",
     ),
 )
