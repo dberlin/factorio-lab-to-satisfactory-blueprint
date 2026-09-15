@@ -570,9 +570,9 @@ def test_the_conveyor_flow_order_carries_the_game_it_was_read_from():
     assert "caveat" not in flow
     if flow["source"] == "native":
         # The grab that makes mConnection0 the entry, and the function it is in.
-        assert any(
-            "Factory_GrabOutput" in line for line in flow["instructions"]
-        ), flow["instructions"]
+        assert any("Factory_GrabOutput" in line for line in flow["instructions"]), flow[
+            "instructions"
+        ]
         assert {f["symbol"] for f in flow["functions"]} >= {
             "AFGBuildableConveyorBase::Factory_Tick",
             "UFGFactoryConnectionComponent::Factory_GrabOutput",
