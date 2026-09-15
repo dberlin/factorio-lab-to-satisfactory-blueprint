@@ -25,8 +25,10 @@ rest of the pipeline needs it, left out of what equality compares
 for a machine's ``clock``, for a different reason: the file DOES carry the
 potential, as one 32-bit float, and a clock is an exact
 :class:`~fractions.Fraction`, so a clock the float cannot hold comes back as the
-number beside it. That is what makes ``decode(emit(placement)) == placement`` a
-statement about the file rather than a statement about this dataclass.
+number beside it. Equality compares that number -- :attr:`MachineObj.stored_clock`
+-- rather than nothing at all, so a machine emitted at the wrong potential still
+fails the round trip. That is what makes ``decode(emit(placement)) == placement``
+a statement about the file rather than a statement about this dataclass.
 """
 
 from __future__ import annotations
@@ -123,10 +125,17 @@ class MachineObj:
     :func:`~flab2bp.sfy.layout.emit._set_potential` names.
 
     ``somersloops`` is a count, and the production boost that encodes it is
-    exact at the width the file holds, so it is part of equality. ``clock`` is
-    not: it is an exact :class:`~fractions.Fraction` and the file holds one
-    ``float``, so a clock that is not a 32-bit number -- ``moc=133``'s 133/100 --
-    comes back as the stored number beside it. See the module docstring.
+    exact at the width the file holds, so it is part of equality. ``clock``
+    itself is not: it is an exact :class:`~fractions.Fraction` and the file
+    holds one ``float``, so a clock that is not a 32-bit number -- ``moc=133``'s
+    133/100 -- comes back as the stored number beside it. See the module
+    docstring.
+
+    What IS compared is :attr:`stored_clock`, the clock at exactly that width.
+    The exactness the file cannot promise is dropped once, here, rather than
+    dropped altogether: a machine written at the wrong potential, or one that
+    inherited a fixture's overclock, is a different number at 32 bits too, so
+    ``decode(emit(placement)) == placement`` catches it.
     """
 
     id: int
@@ -135,6 +144,12 @@ class MachineObj:
     recipe_class: str
     clock: Fraction = field(default=Fraction(1), compare=False)
     somersloops: int = 0
+    #: :attr:`clock` at the width the file holds it, and the part of the clock
+    #: equality asks about. Derived in ``__post_init__``, never passed in.
+    stored_clock: float = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "stored_clock", stored_float(float(self.clock)))
 
 
 @dataclass(frozen=True, slots=True)

@@ -42,8 +42,8 @@ from flab2bp.sfy.layout.model import (
 )
 from flab2bp.sfy.layout.splines import straight
 from flab2bp.sfy.objects import ACTOR, ObjectData, ObjectHeader, Transform
-from flab2bp.sfy.properties import Float, Property
-from flab2bp.sfy.query import connected, object_index
+from flab2bp.sfy.properties import Float, Property, Tag
+from flab2bp.sfy.query import connected, find, object_index
 from flab2bp.sfy.registry import Port, Registry, load_registry
 from flab2bp.sfy.spec import designer
 from flab2bp.sfy.templates import (
@@ -56,7 +56,7 @@ from flab2bp.sfy.templates import (
     set_spline,
     straight_spline,
 )
-from tests.sfy.conftest import fixture_paths
+from tests.sfy.conftest import FIXTURES, fixture_paths
 
 FOUNDATION = "Build_Foundation_8x1_01_C"
 CONSTRUCTOR = "Build_ConstructorMk1_C"
@@ -315,16 +315,94 @@ def test_a_clock_the_stored_float_can_hold_comes_back_as_the_fraction_it_was() -
 
 
 def test_a_clock_the_stored_float_cannot_hold_comes_back_at_the_stored_width() -> None:
-    """Why ``clock`` stays out of equality: ``moc=133`` is 133/100 and the file is f32.
+    """Why the exact ``clock`` stays out of equality: ``moc=133`` is 133/100 and
+    the file is f32.
 
-    The placement still compares equal -- that is what ``compare=False`` is for
-    -- and the exact figure survives in the ``.sbpcfg`` description.
+    The placement still compares equal, because equality asks about
+    ``stored_clock`` -- the one number the file actually holds -- and the exact
+    figure survives in the ``.sbpcfg`` description.
     """
     placement = _with_machine(Fraction(133, 100), 0)
     again = decode(_emit(placement), load_registry())
     assert again == placement
     assert again.machines[0].clock != Fraction(133, 100)
     assert float(again.machines[0].clock) == pytest.approx(1.33, abs=1e-6)
+
+
+def _overclocked_library() -> TemplateLibrary:
+    """A library whose Constructor template is a fixture machine somebody overclocked.
+
+    ``from_fixtures`` keeps the FIRST actor it sees of each class, so putting
+    ``production-17`` in front of the rest makes its 4/3 Constructor the
+    template and leaves every other class's template alone.  147 machines
+    across ten corpus fixtures carry a non-default ``mPendingPotential``; this
+    is one of them, and it is the case ``_set_potential`` strips for.
+    """
+    return TemplateLibrary.from_fixtures([FIXTURES / "production-17.sbp", *fixture_paths()])
+
+
+def _emit_with(placement: SfyPlacement, library: TemplateLibrary) -> Blueprint:
+    newest = _newest_fixture_header()
+    return emit(
+        placement,
+        load_registry(),
+        library,
+        load_lab_map(),
+        build_version=newest.build_version,
+        version_data=newest.version_data,
+    )
+
+
+def test_a_machine_built_from_an_overclocked_template_runs_at_the_groups_clock() -> None:
+    """A template carries whatever the player who built the fixture set.
+
+    At a group clock of 1 the inherited potential is stripped and nothing is
+    written, because 100 % is the class default; at any other clock the group's
+    own value is written over it.  Either way what comes out is the build's
+    number, never the fixture's.
+    """
+    library = _overclocked_library()
+    inherited = find(library.templates[CONSTRUCTOR].data.properties, PENDING_POTENTIAL)
+    assert isinstance(inherited, Float) and inherited.v != 1.0, (
+        "this test says nothing unless the template really carries a potential"
+    )
+
+    at_default = _emit_with(_placement(), library)
+    assert _floats(at_default, PENDING_POTENTIAL) == []
+    assert _floats(at_default, CURRENT_POTENTIAL) == []
+
+    underclocked = _with_machine(Fraction(3, 2), 0)
+    built = _emit_with(underclocked, library)
+    assert _floats(built, PENDING_POTENTIAL) == [1.5]
+    assert _floats(built, CURRENT_POTENTIAL) == [1.5]
+    assert decode(built, load_registry()) == underclocked
+
+
+def test_the_round_trip_catches_a_machine_left_at_its_templates_own_potential() -> None:
+    """What makes the strip load-bearing rather than decorative.
+
+    Equality compares the clock at the width the file holds it, so a machine
+    that kept the fixture's 4/3 is a different placement from the one that was
+    asked for -- which is the failure a round-trip test is there to see.
+    """
+    library = _overclocked_library()
+    placement = _placement()  # the group clock is 1
+    built = _emit_with(placement, library)
+    assert decode(built, load_registry()) == placement
+
+    inherited = find(library.templates[CONSTRUCTOR].data.properties, PENDING_POTENTIAL)
+    assert isinstance(inherited, Float)
+    tag = Tag(PENDING_POTENTIAL, "FloatProperty", 0).as_modern()
+    leaked = replace(
+        built,
+        objects=tuple(
+            (header, replace(data, properties=(*data.properties, Property(tag, inherited))))
+            if header.class_name == CONSTRUCTOR and header.kind == ACTOR
+            else (header, data)
+            for header, data in built.objects
+        ),
+    )
+    assert decode(leaked, load_registry()) != placement
 
 
 def test_decode_refuses_a_boost_that_is_not_a_whole_number_of_somersloops() -> None:

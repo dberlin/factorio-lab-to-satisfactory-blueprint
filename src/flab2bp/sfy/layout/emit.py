@@ -314,8 +314,9 @@ def decode(bp: Blueprint, registry: Registry) -> SfyPlacement:
 
     A machine's clock and its somersloops come back off the four ``SaveGame``
     floats :func:`_set_potential` writes -- the clock at the 32-bit width the
-    file holds it at, which is why :class:`MachineObj` still keeps it out of
-    equality. What the file really has no property for comes back at its
+    file holds it at, which is why :class:`MachineObj` compares
+    ``stored_clock`` rather than the exact :class:`~fractions.Fraction` the rate
+    model works in. What the file really has no property for comes back at its
     default: a belt's item and rate, and the placement's description, which
     lives in the ``.sbpcfg``.
     """
@@ -408,6 +409,12 @@ def _set_potential(data: ObjectData, machine: MachineObj, registry: Registry) ->
     A clock of 1 and no somersloop is the class default, so nothing is written
     for it -- which is also what the game does, since an unchanged ``SaveGame``
     property is not serialised.
+
+    The value written is the machine's exact clock at the width the file holds:
+    the :class:`~fractions.Fraction` belongs to the rate model, and one ``f32``
+    is all a blueprint has room for, so an inexact clock is rounded once, here,
+    and :attr:`MachineObj.stored_clock <flab2bp.sfy.layout.model.MachineObj>` is
+    the number a round trip is held to.
     """
     properties = [p for p in data.properties if p.tag.name not in _POTENTIAL_NAMES]
     if machine.clock != 1:

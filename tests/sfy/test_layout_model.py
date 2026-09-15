@@ -19,6 +19,7 @@ from flab2bp.sfy.layout.model import (
     Pose,
     SfyPlacement,
     belt_ends,
+    stored_float,
 )
 from flab2bp.sfy.layout.splines import straight, yaw_quaternion
 from flab2bp.sfy.registry import load_registry
@@ -132,14 +133,11 @@ def test_a_machines_pose_comes_back_out_of_the_file_it_went_into(yaw: float) -> 
 
 
 def test_what_the_file_cannot_carry_is_left_out_of_what_equality_compares() -> None:
-    """A belt's rate has no property in the file, and a clock has one too narrow
-    to hold it, so ``decode`` cannot hand either back and equality never claimed
-    it could.  A somersloop count is neither: the production boost that encodes
-    it is exact at the stored width, so it IS compared."""
-    fast = MachineObj(1, CONSTRUCTOR, Pose(0.0, 0.0, 100.0, 0.0), IRON_PLATE, Fraction(5, 2), 0)
+    """A belt's rate has no property in the file, so ``decode`` cannot hand it
+    back and equality never claimed it could.  A somersloop count is not like
+    that: the production boost that encodes it is exact at the stored width, so
+    it IS compared."""
     plain = MachineObj(1, CONSTRUCTOR, Pose(0.0, 0.0, 100.0, 0.0), IRON_PLATE)
-    assert fast == plain
-    assert fast.clock != plain.clock
     sloops = MachineObj(1, CONSTRUCTOR, Pose(0.0, 0.0, 100.0, 0.0), IRON_PLATE, Fraction(1), 2)
     assert sloops != plain
     carried = BeltRun(
@@ -148,6 +146,31 @@ def test_what_the_file_cannot_carry_is_left_out_of_what_equality_compares() -> N
     empty = BeltRun(2, BELT, straight((0.0, 0.0, 200.0), (0.0, 1.0, 0.0), 400.0))
     assert carried == empty
     assert carried.item_id != empty.item_id
+
+
+def test_a_machine_at_the_wrong_clock_is_not_equal_to_one_at_the_right_clock() -> None:
+    """The file holds the potential, so equality must ask about it.
+
+    It asks at the width the file holds -- one ``f32`` -- rather than about the
+    exact :class:`~fractions.Fraction`, which is what lets ``moc=133``'s 133/100
+    survive a round trip while a machine left at some fixture's inherited
+    overclock does not.
+    """
+    fast = MachineObj(1, CONSTRUCTOR, Pose(0.0, 0.0, 100.0, 0.0), IRON_PLATE, Fraction(5, 2), 0)
+    plain = MachineObj(1, CONSTRUCTOR, Pose(0.0, 0.0, 100.0, 0.0), IRON_PLATE)
+    assert fast != plain
+    assert fast.stored_clock == 2.5 and plain.stored_clock == 1.0
+
+    inexact = MachineObj(1, CONSTRUCTOR, Pose(0.0, 0.0, 100.0, 0.0), IRON_PLATE, Fraction(133, 100))
+    read_back = MachineObj(
+        1,
+        CONSTRUCTOR,
+        Pose(0.0, 0.0, 100.0, 0.0),
+        IRON_PLATE,
+        Fraction(stored_float(1.33)),
+    )
+    assert inexact.clock != read_back.clock, "the f32 is not 133/100"
+    assert inexact == read_back, "but it is the same number in the file"
 
 
 def test_by_id_answers_from_an_index_rather_than_walking_every_object() -> None:
