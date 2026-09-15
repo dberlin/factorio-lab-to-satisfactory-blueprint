@@ -46,6 +46,7 @@ from dataclasses import dataclass, replace
 from fractions import Fraction
 from pathlib import Path
 
+from flab2bp.layout.base import NoValidLayout
 from flab2bp.sfy import pipeline
 from flab2bp.sfy.codec import read_sbp_file, read_sbpcfg, write_sbpcfg
 from flab2bp.sfy.layout.emit import decode
@@ -80,13 +81,19 @@ class Case:
     name: str
     flow: str
     url: str
+    #: Which designer marks to try, in order.  A case with more than one takes
+    #: the FIRST that builds: a blueprint a player can paste into the designer
+    #: they already own is worth more than one that needs the biggest, and which
+    #: mark that is is a measurement rather than a thing to write down here.
     designer: str
     #: What pasting this one is supposed to settle.
     question: str
 
 
-#: ``iron-plate*60`` in three settings.  The controller's ruling: the plain
-#: 60/min chain is clean in Mk.3 alone (a single level, ten rows), and
+#: ``iron-plate*60`` in three settings, each written into the SMALLEST Blueprint
+#: Designer that holds it.  Since Task 8d that is the Mk.1 for all three: their
+#: two groups pair machine for machine, so the build is one row of smelters
+#: facing one row of constructors with three straight belts between them.
 #: ``reinforced-iron-plate*10`` refuses every mark on depth even with Task 8c's
 #: row splitting in -- see :data:`REFUSED_CASES` -- so the somersloop flow
 #: stands in as a second pair the paste test can judge just as sharply: one
@@ -97,7 +104,7 @@ CASES = (
         name="checkpoint2-iron-plate-60",
         flow="iron-plate-60.csv",
         url="https://factoriolab.github.io/sfy/list?o=iron-plate*60&v=11",
-        designer="mk3",
+        designer="mk1 mk2 mk3",
         question="does a plain two-row chain run at the flow's rate",
     ),
     Case(
@@ -107,14 +114,14 @@ CASES = (
             "https://factoriolab.github.io/sfy/list"
             "?o=iron-plate*60&e=1*somersloop&m=constructor-id*0&v=11"
         ),
-        designer="mk3",
+        designer="mk1 mk2 mk3",
         question="does a somersloop'd chain make the same rate out of fewer machines",
     ),
     Case(
         name="checkpoint2-iron-plate-60-overclock-250",
         flow="iron-plate-60-overclock-250.csv",
         url="https://factoriolab.github.io/sfy/list?o=iron-plate*60&moc=250&v=11",
-        designer="mk3",
+        designer="mk1 mk2 mk3",
         question="does the game keep a pasted machine's 250 % potential",
     ),
 )
@@ -148,27 +155,42 @@ class Written:
     build: pipeline.SfyBuild
     sbp: Path
     cfg: Path
+    #: The mark it was actually written for: the first of the case's own that
+    #: held it.
+    mark: str
     #: The report the round-tripped placement earned, which is the one the gate
     #: judges: the build's own report is about the placement in memory.
     report: Report
 
 
 def build_case(case: Case, out_dir: Path, *, time_budget_s: float) -> Written:
-    """Build one case from its committed flow and write both halves of the pair."""
-    build = pipeline.build(
-        case.url,
-        designer=case.designer,
-        flow=FLOWS / case.flow,
-        time_budget_s=time_budget_s,
-        name=case.name,
-    )
-    if build.blueprint is None:
-        raise CheckFailed(
-            f"{case.name} produced no blueprint: "
-            + "; ".join(str(failure) for failure in build.refused)
-        )
-    sbp, cfg = pipeline.write(build, out_dir)
-    return Written(case, build, sbp, cfg, _check(case, build, sbp, cfg))
+    """Build one case in the smallest of its marks that holds it, and write it.
+
+    A refusal in a smaller mark is a RESULT, not a failure: it says the build
+    wants more floor than that designer has, which is the honest reason to reach
+    for a bigger one.  Only a case that fits none of its marks is a failure.
+    """
+    refusals: list[str] = []
+    for mark in case.designer.split():
+        try:
+            build = pipeline.build(
+                case.url,
+                designer=mark,
+                flow=FLOWS / case.flow,
+                time_budget_s=time_budget_s,
+                name=case.name,
+            )
+        except NoValidLayout as refused:
+            refusals.append(f"{mark}: {refused.reason}")
+            continue
+        if build.blueprint is None:
+            raise CheckFailed(
+                f"{case.name} produced no blueprint in {mark}: "
+                + "; ".join(str(failure) for failure in build.refused)
+            )
+        sbp, cfg = pipeline.write(build, out_dir)
+        return Written(case, build, sbp, cfg, mark, _check(case, build, sbp, cfg))
+    raise CheckFailed(f"{case.name} fits none of {case.designer}: " + "; ".join(refusals))
 
 
 def _check(case: Case, build: pipeline.SfyBuild, sbp: Path, cfg: Path) -> Report:
@@ -421,8 +443,13 @@ def _pair_section(entry: Written, registry: Registry) -> list[str]:
         f"## {case.name}",
         "",
         f"- Files: `{entry.sbp.name}` and `{entry.cfg.name}`",
-        f"- Designer: **Blueprint Designer {case.designer.upper()}** "
-        f"({'x'.join(str(d) for d in placement.designer.dims)} foundations)",
+        f"- Designer: **Blueprint Designer {entry.mark.upper()}** "
+        f"({'x'.join(str(d) for d in placement.designer.dims)} foundations)"
+        + (
+            f" -- the smallest of {case.designer} that holds it"
+            if len(case.designer.split()) > 1
+            else ""
+        ),
         f"- FactorioLab flow: `{case.flow}` -- <{case.url}>",
         f"- What it is meant to settle: {case.question}",
         "",

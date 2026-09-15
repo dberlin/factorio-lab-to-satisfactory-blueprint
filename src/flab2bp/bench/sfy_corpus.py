@@ -241,6 +241,7 @@ class SfyCorpusEntry:
 #: The shape every refusal below takes but the fluid one, spelled once.  Since
 #: Task 8c split the over-long rows, depth is the only ceiling left standing.
 _DEPTH: Final = "rows exceed the designer depth"
+_BRIDGE: Final = "corridor needs a bridge that does not fit"
 
 
 def _pins(mk1: str, mk2: str, mk3: str) -> tuple[tuple[str, str], ...]:
@@ -254,8 +255,12 @@ SFY_CORPUS: Final[tuple[SfyCorpusEntry, ...]] = (
         _LIST + "iron-plate*60",
         "iron-plate-60.csv",
         Tier.TRIVIAL,
-        expects=_pins(_DEPTH, _DEPTH, CLEAN),
-        note="the first thing anyone builds: two rows, smelter then constructor",
+        # Clean in EVERY mark since Task 8d: three smelters make exactly what
+        # three constructors eat, so the two groups are laid facing each other
+        # with one straight belt per pair and no trunk between them, and the
+        # whole build is 2763 cm of band against a mk1's 3200.
+        expects=_pins(CLEAN, CLEAN, CLEAN),
+        note="the first thing anyone builds: one paired row, smelters facing constructors",
     ),
     SfyCorpusEntry(
         "iron-rod-60",
@@ -298,7 +303,11 @@ SFY_CORPUS: Final[tuple[SfyCorpusEntry, ...]] = (
         # the belt feeding a group's underclocked last machine against the
         # group's FULL-clock demand, and this is the first corpus flow with a
         # shard on a belt at all.  Fixed in `729a7e81`; mk3 has been CLEAN since.
-        expects=_pins(_DEPTH, _DEPTH, CLEAN),
+        # mk2 refuses on the BRIDGE since Task 8d rather than on the depth: the
+        # two rows now fit its 4000 cm, and what does not fit is the ore trunk
+        # riding over the coal trunk in the 301 cm of column a mk2 leaves at the
+        # wall.  Both causes are ruled and both say the build wants a mk3.
+        expects=_pins(_DEPTH, _BRIDGE, CLEAN),
         note="the Foundry: two ores into one machine, a footprint no other entry has",
     ),
     SfyCorpusEntry(
