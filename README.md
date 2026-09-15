@@ -287,9 +287,13 @@ overrides), `2` a bad URL, spec or missing flow, `3` no layout.
 What M2 refuses, rather than guessing at: **fluids** (`fluids are M4` — nothing pipes yet, so a
 flow carrying one is refused before any geometry), a **run past the fastest belt the save can
 build** (`run exceeds the belt ceiling`), and anything that **does not fit the chosen designer**
-in a single level of rows (`rows exceed the designer depth`/`width`) — a two-row build wants 42 m
-of band, which is more than a Mk.1's 32 or a Mk.2's 40, so today's two-row examples need a Mk.3
-and a five-row chain does not fit any of them. Every refusal names its cause and exits 3.
+in a single level of rows (`rows exceed the designer depth`/`width`). What fits is measured, not
+assumed: each row's own band is 16–24 m, the margins at the two walls are 3 m each and the gap a
+trunk turns in between two rows is 4 m, and the total has to be inside the designer's 32 m (Mk.1),
+40 m (Mk.2) or 48 m (Mk.3). So a two-row build fits a Mk.2 only when its bands and margins come to
+under 40 m — `concrete*60`, whose two rows are two halves of one group and so need no turning gap,
+is 39 m and fits; `iron-plate*60` is 42 m and needs a Mk.3 — and a five-row chain fits none of
+them. Every refusal names its cause, says the centimetres it wanted, and exits 3.
 
 The committed data files mean neither the tests nor a build need a game install.
 [docs/sfy-regenerating-game-data.md](docs/sfy-regenerating-game-data.md) is the runbook for

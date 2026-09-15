@@ -53,7 +53,7 @@ than from hand-typed tables.
 
 `dotnet 10` is installed, so a CUE4Parse extractor can read the paks.
 
-## 4. Blueprint file format (decoded from headers and 19 community fixtures)
+## 4. Blueprint file format (decoded from headers and 49 community fixtures)
 
 All integers are little-endian. `FString` is `int32 n` then `n` bytes
 (ANSI, NUL-terminated) or, when `n < 0`, `-n` UTF-16 code units.
@@ -262,7 +262,10 @@ blueprints, then total occupied volume, then belt length).
    chain and drained by a merger chain along the row. Levels are a 1D packing of
    rows; blueprints are a 1D packing of levels. Trunk belts between rows, the
    bus wall and the external faces are routed on a 1 m lattice. Rows longer than
-   the wall are split.
+   the wall are split. **The levels sentence is M3's, not M2's**: getting a belt
+   from a row on one level to a row on another is a lift, and M2 ships no lifts,
+   so what M2 lays out is a single level of rows in one designer (R10, and
+   section 14 for what that cost).
 2. **Grid-routed placement.** Machines are packed per level on the hologram
    grid (greedy then CP-SAT rectangle packing on integer grid cells), every belt
    is routed by a 3D orthogonal router on the lattice with lifts as vertical
@@ -372,3 +375,59 @@ Milestones, each with its own plan:
 
 Horizontal tiling, trains and drones, generators, resource extraction,
 customization (paint), signs, and any mod content.
+
+## 14. Status after M2 (2026-09-15)
+
+What M2 actually shipped, against what this document asked for. Every number
+below is a measurement out of the branch -- the corpus audit's own report, or the
+strategy's own refusal text -- and not a figure written here by hand.
+
+**R10: M2 is single-level.** Section 9.1's "levels are a 1D packing of rows"
+needs vertical transport between rows on different levels, which is a lift, and
+`section 8.4`'s lifts are M3. So `ManifoldRows` lays one level of rows in one
+Blueprint Designer and refuses a chain that does not fit it. That ruling is what
+most of the corpus refusals below are.
+
+**How deep a row band is.** Measured over the 28 rows the corpus builds, one
+row's own band is 1600 to 2400 cm deep -- the machine's hard box, its splitter
+and merger chains, and the feeder belts between them, all from `registry.json`.
+Add the two wall margins a belt turns in at (300 cm each) and a one-row build is
+2200 cm. Add a second row and the 400 cm gap a trunk turns out of one row and
+into the next and it is 4200 cm, and the designers are 3200 (Mk1), 4000 (Mk2) and
+4800 (Mk3) cm deep: **only a Mk3 takes a two-row build.** Two SIBLING rows of one
+split group are cheaper, because no trunk turns between them and the gap is one
+grid step: `concrete*60` is 3900 cm of band and builds in a Mk2.
+
+**The corpus, at the head this note was written against.** 36 cells (12 entries x
+3 marks): 5 CLEAN, 28 refused `rows exceed the designer depth`, 3 refused `fluids
+are M4`. Both gates pass and no cell is off its pin;
+`docs/superpowers/evidence/sfy-m2-audit-2026-09-14.md` is the table, cell by
+cell, with the centimetres each depth refusal measured.
+
+**The refusal inventory.** `flab2bp.sfy.layout.strategy.REFUSALS` is 24 named
+causes and the only ones the strategy may raise -- `_refuse` raises `ValueError`
+on anything else, and the mapping tables that turn a `RowError`, a
+`CorridorError` or a `PowerError` into one are pinned by a test. Exactly two of
+the 24 ever fire over the corpus, which is the honest reading of the list: it is
+a vocabulary for the failures this build form CAN have, not a claim that they
+happen. `docs/sfy-layout-model.md` says which bound each one comes from.
+
+**Checkpoint 2.** Three `.sbp`/`.sbpcfg` pairs, all `iron-plate*60` in a Mk3,
+each asking one question a paste test can answer: the plain two-row chain (does
+it run at the flow's rate), the somersloop flow (does the same rate come out of
+fewer machines), and the 250 % overclock. The last one settles what section 7
+left open -- a blueprint writes each machine's saved potential but puts no Power
+Shard in any slot, so if a machine pasted at 250 % shows 100 % the game does not
+keep an overclock nothing paid for, and the `.sbpcfg` description becomes the
+only carrier of the clock. The in-game report is still outstanding.
+
+**Untouched by M2.** The stacking contract (section 8.3) and the bus wall
+(section 9.1) are as this document left them: M2 emits one blueprint, so nothing
+has yet had to stack, and no build has yet needed a bus.
+
+**Two gaps in the extractor, for M3.** `HologramLimits` reads `mHologramClass`
+without walking the class's supers, so a Mk2 or Mk3 power pole comes out with no
+`grid_snap_cm` of its own and the pole placer falls back on the general hologram
+grid. And `flab2bp.bench.sfy_corpus` still reaches `flab2bp.rates.CandidatePolicy`
+for its policy type, which drags the DSP catalog -- and `Tier` -- into a
+Satisfactory-only import; moving `Tier` out is a small M3 chore.
