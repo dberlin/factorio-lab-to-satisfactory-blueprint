@@ -21,6 +21,16 @@ for ONE query by ``opened``: a private copy of
 :attr:`~flab2bp.sfy.layout.lattice.Occupancy.flags` with those indices set
 passable.  The shared occupancy is never written.
 
+**What a net closes against itself.**  ``closed`` is the mirror of ``opened``,
+and it is how a rip-up loop refuses a move the movement table cannot judge.  A
+conveyor lift is the one such move: a per-level transition row carries a single
+via, so there is nowhere in it to name the column a lift stands in, and the
+kernel admits a lift on its two end nodes alone.  Realisation is what catches a
+lift through a machine; it charges congestion history at those two ends -- the
+nodes the kernel DOES test -- and re-queries this net with them ``closed``, a
+bounded number of times, before the net is stranded.  Nothing here has to know
+that: ``closed`` is just nodes this query may not stand on.
+
 **What the ledger is charged.**  ``budget.left`` is READ before the kernel and
 SET to that reading minus the kernel's own charge after it, never decremented,
 so two searches sharing a ledger cannot lose a charge between them.  A ``left``
@@ -139,6 +149,7 @@ def route_net(
     starts: Collection[Node],
     goals: Collection[Node],
     opened: Collection[Node] = (),
+    closed: Collection[Node] = (),
     pressure: float,
     budget: WorkBudget,
     deadline: float | None,
@@ -149,7 +160,14 @@ def route_net(
 
     ``opened`` is this net's own nodes -- its port reach inside its machine's
     hard box, its taps, its goals on a wall line -- made passable for this query
-    alone.  ``pressure`` scales the per-node congestion price the kernel reads
+    alone.  ``closed`` is its mirror: nodes made IMPASSABLE for this query alone,
+    which is how the rip-up loop refuses a move the movement table cannot judge.
+    A lift is the case that needs it -- the kernel admits one on its two end
+    nodes alone, having nowhere in a per-level row to name the column between
+    them -- so a lift that realisation finds runs through a machine comes back
+    as history charged at those two ends plus a re-query with them ``closed``.
+    A node in both sets is closed: ``closed`` is a correction and corrections
+    win.  ``pressure`` scales the per-node congestion price the kernel reads
     out of ``occupancy.history``.  ``transitions`` is
     :func:`~flab2bp.sfy.layout.transitions.sfy_transitions` for this lattice;
     it is passed rather than built so that one caller's registry-derived lift
@@ -175,6 +193,9 @@ def route_net(
     for node in opened:
         if lattice.holds(node):
             flags[lattice.index(node)] = 1
+    for node in closed:
+        if lattice.holds(node):
+            flags[lattice.index(node)] = 0
     start_nodes = tuple(
         node for node in starts if lattice.holds(node) and flags[lattice.index(node)]
     )
@@ -253,7 +274,8 @@ def _wall(
     """
     reverse = result.co_reachable is not None
     reached = result.co_reachable if reverse else result.reachable
-    assert reached is not None
+    if reached is None:
+        return ()  # the kernel proved nothing, so there is nobody to name
     if sum(hi - lo + 1 for _y, _z, lo, hi in reached) > _BLAME_MAX_POCKET:
         return ()
     owner = occupancy.owner
