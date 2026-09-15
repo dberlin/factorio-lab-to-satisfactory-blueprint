@@ -191,6 +191,10 @@ _HARD_CLEARANCE_UNREAD = (
     "soft-versus-hard distinction are unknown and this check's silence about "
     "them proves nothing."
 )
+#: What ``belt.capsule`` skips, with ``{lift}`` left for the paragraph about the
+#: lift boxes in the placement being judged. :func:`_capsule_unread` fills it:
+#: :func:`lift_half_width` has two branches and a constant cannot say which one
+#: a given registry took, so the sentence is built from what actually happened.
 _CAPSULE_UNREAD = (
     "belt.clearance leaves two things unread, so this check's silence about "
     "them proves nothing: the two flag bytes of FFGClearanceData, where a "
@@ -200,22 +204,36 @@ _CAPSULE_UNREAD = (
     "game's own segment lengths cannot be reproduced and the chain is cut at "
     "this project's own 50 cm instead. The exclusion of the box a wired port "
     "sits inside rests on the same unread AFGHologram::TestClearanceOverlap "
-    "that keeps buildable.clearance partial. A conveyor lift's box is here "
-    "too, and lift.clearance is partial for a third reason -- but no longer "
-    "for its width: the half-extent AFGBuildableConveyorLift::FitClearance "
-    "builds the box from is the module global at 0x19B8118, the static "
-    "AFGBuildableConveyorLift::CLEARANCE_EXTENT_2D, which sfy-native now quotes "
-    "by its PDB symbol, so the 95 cm each way this check uses is the game's own "
-    "number (registry.json's lift_clearance_half_extent_cm) and not a reading "
-    "of ours. It is an INITIALISER, what the image holds before the game runs. "
-    "What is still unread is where along its axis the game puts that box: "
-    "FitClearance scales the centre by a third vector reached through a pointer "
-    "nothing names, so the box here is centred between the lift's two ends, "
-    "which is this project's reading of the span the rule does state. A "
-    "registry that carries no lift_clearance_half_extent_cm at all falls back "
-    "to the M2 reading -- the connector clearance registry.json puts on the "
-    "lift's two ports, 200 cm, taken as the box's full width -- which is a "
-    "number the game keeps about a lift's CONNECTIONS and not about its box."
+    "that keeps buildable.clearance partial. {lift}"
+)
+_LIFT_BOX_UNREAD = (
+    "A conveyor lift's box is here too, and lift.clearance is partial for a "
+    "third reason -- but no longer for its width: the half-extent "
+    "AFGBuildableConveyorLift::FitClearance builds the box from is the module "
+    "global at 0x19B8118, the static "
+    "AFGBuildableConveyorLift::CLEARANCE_EXTENT_2D, which sfy-native quotes by "
+    "its PDB symbol into registry.json's lift_clearance_half_extent_cm -- an "
+    "INITIALISER, what the image holds before the game runs. THIS PLACEMENT "
+    "USED {widths}. What is still unread is where along its axis the game puts "
+    "that box: FitClearance scales the centre by a third vector reached through "
+    "a pointer nothing names, so the box here is centred between the lift's two "
+    "ends, which is this project's reading of the span the rule does state."
+)
+_NO_LIFT_BOX = (
+    "A conveyor lift's box would be judged here too, and how wide one is rests "
+    "partly on a reading of ours -- but this placement carries no lift, so "
+    "nothing here turns on it."
+)
+_LIFT_WIDTH_FROM_LIMIT = (
+    "registry.json's lift_clearance_half_extent_cm, which is the game's own "
+    "half-extent out of AFGBuildableConveyorLift::CLEARANCE_EXTENT_2D and not a "
+    "reading of ours"
+)
+_LIFT_WIDTH_FROM_PORTS = (
+    "this project's own M2 reading -- half the connector clearance "
+    "registry.json puts on the lift's two ports, which is a number the game "
+    "keeps about a lift's CONNECTIONS and not about its box -- because this "
+    "registry carries no lift_clearance_half_extent_cm"
 )
 _NO_BOUNDARY = (
     "no belt in this placement flags an end as a boundary end, so this is a fragment "
@@ -511,13 +529,14 @@ def lift_box(lift: LiftObj, registry: Registry) -> WorldBox:
     ``(100.0, 100.0)`` they hold and the ``(95.0, 95.0)`` left after the ``-5``
     shrink.  :func:`lift_half_width` takes that from
     :attr:`Limits.lift_clearance_half_extent_cm`, so both of this box's
-    dimensions are the game's.
+    dimensions are the game's -- unless the registry carries no such limit, when
+    the M2 connector reading stands in and :func:`_capsule_unread` says so.
 
     What is still unread is where along the axis the box *sits*: ``FitClearance``
     scales the centre by a third vector reached through a pointer nothing names,
     which is why ``lift.clearance`` is still ``partial``.  The box here is
     centred between the lift's two ends, which is this module's reading of the
-    span the rule does state, and :data:`_CAPSULE_UNREAD` says so.
+    span the rule does state, and the ``belt.capsule`` skip note says so.
     """
     geometry = lift_geometry(registry, lift.class_name)
     bottom, _ = lift.bottom_end(geometry)
@@ -551,14 +570,26 @@ def lift_half_width(lift: LiftObj, registry: Registry) -> float:
     limit was filled: the connector clearance the lift's own two ports carry
     (``UFGFactoryConnectionComponent``'s ``mClearance``, 200 cm) taken as the
     box's full width. That is this project's reading of a number the game keeps
-    about a lift's *connections* rather than about its box, and
-    :data:`_CAPSULE_UNREAD` says which of the two this check used. A lift class
-    with neither is refused rather than given a number: an invented width would
-    be this module inventing geometry, which is the one thing it may not do.
+    about a lift's *connections* rather than about its box, and the
+    ``belt.capsule`` skip note says which of the two a given run took --
+    :func:`_lift_width_reading` is the branch, and :func:`_capsule_unread` is
+    what puts it in words. A lift class with neither is refused rather than
+    given a number: an invented width would be this module inventing geometry,
+    which is the one thing it may not do.
+    """
+    return _lift_width_reading(lift, registry)[0]
+
+
+def _lift_width_reading(lift: LiftObj, registry: Registry) -> tuple[float, str]:
+    """:func:`lift_half_width`'s answer, and where it was read, in words.
+
+    The two travel together because a reader of a report has to be able to tell
+    the game's own half-extent from this project's stand-in for it, and only the
+    branch that ran knows which one this was.
     """
     half_extent = registry.limits.lift_clearance_half_extent_cm
     if half_extent is not None:
-        return half_extent
+        return half_extent, _LIFT_WIDTH_FROM_LIMIT
     buildable = registry.buildables.get(lift.class_name)
     clearances = [
         p.clearance for p in (buildable.ports if buildable else ()) if p.clearance is not None
@@ -568,7 +599,22 @@ def lift_half_width(lift: LiftObj, registry: Registry) -> float:
             f"the registry gives {lift.class_name} no connector clearance on either port and "
             "no lift_clearance_half_extent_cm, so there is no width to give its clearance box"
         )
-    return max(clearances) / 2.0
+    return max(clearances) / 2.0, _LIFT_WIDTH_FROM_PORTS
+
+
+def _capsule_unread(ctx: Context) -> str:
+    """:data:`_CAPSULE_UNREAD` with the lift paragraph this placement earned.
+
+    ``lift_half_width`` has two branches, so a constant cannot state which width
+    the check used without being wrong half the time. The distinct readings the
+    placement's lifts actually got are named here instead, each with its number
+    and its source; a placement with no lift says that rather than claim one.
+    """
+    readings = sorted({_lift_width_reading(lift, ctx.registry) for lift in ctx.placement.lifts})
+    if not readings:
+        return _CAPSULE_UNREAD.format(lift=_NO_LIFT_BOX)
+    widths = "; ".join(f"{half:g} cm each way, from {source}" for half, source in readings)
+    return _CAPSULE_UNREAD.format(lift=_LIFT_BOX_UNREAD.format(widths=widths))
 
 
 # --- the context every check is handed -------------------------------------
@@ -931,8 +977,8 @@ def _capsule(ctx: Context) -> Iterable[Finding]:
     differ, and that is the only place they are entitled to.
 
     A LIFT is judged here too, with one box rather than a chain -- see
-    :func:`lift_box`, and the third paragraph of :data:`_CAPSULE_UNREAD` for
-    what about that box is the game's and what is not.  Two conveyors WIRED to
+    :func:`lift_box`, and :func:`_capsule_unread`, which names the width each
+    lift here actually got and where it was read.  Two conveyors WIRED to
     each other are
     not tested against each other at all when one of them is a lift's neighbour:
     a lift's box spans the lift itself, so whatever meets it meets it inside its
@@ -941,7 +987,7 @@ def _capsule(ctx: Context) -> Iterable[Finding]:
     ``TestClearanceOverlap`` as the wired-port one above, and it is this
     project's, not the game's.
     """
-    yield ctx.skip("belt.capsule", _CAPSULE_UNREAD)
+    yield ctx.skip("belt.capsule", _capsule_unread(ctx))
     chains = ctx.conveyor_boxes
     hard = [(i, box) for i, box in enumerate(ctx.boxes) if not box.soft]
     runs = [obj for obj in ctx.placement.objects if obj.id in chains]
