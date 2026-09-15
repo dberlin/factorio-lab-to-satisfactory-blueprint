@@ -340,10 +340,25 @@ def _flow(
     a build without one is refused here rather than built from a selection
     FactorioLab never made.
     """
-    if flow is not None and flow_text is not None:
+    # Not a precedence rule. Each of these is a different recipe selection --
+    # a file, a paste, and whatever FactorioLab solves when a browser is driven
+    # to this URL right now -- and picking one silently would pin the build to a
+    # selection the caller did not choose, which is the exact failure R1 exists
+    # to remove. `flab2bp.pipeline` refuses the file/text pair for that reason;
+    # `--fetch-flow` alongside either is the same mistake and is refused too.
+    supplied = [
+        name
+        for name, given in (
+            ("a flow file", flow is not None),
+            ("flow text", flow_text is not None),
+            ("--fetch-flow", fetch_flow),
+        )
+        if given
+    ]
+    if len(supplied) > 1:
         raise ValueError(
-            "both a flow file and flow text were supplied. Pass one: they are "
-            "two different recipe selections and there is no right guess."
+            f"{' and '.join(supplied)} were all supplied. Pass one: they are "
+            "different recipe selections and there is no right guess."
         )
     if flow is not None:
         return load_flow(flow, url=url)

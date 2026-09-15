@@ -15,6 +15,15 @@ no game install. **Re-run this whole sequence after a game update**, in the orde
 below: steps 3 and 4 both need step 2's output and refuse without it, step 5
 needs step 4's, and the merge at the end is what the package actually reads.
 
+> **Using it, rather than regenerating it.** Nothing below is needed to build a
+> blueprint. `flab2bp '<factoriolab.github.io/sfy/... URL>' --flow <csv>
+> --designer mk1|mk2|mk3 -o <dir>` writes a `.sbp`/`.sbpcfg` pair from the
+> committed data; FactorioLab's own solved flow is required (`--flow` or
+> `--fetch-flow`), and fluids, a run past the fastest belt the save can build,
+> and anything that does not fit the chosen designer in one level of rows are
+> refused by name. The README's "Satisfactory" section is the fuller account,
+> including the exit codes.
+
 Every command below is run **from the repository root**, and the ones that `cd`
 into a tool directory `cd` back out again.
 

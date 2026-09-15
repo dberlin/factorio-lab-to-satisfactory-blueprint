@@ -151,3 +151,31 @@ def test_the_game_tables_are_read_once_per_process() -> None:
     assert pipeline.template_library() is pipeline.template_library()
     assert pipeline.lab_map() is pipeline.lab_map()
     assert pipeline.newest_fixture_header() is pipeline.newest_fixture_header()
+
+
+@pytest.mark.parametrize(
+    ("extra", "named"),
+    [
+        ({"flow_text": "x"}, "flow text"),
+        ({"fetch_flow": True}, "--fetch-flow"),
+    ],
+)
+def test_two_ways_of_supplying_a_flow_at_once_are_refused(
+    extra: dict[str, object], named: str
+) -> None:
+    """Each door is a different recipe selection, so there is no right guess.
+
+    ``--fetch-flow`` is the one the DSP pipeline does not have to think about,
+    because there a missing flow simply means "derive it"; here it is a third
+    selection and is refused alongside the other two rather than losing a
+    silent precedence contest.
+    """
+    with pytest.raises(ValueError, match="no right guess") as caught:
+        pipeline.build(
+            flow_url("iron-plate-60"),
+            designer="mk3",
+            flow=FLOWS / "iron-plate-60.csv",
+            **extra,  # type: ignore[arg-type]
+        )
+    assert named in str(caught.value)
+    assert "a flow file" in str(caught.value)
