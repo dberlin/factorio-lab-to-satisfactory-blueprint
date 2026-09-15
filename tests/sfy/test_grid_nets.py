@@ -25,6 +25,7 @@ from flab2bp.sfy.geometry import port_forward, world_port
 from flab2bp.sfy.labmap import LabMap, load_lab_map
 from flab2bp.sfy.layout.corridors import Measures
 from flab2bp.sfy.layout.grid_nets import (
+    LATTICE_TOUCH_CM,
     GridNet,
     NetError,
     belt_class_for,
@@ -311,11 +312,17 @@ def test_a_port_terminal_stands_on_the_first_node_out_along_its_own_normal() -> 
         if source.port and p.name == source.port[1]
     )
     transform = machine.pose.transform()
-    assert source.world == world_port(transform, port)
+    authored = world_port(transform, port)
+    # The port's own position, to within the cooked asset's float noise: this
+    # Smelter's output is authored at x = 0 and arrives as -3.5e-05, and a
+    # terminal that carried the noise would lay a belt leaving its port
+    # sideways (see `grid_nets.snapped`).
+    assert source.world == pytest.approx(authored, abs=LATTICE_TOUCH_CM)
+    assert source.world == _lattice().world(source.node)
     forward = port_forward(transform, port)
     span = math.hypot(forward[0], forward[1])
-    assert source.facing == pytest.approx((forward[0] / span, forward[1] / span, 0.0))
-    assert _lattice().world(source.node)[2] == source.world[2]
+    assert source.facing == pytest.approx((forward[0] / span, forward[1] / span, 0.0), abs=1e-3)
+    assert max(abs(axis) for axis in source.facing) == 1.0, "a port faces along its own axis"
 
 
 def test_a_ports_reach_is_the_nodes_inside_its_own_machines_hard_box() -> None:

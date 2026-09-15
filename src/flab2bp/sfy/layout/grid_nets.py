@@ -53,7 +53,7 @@ from dataclasses import dataclass
 from fractions import Fraction
 from itertools import count
 
-from flab2bp.sfy.geometry import box_bounds, port_forward, world_port
+from flab2bp.sfy.geometry import box_bounds, port_forward, snap_zeros, world_port
 from flab2bp.sfy.labmap import LabMap, machine_class
 from flab2bp.sfy.layout.lattice import GROUND_LEVEL, Lattice, Node
 from flab2bp.sfy.layout.model import MachineObj, Vector
@@ -67,7 +67,9 @@ __all__ = [
     "GridNet",
     "NetError",
     "belt_class_for",
+    "facing_for",
     "nets_for",
+    "snapped",
     "tap_nodes",
     "terminal_for",
     "tier_for",
@@ -132,8 +134,8 @@ class GridNet:
     and ``rate`` is what the item moves in total.  A wall terminal set is the
     one place where the parallel entries are not a sum: every node of the wall
     line carries the whole rate, because the set is one stream that may enter or
-    leave at any of them (R-M3-5), which is what :attr:`wall_sourced` and
-    :attr:`wall_sunk` are for.
+    leave at any of them (R-M3-5).  A terminal says which it is: ``kind`` is
+    ``"wall"`` on every node of such a set.
     """
 
     id: int
@@ -143,16 +145,6 @@ class GridNet:
     rate: Fraction
     per_sink: tuple[Fraction, ...]
     per_source: tuple[Fraction, ...]
-
-    @property
-    def wall_sourced(self) -> bool:
-        """Whether the sources are one wall line rather than N separate ports."""
-        return bool(self.sources) and self.sources[0].kind == "wall"
-
-    @property
-    def wall_sunk(self) -> bool:
-        """Whether the sinks are one wall line rather than N separate ports."""
-        return bool(self.sinks) and self.sinks[0].kind == "wall"
 
 
 # --- belt tiers ------------------------------------------------------------
@@ -418,12 +410,12 @@ def terminal_for(machine: MachineObj, port: Port, lattice: Lattice, registry: Re
     buildable = _buildable(registry, machine.class_name)
     transform = machine.pose.transform()
     world = world_port(transform, port)
-    facing = _flat(port_forward(transform, port), port.name)
+    facing = facing_for(port_forward(transform, port), lattice, port.name)
     node = _node_on_ray(world, facing, lattice, port.name)
     low, high = _hard_bounds(buildable, machine)
     return Terminal(
         node=node,
-        world=world,
+        world=snapped(world, node, lattice),
         facing=facing,
         port=(machine.id, port.name),
         kind="port",
@@ -559,20 +551,54 @@ def _reach(
     return tuple(out)
 
 
+def snapped(world: Vector, node: Node, lattice: Lattice) -> Vector:
+    """``world``, with every axis already on ``node`` moved exactly onto it.
+
+    A port authored at ``x = 0`` arrives out of the cooked asset as
+    ``-3.5e-05``, and a quarter turn through a quaternion leaves a few parts in
+    ``1e-14`` of the same.  A belt drawn to that noise leaves its port a RIGHT
+    ANGLE off the normal -- the piece from the node to the port is 3.5e-05 cm
+    long and points sideways -- so a port within :data:`LATTICE_TOUCH_CM` of its
+    own node is taken to be AT it, which is what the asset meant.  A port that
+    really stands off the grid, like a Manufacturer's inputs at 25 cm, is
+    further than that and is left where it is.
+
+    Ours, and stated here rather than in the realiser: where a terminal stands
+    is the caller's to say, and this is the one place this package says it.
+    """
+    here = lattice.world(node)
+    out = list(world)
+    for axis in range(3):
+        if abs(world[axis] - here[axis]) <= LATTICE_TOUCH_CM:
+            out[axis] = here[axis]
+    return (out[0], out[1], out[2])
+
+
 def _facing_axis(facing: Vector) -> int:
     """Which ground axis a port faces along, which is the one it reaches out on."""
     return 0 if abs(facing[0]) >= abs(facing[1]) else 1
 
 
-def _flat(vector: Vector, name: str) -> Vector:
-    span = math.hypot(vector[0], vector[1])
+def facing_for(vector: Vector, lattice: Lattice, name: str) -> Vector:
+    """A port's normal as a unit vector along the floor, snapped to its own axis.
+
+    Snapped for the same reason :func:`snapped` moves a port onto its node: a
+    Smelter output authored facing ``+Y`` arrives out of the cooked asset as
+    ``(3.5e-07, 1.0, 0)``, which is 2e-05 degrees round from the axis -- enough
+    for the realiser to refuse the 90 degree top yaw of a lift that turns under
+    it, because the build gun's yaw step is 90 degrees exactly.  The tolerance
+    is the lattice's own: :data:`LATTICE_TOUCH_CM` over one grid step is how far
+    off a line the same noise puts a port a grid step away.
+    """
+    snapped_vector = snap_zeros(vector, LATTICE_TOUCH_CM / lattice.grid_cm)
+    span = math.hypot(snapped_vector[0], snapped_vector[1])
     if span <= _EPS:
         raise NetError(
             "lattice",
             f"a port is off the hologram lattice: {name} faces straight up or down, and a "
             "belt on this lattice leaves a port along the floor",
         )
-    return (vector[0] / span, vector[1] / span, 0.0)
+    return (snapped_vector[0] / span, snapped_vector[1] / span, 0.0)
 
 
 # --- taps ------------------------------------------------------------------
