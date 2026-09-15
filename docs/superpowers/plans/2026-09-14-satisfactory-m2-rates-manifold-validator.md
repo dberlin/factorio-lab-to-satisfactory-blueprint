@@ -589,6 +589,22 @@ Spec section 9.1: "Rows longer than the wall are split." Task 8 laid every group
 
 ---
 
+### Task 8d (added during execution, user ruling 2026-09-15): a 3+3 chain fits a Mk1
+
+User ruling: 60 iron plate/min (three smelters, three constructors, ore in) does not need a Mk3 designer; a hand build fits a Mk1 (32 m). The manifold layout spends 4200 cm of depth on it: two 1600 cm bands (machine box 1000 plus a grid-rounded 200 feeder and a 200 splitter with its 400 soft box on each side), a 400 U-turn gap and two 300 wall margins.
+
+**Files:** `src/flab2bp/sfy/layout/manifold.py`, `rows.py`, `nets.py`, `laying.py`, `strategy.py` (as split by the final fix wave), `docs/sfy-layout-model.md`; tests beside them.
+
+**Levers, all three:**
+1. **Feeders at the game's minimum.** The belt from a splitter or merger side port to a machine port is the shortest length above `limits.belt_min_length_cm` (100.02 cm, so 101 cm on whole centimetres; belts are not grid-snapped), not `grid_ceil`; the chain's Y then sits where that puts it, on whole centimetres. Same for the merger side.
+2. **Direct pairing.** When a producer group and a consumer group have equal counts and each producer machine's output rate of the item equals each consumer machine's input rate (compare the spec's per-machine `Fraction`s, including the last machine's share), the two rows are laid facing each other with three straight belts from output port to input port and no chain pair or trunk between them: the consumer row's machines stand at the same X as the producers', at the Y where the straight belt is the minimum length; the producer's own input chain and the consumer's own output chain stay. The pairing is a property of the spec, never of the layout, and is reported in the placement description.
+3. **Wall margins only where a turn happens.** An entry or exit belt that reaches its chain end without a turn (the chain end faces the wall it enters from) needs no turn margin; the margin is computed per wall from the turns actually placed. (This keeps R3's faces; it removes only the margin that a straight belt does not use.)
+
+- [ ] **Step 1: Failing tests**: `iron-plate-60` lays out clean in **Mk1** with `power.wires` run and the strict corpus pin updated; the depth of that build is asserted below 3200 cm with the number; the direct-pairing test asserts three straight belts and no merger/splitter between the rows; a non-matching pair (`iron-plate-50`: 2.5 constructors) still gets a manifold; the feeder length equals 101 cm.
+- [ ] **Step 2: Implement**, **Step 3: re-run `scripts/sfy_audit.py --strict`**, re-pin, append the table to the evidence; re-emit checkpoint 2 with `scripts/sfy_checkpoint2.py` in the smallest mark that fits (expected Mk1 for the plain pair); **Step 4: commit**: `Fit a three-and-three chain in a Mk1 designer`.
+
+---
+
 ### Task 9: power poles and wires
 
 **Files:**
