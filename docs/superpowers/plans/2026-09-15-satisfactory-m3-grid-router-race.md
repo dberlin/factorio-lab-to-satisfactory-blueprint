@@ -138,7 +138,7 @@ The grid strategy's causes (added now so the corpus module can name them before 
 ### Task 3: the lift's clearance width from the binary's `.data`
 
 **Files:**
-- Modify: `tools/sfy-native/src/main.rs` (a `data` subcommand: `sfy-native data <symbol> --bytes N` resolves the PDB symbol to an RVA, refuses unless the RVA falls in `.data` or `.rdata`, prints the section name, the RVA and the bytes as hex and as little-endian `f64`s), `scripts/sfy_native_rules.py` (the `lift.clearance` rule reads the two doubles and states the half-extent with `source: binary .data initialiser via PDB symbol AFGBuildableConveyorLift::CLEARANCE_EXTENT_2D`), `src/flab2bp/sfy/data/hologram_rules.json` (regenerated), `src/flab2bp/sfy/data/registry.json` (regenerated: `lift_clearance_half_extent_cm` on `Limits`, governed by `lift.clearance`, effect `compute`), `src/flab2bp/sfy/registry.py`, `src/flab2bp/sfy/layout/validate.py::_lift_half_width`
+- Modify (keep `_lift_box` and `_lift_half_width` under their private names; Task 4 makes them public): `tools/sfy-native/src/main.rs` (a `data` subcommand: `sfy-native data <symbol> --bytes N` resolves the PDB symbol to an RVA, refuses unless the RVA falls in `.data` or `.rdata`, prints the section name, the RVA and the bytes as hex and as little-endian `f64`s), `scripts/sfy_native_rules.py` (the `lift.clearance` rule reads the two doubles and states the half-extent with `source: binary .data initialiser via PDB symbol AFGBuildableConveyorLift::CLEARANCE_EXTENT_2D`), `src/flab2bp/sfy/data/hologram_rules.json` (regenerated), `src/flab2bp/sfy/data/registry.json` (regenerated: `lift_clearance_half_extent_cm` on `Limits`, governed by `lift.clearance`, effect `compute`), `src/flab2bp/sfy/registry.py`, `src/flab2bp/sfy/layout/validate.py::_lift_half_width`
 - Test: `tests/sfy/test_native.py`, `tests/sfy/test_rules.py`, `tests/sfy/test_validate.py`
 
 **Interfaces:**
@@ -192,7 +192,9 @@ class Occupancy:
     def free(self, node: Node) -> bool                    # THE predicate; flags must agree with it
     def block_box(self, low: Vector, high: Vector) -> None  # hard box → nodes per R-M3-2
     def commit(self, net: int, path: Sequence[Node]) -> None   # nodes + the 2 across-run neighbours per straight node (R-M3-2)
-    def open_port_reach(self, net: int, port_node: Node, edge_node: Node) -> None  # R-M3-2 (d): a net's own path inside its machine's box
+    # R-M3-2 (d) is NOT an Occupancy method: a port's reach nodes (from the port to its
+    # machine's box edge) travel on the Terminal (Task 6, `reach`) and are handed to
+    # `route_net` as `opened` per query (Task 5), so one mechanism opens per-net nodes.
     def rip_up(self, net: int) -> None                    # restore from base for that owner
     def snapshot(self) -> bytes                           # flags copy for a per-net query
 
@@ -272,6 +274,8 @@ class Terminal:
     facing: Vector                 # unit, the port's normal (for a wall terminal, into the designer)
     port: tuple[int, str] | None   # None at the wall
     kind: Literal["port", "wall", "tap"]
+    reach: tuple[Node, ...] = ()   # R-M3-2 (d): the nodes from the port to its machine's box edge,
+                                   # inside the hard box; opened for this port's net alone
 
 @dataclass(frozen=True, slots=True)
 class Realised:
@@ -340,6 +344,7 @@ class RoutingOutcome:
     realised: tuple[Realised, ...]
     rounds: int
     work: int
+    blame: Mapping[Node, float]                   # the loop's accumulated blame, for the packer's Feedback (Task 8)
 
 RRR_MAX = 8
 def route_all(nets: Sequence[GridNet], occupancy: Occupancy, *, measures: Measures, registry: Registry,
