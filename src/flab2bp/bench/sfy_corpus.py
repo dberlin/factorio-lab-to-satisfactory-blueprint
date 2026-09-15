@@ -64,9 +64,14 @@ Satisfactory URLs has no use for any of them, so ``Tier`` now lives in the leaf
 ``bench.corpus`` re-exports it for the other game's gate.
 
 ``tests/sfy/test_corpus.py`` measures that in a fresh interpreter: reading this
-module must load no ``flab2bp.dsp`` or ``flab2bp.rates`` module at all, no DSP
-placer or router, and none of the bake-off package beyond its lazy
-``__init__``.
+module must load no ``flab2bp.dsp`` or ``flab2bp.rates`` module at all, and
+none of the named DSP bake-off modules -- ``layout.freeform``,
+``routing_domain``, ``geometric_router``, ``finalize`` and the two Cython
+kernels.  What it does load beside itself is small and deliberate:
+:mod:`flab2bp.bench.tier` for ``Tier``, and ``flab2bp.layout.base`` with
+``budget`` and ``process_resources`` behind
+:mod:`flab2bp.sfy.layout.refusals` -- the vocabulary both games share, which
+the Satisfactory strategy genuinely uses.
 """
 
 from __future__ import annotations

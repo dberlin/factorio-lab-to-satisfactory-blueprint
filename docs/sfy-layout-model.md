@@ -137,7 +137,7 @@ report. `needs spec` marks a check that cannot run without an `SfyBuildSpec`.
 | --- | --- | --- | --- | --- |
 | `geom.bounds` | `project` | — | no | every origin, clearance-box corner and spline point inside `[-half, half]² × [0, height]` of the designer, sized from `designer_dims` and the shipped foundation's footprint |
 | `geom.hard_clearance` | `buildable.clearance` | refuse | no | no two **hard** clearance boxes lap, by a separating-axis test on the boxes' full `RelativeTransform`. Soft boxes may share space — that is how a machine stands on a foundation. A box flagged `ExcludeForSnapping` is still tested: the flag excludes it from *snapping*, not from clearance, and the finding says the flag was there |
-| `belt.capsule` | `project` | — | no | a conveyor's clearance laps no other conveyor's and no hard box: for a belt, the chain `belt.clearance` lays — `Min = (-L/2, -79, -15)`, `Max = (L/2, 79, 15)` per segment; for a lift, the one box `lift.clearance` says spans it, as wide as the connector clearance the registry carries on the lift's two ports (the game's own half-extent is in `.data` and was never read) |
+| `belt.capsule` | `project` | — | no | a conveyor's clearance laps no other conveyor's and no hard box: for a belt, the chain `belt.clearance` lays — `Min = (-L/2, -79, -15)`, `Max = (L/2, 79, 15)` per segment; for a lift, the one box `lift.clearance` says spans it, as wide as `limits.lift_clearance_half_extent_cm` — the game's own half-extent, read out of `.data` by the PDB symbol `AFGBuildableConveyorLift::CLEARANCE_EXTENT_2D` and shrunk by the 5 cm `FitClearance` takes off each axis, 95 cm each way (a registry that carries no such limit falls back to half the connector clearance on the lift's two ports, and the skip note says which was used) |
 | `belt.max_length` | `belt.max_length` | refuse | no | `spline_length` ≤ `mMaxSplineLength` (`limits.belt_max_spline_cm`), arc length, strict |
 | `belt.min_length` | `belt.min_length` | refuse | no | the **polyline** between stored points > `mMeshLength × 0.5001` (`limits.belt_min_length_cm`), strict |
 | `belt.incline` | `belt.incline` | refuse | no | per chord, <code>&#124;π/2 − acos(clamp(u.Z, −1, 1))&#124;</code> ≤ `mMaxIncline × 0.017453292`, with the game's `float` `π/2` and its `ZeroVector` for a chord of no length |
@@ -162,10 +162,11 @@ says what it could not cover: `geom.hard_clearance`, because
 `buildable.clearance` is `partial`, and `belt.capsule`, because `belt.clearance`
 leaves the `FFGClearanceData` flag bytes and
 `GetNextDistanceExceedingTolerance` unread — and, since lifts joined it,
-because `lift.clearance` is `partial` too: how wide the game's own lift box is
-comes from a mutable module global at `0x19B8118` that `sfy-native` will not
-quote, so the width used here is this project's reading of the connector
-clearance and not the game's number. They still run and their findings
+because `lift.clearance` is `partial` too, though no longer for its width:
+`sfy-native` quotes the module global at `0x19B8118` by its PDB symbol now, so
+the 95 cm each way is the game's. What is still unread is where along its axis
+the game puts that box, and the skip note names the width each lift here
+actually got and where it was read. They still run and their findings
 still stand. `power.wires` joins them on a placement with no wires, and
 `flow.boundary` on one with no boundary end.
 

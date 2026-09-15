@@ -422,7 +422,10 @@ is 3422 cm of band and builds in a Mk2.
 
 **The corpus, measured at `f85afe3f`.** 36 cells (12 entries x 3 marks): 7 CLEAN, 25
 refused `rows exceed the designer depth`, 3 refused `fluids are M5`, 1 refused
-`corridor needs a bridge that does not fit`. Both gates pass and no cell is off
+`corridor needs a bridge that does not fit` -- that fluid cause was named
+`fluids are M4` at the time of that run, which is what the evidence file below
+prints; the milestone reorder renamed it to `fluids are M5` at `3140f266` and
+the cells it refused are the same three. Both gates pass and no cell is off
 its pin; `docs/superpowers/evidence/sfy-m2-audit-2026-09-14.md` is the table,
 cell by cell, with the centimetres each depth refusal measured -- the run at
 `6a35a02b` and, appended under it, the re-take after Task 8d.

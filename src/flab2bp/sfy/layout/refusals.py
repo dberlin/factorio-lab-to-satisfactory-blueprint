@@ -53,7 +53,8 @@ gap from a missing machine, and a reader chasing one is not chasing the other.""
 REFUSALS: Final[tuple[str, ...]] = (
     # --- MANIFOLD: only flab2bp.sfy.layout.strategy raises these --------------
     #
-    # The M2 brief's own list, minus the four shared causes further down.
+    # The M2 brief's own list, minus the shared causes further down: the five
+    # named ones plus GAME_DATA and GAME_LIMITS.
     "rows exceed the designer depth",
     "rows exceed the designer width",
     "corridor needs a bridge that does not fit",
