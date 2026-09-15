@@ -31,6 +31,31 @@ Distances are centimetres and the axes are Unreal's, left-handed, `+Z` up.
   fields: no property in the file carries them, so `decode` hands a belt back
   unflagged.
 
+### A machine's clock and its somersloops *are* in the file
+
+Task 12 read the properties out of the game's public headers, so the clock is no
+longer carried by the `.sbpcfg` description alone.
+`Source/FactoryGame/Public/Buildables/FGBuildableFactory.h` in
+`CommunityResources/Headers.zip` declares four `SaveGame` floats —
+`mPendingPotential` (line 609) and `mCurrentPotential` (line 670),
+`mPendingProductionBoost` (line 613) and `mCurrentProductionBoost` (line 674) —
+and `emit` writes all four on every machine that is not a plain 100 % machine
+with no somersloop in it, first stripping any the template inherited from the
+fixture player's own build. What the numbers mean is the game's own data and not
+this project's reading of a corpus: a potential is a multiple of the rated speed,
+because Docs.json gives a Constructor `mMaxPotential` 1.0 and a Power Shard
+`mExtraPotential` 0.5, so three shard slots reach 2.5 and 250 % is written as
+`2.5`; a production boost is `base_production_boost + n *
+production_boost_per_slot * production_boost_multiplier`, which is
+`GetCurrentMaxProductionBoost` adding `GetBoostValue` once per shard, and every
+one of those numbers is in the registry. `decode` reads both back, so
+`MachineObj.somersloops` — an integer count, encoded exactly at the stored width
+— is part of equality again. `clock` is not, and the reason has changed rather
+than gone: a clock is an exact `Fraction` and the file holds one 32-bit float, so
+`moc=133`'s 133/100 comes back as the stored number beside it. Whether the *game*
+keeps a pasted machine's potential when no shard sits in the slot is a question
+no file can answer; `scripts/sfy_checkpoint2.py` writes the pair that asks it.
+
 ## What the validator checks, and which rule each check names
 
 `validate(placement, spec, registry, *, rules=None, only=None)` returns a

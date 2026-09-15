@@ -19,7 +19,16 @@ from flab2bp.sfy.codec import Blueprint
 from flab2bp.sfy.geometry import port_forward, world_port
 from flab2bp.sfy.header import BlueprintHeader, read_header
 from flab2bp.sfy.labmap import load_lab_map
-from flab2bp.sfy.layout.emit import FIRST_NAME_ID, EmitError, decode, emit
+from flab2bp.sfy.layout.emit import (
+    CURRENT_POTENTIAL,
+    CURRENT_PRODUCTION_BOOST,
+    FIRST_NAME_ID,
+    PENDING_POTENTIAL,
+    PENDING_PRODUCTION_BOOST,
+    EmitError,
+    decode,
+    emit,
+)
 from flab2bp.sfy.layout.model import (
     BeltRun,
     FoundationObj,
@@ -32,7 +41,8 @@ from flab2bp.sfy.layout.model import (
     belt_ends,
 )
 from flab2bp.sfy.layout.splines import straight
-from flab2bp.sfy.objects import ObjectData, ObjectHeader, Transform
+from flab2bp.sfy.objects import ACTOR, ObjectData, ObjectHeader, Transform
+from flab2bp.sfy.properties import Float, Property
 from flab2bp.sfy.query import connected, object_index
 from flab2bp.sfy.registry import Port, Registry, load_registry
 from flab2bp.sfy.spec import designer
@@ -218,19 +228,126 @@ def test_the_decoded_links_name_the_upstream_port_first() -> None:
     assert placement.links == (Link((4, "Output0"), (5, entry)),)
 
 
-def test_a_machines_clock_is_not_written_because_no_property_for_it_was_read() -> None:
-    """Task 4 found no save property the game writes a requested potential into.
-
-    Until one is read, the clock lives in the placement's description and
-    nowhere in the file, which is exactly what this asserts: two placements that
-    differ only in their clocks emit the same bytes.
-    """
+def _with_machine(clock: Fraction, somersloops: int) -> SfyPlacement:
+    """Checkpoint 1 with its Constructor set to one clock and one sloop count."""
     placement = _placement()
     machine = placement.machines[0]
-    underclocked = MachineObj(
-        machine.id, machine.class_name, machine.pose, machine.recipe_class, Fraction(1, 2), 1
+    return replace(
+        placement,
+        machines=(
+            MachineObj(
+                machine.id,
+                machine.class_name,
+                machine.pose,
+                machine.recipe_class,
+                clock,
+                somersloops,
+            ),
+        ),
     )
-    assert _emit(replace(placement, machines=(underclocked,))) == _emit(placement)
+
+
+def _constructor(built: Blueprint) -> ObjectData:
+    return next(d for h, d in built.objects if h.class_name == CONSTRUCTOR and h.kind == ACTOR)
+
+
+def _floats(built: Blueprint, name: str) -> list[float]:
+    """Every value of one property on the Constructor in an emitted blueprint."""
+    return [
+        p.value.v
+        for p in _constructor(built).properties
+        if p.tag.name == name and isinstance(p.value, Float)
+    ]
+
+
+def test_a_machine_at_100_percent_with_no_sloop_writes_no_potential_at_all() -> None:
+    """It is the class default, and the game does not serialise an unchanged one."""
+    built = _emit(_placement())
+    for name in (
+        CURRENT_POTENTIAL,
+        PENDING_POTENTIAL,
+        CURRENT_PRODUCTION_BOOST,
+        PENDING_PRODUCTION_BOOST,
+    ):
+        assert _floats(built, name) == []
+
+
+def test_an_overclocked_machine_writes_its_potential_into_both_saved_floats() -> None:
+    """250 % is ``2.5``: ``mMaxPotential`` 1.0 plus three shards of ``mExtraPotential``.
+
+    ``FGBuildableFactory.h`` declares ``mCurrentPotential`` and
+    ``mPendingPotential`` as ``SaveGame`` floats (lines 670 and 609), and both
+    are written -- the pending one is what the slider sets, the current one what
+    ``GetCurrentPotential`` returns before a cycle has finished.
+    """
+    built = _emit(_with_machine(Fraction(5, 2), 0))
+    assert _floats(built, CURRENT_POTENTIAL) == [2.5]
+    assert _floats(built, PENDING_POTENTIAL) == [2.5]
+
+
+def test_a_somersloop_writes_the_production_boost_the_game_computes_for_it() -> None:
+    """One somersloop in a Constructor is a boost of 2.0, from the registry alone.
+
+    ``base_production_boost`` 1.0 plus ``production_boost_per_slot`` 1.0 times
+    the class's ``production_boost_multiplier`` 1.0, which is
+    ``GetCurrentMaxProductionBoost`` adding ``GetBoostValue`` once per shard.
+    """
+    registry = load_registry()
+    constructor = registry.buildables[CONSTRUCTOR]
+    assert constructor.base_production_boost == 1.0
+    assert constructor.production_boost_multiplier == 1.0
+    assert registry.limits.production_boost_per_slot == 1.0
+
+    built = _emit(_with_machine(Fraction(1), 1))
+    assert _floats(built, CURRENT_PRODUCTION_BOOST) == [2.0]
+    assert _floats(built, PENDING_PRODUCTION_BOOST) == [2.0]
+
+
+def test_a_somersloop_count_comes_back_out_of_the_blueprint_it_went_into() -> None:
+    """Which is why ``MachineObj.somersloops`` is part of equality again."""
+    placement = _with_machine(Fraction(1), 1)
+    assert decode(_emit(placement), load_registry()) == placement
+
+
+def test_a_clock_the_stored_float_can_hold_comes_back_as_the_fraction_it_was() -> None:
+    placement = _with_machine(Fraction(5, 2), 0)
+    assert decode(_emit(placement), load_registry()).machines[0].clock == Fraction(5, 2)
+
+
+def test_a_clock_the_stored_float_cannot_hold_comes_back_at_the_stored_width() -> None:
+    """Why ``clock`` stays out of equality: ``moc=133`` is 133/100 and the file is f32.
+
+    The placement still compares equal -- that is what ``compare=False`` is for
+    -- and the exact figure survives in the ``.sbpcfg`` description.
+    """
+    placement = _with_machine(Fraction(133, 100), 0)
+    again = decode(_emit(placement), load_registry())
+    assert again == placement
+    assert again.machines[0].clock != Fraction(133, 100)
+    assert float(again.machines[0].clock) == pytest.approx(1.33, abs=1e-6)
+
+
+def test_decode_refuses_a_boost_that_is_not_a_whole_number_of_somersloops() -> None:
+    """A count is what the model holds, so half a sloop is a file we do not understand."""
+    registry = load_registry()
+    built = _emit(_with_machine(Fraction(1), 1))
+    objects = tuple(
+        (header, _replace_float(data, CURRENT_PRODUCTION_BOOST, 1.4))
+        if header.class_name == CONSTRUCTOR and header.kind == ACTOR
+        else (header, data)
+        for header, data in built.objects
+    )
+    with pytest.raises(EmitError, match="somersloops"):
+        decode(replace(built, objects=objects), registry)
+
+
+def _replace_float(data: ObjectData, name: str, value: float) -> ObjectData:
+    return replace(
+        data,
+        properties=tuple(
+            Property(p.tag, Float(value)) if p.tag.name == name else p for p in data.properties
+        ),
+    )
 
 
 def test_emit_refuses_a_class_the_fixture_library_has_no_template_for() -> None:

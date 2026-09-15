@@ -11,16 +11,46 @@ and this is that script generalised: the same numbering from
 calls, and the same ``assemble`` at the end.
 
 :func:`decode` is the inverse, and it exists so that the emitter can be held to
-a round trip: ``decode(emit(placement)) == placement``. Three things a placement
-carries have no property in a blueprint -- a machine's clock, its somersloops,
-and a belt's item and rate -- so ``decode`` returns them at their defaults and
-:mod:`~flab2bp.sfy.layout.model` leaves them out of what equality compares. The
-clock in particular is not written anywhere: Task 4's reading of the game found
-no save property a requested potential is stored in, so a placement's clocks
-survive in :attr:`SfyPlacement.description`, which goes into the ``.sbpcfg``
-beside the blueprint, and nowhere else. Until the property is read, a build with
-underclocked machines pastes at 100 % and the description is what tells the
-player.
+a round trip: ``decode(emit(placement)) == placement``. What a placement carries
+that a blueprint has no property for -- what a belt carries and how fast -- comes
+back at its default, and :mod:`~flab2bp.sfy.layout.model` leaves it out of what
+equality compares.
+
+A machine's clock and its somersloops are no longer in that company. The game's
+public headers declare four ``SaveGame`` UPROPERTYs for them in
+``Source/FactoryGame/Public/Buildables/FGBuildableFactory.h``
+(``CommunityResources/Headers.zip``): ``mPendingPotential`` at line 609 and
+``mCurrentPotential`` at line 670, ``mPendingProductionBoost`` at line 613 and
+``mCurrentProductionBoost`` at line 674, each a bare ``float``. :func:`emit`
+writes all four on every machine that is not a plain 100 % machine with no
+somersloop in it -- the pending one because it is what the player's slider sets
+and the current one because it is what ``GetCurrentPotential`` returns before a
+production cycle has run.
+
+What the numbers MEAN is the game's own data rather than this module's opinion.
+A potential is a multiple of the machine's rated speed: Docs.json gives the
+Constructor ``mMaxPotential`` 1.0 and the Power Shard ``mExtraPotential`` 0.5,
+so three shard slots reach 2.5 and 250 % is written as ``2.5``. A production
+boost is ``base_production_boost + n * production_boost_per_slot *
+production_boost_multiplier``, which is
+``AFGBuildableFactory::GetCurrentMaxPotentialForType`` adding
+``UFGPowerShardDescriptor::GetBoostValue`` once per shard; every one of those
+numbers is in the registry, read out of Docs.json. Nothing here is measured off
+a blueprint: a corpus machine shows what the TAG looks like and says nothing
+about what a value means.
+
+:func:`decode` reads both back. ``somersloops`` is an integer count, and the
+boost that encodes it is exact at 32-bit width, so it takes part in equality
+again. ``clock`` does not, and its reason has changed rather than gone: a clock
+is an exact :class:`~fractions.Fraction` and the file holds a ``float``, so
+``moc=133``'s 133/100 comes back as the 32-bit number beside it and not as
+itself. It stays outside equality for that, and :attr:`SfyPlacement.description`
+-- which goes into the ``.sbpcfg`` -- still carries the exact figure.
+
+Whether the GAME keeps a pasted machine's potential, or resets it to 100 %
+because no power shard sits in the slot, is not something the file can answer.
+That is spec section 7's open question, and it is what ``scripts/sfy_checkpoint2.py``
+asks the player to look at.
 
 A power line is written like everything else, with one difference: what joins it
 to the two connections it spans is not a property but its class trailer, which
@@ -38,6 +68,7 @@ from __future__ import annotations
 import math
 from collections.abc import Iterator
 from dataclasses import replace
+from fractions import Fraction
 
 from flab2bp.sfy.archive import ObjectRef
 from flab2bp.sfy.codec import Blueprint
@@ -85,6 +116,32 @@ clear of every name in every fixture template, which is the convention
 
 CURRENT_RECIPE = "mCurrentRecipe"
 
+CURRENT_POTENTIAL = "mCurrentPotential"
+PENDING_POTENTIAL = "mPendingPotential"
+CURRENT_PRODUCTION_BOOST = "mCurrentProductionBoost"
+PENDING_PRODUCTION_BOOST = "mPendingProductionBoost"
+"""The four ``SaveGame`` floats a machine's clock and its somersloops live in,
+named as ``FGBuildableFactory.h`` names them -- see the module docstring for the
+line each is declared on."""
+
+_POTENTIAL_NAMES = (
+    CURRENT_POTENTIAL,
+    PENDING_POTENTIAL,
+    CURRENT_PRODUCTION_BOOST,
+    PENDING_PRODUCTION_BOOST,
+)
+
+_FLOAT_TAGS = {name: Tag(name, "FloatProperty", 0).as_modern() for name in _POTENTIAL_NAMES}
+"""The tag each of the four is written with. Every one is declared ``float`` in
+the header, so every one is a ``FloatProperty``, and a corpus machine that
+carries ``mPendingPotential`` writes exactly this tag -- the fixture is the
+format example and nothing more."""
+
+_WHOLE_SOMERSLOOP_TOLERANCE = 1e-4
+"""How far a stored production boost may sit from a whole number of somersloops
+and still be read back as that number: the boost is one 32-bit float, and the
+step per somersloop is 1, 0.5 or 0.25 of one across the shipped classes."""
+
 _ATTACHMENT_NATIVE = frozenset(
     {
         "FGBuildableAttachmentSplitter",
@@ -129,6 +186,8 @@ def emit(
     <flab2bp.sfy.templates.apply_recipe>`, because the recipe lives on the
     inventory components as well as on the actor; a belt's spline is set in the
     belt actor's own frame, with the run's first point at the actor's origin.
+    A machine's clock and its somersloops go on the actor too, as the four
+    ``SaveGame`` floats :func:`_set_potential` writes.
 
     ``links`` are wired with :func:`connect <flab2bp.sfy.templates.connect>`,
     which writes ``mConnectedComponent`` on both sides. A link names a belt end
@@ -184,6 +243,8 @@ def emit(
         if recipe_path is None:
             raise EmitError(f"the registry has no asset path for the recipe {machine.recipe_class}")
         objects[start:stop] = apply_recipe(objects[start:stop], recipe_path, registry)
+        actor_header, actor_data = objects[start]
+        objects[start] = (actor_header, _set_potential(actor_data, machine, registry))
 
     for attachment in placement.attachments:
         place(attachment.id, attachment.class_name, attachment.pose)
@@ -251,9 +312,12 @@ def decode(bp: Blueprint, registry: Registry) -> SfyPlacement:
     registry: the port whose direction is ``output``, or the belt end its
     ``flow`` calls the exit.
 
-    What the file has no property for comes back at its default: a machine's
-    clock and somersloops, a belt's item and rate, and the placement's
-    description, which lives in the ``.sbpcfg``.
+    A machine's clock and its somersloops come back off the four ``SaveGame``
+    floats :func:`_set_potential` writes -- the clock at the 32-bit width the
+    file holds it at, which is why :class:`MachineObj` still keeps it out of
+    equality. What the file really has no property for comes back at its
+    default: a belt's item and rate, and the placement's description, which
+    lives in the ``.sbpcfg``.
     """
     machines: list[MachineObj] = []
     attachments: list[AttachmentObj] = []
@@ -272,7 +336,16 @@ def decode(bp: Blueprint, registry: Registry) -> SfyPlacement:
         recipe = find(data.properties, CURRENT_RECIPE)
         native = _native_class(registry, header.class_name)
         if isinstance(recipe, Object) and not recipe.ref.is_null:
-            machines.append(MachineObj(obj_id, header.class_name, pose, recipe.ref.name))
+            machines.append(
+                MachineObj(
+                    obj_id,
+                    header.class_name,
+                    pose,
+                    recipe.ref.name,
+                    _clock(data),
+                    _somersloops(registry, header, data),
+                )
+            )
         elif native in _BELT_NATIVE:
             belts.append(BeltRun(obj_id, header.class_name, _world_points(header, data)))
         elif native in _ATTACHMENT_NATIVE:
@@ -321,6 +394,103 @@ def _wire_side(ref: ObjectRef, ids: dict[str, int]) -> tuple[int, str]:
         return (ids[parent], port)
     except KeyError:
         raise EmitError(f"a power line names {ref.path}, which is not in this file") from None
+
+
+def _set_potential(data: ObjectData, machine: MachineObj, registry: Registry) -> ObjectData:
+    """``data`` with the machine's clock and somersloops written onto it.
+
+    Every one of the four names is REMOVED first and then written back only if
+    this machine wants it. A template is a copy of some fixture's actor, and a
+    fixture machine may have been overclocked by the player who built it; a
+    build of ours that inherited that machine's potential would run at a speed
+    nobody asked for and would not survive :func:`decode`.
+
+    A clock of 1 and no somersloop is the class default, so nothing is written
+    for it -- which is also what the game does, since an unchanged ``SaveGame``
+    property is not serialised.
+    """
+    properties = [p for p in data.properties if p.tag.name not in _POTENTIAL_NAMES]
+    if machine.clock != 1:
+        properties += _both(CURRENT_POTENTIAL, PENDING_POTENTIAL, float(machine.clock))
+    if machine.somersloops:
+        properties += _both(
+            CURRENT_PRODUCTION_BOOST,
+            PENDING_PRODUCTION_BOOST,
+            _boost_value(registry, machine.class_name, machine.somersloops),
+        )
+    return replace(data, properties=tuple(properties))
+
+
+def _both(current: str, pending: str, value: float) -> list[Property]:
+    """The current and the pending property for one setting, at the stored width."""
+    stored = Float(stored_float(value))
+    return [Property(_FLOAT_TAGS[current], stored), Property(_FLOAT_TAGS[pending], stored)]
+
+
+def _boost_step(registry: Registry, class_name: str) -> tuple[float, float]:
+    """``(base boost, boost per somersloop)`` for a class, out of the registry.
+
+    ``GetCurrentMaxProductionBoost`` starts at the class's own
+    ``mBaseProductionBoost`` and adds the somersloop's ``mExtraProductionBoost``
+    scaled by the class's ``mProductionShardBoostMultiplier`` once per shard, so
+    those three numbers are the whole encoding. All three are Docs.json class
+    defaults; a class the registry has none for is refused rather than guessed
+    at.
+    """
+    buildable = registry.buildables.get(class_name)
+    base = None if buildable is None else buildable.base_production_boost
+    multiplier = None if buildable is None else buildable.production_boost_multiplier
+    per_slot = registry.limits.production_boost_per_slot
+    if base is None or multiplier is None or per_slot is None:
+        raise EmitError(
+            f"the registry does not say what a somersloop is worth in a {class_name}, so "
+            "a production boost cannot be written or read"
+        )
+    step = per_slot * multiplier
+    if step <= 0.0:
+        raise EmitError(
+            f"a somersloop is worth {step} in a {class_name}, so no boost encodes a count"
+        )
+    return (base, step)
+
+
+def _boost_value(registry: Registry, class_name: str, somersloops: int) -> float:
+    """The production boost ``somersloops`` in this class's slots come to."""
+    base, step = _boost_step(registry, class_name)
+    return base + somersloops * step
+
+
+def _clock(data: ObjectData) -> Fraction:
+    """The potential an actor is stored at, as a fraction of 100 %.
+
+    The current one, falling back to the pending one: a machine that has never
+    finished a production cycle carries only the pending value, which is what
+    the corpus's own machines show. An actor with neither is at the class
+    default, which is 100 %.
+    """
+    for name in (CURRENT_POTENTIAL, PENDING_POTENTIAL):
+        value = find(data.properties, name)
+        if isinstance(value, Float):
+            return Fraction(value.v)
+    return Fraction(1)
+
+
+def _somersloops(registry: Registry, header: ObjectHeader, data: ObjectData) -> int:
+    """How many somersloops the production boost an actor carries encodes."""
+    for name in (CURRENT_PRODUCTION_BOOST, PENDING_PRODUCTION_BOOST):
+        value = find(data.properties, name)
+        if not isinstance(value, Float):
+            continue
+        base, step = _boost_step(registry, header.class_name)
+        count = (value.v - base) / step
+        whole = round(count)
+        if whole < 0 or abs(count - whole) > _WHOLE_SOMERSLOOP_TOLERANCE:
+            raise EmitError(
+                f"{header.name} carries a production boost of {value.v}, which is "
+                f"{count} somersloops in a {header.class_name} and not a whole number of them"
+            )
+        return whole
+    return 0
 
 
 def _spline_values(

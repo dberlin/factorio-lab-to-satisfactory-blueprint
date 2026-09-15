@@ -132,12 +132,16 @@ def test_a_machines_pose_comes_back_out_of_the_file_it_went_into(yaw: float) -> 
 
 
 def test_what_the_file_cannot_carry_is_left_out_of_what_equality_compares() -> None:
-    """A clock and a belt's rate have no property in the file, so ``decode``
-    hands back the defaults and equality never claimed otherwise."""
-    fast = MachineObj(1, CONSTRUCTOR, Pose(0.0, 0.0, 100.0, 0.0), IRON_PLATE, Fraction(5, 2), 2)
+    """A belt's rate has no property in the file, and a clock has one too narrow
+    to hold it, so ``decode`` cannot hand either back and equality never claimed
+    it could.  A somersloop count is neither: the production boost that encodes
+    it is exact at the stored width, so it IS compared."""
+    fast = MachineObj(1, CONSTRUCTOR, Pose(0.0, 0.0, 100.0, 0.0), IRON_PLATE, Fraction(5, 2), 0)
     plain = MachineObj(1, CONSTRUCTOR, Pose(0.0, 0.0, 100.0, 0.0), IRON_PLATE)
     assert fast == plain
     assert fast.clock != plain.clock
+    sloops = MachineObj(1, CONSTRUCTOR, Pose(0.0, 0.0, 100.0, 0.0), IRON_PLATE, Fraction(1), 2)
+    assert sloops != plain
     carried = BeltRun(
         2, BELT, straight((0.0, 0.0, 200.0), (0.0, 1.0, 0.0), 400.0), "iron-plate", Fraction(2)
     )

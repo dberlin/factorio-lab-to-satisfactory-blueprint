@@ -16,14 +16,17 @@ builds.
 **What the file can carry.** An actor's transform is written as ten 32-bit
 floats (``objects.write_toc``), so :class:`Pose` states its position at that
 width and no finer: a placement that claims a nanometre the file cannot hold is
-claiming something the game will never read. Three things in this model have no
-property in a blueprint at all -- a machine's clock, its somersloops, and what a
-belt carries and how fast -- because no save property the game writes them into
-has been read out of the game yet. They are carried here because the rest of the
-pipeline needs them, they are left out of what equality compares (``compare=False``),
-and :func:`~flab2bp.sfy.layout.emit.decode` hands them back at their defaults
-rather than guessing. That is what makes ``decode(emit(placement)) == placement``
-a statement about the file rather than a statement about this dataclass.
+claiming something the game will never read. What a belt carries and how fast
+has no property in a blueprint at all -- a belt in a file holds the items that
+happen to be sitting on it, not a contract -- so it is carried here because the
+rest of the pipeline needs it, left out of what equality compares
+(``compare=False``), and handed back at its default by
+:func:`~flab2bp.sfy.layout.emit.decode` rather than guessed at. The same goes
+for a machine's ``clock``, for a different reason: the file DOES carry the
+potential, as one 32-bit float, and a clock is an exact
+:class:`~fractions.Fraction`, so a clock the float cannot hold comes back as the
+number beside it. That is what makes ``decode(emit(placement)) == placement`` a
+statement about the file rather than a statement about this dataclass.
 """
 
 from __future__ import annotations
@@ -115,10 +118,15 @@ class MachineObj:
     """One production building running one recipe.
 
     ``clock`` is the requested potential as a fraction of 100 % and
-    ``somersloops`` how many sit in the production-boost slots. Neither is
-    written into the blueprint -- no save property that carries them has been
-    read out of the game -- so neither takes part in equality; see the module
-    docstring.
+    ``somersloops`` how many sit in the production-boost slots. Both are written
+    into the blueprint now, into the ``SaveGame`` floats
+    :func:`~flab2bp.sfy.layout.emit._set_potential` names.
+
+    ``somersloops`` is a count, and the production boost that encodes it is
+    exact at the width the file holds, so it is part of equality. ``clock`` is
+    not: it is an exact :class:`~fractions.Fraction` and the file holds one
+    ``float``, so a clock that is not a 32-bit number -- ``moc=133``'s 133/100 --
+    comes back as the stored number beside it. See the module docstring.
     """
 
     id: int
@@ -126,7 +134,7 @@ class MachineObj:
     pose: Pose
     recipe_class: str
     clock: Fraction = field(default=Fraction(1), compare=False)
-    somersloops: int = field(default=0, compare=False)
+    somersloops: int = 0
 
 
 @dataclass(frozen=True, slots=True)
