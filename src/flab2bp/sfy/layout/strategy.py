@@ -80,6 +80,8 @@ from flab2bp.sfy.layout.model import (
     SfyPlacement,
     Vector,
 )
+from flab2bp.sfy.layout.power import PowerError, PowerPlan, PowerRow
+from flab2bp.sfy.layout.power import place as place_power
 from flab2bp.sfy.layout.validate import BELT_CLEARANCE_HALF_WIDTH_CM
 from flab2bp.sfy.registry import Buildable, Port, Registry, load_registry
 from flab2bp.sfy.spec import FOUNDATION_CLASS, Designer, SfyBuildSpec, SfyMachineGroup
@@ -102,6 +104,11 @@ REFUSALS = (
     "a row makes something the spec never sends out",
     "a row is fed from the corridor on the other side of the build",
     "nothing in the build supplies a row's input",
+    # Task 9's three: a pole line that cannot be reached, cannot be stood, or a
+    # class with no power connection to wire at all.
+    "wire exceeds the maximum length",
+    "no room for a power pole",
+    "a machine has no power connection",
 )
 """Every reason this strategy refuses with, and the only ones it may use."""
 
@@ -122,6 +129,14 @@ _CORRIDOR_CAUSES = {
     "width": "rows exceed the designer width",
     "bridge": "corridor needs a bridge that does not fit",
     "depth": "rows exceed the designer depth",
+}
+
+#: What a :class:`~flab2bp.sfy.layout.power.PowerError`'s cause is called where a
+#: caller can see it.
+_POWER_CAUSES = {
+    "wire": "wire exceeds the maximum length",
+    "room": "no room for a power pole",
+    "port": "a machine has no power connection",
 }
 
 COLUMN_TRIES = 100_000
@@ -169,6 +184,8 @@ class ManifoldRows:
             raise _refuse(spec, _CORRIDOR_CAUSES[exc.cause], exc.detail) from exc
         except RowError as exc:
             raise _refuse(spec, _row_cause(exc), str(exc)) from exc
+        except PowerError as exc:
+            raise _refuse(spec, _POWER_CAUSES[exc.cause], exc.detail) from exc
 
 
 def _refuse(spec: SfyBuildSpec, reason: str, detail: str = "") -> NoValidLayout:
@@ -864,18 +881,36 @@ class _Layout:
             attachments.extend(row.geometry.attachments)
             belts.extend(row.geometry.belts)
             links.extend(row.geometry.links)
+        power = self._power()
         return SfyPlacement(
             designer=self.designer,
             machines=tuple(machines),
             attachments=tuple(attachments),
             belts=tuple(belts),
+            poles=power.poles,
+            wires=power.wires,
             foundations=self._floor(),
             links=tuple(links),
-            description=self._description(belts),
+            description=self._description(belts, power),
             short_desc=f"{self.spec.label or 'manifold rows'}: {len(machines)} machines",
         )
 
-    def _description(self, belts: Sequence[BeltRun]) -> str:
+    def _power(self) -> PowerPlan:
+        """A pole line along every row, and a wire from every machine onto it.
+
+        The rows are handed over as they finally stand, so the poles are placed
+        against the boxes the validator will judge; the corridor is not, because
+        a belt carries no clearance box of its own and a pole's own box is soft.
+        Power objects take the last ids in the build.
+        """
+        return place_power(
+            [PowerRow(row.geometry.machines, row.geometry.attachments) for row in self.rows],
+            self.registry,
+            ids=self.ids,
+            designer=self.designer,
+        )
+
+    def _description(self, belts: Sequence[BeltRun], power: PowerPlan) -> str:
         """The manifest's precursor: what arrives where, what leaves where, what runs."""
         lines = [f"{self.spec.label or 'manifold rows'} in a {self.designer.mark} designer"]
         for run in sorted(belts, key=lambda belt: (belt.item_id, belt.start[0])):
@@ -889,6 +924,7 @@ class _Layout:
                 f"row {row.index}: {row.group.count} x {row.group.machine_class} running "
                 f"{row.group.recipe_id} at {float(row.group.clock) * 100:g}%"
             )
+        lines += [f"power: {line}" for line in power.lines]
         return "\n".join(lines)
 
     # --- the refusal that comes before any geometry -------------------------

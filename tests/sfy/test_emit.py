@@ -37,6 +37,7 @@ from flab2bp.sfy.query import connected, object_index
 from flab2bp.sfy.registry import Port, Registry, load_registry
 from flab2bp.sfy.spec import designer
 from flab2bp.sfy.templates import (
+    ACTOR_PATH_PREFIX,
     TemplateError,
     TemplateLibrary,
     apply_recipe,
@@ -242,14 +243,55 @@ def test_emit_refuses_a_class_the_fixture_library_has_no_template_for() -> None:
         _emit(placement)
 
 
-def test_emit_refuses_a_power_line_because_its_trailer_is_not_authored_yet() -> None:
+def _two_poles() -> SfyPlacement:
+    """Two poles a wire apart, which is the smallest placement with a wire in it."""
+    registry = load_registry()
+    return SfyPlacement(
+        designer=designer("mk1", registry),
+        poles=(
+            PoleObj(1, POLE, Pose(-POLE_X_CM, 0.0, SLAB_TOP_CM, 0.0)),
+            PoleObj(2, POLE, Pose(POLE_X_CM, 0.0, SLAB_TOP_CM, 0.0)),
+        ),
+        wires=(WireObj(3, POWER_LINE, Link((1, "PowerConnection"), (2, "PowerConnection"))),),
+    )
+
+
+def test_a_wire_carries_the_two_connection_references_the_game_writes_in_its_trailer() -> None:
+    """The trailer is the wire's whole record of what it joins -- Task 9a's reading."""
+    blueprint = _emit(_two_poles())
+    wire = next(d for h, d in blueprint.objects if h.class_name == POWER_LINE)
+    assert [ref.path for ref in wire.trailer.connections] == [
+        f"{ACTOR_PATH_PREFIX}{POLE}_{FIRST_NAME_ID + 1}.PowerConnection",
+        f"{ACTOR_PATH_PREFIX}{POLE}_{FIRST_NAME_ID + 2}.PowerConnection",
+    ]
+
+
+def test_a_wire_stands_on_the_second_connection_it_names() -> None:
+    """The corpus's own convention; ``emit._wire_stand`` gives the figures."""
+    registry = load_registry()
+    placement = _two_poles()
+    blueprint = _emit(placement)
+    header = next(h for h, _ in blueprint.objects if h.class_name == POWER_LINE)
+    port = _port(registry, POLE, "PowerConnection")
+    assert header.transform is not None
+    assert header.transform.translation == pytest.approx(
+        world_port(placement.poles[1].pose.transform(), port)
+    )
+
+
+def test_a_placement_with_a_wire_comes_back_out_of_the_file_unchanged() -> None:
+    placement = _two_poles()
+    assert decode(_emit(placement), load_registry()) == placement
+
+
+def test_emit_refuses_a_wire_that_joins_a_connection_to_itself() -> None:
     registry = load_registry()
     placement = SfyPlacement(
         designer=designer("mk1", registry),
-        poles=(PoleObj(1, POLE, Pose(0.0, 0.0, 100.0, 0.0)),),
+        poles=(PoleObj(1, POLE, Pose(0.0, 0.0, SLAB_TOP_CM, 0.0)),),
         wires=(WireObj(2, POWER_LINE, Link((1, "PowerConnection"), (1, "PowerConnection"))),),
     )
-    with pytest.raises(EmitError, match="trailer"):
+    with pytest.raises(EmitError, match="itself"):
         _emit(placement)
 
 

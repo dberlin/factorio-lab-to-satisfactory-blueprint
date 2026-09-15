@@ -196,8 +196,9 @@ _NO_BOUNDARY = (
     "nothing here to hold to a wall"
 )
 _NO_WIRES = (
-    "the placement carries no wires, and emit refuses to write one until Task 9 "
-    "decodes the power-line trailer, so there is nothing here to judge"
+    "the placement carries no wires, so there is nothing here to judge: it is a "
+    "fragment rather than a build, and nothing in the file says whether power was "
+    "left out or forgotten"
 )
 
 _FIXTURE_DIR = Path(__file__).resolve().parents[4] / "tests" / "fixtures" / "sfy"
@@ -1594,12 +1595,17 @@ def _wires(ctx: Context) -> Iterable[Finding]:
     """Every wire is short enough, every connection is inside its limit, and every
     machine is on a pole.
 
-    This project's own rule in all three parts.  ``registry.json`` carries
-    ``wire_max_cm`` per power-line class and ``max_connections`` per port, both
-    read out of the game's own assets (``mMaxNumConnectionLinks``), but no
-    hologram rule that REFUSES a wire has been extracted, so the refusal is
-    ours.  That a machine must reach a pole is ours outright: the game is happy
-    to build an unpowered machine and we decline to author one.
+    The NUMBERS are the game's and the refusal is this project's own, in all
+    three parts.  ``registry.json`` carries ``wire_max_cm`` per power-line class --
+    ``AFGBuildableWire::mMaxLength`` out of Docs.json, which
+    ``limits_sources["wire_max_cm"]`` says is where it came from -- and
+    ``max_connections`` per port out of the cooked assets
+    (``mMaxNumConnectionLinks``).  **No extracted hologram rule governs either.**
+    ``hologram_rules.json`` holds nothing that turns a wire away for its length
+    or a connection away for its link count, so what happens above those numbers
+    in the game is unread and the refusal here is ours rather than the
+    hologram's.  That a machine must reach a pole is ours outright as well: the
+    game is happy to build an unpowered machine and we decline to author one.
     """
     if not ctx.placement.wires:
         yield ctx.skip("power.wires", _NO_WIRES)

@@ -453,11 +453,12 @@ def test_spec_machines_refuses_a_row_the_placement_did_not_build() -> None:
 # --- power and the round trip ----------------------------------------------
 
 
-def test_power_wires_stands_aside_until_a_placement_has_wires() -> None:
+def test_power_wires_stands_aside_on_a_placement_with_no_wires() -> None:
+    """A fragment, not a build: nothing in it says whether power was left out."""
     report = validate(_placement(), _spec(), _registry(), only={"power.wires"})
     assert report.checks_run == ()
     assert report.skipped == ("power.wires",)
-    assert "Task 9" in report.by_check("power.wires")[0].message
+    assert "carries no wires" in report.by_check("power.wires")[0].message
 
 
 def test_power_wires_refuses_a_machine_no_pole_reaches() -> None:

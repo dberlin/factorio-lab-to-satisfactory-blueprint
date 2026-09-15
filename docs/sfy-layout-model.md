@@ -216,9 +216,11 @@ never a bound — the bounds are all in `registry.json`'s `limits`:
   inside `TestClearanceOverlap`, which is unread. Every *other* box of the same
   buildable stays under test — an Assembler's upper box is not forgiven because
   its lower one holds the port.
-* **`power.wires` stands aside on a placement with no wires**, because `emit`
-  refuses to write one until Task 9 decodes the power-line trailer. It says so
-  in an `INFO` finding rather than reporting a clean pass.
+* **`power.wires` stands aside on a placement with no wires**, because a
+  placement with none is a fragment and nothing in the file says whether power
+  was left out or forgotten. It says so in an `INFO` finding rather than
+  reporting a clean pass. Every build `ManifoldRows` lays out has wires in it,
+  so the check *runs* on all of them.
 
 ## What a build looks like: rows, corridors and bridges
 
@@ -250,6 +252,48 @@ belt between the attachment and the row is one straight transverse. The two wall
 are never branches: the entry is below every row and the exit above them, so they
 are always the trunk's own two ends.
 
+**A pole line** (`power.py`) stands along every row, and a wire runs from every
+machine's power connection to the nearest pole with a link free. The poles are
+chained to each other along the row and row to row, so the whole build is one
+circuit — which is what `power.wires` walks.
+
+### Power: where a pole stands, and what a wire is
+
+The build uses `Build_PowerPoleMk2_C` and `Build_PowerLine_C`. **Both choices are
+ours**: the game ships three free-standing marks and two wire classes and says
+nothing about which a build should use. The Mk2 is chosen because its
+`PowerConnection` takes seven wires where the Mk1's takes four, and because the
+fixture corpus carries a template of it and none of the Mk3.
+
+| quantity | where it comes from | today |
+| --- | --- | --- |
+| a pole's connection, and where it sits | `Port.translation` on `PowerConnection` | `(0, 0, 760)` |
+| how many wires it takes | `Port.max_connections`, `max_connections_source` `asset` | 7 |
+| how many machines one pole carries | `max_connections` − `CHAIN_LINKS_PER_POLE`. **Ours**: two links held back on every pole, which is the most any pole in this shape spends on the chain (one neighbour each side, or one neighbour and the row beside it) | 5 |
+| how far a wire reaches | `limits.wire_max_cm[Build_PowerLine_C]`, source `docs` (`mMaxLength`) | 10 000 cm |
+| the grid a pole snaps to | `Buildable.grid_snap_cm` where the class's hologram overrides `mGridSnapSize` (the Mk1, the Power Tower and the street light, all 50); otherwise `limits.hologram_grid_cm`, read out of the shipped DLL. The Mk2 states none, so it takes the global 100 — which is a multiple of 50, so it stands on the pole grid either way | 100 cm |
+| where along the row the line stands | **ours**, and computed rather than assumed: the band between the machine line's own hard `+Y` face and the merger chain's near face is tried first, and only where that band is narrower than the pole's own box does the line go past the chain. The placement's description says which of the two happened | past the chain, in both `iron-plate-60` rows |
+| where along `X` | **ours**: the midpoints of the machine pitch, one per group of machines, each group taking the free midpoint nearest its own centre | — |
+
+A wire is written as a `Build_PowerLine_C` actor stamped out of the fixture
+template, with the two connection references in its **class trailer** —
+Task 9a's reading of `AFGBuildableWire::Serialize`, recorded in
+`docs/sfy-struct-layouts.md`. Two of its properties are authored rather than
+copied: `mWireInstances` goes out empty, because the game's loader calls
+`DestroyWireInstances` and then `CreateWireInstancesBetweenConnections` and
+rebuilds the meshes from the two connections; and `mCachedLength` is the span
+this wire really covers. The wire is also listed in the `mWires` array of each
+connection component it joins, which is what the game writes: all 1016 ends of
+the corpus's 508 wires carry it.
+
+The actor stands **on the second connection's point**, unrotated. That is the
+corpus's convention rather than a rule out of the binary: of the 330 fixture
+wires whose two connection points the registry reproduces exactly, 276 stand
+within a centimetre of `mConnections[1]` and two of `mConnections[0]`, and 482 of
+all 508 carry a `mWireInstances` entry whose second `CachedRelativeLocations` is
+zero. The yaw a fixture wire carries is the angle the player's build gun happened
+to be at and says nothing, so ours is 0.
+
 ### The numbers, and which of them are ours
 
 | quantity | where it comes from | today |
@@ -275,10 +319,13 @@ raises `NoValidLayout` with one of these, and nothing else:
 `corridor assignment exceeded the budget` ·
 `a row makes something the spec never sends out` ·
 `a row is fed from the corridor on the other side of the build` ·
-`nothing in the build supplies a row's input`
+`nothing in the build supplies a row's input` ·
+`wire exceeds the maximum length` · `no room for a power pole` ·
+`a machine has no power connection`
 
-The last three are not in the brief's list; they are shapes of spec this build
-form cannot realise, and each is a named cause rather than a stray message. The
+The last six are not in the brief's list; three are shapes of spec this build
+form cannot realise and three are the power stage's, and each is a named cause
+rather than a stray message. The
 module refuses to raise anything else: `_refuse` checks the string against
 `REFUSALS` and raises `ValueError` on a cause nobody declared.
 

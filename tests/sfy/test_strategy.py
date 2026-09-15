@@ -39,10 +39,11 @@ from tests.sfy.conftest import fixture_paths
 
 FLOWS = Path(__file__).resolve().parents[1] / "fixtures" / "sfy_flows"
 
-#: What a clean report stands aside on, and nothing else: the two partial rules
-#: and the wires Task 9 has not written yet.  ``flow.boundary`` is NOT here --
-#: every build this strategy lays out has its entries and exits on the walls.
-ALWAYS_SKIPPED = {"geom.hard_clearance", "belt.capsule", "power.wires"}
+#: What a clean report stands aside on, and nothing else: the two partial rules.
+#: ``flow.boundary`` is NOT here -- every build this strategy lays out has its
+#: entries and exits on the walls -- and neither is ``power.wires``, since Task 9
+#: gave every row a pole line and a wire from every machine onto it.
+ALWAYS_SKIPPED = {"geom.hard_clearance", "belt.capsule"}
 
 #: The designer every build in this file is laid out in.  Two rows and the room
 #: their trunks need to turn between them is 42 m of band, which is more than the
