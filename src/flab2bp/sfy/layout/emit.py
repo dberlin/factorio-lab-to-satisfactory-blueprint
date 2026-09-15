@@ -718,11 +718,16 @@ def _yaw_degrees(header: ObjectHeader, transform: Transform) -> float:
     width -- which is every yaw the build gun can produce -- that whole degree is
     the answer rather than the seven-digit angle they encode.
 
-    Any other angle comes back at the same 32-bit width :class:`Pose` states it
-    at.  The ``f64`` angle four ``f32`` components encode is not the angle that
-    built them -- it misses by about a part in ten million -- and rounding it to
-    a ``float`` lands back on the number that went in, which is what makes
-    ``decode(emit(placement)) == placement`` hold for a fractional yaw.
+    Any other angle comes back as the simplest number whose own quaternion the
+    file holds.  The ``f64`` angle four ``f32`` components encode is not the
+    angle that built them -- it misses by about a part in ten million, which at
+    thirty degrees is larger than the gap between two ``f32`` yaws -- so reading
+    it back off the components alone lands one step beside the number that went
+    in.  Trying the roundings in turn and taking the first whose quaternion
+    matches what is stored lands back ON it, which is what makes
+    ``decode(emit(placement)) == placement`` hold for a fractional yaw.  Every
+    candidate is CHECKED against the stored rotation, so this never invents a
+    tidier angle than the file actually carries.
     """
     x, y, z, w = transform.rotation
     if abs(x) > _ROTATION_TOLERANCE or abs(y) > _ROTATION_TOLERANCE:
@@ -730,9 +735,9 @@ def _yaw_degrees(header: ObjectHeader, transform: Transform) -> float:
             f"{header.name} is turned about more than its up axis: {transform.rotation}"
         )
     yaw = math.degrees(2.0 * math.atan2(z, w))
-    whole = float(round(yaw))
-    if _same_rotation(yaw_quaternion(whole), transform.rotation):
-        return whole
+    for candidate in (float(round(yaw)), *(round(yaw, places) for places in range(1, 7))):
+        if _same_rotation(yaw_quaternion(candidate), transform.rotation):
+            return candidate
     return stored_float(yaw)
 
 

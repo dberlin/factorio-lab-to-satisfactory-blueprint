@@ -30,6 +30,7 @@ from array import array
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import cast
 
 from flab2bp.sfy.archive import ObjectRef
 from flab2bp.sfy.codec import Blueprint, read_sbp_file
@@ -193,7 +194,7 @@ class TemplateLibrary:
         new_path = f"{ACTOR_PATH_PREFIX}{class_name}_{name_id}"
         out: list[tuple[ObjectHeader, ObjectData]] = [
             (
-                replace(template.header, path=new_path, transform=transform),
+                replace(template.header, path=new_path, transform=_stored(transform)),
                 replace(
                     template.data,
                     components=tuple(
@@ -470,6 +471,28 @@ def _recipe_ref(h: ObjectHeader, d: ObjectData) -> ObjectRef:
     if not isinstance(value, Object) or value.ref.is_null:
         raise TemplateError(f"{h.path}: no {BUILT_WITH_RECIPE} to cost the actor with")
     return value.ref
+
+
+def _stored(transform: Transform) -> Transform:
+    """``transform`` at the width the object table holds one.
+
+    ``objects.write_toc`` writes all ten numbers with ``Writer.f32``, so a
+    stamped actor whose transform carries anything finer is claiming a rotation
+    or a position the file cannot hold -- and a blueprint assembled in this
+    process would then not equal the one read back out of the file it was
+    written to.  A caller's ``Pose`` already rounds its own translation and yaw;
+    what it cannot round is the QUATERNION that yaw becomes, and a quarter turn
+    is where that shows: ``cos(45 deg)`` is 0.7071067811865476 here and
+    0.7071067690849304 in the file.
+    """
+    return Transform(
+        cast(
+            "tuple[float, float, float, float]",
+            tuple(_f32(part) for part in transform.rotation),
+        ),
+        cast("tuple[float, float, float]", tuple(_f32(part) for part in transform.translation)),
+        cast("tuple[float, float, float]", tuple(_f32(part) for part in transform.scale)),
+    )
 
 
 def _f32(value: float) -> float:
