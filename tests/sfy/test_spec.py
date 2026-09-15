@@ -15,6 +15,7 @@ from flab2bp.sfy.spec import (
     SfyBuildSpec,
     SfyMachineGroup,
     designer,
+    direct_pairs,
     foundation_cm,
 )
 
@@ -175,3 +176,81 @@ def test_a_spec_totals_its_machines_belt_tiers_and_power() -> None:
     assert [t.item_id for t in spec.belt_tiers] == ["conveyor-belt-mk1", "conveyor-belt-mk2"]
     assert spec.power_mw == pytest.approx(20.0)
     assert spec.power_shards == 0
+
+
+# --- which groups a belt can join machine to machine ------------------------
+
+
+def _paired_spec(**consumer: object) -> SfyBuildSpec:
+    """Smelters making exactly what Constructors eat, with the consumer tweaked.
+
+    The base pair is the shape ``iron-plate*60`` has: three machines each side,
+    each Smelter making half an ingot a second and each Constructor eating half.
+    Every test below changes ONE thing about the consumer and asks whether the
+    pair survives it.
+    """
+    maker = _group(
+        recipe_id="iron-ingot",
+        recipe_class="Recipe_IngotIron_C",
+        machine_item_id="smelter-id",
+        machine_class="Build_SmelterMk1_C",
+        inputs_per_machine={"iron-ore": Fraction(1, 2)},
+        outputs_per_machine={"iron-ingot": Fraction(1, 2)},
+    )
+    return SfyBuildSpec(
+        groups=(maker, _group(**consumer)),
+        external_inputs={"iron-ore": Fraction(3, 2)},
+        outputs={"iron-plate": Fraction(1)},
+        belt_item_id="conveyor-belt-mk1",
+        belt_items_per_second=Fraction(1),
+    )
+
+
+def test_two_groups_whose_rates_match_machine_for_machine_are_a_direct_pair() -> None:
+    (pair,) = direct_pairs(_paired_spec())
+    assert pair.item == "iron-ingot"
+    assert (pair.producer.recipe_id, pair.consumer.recipe_id) == ("iron-ingot", "iron-plate")
+
+
+def test_an_odd_last_machine_that_runs_a_different_share_is_not_a_direct_pair() -> None:
+    """The one comparison the whole-build tests cannot reach.
+
+    A group's LAST machine runs at ``last_clock`` rather than ``clock``, so what
+    it makes -- or eats -- is its own share of the group's per-machine rate. Two
+    groups can therefore agree on every other number and still not pair: three
+    Smelters whose last runs at half make 1/2, 1/2, 1/4 a second, and three
+    Constructors all at full clock eat 1/2, 1/2, 1/2, so the last belt of such a
+    pair would be short by a quarter for ever.
+
+    The equality is ``producer.last_clock / producer.clock ==
+    consumer.last_clock / consumer.clock``, cross-multiplied to stay in exact
+    integers, and it is checked in both directions: an underclocked PRODUCER
+    starves its partner and an underclocked CONSUMER backs its own up.
+    """
+    maker, eater = _paired_spec().groups
+    starved = _paired_spec(last_clock=Fraction(1, 2))
+    assert direct_pairs(starved) == ()
+    assert maker.count == eater.count
+    assert maker.outputs_per_machine["iron-ingot"] == eater.inputs_per_machine["iron-ingot"]
+    # And the mirror: the producer's last machine underclocked instead.
+    backed_up = SfyBuildSpec(
+        groups=(maker.model_copy(update={"last_clock": Fraction(1, 2)}), eater),
+        external_inputs={"iron-ore": Fraction(3, 2)},
+        outputs={"iron-plate": Fraction(1)},
+        belt_item_id="conveyor-belt-mk1",
+        belt_items_per_second=Fraction(1),
+    )
+    assert direct_pairs(backed_up) == ()
+    # Underclock BOTH last machines by the same share and they pair again, which
+    # is what says the rule is about the share and not about the clock.
+    together = SfyBuildSpec(
+        groups=(
+            maker.model_copy(update={"last_clock": Fraction(1, 2)}),
+            eater.model_copy(update={"last_clock": Fraction(1, 2)}),
+        ),
+        external_inputs={"iron-ore": Fraction(3, 2)},
+        outputs={"iron-plate": Fraction(1)},
+        belt_item_id="conveyor-belt-mk1",
+        belt_items_per_second=Fraction(1),
+    )
+    assert [pair.item for pair in direct_pairs(together)] == ["iron-ingot"]

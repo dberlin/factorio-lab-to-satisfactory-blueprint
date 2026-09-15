@@ -266,7 +266,7 @@ Milestone 2 makes it a build. The same `flab2bp` command takes a Satisfactory UR
 
 ```bash
 flab2bp 'https://factoriolab.github.io/sfy/list?o=iron-plate*60&v=11' \
-    --flow plates.csv --designer mk3 -o blueprints/
+    --flow plates.csv --designer mk1 -o blueprints/
 ```
 
 It lays the flow out as *manifold rows* — one row of machines per recipe, stacked along `Y`,
@@ -287,13 +287,27 @@ overrides), `2` a bad URL, spec or missing flow, `3` no layout.
 What M2 refuses, rather than guessing at: **fluids** (`fluids are M4` — nothing pipes yet, so a
 flow carrying one is refused before any geometry), a **run past the fastest belt the save can
 build** (`run exceeds the belt ceiling`), and anything that **does not fit the chosen designer**
-in a single level of rows (`rows exceed the designer depth`/`width`). What fits is measured, not
-assumed: each row's own band is 16–24 m, the margins at the two walls are 3 m each and the gap a
-trunk turns in between two rows is 4 m, and the total has to be inside the designer's 32 m (Mk.1),
-40 m (Mk.2) or 48 m (Mk.3). So a two-row build fits a Mk.2 only when its bands and margins come to
-under 40 m — `concrete*60`, whose two rows are two halves of one group and so need no turning gap,
-is 39 m and fits; `iron-plate*60` is 42 m and needs a Mk.3 — and a five-row chain fits none of
-them. Every refusal names its cause, says the centimetres it wanted, and exits 3.
+in a single level of rows (`rows exceed the designer depth`/`width`).
+
+What fits is the sum of four things, measured rather than assumed, against the designer's own
+32 m (Mk.1), 40 m (Mk.2) or 48 m (Mk.3):
+
+- **each row's own band, 15.6–22.6 m** over the corpus — the machine's hard clearance boxes and
+  the chains that feed and drain it, every distance the game's;
+- **a margin at each wall of what the turn there costs**, 1.01 m today — *this project's choice*,
+  and derived rather than picked: a turn made by a conveyor attachment spends its own soft box
+  and one shortest legal belt, less whatever the row's band already covers;
+- **a gap between two rows of what their trunk's two turns still want**, 2.02 m today, and 1 m
+  between two rows of ONE group, which no trunk turns between — *ours*, same derivation;
+- **nothing at all between two rows the spec's own rates pair** — where one group makes exactly
+  what another eats, machine for machine, the two are laid facing each other with one straight
+  belt per pair and no chains and no trunk between them.
+
+So `iron-plate*60` is 27.6 m and fits a **Mk.1**, because its three Smelters and three
+Constructors pair; `concrete*60` is two halves of one group at 34.2 m and needs a **Mk.2**;
+`reinforced-iron-plate*10` is 95 m and fits none of the three. Every refusal names its cause,
+says the centimetres it wanted, and exits 3.
+[docs/sfy-layout-model.md](docs/sfy-layout-model.md) has each number and where it comes from.
 
 The committed data files mean neither the tests nor a build need a game install.
 [docs/sfy-regenerating-game-data.md](docs/sfy-regenerating-game-data.md) is the runbook for
