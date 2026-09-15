@@ -743,6 +743,14 @@ corner turns by the *shape* `route_all` hands back — a tap arrives as a `Reali
 of one attachment and no belts — and the corners are counted off the committed
 paths, a node whose step in differs from its step out at one level.
 
+It reports those two counts **side by side and never subtracts one from the
+other**. `realise` does not say which kind `choose_turn` picked at each corner, and
+the path count is a floor on what the realiser was offered — a stub out of a port
+standing off its own node can put a right angle where no three path nodes show one
+— so an arc count would be a subtraction that can go the wrong way. A `Realised`
+that carried the turn kinds would make it exact, and the M3 evidence table wants
+exactly that.
+
 ### What does not route yet
 
 A corpus flow runs several machines on one recipe, so the item it belts in is one

@@ -305,6 +305,7 @@ class _Run:
         lattice = Lattice.over(self.designer, self.registry)
         feedback: Feedback | None = None
         outcome: RoutingOutcome | None = None
+        tried = 0
         for arrangement in range(1, ARRANGEMENTS + 1):
             if arrangement > 1 and expired(self.deadline):
                 break
@@ -321,6 +322,7 @@ class _Run:
                 if outcome is None or not _out_of_clock(exc):
                     raise
                 break
+            tried = arrangement
             ids = _numbering(packed.machines)
             occupancy = occupancy_for(lattice, packed.machines, (), (), (), self.registry)
             nets = nets_for(self.spec, packed.machines, lattice, self.registry, self.lab_map)
@@ -328,7 +330,7 @@ class _Run:
             if not outcome.stranded:
                 return self._placement(packed, occupancy, outcome, nets, arrangement, ids)
             feedback = _folded(feedback, outcome)
-        raise self._unrouted(outcome)
+        raise self._unrouted(outcome, tried)
 
     # --- the wall -----------------------------------------------------------
 
@@ -524,16 +526,23 @@ class _Run:
             f"authored: {lifts} conveyor lifts, {turns + taps} conveyor attachments "
             f"({taps} standing on a tap, {turns} turning a corner)"
         )
+        # Two counts and no arithmetic between them.  Every corner is made either
+        # by an attachment standing on it or by bending the belt, and only the
+        # first leaves an object behind: ``realise`` does not report which it
+        # chose, and ``corners`` is what the PATHS hold, which is a floor on what
+        # the realiser was offered (a stub out of a port standing off its own
+        # node can put a right angle where no three path nodes show one).  So an
+        # arc count here would be a subtraction that can go the wrong way.
         lines.append(
-            f"turns: {corners} corners in the routed paths, {turns} of them made by an "
-            f"attachment and {corners - turns} bent as an arc"
+            f"turns: {turns} made by a conveyor attachment, {corners} right angles in the "
+            f"routed paths"
         )
         lines += [f"power: {line}" for line in power.lines]
         return "\n".join(lines)
 
     # --- the refusal the loop reaches by running out of arrangements ---------
 
-    def _unrouted(self, outcome: RoutingOutcome | None) -> Exception:
+    def _unrouted(self, outcome: RoutingOutcome | None, tried: int) -> Exception:
         """What to say when every arrangement left a net with no tree.
 
         Two different answers, and the router's own evidence is what tells them
@@ -553,8 +562,8 @@ class _Run:
         return refuse(
             self.spec,
             "a belt could not be routed",
-            f"{ARRANGEMENTS} arrangements were packed and routed and these nets still have "
-            f"no tree: {named}",
+            f"{tried} of {ARRANGEMENTS} arrangements were packed and routed and these nets "
+            f"still have no tree: {named}",
         )
 
     # --- the refusal that comes before any geometry -------------------------
@@ -647,6 +656,11 @@ def _flat_corners(path: Sequence[Node]) -> int:
     there is a ramp or a shaft rather than a turn -- so both are skipped, which
     is the same reading :func:`~flab2bp.sfy.layout.grid_nets.tap_nodes` ends a
     straight run on.
+
+    A FLOOR on what the realiser was offered rather than an exact count of it:
+    a stub from a port that stands off its own node can put a right angle where
+    no three path nodes show one.  The description says the two counts side by
+    side for that reason and never subtracts one from the other.
     """
     corners = 0
     for before, here, after in zip(path, path[1:], path[2:], strict=False):
