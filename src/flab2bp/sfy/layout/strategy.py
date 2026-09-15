@@ -132,6 +132,11 @@ REFUSALS = (
     # Two more this shape of build can hit that the brief does not name.
     "a row makes something the spec never sends out",
     "a row is fed from the corridor on the other side of the build",
+    # The row/corridor walk's own backstop, kept separate from the width bound it
+    # used to borrow: a build that ran out of PASSES has not been shown not to
+    # fit, and a reader told "rows exceed the designer width" would go measuring
+    # a designer when what happened is that this module gave up.
+    "row splitting did not converge",
     # Task 9's three: a pole line that cannot be reached, cannot be stood, or a
     # class with no power connection to wire at all.
     "wire exceeds the maximum length",
@@ -194,6 +199,10 @@ Ours, and a backstop rather than a bound: splitting a group only ever adds rows,
 which only ever narrows them, so a pass that does not settle the width makes the
 next one's job easier and the walk is monotone.  Two passes settle every build in
 the corpus; six is room for a build whose corridors grow twice on the way.
+
+Running out of passes refuses with ``row splitting did not converge`` rather than
+``rows exceed the designer width``, because it is a statement about this module
+and not about the designer: nothing here has shown the build does not fit.
 """
 
 COLUMN_TRIES = 100_000
@@ -371,7 +380,6 @@ class _Layout:
     belt_z: float = 0.0
     x_edge: float = 0.0
     offset: float = 0.0
-    columns: int = 0
 
     def build(self) -> SfyPlacement:
         self._refuse_fluids()
@@ -407,14 +415,14 @@ class _Layout:
             self.rows = self._lay_rows(order, splits)
             self.belt_z = max(row.geometry.belt_z_cm for row in self.rows)
             self._plan_columns()
-            wanted = self.offset + self._columns_used() * self.pitch
+            wanted = self.offset + self._outermost_column() * self.pitch
             wanted += BELT_CLEARANCE_HALF_WIDTH_CM
             if self.x_edge + wanted <= self.half + _EPS:
                 return
             allowance = _grid_ceil(wanted, self.grid)
         raise _refuse(
             self.spec,
-            "rows exceed the designer width",
+            "row splitting did not converge",
             f"the rows and the corridors they need did not settle inside the "
             f"{self.designer.mark} designer in {SPLIT_ROUNDS} passes",
         )
@@ -450,8 +458,13 @@ class _Layout:
             out.append(max(before, -(-group.count // per_row)))
         return out
 
-    def _columns_used(self) -> int:
-        """How far out the corridors actually reach, as a column index."""
+    def _outermost_column(self) -> int:
+        """How far out the corridors actually reach, as a column index.
+
+        The MAXIMUM index, not a count: columns are handed out from the wall
+        outwards and a trunk may skip one, so this says how far the corridor
+        reaches rather than how many trunks are in it.
+        """
         return max((assignment.column for assignment in self.spine.values()), default=0)
 
     def _measure(self) -> None:
@@ -558,7 +571,7 @@ class _Layout:
         need to be -- one column per trunk -- rather than against the designer,
         because how far the corridor reaches is one of the things
         :meth:`_plan_rows` is still deciding.  What the corridor really took is
-        :meth:`_columns_used`, and holding that against the designer is
+        :meth:`_outermost_column`, and holding that against the designer is
         ``_plan_rows``'s last step.
         """
         self.nets = self._nets()
@@ -1297,6 +1310,14 @@ def _split_group(group: SfyMachineGroup, rows: int) -> list[SfyMachineGroup]:
 
     The shares differ by at most one machine, largest first, so a group of seven
     in rows of at most four is four and three rather than four, one and two.
+
+    ``last_clock`` is not the only per-share figure the last machine owns: the
+    shards it takes and the megawatts it draws are stated for ITS clock too, so
+    a share whose last machine runs at the group's clock must carry the group's
+    per-machine figures in all three places.  Left at the group's underclocked
+    values, every non-last share would under-order shards and under-report
+    power, and the shares' :attr:`~flab2bp.sfy.spec.SfyMachineGroup.row_power_mw`
+    would no longer add up to the group's.
     """
     if rows < 1 or rows > group.count:
         raise ValueError(f"{group.recipe_id}: {group.count} machines cannot be laid as {rows} rows")
@@ -1304,10 +1325,16 @@ def _split_group(group: SfyMachineGroup, rows: int) -> list[SfyMachineGroup]:
     counts = [base + (1 if index < extra else 0) for index in range(rows)]
     return [
         group.model_copy(
-            update={
-                "count": count,
-                "last_clock": group.last_clock if index == rows - 1 else group.clock,
-            }
+            update=(
+                {"count": count}
+                if index == rows - 1
+                else {
+                    "count": count,
+                    "last_clock": group.clock,
+                    "last_power_shards": group.power_shards_per_machine,
+                    "last_power_mw": group.power_mw_per_machine,
+                }
+            )
         )
         for index, count in enumerate(counts)
     ]

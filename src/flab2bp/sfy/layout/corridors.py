@@ -85,7 +85,14 @@ class CorridorError(ValueError):
     * ``"path"`` -- a path with no length at all, which is two ports in the same
       place and a fault in the caller rather than in the designer;
     * ``"curve"`` -- a curved leg longer than a belt may be, which this module
-      will not cut because cutting it would mean guessing at tangents.
+      will not cut because cutting it would mean guessing at tangents.  No
+      corridor this module BUILDS can raise it today: every curve it lays is a
+      quarter turn of ``turn_radius_cm``, about 628 cm of arc, against a
+      ``belt_max_spline_cm`` of 5600.1 -- an order of magnitude of headroom.
+      It is reachable only from a route handed to :func:`lay_path` directly,
+      which is how it is tested, and it is kept because the bound is the game's
+      and the radius is not: a wider turn, or a tier with a shorter spline,
+      would make it a real refusal rather than a guard.
 
     :mod:`flab2bp.sfy.layout.strategy` turns each into the refusal the caller
     sees, so the refusal strings live in one place.

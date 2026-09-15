@@ -566,6 +566,33 @@ def test_a_split_group_is_the_same_machines_at_the_same_clocks() -> None:
     assert sum(share.row_outputs["screw"] for share in shares) == group.row_outputs["screw"]
 
 
+def test_a_split_shares_power_the_way_it_shares_clocks() -> None:
+    """Only the LAST share's last machine is the underclocked one.
+
+    ``last_power_shards`` and ``last_power_mw`` are stated for ``last_clock``,
+    so a share whose last machine runs at the group's clock must carry the
+    group's per-machine figures instead.  Summed back up, the shares order the
+    shards the group ordered and draw the megawatts the group draws.
+    """
+    flow = _spec("reinforced-iron-plate-10")
+    group = _group(flow, "screw").model_copy(
+        update={
+            "count": 7,
+            "clock": Fraction(5, 2),
+            "last_clock": Fraction(1, 4),
+            "power_shards_per_machine": 3,
+            "last_power_shards": 0,
+            "power_mw_per_machine": 40.0,
+            "last_power_mw": 1.0,
+        }
+    )
+    shares = strategy._split_group(group, 2)
+    assert [share.last_power_shards for share in shares] == [3, 0]
+    assert [share.last_power_mw for share in shares] == [40.0, 1.0]
+    assert sum(share.row_power_shards for share in shares) == group.row_power_shards
+    assert sum(share.row_power_mw for share in shares) == pytest.approx(group.row_power_mw)
+
+
 def test_how_many_rows_a_group_is_laid_as_is_what_the_floor_holds() -> None:
     """``per_row`` is the floor between the corridors over the machine pitch, and
     a row of ``n`` is ``n - 1`` pitches plus one machine's own footprint."""

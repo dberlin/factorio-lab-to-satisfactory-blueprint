@@ -365,8 +365,7 @@ def _pole_xs(
     candidates = [
         x
         for x in (
-            _grid_round(value, grid)
-            for value in (xs[0] - pitch / 2.0, *mids, xs[-1] + pitch / 2.0)
+            _grid_round(value, grid) for value in (xs[0] - pitch / 2.0, *mids, xs[-1] + pitch / 2.0)
         )
         if abs(x) <= wall + _EPS
     ]
