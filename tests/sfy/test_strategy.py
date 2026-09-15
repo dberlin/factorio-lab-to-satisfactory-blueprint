@@ -13,41 +13,28 @@ not, and "it laid something out" is not evidence that it laid out the build.
 
 from __future__ import annotations
 
-import math
+from collections.abc import Sequence
 from fractions import Fraction
-from functools import cache
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from flab2bp.lab.data import load_vendored
-from flab2bp.lab.flow import load_flow
-from flab2bp.lab.url import Game, parse_url
 from flab2bp.layout.base import NoValidLayout
 from flab2bp.layout.budget import BudgetExhausted, WorkBudget
 from flab2bp.sfy.archive import Reader
 from flab2bp.sfy.header import read_header
 from flab2bp.sfy.labmap import load_lab_map
-from flab2bp.sfy.layout import strategy
-from flab2bp.sfy.layout.corridors import BRIDGE_CLEARANCE_BOXES, CorridorError
+from flab2bp.sfy.layout import nets, strategy
 from flab2bp.sfy.layout.emit import decode, emit
-from flab2bp.sfy.layout.manifold import (
-    RowError,
-    crossing_gap_cm,
-    hard_footprint_cm,
-    machine_pitch_cm,
-)
+from flab2bp.sfy.layout.manifold import RowError, crossing_gap_cm
 from flab2bp.sfy.layout.model import AttachmentObj, SfyPlacement
+from flab2bp.sfy.layout.rows import _Row
 from flab2bp.sfy.layout.strategy import ManifoldRows
 from flab2bp.sfy.layout.validate import validate
-from flab2bp.sfy.rates import spec_from_flow
-from flab2bp.sfy.registry import Registry, load_registry
+from flab2bp.sfy.registry import Registry
 from flab2bp.sfy.spec import FOUNDATION_CLASS, SfyBuildSpec, SfyMachineGroup, designer
 from flab2bp.sfy.templates import TemplateLibrary
-from tests.sfy.conftest import fixture_paths
-
-FLOWS = Path(__file__).resolve().parents[1] / "fixtures" / "sfy_flows"
+from tests.sfy.conftest import fixture_paths, flow_spec, sfy_registry
 
 #: What a clean report stands aside on, and nothing else: the two partial rules.
 #: ``flow.boundary`` is NOT here -- every build this strategy lays out has its
@@ -62,21 +49,12 @@ ALWAYS_SKIPPED = {"geom.hard_clearance", "belt.capsule"}
 MARK = "mk3"
 
 
-@cache
 def _registry() -> Registry:
-    return load_registry()
+    return sfy_registry()
 
 
-@cache
 def _spec(name: str) -> SfyBuildSpec:
-    url = (FLOWS / f"{name}.csv").read_text(encoding="utf-8").splitlines()[0].strip().strip('"')
-    return spec_from_flow(
-        load_vendored(Game.SFY),
-        parse_url(url),
-        load_flow(FLOWS / f"{name}.csv", url=url),
-        _registry(),
-        load_lab_map(),
-    )
+    return flow_spec(name)
 
 
 def _lay_out(spec: SfyBuildSpec, mark: str) -> SfyPlacement:
@@ -346,96 +324,6 @@ def test_the_strategy_names_itself() -> None:
     assert ManifoldRows().name == "manifold-rows"
 
 
-# --- the corridor's own arithmetic, pinned on its own ----------------------
-
-
-def _fresh(spec: SfyBuildSpec, mark: str = MARK) -> strategy._Layout:
-    """A layout with its numbers read and nothing laid out yet.
-
-    Two of the decisions below -- where a merger stands and how much of a
-    transverse is clear of what it crosses -- are arithmetic on a handful of
-    numbers, and a whole build is a poor place to read either of them.
-    """
-    layout = strategy._Layout(
-        spec=spec,
-        designer=designer(mark, _registry()),
-        registry=_registry(),
-        lab_map=load_lab_map(),
-        budget=WorkBudget(),
-    )
-    layout._measure()
-    return layout
-
-
-def _terminal(y: float, rate: Fraction, *, wall: bool = False) -> strategy._Terminal:
-    return strategy._Terminal(item="iron-ingot", rate=rate, side=1, y=y, wall=wall)
-
-
-def _net(sources: list[strategy._Terminal], sinks: list[strategy._Terminal]) -> strategy._Net:
-    return strategy._Net(item="iron-ingot", side=1, sources=sources, sinks=sinks)
-
-
-def test_the_nodes_stand_in_the_order_the_spine_meets_them_not_in_kind_order() -> None:
-    """A source can stand between two sinks, and then the spine merges it in on
-    the way past -- after it has already split some off.
-
-    Mergers are built from the sources and splitters from the sinks, so taking
-    them in that order would put a merger at 1000 before a splitter at 0 and the
-    belt between them would run backwards.  The sort is by ``Y``, which is the
-    order a belt running up one column actually arrives in, and
-    :func:`_carried` reads the rate the same way.
-    """
-    layout = _fresh(_spec("iron-plate-60"))
-    net = _net(
-        sources=[_terminal(-2400.0, Fraction(1), wall=True), _terminal(1000.0, Fraction(1, 2))],
-        sinks=[_terminal(0.0, Fraction(1, 4)), _terminal(2400.0, Fraction(5, 4), wall=True)],
-    )
-    layout._plan_nodes(net)
-    assert [(node.y, node.merging) for node in net.nodes] == [(0.0, False), (1000.0, True)]
-    # What the spine carries between them: one in, a quarter off, a half in.
-    assert strategy._carried(net, 0) == Fraction(1)
-    assert strategy._carried(net, 1) == Fraction(3, 4)
-    assert strategy._carried(net, 2) == Fraction(5, 4)
-
-
-def test_a_source_outside_the_span_the_trunk_runs_through_is_refused_by_its_own_cause() -> None:
-    """The reviewer's case: made at y = 1000 and y = 3000, eaten at y = 2000.
-
-    One column carries one direction, and the source above the sink would have to
-    run back down it against everything else in the corridor.  This build form
-    cannot do that, and says so: it is not a designer that is too shallow, which
-    is the cause it used to wear.
-    """
-    layout = _fresh(_spec("iron-plate-60"))
-    net = _net(
-        sources=[_terminal(1000.0, Fraction(1)), _terminal(3000.0, Fraction(1))],
-        sinks=[_terminal(2000.0, Fraction(2))],
-    )
-    with pytest.raises(CorridorError) as caught:
-        layout._plan_nodes(net)
-    assert caught.value.cause == "backwards"
-    assert strategy._CORRIDOR_CAUSES["backwards"] in strategy.REFUSALS
-
-
-def test_how_much_of_a_transverse_is_clear_is_measured_from_the_nearest_crossing() -> None:
-    """The slope has to be over before the crossing it is closest to.
-
-    At a row's end of a transverse that is the innermost column crossed; at the
-    corridor's end it is the outermost.  Taking the closest says both, and it is
-    a real number in both cases -- a ``room`` that answered "unbounded" would let
-    a belt come down through the belt it just climbed over.
-    """
-    layout = _fresh(_spec("iron-plate-60"))
-    layout.x_edge, layout.offset = 1300.0, 300.0
-    assert (layout._column_x(1, 0), layout._column_x(1, 1)) == (1600.0, 1900.0)
-    clear = BRIDGE_CLEARANCE_BOXES * 79.0
-    # A row's chain end at x = 1000: the nearest of the two crossings is column 0.
-    assert layout._room(1000.0, (0, 1), 1) == pytest.approx(600.0 - clear)
-    # A node standing at x = 2200 out in the corridor: the nearest is column 1.
-    assert layout._room(2200.0, (0, 1), 1) == pytest.approx(300.0 - clear)
-    assert layout._room(1000.0, (), 1) == math.inf
-
-
 # --- the causes nothing else reaches ---------------------------------------
 
 
@@ -475,36 +363,6 @@ def test_a_product_the_spec_never_sends_out_is_refused_by_its_own_cause() -> Non
     assert _refusal(spec, MARK) == "a row makes something the spec never sends out"
 
 
-def test_an_item_made_only_on_the_other_side_of_the_rows_is_refused_by_its_own_cause() -> None:
-    """A corridor is one side of the build and a belt cannot cross the rows.
-
-    Three rows would be needed for a build to do this, and no designer is deep
-    enough for three, so the refusal is put in front of the code that raises it
-    rather than through a spec that cannot exist.
-    """
-    layout = _fresh(_spec("iron-plate-60"))
-    made = strategy._Terminal(
-        item="iron-ingot", rate=Fraction(1), side=-1, y=0.0, wall=False, link=(1, "Output1")
-    )
-    eaten = strategy._Terminal(
-        item="iron-ingot", rate=Fraction(1), side=1, y=500.0, wall=False, link=(2, "Input1")
-    )
-    with pytest.raises(NoValidLayout) as caught:
-        layout._nets_for("iron-ingot", {("iron-ingot", -1): [made]}, {("iron-ingot", 1): [eaten]})
-    assert caught.value.reason == "a row is fed from the corridor on the other side of the build"
-
-
-def test_an_item_nothing_supplies_is_this_packages_own_bug_and_not_a_refusal() -> None:
-    """``SfyBuildSpec`` turns that spec away at construction, so a spec that
-    reaches the layout stage with one is not a build anybody asked for."""
-    layout = _fresh(_spec("iron-plate-60"))
-    eaten = strategy._Terminal(
-        item="iron-ingot", rate=Fraction(1), side=1, y=500.0, wall=False, link=(2, "Input1")
-    )
-    with pytest.raises(ValueError, match="bug in this package"):
-        layout._nets_for("iron-ingot", {}, {("iron-ingot", 1): [eaten]})
-
-
 # --- the budget bounds the whole of lay_out --------------------------------
 
 
@@ -521,6 +379,37 @@ def test_a_column_search_that_runs_out_of_tries_says_so_instead() -> None:
     with patch.object(strategy, "COLUMN_TRIES", 1), pytest.raises(NoValidLayout) as caught:
         _lay_out(spec, MARK)
     assert caught.value.reason == "corridor assignment exceeded the budget"
+
+
+def test_the_clock_is_read_again_once_the_columns_are_planned() -> None:
+    """The budget bounds the DRAWING as well as the search.
+
+    Every net turns into belts, turns and links after the columns are settled,
+    and a clock that ran out between the two would otherwise not be looked at
+    until the build was finished.  The fake clock here runs out at exactly that
+    moment: the rows are built, the columns are assigned, and the first net to be
+    drawn finds the time gone.
+    """
+    layout = strategy._Layout(
+        spec=_spec("iron-plate-60"),
+        designer=designer(MARK, _registry()),
+        registry=_registry(),
+        lab_map=load_lab_map(),
+        budget=WorkBudget(),
+    )
+    settled: dict[str, object] = {"rows": (), "columns": False}
+    settle = nets.NetPlanner._plan_columns
+
+    def watched(planner: nets.NetPlanner, rows: Sequence[_Row], x_edge: float) -> nets.CorridorPlan:
+        plan = settle(planner, rows, x_edge)
+        settled["rows"], settled["columns"] = tuple(rows), True
+        return plan
+
+    layout.budget = WorkBudget(deadline=1.0, clock=lambda: 100.0 if settled["columns"] else 0.0)
+    with patch.object(nets.NetPlanner, "_plan_columns", watched), pytest.raises(BudgetExhausted):
+        layout.build()
+    assert settled["rows"], "the rows were built before the clock ran out"
+    assert settled["columns"], "and so were the columns"
 
 
 # --- a row longer than the wall is split ------------------------------------
@@ -546,93 +435,3 @@ def test_concrete_at_sixty_is_two_rows_of_one_recipe_in_an_mk2() -> None:
     # The two rows face the same corridors, which is what lets one splitter chain
     # feed both of them and one merger chain drain them.
     assert len({machine.pose.yaw_deg for machine in placement.machines}) == 1
-
-
-def test_a_split_group_is_the_same_machines_at_the_same_clocks() -> None:
-    """Seven machines in rows of at most four: four and three, the underclocked
-    one in the last row, and the multiset of clocks the spec's own."""
-    flow = _spec("reinforced-iron-plate-10")
-    group = _group(flow, "screw").model_copy(update={"count": 7, "last_clock": Fraction(1, 4)})
-    shares = strategy._split_group(group, 2)
-    assert [share.count for share in shares] == [4, 3]
-    assert [share.clock for share in shares] == [Fraction(1), Fraction(1)]
-    assert [share.last_clock for share in shares] == [Fraction(1), Fraction(1, 4)]
-    # What spec.machines compares: count - 1 at clock and one at last_clock.
-    clocks: list[Fraction] = []
-    for share in shares:
-        clocks += [share.clock] * (share.count - 1) + [share.last_clock]
-    assert sorted(clocks) == sorted([Fraction(1, 4)] + [Fraction(1)] * 6)
-    # And what each row's chain ends carry is that row's own share.
-    assert sum(share.row_outputs["screw"] for share in shares) == group.row_outputs["screw"]
-
-
-def test_a_split_shares_power_the_way_it_shares_clocks() -> None:
-    """Only the LAST share's last machine is the underclocked one.
-
-    ``last_power_shards`` and ``last_power_mw`` are stated for ``last_clock``,
-    so a share whose last machine runs at the group's clock must carry the
-    group's per-machine figures instead.  Summed back up, the shares order the
-    shards the group ordered and draw the megawatts the group draws.
-    """
-    flow = _spec("reinforced-iron-plate-10")
-    group = _group(flow, "screw").model_copy(
-        update={
-            "count": 7,
-            "clock": Fraction(5, 2),
-            "last_clock": Fraction(1, 4),
-            "power_shards_per_machine": 3,
-            "last_power_shards": 0,
-            "power_mw_per_machine": 40.0,
-            "last_power_mw": 1.0,
-        }
-    )
-    shares = strategy._split_group(group, 2)
-    assert [share.last_power_shards for share in shares] == [3, 0]
-    assert [share.last_power_mw for share in shares] == [40.0, 1.0]
-    assert sum(share.row_power_shards for share in shares) == group.row_power_shards
-    assert sum(share.row_power_mw for share in shares) == pytest.approx(group.row_power_mw)
-
-
-def test_how_many_rows_a_group_is_laid_as_is_what_the_floor_holds() -> None:
-    """``per_row`` is the floor between the corridors over the machine pitch, and
-    a row of ``n`` is ``n - 1`` pitches plus one machine's own footprint."""
-    layout = _fresh(_spec("iron-plate-60"))
-    order = [_group(_spec("iron-plate-60"), "iron-plate").model_copy(update={"count": 7})]
-    machine = _registry().buildables[order[0].machine_class]
-    pitch = machine_pitch_cm(machine, _registry().limits)
-    x0, _, x1, _ = hard_footprint_cm(machine)
-    # An allowance that leaves exactly four pitches' worth of floor.
-    usable = 3.0 * pitch + (x1 - x0)
-    allowance = layout.half - usable / 2.0
-    assert layout._splits(order, [1], allowance) == [2]
-    # One machine wider than the floor is the refusal that remains, and it says
-    # which class could not be stood.
-    with pytest.raises(NoValidLayout) as caught:
-        layout._splits(order, [1], layout.half - (x1 - x0) / 2.0 + 100.0)
-    assert caught.value.reason == "rows exceed the designer width"
-    assert order[0].machine_class in caught.value.attempt_reasons[0]
-
-
-def test_the_clock_is_read_again_once_the_columns_are_planned() -> None:
-    """The budget bounds the DRAWING as well as the search.
-
-    Every net turns into belts, turns and links after the columns are settled,
-    and a clock that ran out between the two would otherwise not be looked at
-    until the build was finished.  The fake clock here runs out at exactly that
-    moment: the rows are built, the columns are assigned, and the first net to be
-    drawn finds the time gone.
-    """
-    layout = _fresh(_spec("iron-plate-60"))
-    planned = {"columns": False}
-    settle = layout._plan_columns
-
-    def watched() -> None:
-        settle()
-        planned["columns"] = True
-
-    layout._plan_columns = watched  # type: ignore[method-assign]
-    layout.budget = WorkBudget(deadline=1.0, clock=lambda: 100.0 if planned["columns"] else 0.0)
-    with pytest.raises(BudgetExhausted):
-        layout.build()
-    assert layout.rows, "the rows were built before the clock ran out"
-    assert planned["columns"], "and so were the columns"

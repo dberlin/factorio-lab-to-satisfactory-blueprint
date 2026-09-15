@@ -188,6 +188,35 @@ def descent_run_cm(rise: float, registry: Registry) -> float:
     return grid_ceil(abs(rise) / math.tan(math.radians(limit)), _grid(registry))
 
 
+@dataclass(frozen=True, slots=True)
+class Measures:
+    """Every number a manifold build is laid out against, read once.
+
+    Apart from :attr:`half` -- the designer's own half width -- these are all the
+    corridor's, and all of them come out of ``registry.json``.  The value lives
+    here rather than beside the build because the row planner, the net planner
+    and the corridor layer are each handed the same one:
+    :func:`flab2bp.sfy.layout.strategy._measure` reads it at the top of a run and
+    nothing below that line reads a limit again, so no two stages can be laid out
+    against different numbers.
+    """
+
+    #: The hologram grid every object stands on.
+    grid: float
+    #: The radius every corridor-to-row turn is built on.
+    radius: float
+    #: How far apart two corridor columns stand, centre to centre.
+    pitch: float
+    #: How far apart two splitters (or two mergers) stand along a column.
+    node_pitch: float
+    #: The shortest run between a corridor attachment's port and a turn or another.
+    lead: float
+    #: How far a belt runs flat out of a port before it starts to climb.
+    lead_in: float
+    #: Half the designer's own side, which is where its walls are.
+    half: float
+
+
 # --- which column a belt takes ---------------------------------------------
 
 
