@@ -26,10 +26,19 @@ else.
 
 **What a corner costs, and where the space comes from.**  Global constraint 8:
 at every turn the realiser takes whichever of arc and attachment costs the least
-space where it stands, which is exactly what ``choose_turn`` answers.  The space
-it is offered is the FREE length of the straight either side -- the leg's own
-length, less what the corner before it already spent, less what the leg must
-keep for itself.  A flat leg keeps nothing.  An incline keeps
+space where it stands, which is exactly what ``choose_turn`` answers.  The
+attachment it weighs is
+:func:`~flab2bp.sfy.layout.corridors.attachment_turn_tight`, not the manifold's
+:func:`~flab2bp.sfy.layout.corridors.attachment_turn`: a splitter's clearance is
+``CT_Soft`` and a grid-routed corner stands in open floor, so what the turn
+really denies the straight is the reach to its own port plus the shortest legal
+belt (201 cm with the shipped registry) rather than the whole box (301).  That
+is a grid step of difference and it is the difference between a three-node leg
+turning and not.
+
+The space a corner is offered is the FREE length of the straight either side --
+the leg's own length, less what the corner before it already spent, less what
+the leg must keep for itself.  A flat leg keeps nothing.  An incline keeps
 :func:`~flab2bp.sfy.layout.corridors.descent_run_cm` of run, because the rise is
 fixed by the two levels and shortening the run past that angle is a belt
 ``belt.incline`` refuses: so a turn may eat into a climb, but only down to the
@@ -67,6 +76,8 @@ from flab2bp.sfy.layout.corridors import (
     Measures,
     Route,
     Turn,
+    arc_turn,
+    attachment_turn_tight,
     choose_turn,
     descent_run_cm,
     lay_path,
@@ -176,6 +187,15 @@ class Realised:
     lifts: tuple[LiftObj, ...]
     links: tuple[Link, ...]
     lift_columns: tuple[tuple[Node, Node], ...]
+    #: One entry per corner laid, in path order:
+    #: :data:`~flab2bp.sfy.layout.corridors.ARC` or
+    #: :data:`~flab2bp.sfy.layout.corridors.ATTACHMENT`.  A caller that wants
+    #: turns BY KIND has to be told, because neither of the two counts beside it
+    #: answers: an attachment in ``attachments`` may be a tap rather than a turn,
+    #: and the right angles visible in the path are a floor on the corners the
+    #: realiser was offered -- a stub out of a port standing off its own node can
+    #: put one where no three path nodes show it.
+    turns: tuple[str, ...] = ()
 
 
 # --- reading the path ------------------------------------------------------
@@ -229,47 +249,102 @@ def _lift_edges(path: Sequence[Node]) -> tuple[tuple[tuple[int, int], ...], tupl
 
 
 def _steps(path: Sequence[Node], span: tuple[int, int], grid: float) -> list[_Move]:
-    """One span's nodes as straight pieces, with the incline's via read as a via.
+    """One span's nodes as straight pieces, with a ramp's via read as a via.
 
-    A step whose ``dz`` is zero and whose horizontal displacement is one grid
-    step is a flat move -- UNLESS the step after it climbs one level in the same
-    direction, in which case the two together are one incline leg of two grid
-    steps of run per level of rise and the middle node is the via.  Anything
-    else is a move this lattice does not offer and is refused rather than
-    guessed at.
+    A ramp is THREE nodes -- two endpoints at node altitude and the midpoint via
+    between them -- and only two of the three are places a belt really passes at
+    a node's height.  The kernel reports the via on the move's SOURCE level, so
+    the two nodes that share a level are the source and the via and the level
+    change is the other step.  Which of the two steps comes first is the
+    direction the path is read in, and both are read here: the ramp is
+    recognised from the LEVEL-CHANGE step and the collinear flat step beside it,
+    whether that flat step precedes it (``A(k) -> V(k) -> B(k+-1)``, the shape
+    ``route_net`` returns) or follows it (``B(k+-1) -> V(k) -> A(k)``, the same
+    ramp read the other way).  Assuming the first shape is what made a path piece
+    that began at a ramp refuse.
+
+    A level-change step with NO collinear flat step on either side is half a
+    ramp: the path stops on the midpoint, which stands half a level up where no
+    belt end and no attachment can be.  That is refused, and the message says so
+    rather than calling it a move the lattice does not offer.
     """
     moves: list[_Move] = []
     index, last = span
     while index < last:
         here, there = path[index], path[index + 1]
         dx, dy, dz = there[0] - here[0], there[1] - here[1], there[2] - here[2]
-        if dz == 0 and abs(dx) + abs(dy) == 1:
-            if index + 1 < last:
-                beyond = path[index + 2]
-                ex, ey, ez = beyond[0] - there[0], beyond[1] - there[1], beyond[2] - there[2]
-                if abs(ez) == 1 and (ex, ey) == (dx, dy):
-                    moves.append(
-                        _Move(
-                            direction=(float(dx), float(dy), 0.0),
-                            run=2.0 * grid,
-                            rise=float(ez) * grid,
-                            end=index + 2,
-                        )
-                    )
-                    index += 2
-                    continue
+        if abs(dx) + abs(dy) != 1:
+            raise RealiseError(
+                "leg",
+                (here, there),
+                f"{here} -> {there} is not a move this lattice offers: a belt steps one grid "
+                "step at a level, climbs a level over a via, or takes a lift straight up",
+            )
+        if dz == 0:
+            climb = _ramp_ahead(path, index, last)
+            if climb is not None:
+                moves.append(_ramp((dx, dy), climb, grid, end=index + 2))
+                index += 2
+                continue
             moves.append(
                 _Move(direction=(float(dx), float(dy), 0.0), run=grid, rise=0.0, end=index + 1)
             )
             index += 1
             continue
+        if abs(dz) == 1 and _flat_ahead(path, index, last) == (dx, dy):
+            moves.append(_ramp((dx, dy), dz, grid, end=index + 2))
+            index += 2
+            continue
         raise RealiseError(
             "leg",
             (here, there),
-            f"{here} -> {there} is not a move this lattice offers: a belt steps one grid "
-            "step at a level, climbs a level over a via, or takes a lift straight up",
+            f"{here} -> {there} is half a ramp: it changes {abs(dz)} level(s) over one grid "
+            "step, which no belt may do, and the collinear flat step that would make it a "
+            "ramp is on neither side -- so one of these two nodes is a ramp's midpoint and "
+            "the path stops there, half a level up, where no belt end may be",
         )
     return moves
+
+
+def _ramp(step: tuple[int, int], rise: int, grid: float, *, end: int) -> _Move:
+    """One ramp leg: two grid steps of run for the level it climbs."""
+    return _Move(
+        direction=(float(step[0]), float(step[1]), 0.0),
+        run=2.0 * grid,
+        rise=float(rise) * grid,
+        end=end,
+    )
+
+
+def _ramp_ahead(path: Sequence[Node], index: int, last: int) -> int | None:
+    """The rise of the ramp this flat step is the FIRST half of, or ``None``.
+
+    ``A(k) -> V(k) -> B(k+-1)``: the step after this one changes level by one and
+    points the same way, so the two are one ramp and ``V`` is its midpoint.
+    """
+    if index + 1 >= last:
+        return None
+    here, there, beyond = path[index], path[index + 1], path[index + 2]
+    step = (there[0] - here[0], there[1] - here[1])
+    rise = beyond[2] - there[2]
+    if abs(rise) != 1 or (beyond[0] - there[0], beyond[1] - there[1]) != step:
+        return None
+    return rise
+
+
+def _flat_ahead(path: Sequence[Node], index: int, last: int) -> tuple[int, int] | None:
+    """The step after this one if it is flat, or ``None``.
+
+    ``B(k+-1) -> V(k) -> A(k)``: a level-change step whose FOLLOWER is flat and
+    collinear is the first half of the same ramp read the other way round, and
+    ``V`` -- the node between them -- is the midpoint again.
+    """
+    if index + 1 >= last:
+        return None
+    there, beyond = path[index + 1], path[index + 2]
+    if beyond[2] != there[2]:
+        return None
+    return (beyond[0] - there[0], beyond[1] - there[1])
 
 
 def _merge(moves: Sequence[_Move]) -> list[_Move]:
@@ -330,6 +405,11 @@ def _stub(head: Vector, tail: Vector, facing: Vector, *, end: int | None, at: No
 # --- turning a run into a route --------------------------------------------
 
 
+def _options(measures: Measures) -> tuple[Turn, Turn]:
+    """The two turns a grid-routed corner is weighed against."""
+    return (arc_turn(measures), attachment_turn_tight(measures))
+
+
 def _free(move: _Move, registry: Registry) -> float:
     """How much of a leg a corner may take, which is all of it unless it climbs.
 
@@ -363,6 +443,12 @@ def _turns(
     short by.  An arc's are equal, an attachment's are not -- it stands on the
     corner with its ports one reach out, but it also denies the shortest legal
     belt beyond them.
+
+    The attachment weighed is
+    :func:`~flab2bp.sfy.layout.corridors.attachment_turn_tight`: a grid-routed
+    corner stands in open floor, not in a packed corridor column, so its soft box
+    is not this path's to keep clear.  That function is where the difference is
+    argued.
     """
     corners: list[Turn | None] = [None] * (len(moves) - 1)
     reach_start = [0.0] * len(moves)
@@ -382,7 +468,7 @@ def _turns(
             )
         along = free[index] - spent[index]
         across = free[index + 1]
-        turn = choose_turn(measures, along, across)
+        turn = choose_turn(measures, along, across, options=_options(measures))
         if turn.cost > along + _EPS or turn.cost > across + _EPS:
             raise RealiseError(
                 "corner",
@@ -405,8 +491,8 @@ def _route(
     path: Sequence[Node],
     measures: Measures,
     registry: Registry,
-) -> Route:
-    """One run of the path as a :class:`Route`: the straights and the turns.
+) -> tuple[Route, tuple[str, ...]]:
+    """One run of the path as a :class:`Route`, and the kind of every turn in it.
 
     The cursor stops one reach short of every corner because that is where the
     turn takes hold -- an arc leaves the straight a radius early and an
@@ -420,7 +506,7 @@ def _route(
         turn = corners[index] if index < len(corners) else None
         if turn is not None:
             route.turn(_is_left(move.direction, moves[index + 1].direction), turn)
-    return route
+    return (route, tuple(turn.kind for turn in corners if turn is not None))
 
 
 # --- the lifts -------------------------------------------------------------
@@ -579,6 +665,7 @@ def realise(
     belts: list[BeltRun] = []
     attachments: list[AttachmentObj] = []
     links: list[Link] = []
+    turns: list[str] = []
     for index, moves in enumerate(runs):
         upstream = source.port if index == 0 else (lifts[index - 1].id, exit_end)
         downstream = sink.port if index == len(runs) - 1 else (lifts[index].id, entry)
@@ -592,12 +679,14 @@ def realise(
                 )
             links.append(Link(a=upstream, b=downstream))
             continue
+        _flat_at_cuts(moves, upstream, downstream, nodes, spans[index])
         start = (
             source.world
             if index == 0
             else lifts[index - 1].top_end(lift_geometry(registry, lift_class))[0]
         )
-        route = _route(moves, start, nodes, measures, registry)
+        route, kinds = _route(moves, start, nodes, measures, registry)
+        turns.extend(kinds)
         try:
             laid = lay_path(
                 route,
@@ -633,6 +722,7 @@ def realise(
         lifts=tuple(lifts),
         links=tuple(links),
         lift_columns=tuple((edge.low, edge.high) for edge in edges),
+        turns=tuple(turns),
     )
 
 
@@ -727,6 +817,48 @@ def _blame(path: Sequence[Node], end: int | None) -> tuple[Node, ...]:
         return (path[-1],)
     low = max(end - 1, 0)
     return tuple(path[low : end + 2])
+
+
+def _flat_at_cuts(
+    moves: Sequence[_Move],
+    upstream: tuple[int, str] | None,
+    downstream: tuple[int, str] | None,
+    path: Sequence[Node],
+    span: tuple[int, int],
+) -> None:
+    """A belt runs FLAT out of a port and flat into one, or this refuses.
+
+    ``ports.position`` holds a belt leaving a buildable's port to that port's own
+    normal within ``PORT_ANGLE_RAD``, and every connector this project meets --
+    a machine's, an attachment's, a conveyor lift's top -- faces along the
+    ground.  A run whose first leg climbs leaves at the ramp's own angle instead:
+    26.57 degrees, 0.46 rad, on the shipped registry, which is forty-six times
+    the slack.  So a path that ramps out of a cut is a belt the game would put
+    somewhere else, and it is refused here with the nodes rather than drawn and
+    failed by the judge.
+
+    The far end is held to the same rule.  Nothing checks the tangent a belt
+    ARRIVES on, so this half is ours: a connector faces along the ground at both
+    ends of a belt, and :mod:`~flab2bp.sfy.layout.laying` has run flat into a
+    port as well as out of one since M2.  A DESIGNER WALL is not a port and is
+    exempt at either end -- there is no connector there to be off the normal of.
+
+    This is the rule ``Measures.lead_in`` is named for; no length is demanded
+    beyond it, because the flat piece's own length is already R-M3-4's business.
+    """
+    for cut, move, node in (
+        (upstream, moves[0], path[span[0]]),
+        (downstream, moves[-1], path[span[1]]),
+    ):
+        if cut is None or abs(move.rise) <= TOUCH_CM:
+            continue
+        raise RealiseError(
+            "leg",
+            (node,),
+            f"this belt would meet object {cut[0]}'s {cut[1]} while climbing "
+            f"{abs(move.rise):.0f} cm over {move.run:.0f}, and a connector faces along the "
+            "ground: a belt runs flat out of a port and flat into one",
+        )
 
 
 def _span_nodes(path: Sequence[Node], span: tuple[int, int]) -> tuple[Node, ...]:

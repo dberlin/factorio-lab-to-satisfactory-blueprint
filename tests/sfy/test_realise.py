@@ -25,9 +25,17 @@ from itertools import count
 
 import pytest
 
+from flab2bp.layout.budget import WorkBudget
 from flab2bp.sfy.geometry import port_forward, world_port
-from flab2bp.sfy.layout.corridors import ARC, ATTACHMENT, Measures, attachment_turn, turn_radius_cm
-from flab2bp.sfy.layout.lattice import GROUND_LEVEL, Lattice, Node
+from flab2bp.sfy.layout.corridors import (
+    ARC,
+    ATTACHMENT,
+    Measures,
+    attachment_turn,
+    attachment_turn_tight,
+    turn_radius_cm,
+)
+from flab2bp.sfy.layout.lattice import GROUND_LEVEL, Lattice, Node, Occupancy, occupancy_for
 from flab2bp.sfy.layout.manifold import shortest_belt_cm
 from flab2bp.sfy.layout.model import (
     BeltRun,
@@ -39,7 +47,9 @@ from flab2bp.sfy.layout.model import (
     lift_geometry,
 )
 from flab2bp.sfy.layout.realise import Realised, RealiseError, Terminal, realise
+from flab2bp.sfy.layout.router import route_net
 from flab2bp.sfy.layout.strategy import _measure
+from flab2bp.sfy.layout.transitions import incline_run_nodes, sfy_transitions
 from flab2bp.sfy.layout.validate import BELT_CONNECTION_CM, Report, validate
 from flab2bp.sfy.registry import Port, Registry, load_registry
 from flab2bp.sfy.spec import designer
@@ -90,6 +100,42 @@ def _measures() -> Measures:
 
 def _ids() -> Iterator[int]:
     return count(1)
+
+
+@cache
+def _transitions(lifts: bool = True) -> tuple[tuple[tuple[int, int, int, bool, float], ...], ...]:
+    """The movement table for this lattice, every number of it read.
+
+    The lift window is ``Registry.limits``' own, in levels, clamped by the
+    designer (R-M3-3); the ramp run is
+    :func:`~flab2bp.sfy.layout.transitions.incline_run_nodes`'.  ``lifts=False``
+    is a table with the lift family left out, which is a perfectly legal build
+    (``sfy_transitions`` says so) and is how a test asks for a path that has to
+    ramp over what is in its way rather than hop it.
+    """
+    lattice, limits = _lattice(), _registry().limits
+    assert limits.lift_min_cm is not None
+    assert limits.lift_max_cm is not None
+    assert limits.lift_step_cm is not None
+    grid = lattice.grid_cm
+    heights = range(
+        round(limits.lift_min_cm / grid),
+        min(round(limits.lift_max_cm / grid), lattice.n - GROUND_LEVEL) + 1,
+        round(limits.lift_step_cm / grid),
+    )
+    return sfy_transitions(
+        lattice.n + 1, heights if lifts else range(0), incline_run_nodes(limits, grid)
+    )
+
+
+def _wall_of_constructors() -> tuple[tuple[MachineObj, ...], Occupancy]:
+    """A line of Constructors across one row, wall to wall: no way round, only over."""
+    lattice = _lattice()
+    machines = tuple(
+        _machine(200 + i, CONSTRUCTOR, lattice.world((c, 0, 0))[0], 0.0, 0.0, ROD)
+        for i, c in enumerate(range(0, lattice.n + 1, 4))
+    )
+    return (machines, occupancy_for(lattice, machines, (), (), (), _registry()))
 
 
 def _port(class_name: str, name: str) -> Port:
@@ -256,30 +302,60 @@ def _l_path(corner_legs: int) -> tuple[tuple[Node, ...], MachineObj, MachineObj]
 def test_an_l_path_with_four_node_legs_is_an_arc_or_an_attachment_and_says_which() -> None:
     """Which turn is taken is the registry's answer, and the result shows it.
 
-    With the shipped registry an attachment turns inside its own box plus the
-    shortest legal belt and an arc costs a whole turn radius, so the attachment
-    is the cheaper of the two and stands in the build; drop the radius under
-    the attachment's cost and the same path comes back as one unbroken belt
+    With the shipped registry an attachment turns inside its own port reach plus
+    the shortest legal belt and an arc costs a whole turn radius, so the
+    attachment is the cheaper of the two and stands in the build; drop the radius
+    under the attachment's cost and the same path comes back as one unbroken belt
     with no object on the corner at all.
+
+    ``turns`` is what SAYS which, one entry per corner: neither count beside it
+    can, because an attachment may be a tap rather than a turn and a stub out of
+    an off-node port can put a corner where no three path nodes show one.
     """
     measures = _measures()
-    assert attachment_turn(measures).cost < turn_radius_cm(_registry())
+    assert attachment_turn_tight(measures).cost < turn_radius_cm(_registry())
 
     path, maker, eater = _l_path(4)
     source, sink = _terminal(maker, "Output0"), _terminal(eater, "Input0")
 
     chosen = _run(path, source, sink)
+    assert chosen.turns == (ATTACHMENT,)
     assert len(chosen.attachments) == 1
     assert len(chosen.belts) == 2
     assert chosen.attachments[0].class_name != ""
     _judge(chosen, maker, eater, only=BELT_CHECKS)
 
-    tight = replace(measures, radius=attachment_turn(measures).cost - measures.grid)
+    tight = replace(measures, radius=attachment_turn_tight(measures).cost - measures.grid)
     arced = _run(path, source, sink, measures=tight)
+    assert arced.turns == (ARC,)
     assert arced.attachments == ()
     assert len(arced.belts) == 1
 
     assert (ARC, ATTACHMENT) == ("arc", "attachment")
+
+
+def test_a_corner_with_three_node_legs_is_laid_as_an_attachment_turn() -> None:
+    """The controller's ruling, measured: a splitter's box is SOFT.
+
+    What a turn at a corner really denies the straight into it is the reach to
+    the attachment's own port plus the shortest belt the game allows -- 201 cm on
+    the shipped registry -- and not the 200 cm soft box on top of that.  So a
+    three-node leg, which is 300 cm, turns with the grid step to spare; charging
+    the box refuses it by one centimetre, which is what Task 10 measured 25 times
+    over 8 rip-up rounds.
+    """
+    grid = _lattice().grid_cm
+    measures = _measures()
+    assert attachment_turn_tight(measures).cost < 3.0 * grid < attachment_turn(measures).cost
+
+    path, maker, eater = _l_path(3)
+    source, sink = _terminal(maker, "Output0"), _terminal(eater, "Input0")
+    realised = _run(path, source, sink)
+
+    assert realised.turns == (ATTACHMENT,)
+    assert len(realised.attachments) == 1
+    assert len(realised.belts) == 2
+    _judge(realised, maker, eater, only=BELT_CHECKS)
 
 
 def test_a_corner_with_two_node_legs_refuses_naming_the_corner() -> None:
@@ -352,6 +428,123 @@ def test_an_incline_run_is_one_leg_at_thirty_five_degrees_or_under() -> None:
     )
     assert angle <= limit
     _judge(realised, maker, only=BELT_CHECKS)
+
+
+def test_a_ramp_reads_the_same_whichever_end_the_path_starts_from() -> None:
+    """A ramp is three nodes and only two of them are places a belt really is.
+
+    The kernel reports the midpoint via on the move's SOURCE level, so the two
+    nodes that share a level are the source and the via and the level change is
+    the other step.  Which step comes FIRST is only which way the path is read,
+    and both read as the same ramp: the segmenter recognises it from the
+    level-change step and the collinear flat step beside it, on either side.
+    """
+    grid = _lattice().grid_cm
+    foot = (10, 13, GROUND_LEVEL)
+    crest = (foot[0] + 2, foot[1], foot[2] + 1)
+    forward = _join(
+        (foot, (foot[0] + 1, foot[1], foot[2]), crest), _line(crest, (24, 13, crest[2]))
+    )
+    laid = _run(forward, _wall(foot, (1.0, 0.0, 0.0)), _wall((24, 13, crest[2]), (-1.0, 0.0, 0.0)))
+
+    backward = _join(
+        (crest, (crest[0] - 1, crest[1], foot[2]), foot), _line(foot, (2, 13, foot[2]))
+    )
+    other = _run(backward, _wall(crest, (-1.0, 0.0, 0.0)), _wall((2, 13, foot[2]), (1.0, 0.0, 0.0)))
+
+    for realised, rise in ((laid, grid), (other, -grid)):
+        assert realised.turns == ()
+        assert len(realised.belts) == 1
+        belt = realised.belts[0]
+        climbs = [
+            (a[0], b[0])
+            for a, b in zip(belt.points, belt.points[1:], strict=False)
+            if abs(b[0][2] - a[0][2]) > 1e-9
+        ]
+        assert len(climbs) == 1
+        head, tail = climbs[0]
+        assert tail[2] - head[2] == pytest.approx(rise)
+        assert math.dist((head[0], head[1], 0.0), (tail[0], tail[1], 0.0)) == pytest.approx(
+            2.0 * grid
+        )
+
+
+def test_a_path_that_stops_half_way_up_a_ramp_refuses_as_a_leg() -> None:
+    """A level change over one grid step is half a ramp, and it says so.
+
+    One of the two nodes is the midpoint, which stands half a level up where no
+    belt end and no attachment may be.  Naming it "a move the lattice does not
+    offer" sent a reader to the movement table; the move is the table's, the
+    slicing is not.
+    """
+    foot = (10, 13, GROUND_LEVEL)
+    orphan = ((foot[0] + 1, foot[1], foot[2] + 1), (foot[0] + 1, foot[1] + 1, foot[2] + 1))
+    path = (foot, *orphan)
+    with pytest.raises(RealiseError) as caught:
+        _run(path, _wall(foot, (1.0, 0.0, 0.0)), _wall(orphan[-1], (0.0, -1.0, 0.0)))
+    assert caught.value.cause == "leg"
+    assert "half a ramp" in caught.value.detail
+    assert foot in caught.value.nodes
+
+
+def test_a_router_path_over_a_wall_of_machines_is_laid_as_belts() -> None:
+    """The shape the kernel really returns, realised -- not a path written here.
+
+    A solid line of Constructors across the designer leaves a belt no way round,
+    so with the lift family left out of the movement table ``route_net`` climbs
+    over the wall with the 2:1 ramps that are left, and comes back with every via
+    in place.  What this pins is that the realiser reads that path -- the shape
+    the kernel really returns, not one written here -- and that the ramps become
+    inclines inside the game's own limit.
+    """
+    limit = _registry().limits.belt_max_incline_deg
+    assert limit is not None
+    machines, occupancy = _wall_of_constructors()
+    column = 16
+    start = (column, _lattice().open_lines.start, GROUND_LEVEL)
+    goal = (column, _lattice().open_lines.stop - 1, GROUND_LEVEL)
+    routed = route_net(
+        occupancy,
+        starts=(start,),
+        goals=(goal,),
+        pressure=0.0,
+        budget=WorkBudget(left=4_000_000),
+        deadline=None,
+        transitions=_transitions(lifts=False),
+    )
+    assert routed.path is not None
+    ramps = [
+        (a, b)
+        for a, b in zip(routed.path, routed.path[1:], strict=False)
+        if a[2] != b[2] and (a[0], a[1]) != (b[0], b[1])
+    ]
+    assert ramps, "the wall has to be climbed, so the path must ramp"
+    # Every one of them arrives with its via in front of it, which is the shape
+    # the movement table's ``via`` flag puts on the SOURCE level.
+    for index, (here, there) in enumerate(zip(routed.path, routed.path[1:], strict=False)):
+        if (here, there) not in ramps:
+            continue
+        before = routed.path[index - 1]
+        assert index and (
+            here[0] - before[0],
+            here[1] - before[1],
+            here[2] - before[2],
+        ) == (there[0] - here[0], there[1] - here[1], 0)
+
+    # No step of it is unreadable.  This path also turns straight off a ramp,
+    # which is a corner with no room and a concern of its own, so the claim is
+    # about the SEGMENTER: a real router path is never refused as a leg.
+    try:
+        realised = _run(routed.path, _wall(start, (0.0, 1.0, 0.0)), _wall(goal, (0.0, -1.0, 0.0)))
+    except RealiseError as refused:
+        assert refused.cause == "corner", refused.detail
+        return
+    assert realised.lifts == ()
+    for belt in realised.belts:
+        for a, b in zip(belt.points, belt.points[1:], strict=False):
+            run = math.dist((a[0][0], a[0][1], 0.0), (b[0][0], b[0][1], 0.0))
+            assert math.degrees(math.atan2(abs(b[0][2] - a[0][2]), run)) <= limit
+    _judge(realised, *machines, only=BELT_CHECKS)
 
 
 # --- a lift ----------------------------------------------------------------
