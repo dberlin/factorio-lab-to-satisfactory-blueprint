@@ -21,6 +21,7 @@ from flab2bp.sfy.layout.model import (
     AttachmentObj,
     BeltRun,
     FoundationObj,
+    LiftObj,
     Link,
     MachineObj,
     PoleObj,
@@ -29,6 +30,7 @@ from flab2bp.sfy.layout.model import (
     Vector,
     WireObj,
     belt_ends,
+    lift_geometry,
 )
 from flab2bp.sfy.layout.splines import concat, incline, quarter_turn, straight
 from flab2bp.sfy.layout.validate import (
@@ -983,3 +985,205 @@ def test_flow_boundary_stands_aside_on_a_fragment_and_without_a_spec() -> None:
     unspecified = validate(_at_the_wall(), None, _registry(), only={"flow.boundary"})
     assert unspecified.skipped == ("flow.boundary",)
     assert "no spec was given" in unspecified.by_check("flow.boundary")[0].message
+
+
+# --- conveyor lifts --------------------------------------------------------
+
+LIFT = "Build_ConveyorLiftMk1_C"
+LIFT_ID, LIFT_BELT_ID = 7, 8
+LIFT_HEIGHT_CM = 600.0
+WALL_CM = 1600.0
+"""The lift is 600 cm rather than the 400 cm minimum so that the belt on its far
+end clears the Constructor's own clearance box, which is 600 cm tall on a machine
+standing at z = 100.  Both numbers are the game's: ``lift_min_cm`` and the box in
+``registry.json``."""
+
+
+def _foundations() -> tuple[FoundationObj, ...]:
+    return tuple(
+        FoundationObj(10 + i, FOUNDATION, Pose(0.0, y, FOUNDATION_Z_CM, 0.0))
+        for i, y in enumerate((-1200.0, -400.0, 400.0, 1200.0))
+    )
+
+
+def _lift_out_of_a_machine(height_cm: float = LIFT_HEIGHT_CM) -> SfyPlacement:
+    """A lift standing on the rod machine's output, and a belt off its top.
+
+    The lift's BOTTOM is on the port -- ``mConnection0`` is at the actor
+    transform and is the end items enter by -- so this is a lift carrying items
+    upward, and the belt leaves the top along the top's own facing.
+    """
+    registry = _registry()
+    rod_pose = Pose(0.0, ROD_Y_CM, SLAB_TOP_CM, 0.0)
+    foot = world_port(rod_pose.transform(), _port(CONSTRUCTOR, "Output0"))
+    lift = LiftObj(LIFT_ID, LIFT, Pose(foot[0], foot[1], foot[2], 90.0), height_cm)
+    top, facing = lift.top_end(lift_geometry(registry, LIFT))
+    entry, exit_end = belt_ends(registry, LIFT)
+    belt_entry, _ = belt_ends(registry, BELT)
+    return SfyPlacement(
+        designer=designer("mk1", registry),
+        machines=(MachineObj(ROD_ID, CONSTRUCTOR, rod_pose, ROD),),
+        lifts=(lift,),
+        belts=(
+            BeltRun(
+                LIFT_BELT_ID,
+                BELT,
+                straight(top, facing, WALL_CM - top[1]),
+                "iron-rod",
+                Fraction(1, 4),
+                boundary_end=True,
+            ),
+        ),
+        foundations=_foundations(),
+        links=(
+            Link((ROD_ID, "Output0"), (LIFT_ID, entry)),
+            Link((LIFT_ID, exit_end), (LIFT_BELT_ID, belt_entry)),
+        ),
+    )
+
+
+def _lift_into_a_machine(height_cm: float = LIFT_HEIGHT_CM) -> SfyPlacement:
+    """A belt along the top, down a lift, into the screw machine's input.
+
+    The reverse of :func:`_lift_out_of_a_machine`, and the case the geometry
+    makes awkward: items leave a lift by ``mConnection1`` at ``mTopTransform``,
+    so a lift that delivers DOWNWARD into a port has its actor at the top --
+    where the belt arrives -- and a negative height.
+    """
+    registry = _registry()
+    screw_pose = Pose(0.0, SCREW_Y_CM, SLAB_TOP_CM, 0.0)
+    mouth = world_port(screw_pose.transform(), _port(CONSTRUCTOR, "Input0"))
+    lift = LiftObj(LIFT_ID, LIFT, Pose(mouth[0], mouth[1], mouth[2] + height_cm, 90.0), -height_cm)
+    head, _ = lift.bottom_end(lift_geometry(registry, LIFT))
+    entry, exit_end = belt_ends(registry, LIFT)
+    _, belt_exit = belt_ends(registry, BELT)
+    return SfyPlacement(
+        designer=designer("mk1", registry),
+        machines=(MachineObj(SCREW_ID, CONSTRUCTOR, screw_pose, SCREW),),
+        lifts=(lift,),
+        belts=(
+            BeltRun(
+                LIFT_BELT_ID,
+                BELT,
+                straight((head[0], -WALL_CM, head[2]), (0.0, 1.0, 0.0), head[1] + WALL_CM),
+                "iron-rod",
+                Fraction(1, 4),
+                boundary_start=True,
+            ),
+        ),
+        foundations=_foundations(),
+        links=(
+            Link((LIFT_BELT_ID, belt_exit), (LIFT_ID, entry)),
+            Link((LIFT_ID, exit_end), (SCREW_ID, "Input0")),
+        ),
+    )
+
+
+def _lift(placement: SfyPlacement, **changes: float) -> SfyPlacement:
+    return replace(placement, lifts=(replace(placement.lifts[0], **changes),))
+
+
+def test_a_lift_out_of_a_port_and_one_into_a_port_both_pass_every_check() -> None:
+    """The two shapes M3's router will lay, judged by everything this module has."""
+    for placement in (_lift_out_of_a_machine(), _lift_into_a_machine()):
+        report = validate(placement, None, _registry())
+        assert report.ok, [f.message for f in report.errors]
+        assert {"lift.height", "lift.step", "lift.placement"} <= set(report.checks_run)
+
+
+def test_lift_height_refuses_a_lift_shorter_or_taller_than_the_game_clamps_to() -> None:
+    """``lift.height_range`` CLAMPS, so the refusal is ours and the numbers theirs.
+
+    ``mMinimumHeight`` and ``mMaximumHeight`` are 400 and 4800 in the shipped
+    build, worked out by ``BeginPlay`` from the lift's mesh height.
+    """
+    placement = _lift_out_of_a_machine()
+    assert _findings(placement, "lift.height") == []
+    assert _findings(_lift(placement, height_cm=300.0), "lift.height") == ["lift.height"]
+    assert _findings(_lift(placement, height_cm=5000.0), "lift.height") == ["lift.height"]
+    # The sign is the flow direction, not a second range: a downward lift is
+    # held to the same window on the size of the drop.
+    down = _lift_into_a_machine()
+    assert _findings(down, "lift.height") == []
+    assert _findings(_lift(down, height_cm=-300.0), "lift.height") == ["lift.height"]
+
+
+def test_lift_step_refuses_a_height_the_hologram_would_move() -> None:
+    """``lift.step`` snaps; we refuse, because a snapped lift is not the one costed."""
+    placement = _lift_out_of_a_machine()
+    assert _findings(placement, "lift.step") == []
+    assert _findings(_lift(placement, height_cm=450.0), "lift.step") == ["lift.step"]
+    assert _findings(_lift(placement, height_cm=450.0), "lift.height") == []
+
+
+def test_lift_placement_refuses_an_end_on_a_connection_that_is_already_wired() -> None:
+    """``lift.placement`` is the game's own refusal, read at 0xa681fa/0xa68253.
+
+    ``CheckValidPlacement`` tests ``mHasConnectedComponent`` on each of the two
+    connections the lift snapped to and adds ``UFGCDInvalidPlacement`` when one
+    is set, so a lift that ends on an occupied port is a build the game turns
+    away rather than one it moves.
+    """
+    placement = _lift_out_of_a_machine()
+    assert _findings(placement, "lift.placement") == []
+    belt_entry, _ = belt_ends(_registry(), BELT)
+    stolen = replace(
+        placement,
+        links=(
+            *placement.links,
+            Link((ROD_ID, "Output0"), (LIFT_BELT_ID, belt_entry)),
+        ),
+    )
+    assert _findings(stolen, "lift.placement") == ["lift.placement"]
+
+
+def test_a_lifts_ends_are_held_to_the_ports_they_are_wired_to() -> None:
+    """``ports.position`` over a lift: the bottom is the actor, the top the height above."""
+    placement = _lift_out_of_a_machine()
+    assert _findings(placement, "ports.position") == []
+    moved = _lift(placement, height_cm=700.0)
+    assert _findings(moved, "ports.position") == ["ports.position"]
+
+
+def test_both_ends_of_a_lift_are_wired_exactly_once() -> None:
+    """``ports.connected_once`` over a lift: a dangling end is a build that does not run."""
+    placement = _lift_out_of_a_machine()
+    assert _findings(placement, "ports.connected_once") == []
+    loose = replace(placement, links=placement.links[1:])
+    assert _findings(loose, "ports.connected_once") == ["ports.connected_once"]
+
+
+def test_a_link_runs_out_of_a_lifts_exit_and_into_its_entry() -> None:
+    """``ports.direction`` over a lift: ``flow`` says which end is which, not the sign."""
+    placement = _lift_out_of_a_machine()
+    assert _findings(placement, "ports.direction") == []
+    entry, exit_end = belt_ends(_registry(), LIFT)
+    belt_entry, _ = belt_ends(_registry(), BELT)
+    backwards = replace(
+        placement,
+        links=(
+            Link((ROD_ID, "Output0"), (LIFT_ID, exit_end)),
+            Link((LIFT_ID, entry), (LIFT_BELT_ID, belt_entry)),
+        ),
+    )
+    assert _findings(backwards, "ports.direction") == ["ports.direction"]
+
+
+def test_a_lifts_clearance_is_judged_against_a_hard_box_it_is_not_wired_to() -> None:
+    """The lift's own box is live, not excluded away by the two forgivenesses.
+
+    ``belt.capsule`` forgives the one box a wired port sits inside and the
+    conveyor a lift is wired to, both for the unread ``TestClearanceOverlap``.
+    A machine the lift has nothing to do with is neither, so a lift standing in
+    its clearance is reported.
+    """
+    placement = _lift_out_of_a_machine()
+    assert _findings(placement, "belt.capsule") == []
+    crowded = replace(
+        placement,
+        machines=(
+            *placement.machines,
+            MachineObj(99, CONSTRUCTOR, Pose(0.0, -500.0, SLAB_TOP_CM, 0.0), ROD),
+        ),
+    )
+    assert _findings(crowded, "belt.capsule") == ["belt.capsule"]

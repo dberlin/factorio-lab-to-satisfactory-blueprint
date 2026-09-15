@@ -58,12 +58,14 @@ from flab2bp.sfy.labmap import LabMap, load_lab_map
 from flab2bp.sfy.layout.emit import EmitError, decode, emit
 from flab2bp.sfy.layout.model import (
     BeltRun,
+    LiftObj,
     MachineObj,
     Placed,
     SfyPlacement,
     Vector,
     WireObj,
     belt_ends,
+    lift_geometry,
 )
 from flab2bp.sfy.layout.splines import hermite, spline_length, tangent_at_distance
 from flab2bp.sfy.objects import Transform
@@ -188,7 +190,15 @@ _CAPSULE_UNREAD = (
     "game's own segment lengths cannot be reproduced and the chain is cut at "
     "this project's own 50 cm instead. The exclusion of the box a wired port "
     "sits inside rests on the same unread AFGHologram::TestClearanceOverlap "
-    "that keeps buildable.clearance partial."
+    "that keeps buildable.clearance partial. A conveyor lift's box is here "
+    "too, and lift.clearance is partial for a third reason: the half-extent "
+    "AFGBuildableConveyorLift::FitClearance builds the box from is a mutable "
+    "module global at 0x19B8118 that sfy-native will not quote, so how WIDE "
+    "the game's own box is was never read and this check uses the connector "
+    "clearance registry.json carries on the lift's two ports instead, which is "
+    "this project's reading and not the game's number. What the rule does "
+    "state -- that a lift has ONE box spanning it rather than a chain -- is "
+    "what the box here is."
 )
 _NO_BOUNDARY = (
     "no belt in this placement flags an end as a boundary end, so this is a fragment "
@@ -466,6 +476,63 @@ def _belt_chain(run: BeltRun) -> tuple[WorldBox, ...]:
     return tuple(chain)
 
 
+def _lift_box(lift: LiftObj, registry: Registry) -> WorldBox:
+    """The ONE box ``lift.clearance`` lays along a conveyor lift.
+
+    ``AFGConveyorLiftHologram::UpdateClearance`` hands the lift's height and its
+    mesh height to ``AFGBuildableConveyorLift::FitClearance``, which returns a
+    single box spanning the lift rather than a chain along a spline -- that much
+    the rule states, and it is the shape used here: the box runs from one end of
+    the lift to the other, about the axis the two ends are strung along.
+
+    **How wide it is was not read**, and this is where this check stops being
+    the game's.  ``FitClearance`` takes the half-extent from a mutable module
+    global at ``0x19B8118`` which ``sfy-native`` refuses to quote as a constant,
+    so ``lift.clearance`` is ``partial`` and states no width at all.  What is
+    used instead is the connector clearance ``registry.json`` carries on the
+    lift's own two ports -- ``UFGFactoryConnectionComponent``'s ``mClearance``,
+    200 cm, which the six lift marks are the only classes in the registry to
+    carry -- as the box's full width and depth.  That is this project's reading
+    of a number the game does keep about a lift's connections, and
+    :data:`_CAPSULE_UNREAD` says so; it is not the game's own box.
+    """
+    geometry = lift_geometry(registry, lift.class_name)
+    bottom, _ = lift.bottom_end(geometry)
+    top, _ = lift.top_end(geometry)
+    along = _unit(tuple(top[i] - bottom[i] for i in range(3)))  # type: ignore[arg-type]
+    side = _cross((0.0, 0.0, 1.0), along)
+    if _dot(side, side) <= 1e-12:  # a vertical lift, which is every lift
+        side = _cross((0.0, 1.0, 0.0), along)
+    side = _unit(side)
+    across = _lift_half_width(lift, registry)
+    return WorldBox(
+        owner=lift.id,
+        label=f"{lift.class_name} {lift.id} lift box",
+        centre=tuple((bottom[k] + top[k]) / 2.0 for k in range(3)),  # type: ignore[arg-type]
+        axes=(along, side, _unit(_cross(along, side))),
+        half=(math.dist(bottom, top) / 2.0, across, across),
+    )
+
+
+def _lift_half_width(lift: LiftObj, registry: Registry) -> float:
+    """Half the width :func:`_lift_box` gives a lift, from the registry's ports.
+
+    A lift class with no connector clearance on its ports is refused rather than
+    given a number: an invented width would be this module inventing geometry,
+    which is the one thing it may not do.
+    """
+    buildable = registry.buildables.get(lift.class_name)
+    clearances = [
+        p.clearance for p in (buildable.ports if buildable else ()) if p.clearance is not None
+    ]
+    if not clearances:
+        raise ValueError(
+            f"the registry gives {lift.class_name} no connector clearance on either port, so "
+            "there is no width to give its clearance box and lift.clearance states none"
+        )
+    return max(clearances) / 2.0
+
+
 # --- the context every check is handed -------------------------------------
 
 
@@ -501,11 +568,14 @@ class Context:
         Belts are not here: a conveyor carries no ``mClearanceData`` of its own
         (``registry.json`` gives ``Build_ConveyorBeltMk1_C`` none), because the
         hologram builds one per spline segment at placement time.  That is
-        :func:`_belt_chain`'s job.
+        :func:`_belt_chain`'s job.  Nor are lifts, for the same reason and with
+        the same answer: a lift's class carries no box either, and
+        ``AFGConveyorLiftHologram::UpdateClearance`` builds one at placement
+        time out of the height -- :func:`_lift_box`.
         """
         out: list[WorldBox] = []
         for obj in self.placement.objects:
-            if isinstance(obj, BeltRun | WireObj):
+            if isinstance(obj, BeltRun | LiftObj | WireObj):
                 continue
             buildable = self.registry.buildables.get(obj.class_name)
             if buildable is None:
@@ -521,10 +591,29 @@ class Context:
         return {run.id: _belt_chain(run) for run in self.placement.belts}
 
     @cached_property
-    def wired_port_boxes(self) -> dict[int, frozenset[int]]:
-        """Belt id -> indices into :attr:`boxes` of the boxes holding its own ports.
+    def conveyor_boxes(self) -> dict[int, tuple[WorldBox, ...]]:
+        """Every conveyor's own clearance, by object id: belt chains and lift boxes.
 
-        The narrow form of "a belt is not tested against what it is wired to".
+        The two are built differently -- one box per spline segment for a belt
+        (``belt.clearance``), one box spanning the whole lift for a lift
+        (``lift.clearance``) -- and judged together, because what they may not
+        lap is the same list.
+        """
+        return {
+            **self.belt_chains,
+            **{
+                lift.id: (_lift_box(lift, self.registry),)
+                for lift in self.placement.lifts
+                if abs(lift.height_cm) > 0.0
+            },
+        }
+
+    @cached_property
+    def wired_port_boxes(self) -> dict[int, frozenset[int]]:
+        """Conveyor id -> indices into :attr:`boxes` of the boxes holding its own ports.
+
+        The narrow form of "a conveyor is not tested against what it is wired
+        to".
         A Constructor's ``Output0`` sits at ``(0, 300, 100)`` inside a hard box
         that runs to ``y = 500``, so the belt starting there starts 200 cm
         inside the machine and the game must be excluding something; what it
@@ -536,7 +625,7 @@ class Context:
         for link in self.placement.links:
             for side, other in ((link.a, link.b), (link.b, link.a)):
                 run = self.placed.get(other[0])
-                if not isinstance(run, BeltRun):
+                if not isinstance(run, BeltRun | LiftObj):
                     continue
                 where = self.world_port(*side)
                 if where is None:
@@ -577,12 +666,16 @@ class Context:
         return next((p for p in buildable.ports if p.name == name), None)
 
     def world_port(self, oid: int, name: str) -> Vector | None:
-        """Where a port sits in the world -- and, for a belt, which end it is.
+        """Where a port sits in the world -- and, for a conveyor, which end it is.
 
         A conveyor's two connections both sit at the actor's origin
         (``registry.json`` gives both ``ConveyorAny`` ports translation zero),
         so ``world_port`` cannot tell them apart; the run's own ends can, and
-        ``flow`` says which is which.
+        ``flow`` says which is which.  A LIFT's ends are the same question with
+        a different answer: the game moves them at runtime, to the actor and to
+        ``mTopTransform`` (``lift.connectors``), which is what
+        :meth:`LiftObj.bottom_end <flab2bp.sfy.layout.model.LiftObj.bottom_end>`
+        works out.
         """
         obj = self.placed.get(oid)
         if obj is None:
@@ -590,12 +683,43 @@ class Context:
         if isinstance(obj, BeltRun):
             entry, _ = belt_ends(self.registry, obj.class_name)
             return obj.start if name == entry else obj.end
+        if isinstance(obj, LiftObj):
+            return self.lift_end(obj, name)[0]
         if isinstance(obj, WireObj):
             return None
         port = self.port(oid, name)
         if port is None:
             return None
         return world_port(obj.pose.transform(), port)
+
+    def lift_end(self, lift: LiftObj, name: str) -> tuple[Vector, Vector]:
+        """``(where this end of the lift is, which way it faces)``.
+
+        ``flow`` names the two: the entry is ``mConnection0``, which
+        ``SetupConnections`` puts at the actor, and the exit ``mConnection1`` at
+        ``mTopTransform``.  Which is physically higher depends on the sign of
+        the height and not on either name.
+        """
+        geometry = lift_geometry(self.registry, lift.class_name)
+        entry, _ = belt_ends(self.registry, lift.class_name)
+        return lift.bottom_end(geometry) if name == entry else lift.top_end(geometry)
+
+    def port_facing(self, oid: int, name: str) -> Vector | None:
+        """Which way a port faces in the world, for an object that has a pose.
+
+        The registry's own answer through
+        :func:`~flab2bp.sfy.geometry.port_forward`, except for a lift, whose two
+        connections are moved at runtime and whose top carries a yaw of its own.
+        """
+        obj = self.placed.get(oid)
+        if isinstance(obj, LiftObj):
+            return self.lift_end(obj, name)[1]
+        if obj is None or isinstance(obj, BeltRun | WireObj):
+            return None
+        port = self.port(oid, name)
+        if port is None:
+            return None
+        return port_forward(obj.pose.transform(), port)
 
     def group_for(self, machine: MachineObj) -> SfyMachineGroup | None:
         if self.spec is None:
@@ -658,17 +782,20 @@ def _bounds(ctx: Context) -> Iterable[Finding]:
             or point[2] > height + TOUCH_CM
         )
 
-    chains = ctx.belt_chains
+    chains = ctx.conveyor_boxes
     for obj in ctx.placement.objects:
         if isinstance(obj, WireObj):
             continue
         points: list[Vector] = []
         if isinstance(obj, BeltRun):
             points += [location for location, _, _ in obj.points]
-            for box in chains[obj.id]:
-                points += list(box.corners())
+        elif isinstance(obj, LiftObj):
+            ends = belt_ends(ctx.registry, obj.class_name)
+            points += [ctx.lift_end(obj, name)[0] for name in ends]
         else:
             points.append(obj.pose.location)
+        for box in chains.get(obj.id, ()):
+            points += list(box.corners())
         for box in ctx.boxes:
             if box.owner == obj.id:
                 points += list(box.corners())
@@ -733,7 +860,7 @@ def _hard_clearance(ctx: Context) -> Iterable[Finding]:
 
 @check("belt.capsule")
 def _capsule(ctx: Context) -> Iterable[Finding]:
-    """A belt's clearance chain may not lap another belt's, or a hard box.
+    """A conveyor's clearance may not lap another conveyor's, or a hard box.
 
     The SHAPE is the game's: ``belt.clearance`` is ``extracted``, and
     ``AFGBuildableConveyorBelt::CreateClearanceData`` lays one box per spline
@@ -764,21 +891,34 @@ def _capsule(ctx: Context) -> Iterable[Finding]:
     and only for segment pairs within one box length of the shared connection
     point: two runs joined end to end lap by a sliver where their tangents
     differ, and that is the only place they are entitled to.
+
+    A LIFT is judged here too, with one box rather than a chain -- see
+    :func:`_lift_box`, and the third paragraph of :data:`_CAPSULE_UNREAD` for
+    the half-extent that was never read.  Two conveyors WIRED to each other are
+    not tested against each other at all when one of them is a lift's neighbour:
+    a lift's box spans the lift itself, so whatever meets it meets it inside its
+    own box, and the centimetre-level forgiveness two belts get end to end
+    cannot express that.  The exclusion rests on the same unread
+    ``TestClearanceOverlap`` as the wired-port one above, and it is this
+    project's, not the game's.
     """
     yield ctx.skip("belt.capsule", _CAPSULE_UNREAD)
-    chains = ctx.belt_chains
+    chains = ctx.conveyor_boxes
     hard = [(i, box) for i, box in enumerate(ctx.boxes) if not box.soft]
-    runs = list(ctx.placement.belts)
+    runs = [obj for obj in ctx.placement.objects if obj.id in chains]
     for i, run in enumerate(runs):
         for other in runs[i + 1 :]:
+            lifting = isinstance(run, LiftObj) or isinstance(other, LiftObj)
+            if lifting and other.id in ctx.partners.get(run.id, frozenset()):
+                continue  # see the docstring: a lift and a conveyor wired to it
             near = ctx.connection_points.get(frozenset((run.id, other.id)), ())
             clash = _worst(chains[run.id], chains[other.id], near)
             if clash is not None:
                 depth, first, second = clash
                 yield ctx.finding(
                     "belt.capsule",
-                    f"belt {run.id}'s clearance ({first.label}) laps belt {other.id}'s "
-                    f"({second.label}) by {depth:.1f} cm",
+                    f"conveyor {run.id}'s clearance ({first.label}) laps conveyor "
+                    f"{other.id}'s ({second.label}) by {depth:.1f} cm",
                     run.id,
                     other.id,
                     depth_cm=round(depth, 3),
@@ -792,7 +932,8 @@ def _capsule(ctx: Context) -> Iterable[Finding]:
                 depth, first, _ = clash
                 yield ctx.finding(
                     "belt.capsule",
-                    f"belt {run.id}'s clearance ({first.label}) laps {box.label} by {depth:.1f} cm",
+                    f"conveyor {run.id}'s clearance ({first.label}) laps {box.label} by "
+                    f"{depth:.1f} cm",
                     run.id,
                     box.owner,
                     depth_cm=round(depth, 3),
@@ -1154,6 +1295,10 @@ def _connected_once(ctx: Context) -> Iterable[Finding]:
     hands out no direction at all, which is what a conveyor pole is, so a link
     there is one this project cannot say the meaning of.
 
+    A lift's two ends are held to the same rule and have no boundary exemption:
+    this project lays no lift onto the designer wall, and a lift with a loose
+    end carries nothing at all.
+
     The one loose end this project does author is a BOUNDARY end: a belt whose
     ``boundary_start`` or ``boundary_end`` is set claims to stop on the designer
     wall, where what it meets is outside the blueprint.  Such an end must be
@@ -1189,6 +1334,19 @@ def _connected_once(ctx: Context) -> Iterable[Finding]:
                 "component holds one belt",
                 side[0],
                 links=count,
+            )
+    for lift in ctx.placement.lifts:
+        for end in belt_ends(ctx.registry, lift.class_name):
+            found = counts[(lift.id, end)]
+            if found == 1:
+                continue
+            yield ctx.finding(
+                "ports.connected_once",
+                f"lift {lift.id}'s {end} end is wired {found} times, not once: a lift has "
+                "two connections and carries nothing with either of them loose",
+                lift.id,
+                end=end,
+                links=found,
             )
     for run in ctx.placement.belts:
         entry, exit_end = belt_ends(ctx.registry, run.class_name)
@@ -1237,7 +1395,10 @@ def _direction(ctx: Context) -> Iterable[Finding]:
 
     A belt's own two ends are ``any``; which is which is ``flow``'s answer in
     ``registry.json``, so the upstream side of a link must be the belt's exit
-    end and the downstream side its entry.
+    end and the downstream side its entry.  A LIFT's two ends are ``any`` for
+    the same reason and answered the same way, and the sign of its height does
+    not come into it: ``reversed_swaps_flow`` is false, so items enter by
+    ``mConnection0`` -- the end at the actor -- whichever way the lift runs.
     """
     for link in ctx.placement.links:
         upstream, downstream = ctx.port(*link.a), ctx.port(*link.b)
@@ -1261,13 +1422,14 @@ def _direction(ctx: Context) -> Iterable[Finding]:
             )
         for side, wanted in ((link.a, 1), (link.b, 0)):
             run = ctx.placed.get(side[0])
-            if not isinstance(run, BeltRun):
+            if not isinstance(run, BeltRun | LiftObj):
                 continue
             ends = belt_ends(ctx.registry, run.class_name)
             if side[1] != ends[wanted]:
+                kind = "lift" if isinstance(run, LiftObj) else "belt"
                 yield ctx.finding(
                     "ports.direction",
-                    f"belt {run.id} meets this link by its {side[1]} end, but flow calls "
+                    f"{kind} {run.id} meets this link by its {side[1]} end, but flow calls "
                     f"{ends[wanted]} the end items {'leave' if wanted else 'enter'} by",
                     run.id,
                 )
@@ -1291,11 +1453,21 @@ def _position(ctx: Context) -> Iterable[Finding]:
     facing is only checked where the upstream side is a buildable's port: two
     belts joined to each other share a point, and their tangents are
     :func:`~flab2bp.sfy.layout.splines.concat`'s business.
+
+    A LIFT's two ends are held to the same centimetre, and where they are is
+    the game's answer rather than the registry's: ``SetupConnections`` moves
+    them to the actor and to ``mTopTransform`` (``lift.connectors``), which is
+    what :meth:`Context.lift_end` works out.  A belt leaving a lift's TOP is
+    held to that end's own facing -- the top yaw turns the connector with it --
+    on exactly the assumption the paragraph above states, and nothing here
+    checks which way a lift's end faces the port it stands ON: what the game
+    does with a lift's own yaw when it snaps to a connection was not read, so
+    there is no rule to hold it to and none is invented.
     """
     for link in ctx.placement.links:
         for side, other in ((link.a, link.b), (link.b, link.a)):
             run = ctx.placed.get(side[0])
-            if not isinstance(run, BeltRun):
+            if not isinstance(run, BeltRun | LiftObj):
                 continue
             here = ctx.world_port(*side)
             there = ctx.world_port(*other)
@@ -1303,9 +1475,10 @@ def _position(ctx: Context) -> Iterable[Finding]:
                 continue
             gap = math.dist(here, there)
             if gap > PORT_CM:
+                kind = "lift" if isinstance(run, LiftObj) else "belt"
                 yield ctx.finding(
                     "ports.position",
-                    f"belt {run.id}'s {side[1]} end is {gap:.2f} cm from object "
+                    f"{kind} {run.id}'s {side[1]} end is {gap:.2f} cm from object "
                     f"{other[0]}'s {other[1]}, past the {PORT_CM:.0f} cm this project allows",
                     run.id,
                     other[0],
@@ -1315,12 +1488,9 @@ def _position(ctx: Context) -> Iterable[Finding]:
         run = ctx.placed.get(link.b[0])
         if isinstance(upstream, BeltRun) or not isinstance(run, BeltRun):
             continue
-        if isinstance(upstream, WireObj) or upstream is None:
+        facing = ctx.port_facing(*link.a)
+        if facing is None:
             continue
-        port = ctx.port(*link.a)
-        if port is None:
-            continue
-        facing = port_forward(upstream.pose.transform(), port)
         leave = run.points[0][2]
         if _dot(leave, leave) < 1e-12:
             continue
@@ -1334,6 +1504,134 @@ def _position(ctx: Context) -> Iterable[Finding]:
                 link.a[0],
                 angle_rad=round(angle, 5),
             )
+
+
+# --- conveyor lifts --------------------------------------------------------
+
+
+@check("lift.height")
+def _lift_height(ctx: Context) -> Iterable[Finding]:
+    """A lift stands between ``lift_min_cm`` and ``lift_max_cm`` tall.
+
+    This project's own rule, over the game's own numbers.  ``lift.height_range``
+    is a **clamp**: ``UpdateTopTransform`` takes ``minss`` of the wanted height
+    and ``mMaximumHeight`` and ``maxss`` of that and the floor
+    (``0xaa4979``/``0xaa497d``, and the sign-flipped pair at
+    ``0xaa4987``..``0xaa499f``), so the hologram cannot be given an illegal
+    height and there is no disqualifier to name.  We refuse instead, because a
+    lift we author outside the window is one the game would silently build at a
+    different height -- ending nowhere near the port it was drawn to.
+
+    The floor is ``mMinimumHeight``.  ``lift_min_vertical_cm``
+    (``mMinimumHeightWithVerticalConnection``) is NOT used: the rule's own
+    comparison takes that floor only when ``mSnappedPassthroughs[0]`` is set
+    (``0xaa494d``..``0xaa495d``), which is a lift built through a foundation
+    passthrough, and this project authors no passthroughs -- ``emit`` writes
+    that array empty.  A placer that starts snapping lifts to passthroughs has
+    to bring the other floor with it.
+
+    The bound is on the SIZE of the drop: the sign of ``height_cm`` says which
+    way items travel, and both branches of the clamp are the same window.
+    """
+    limits = ctx.registry.limits
+    low, high = limits.lift_min_cm, limits.lift_max_cm
+    if low is None or high is None:
+        return
+    for lift in ctx.placement.lifts:
+        rise = abs(lift.height_cm)
+        if low - TOUCH_CM <= rise <= high + TOUCH_CM:
+            continue
+        yield ctx.finding(
+            "lift.height",
+            f"lift {lift.id} is {rise:.0f} cm, outside the {low:.0f}..{high:.0f} cm the "
+            "hologram clamps a lift into, so the game would build it at a different height",
+            lift.id,
+            height_cm=round(lift.height_cm, 3),
+            min_cm=low,
+            max_cm=high,
+        )
+
+
+@check("lift.step")
+def _lift_step(ctx: Context) -> Iterable[Finding]:
+    """A lift's height is a whole number of ``lift_step_cm``.
+
+    This project's own rule, and the game's own arithmetic.  ``lift.step`` is a
+    **snap**, not a refusal: ``UpdateTopTransform`` computes
+    ``floor(raw / mStepHeight + 0.5) * mStepHeight`` -- ``0xaa4769`` ``divss``,
+    ``0xaa476d`` ``addss`` the 0.5 at ``0xf6dee8``, ``0xaa4776`` ``roundps ...,
+    1`` and ``0xaa477c`` ``mulss``, on the step loaded at ``0xaa46e8`` -- and
+    the rounded height is what the clamp and the mesh then use.  So a height off
+    the step is one the game MOVES, by up to half a step, and the lift ends
+    somewhere other than the port it was drawn to.  We refuse to author one.
+
+    The one lift the game itself leaves off the lattice is one snapped to a
+    passthrough, which carries that passthrough's thickness modulo 100 through
+    the clamp (``0xaa4830``..``0xaa4867``, added back at ``0xaa4981``).  This
+    project authors no passthroughs, so no lift of ours is entitled to it.
+    """
+    step = ctx.registry.limits.lift_step_cm
+    if not step:
+        return
+    for lift in ctx.placement.lifts:
+        rise = abs(lift.height_cm)
+        off = min(rise % step, step - rise % step)
+        if off <= TOUCH_CM:
+            continue
+        yield ctx.finding(
+            "lift.step",
+            f"lift {lift.id} is {rise:.1f} cm, which is {off:.1f} cm off a multiple of the "
+            f"{step:.0f} cm the hologram snaps a height to",
+            lift.id,
+            height_cm=round(lift.height_cm, 3),
+            step_cm=step,
+        )
+
+
+@check("lift.placement", rule="lift.placement")
+def _lift_placement(ctx: Context) -> Iterable[Finding]:
+    """A lift may not end on a connection that already has something on it.
+
+    ``lift.placement``, ``extracted`` and ``refuse``:
+    ``AFGConveyorLiftHologram::CheckValidPlacement`` tests each of the two
+    ``mSnappedConnectionComponents`` -- ``cmp byte ptr [rax+268h], 0; je`` at
+    ``0xa681fa``/``0xa68201`` and ``0xa68253``/``0xa6825a``, which is
+    ``UFGFactoryConnectionComponent::mHasConnectedComponent`` -- and adds
+    ``UFGCDInvalidPlacement`` when one is set, so the build gun turns the lift
+    away.  This is that comparison: for each end of each lift, the connection it
+    is wired to must carry that one link and nothing else.
+
+    The guard the rule records is about the build gun's two clicks rather than
+    about a finished build: the test runs only once ``mActivePointIdx > 0``, so
+    the FIRST click may land on an occupied port and the second is what refuses.
+    A placement has both ends down, so both are judged here.
+    """
+    counts: Counter[tuple[int, str]] = Counter()
+    for link in ctx.placement.links:
+        counts[link.a] += 1
+        counts[link.b] += 1
+    for lift in ctx.placement.lifts:
+        for side, other in _lift_links(ctx, lift.id):
+            taken = counts[other] - 1
+            if taken <= 0:
+                continue
+            yield ctx.finding(
+                "lift.placement",
+                f"lift {lift.id}'s {side[1]} ends on object {other[0]}'s {other[1]}, which "
+                f"already carries {taken} other connection: the build gun adds "
+                "UFGCDInvalidPlacement for a snapped connection that is taken",
+                lift.id,
+                other[0],
+                links=counts[other],
+            )
+
+
+def _lift_links(ctx: Context, lift_id: int) -> Iterable[tuple[tuple[int, str], tuple[int, str]]]:
+    """``(this lift's side, the connection it snapped to)`` for each of its links."""
+    for link in ctx.placement.links:
+        for side, other in ((link.a, link.b), (link.b, link.a)):
+            if side[0] == lift_id:
+                yield (side, other)
 
 
 # --- rates -----------------------------------------------------------------
@@ -1768,7 +2066,16 @@ def _corpus() -> tuple[TemplateLibrary | None, BlueprintHeader | None]:
 
 
 def _first_difference(want: SfyPlacement, got: SfyPlacement) -> str:
-    for name in ("designer", "machines", "attachments", "belts", "poles", "wires", "foundations"):
+    for name in (
+        "designer",
+        "machines",
+        "attachments",
+        "belts",
+        "lifts",
+        "poles",
+        "wires",
+        "foundations",
+    ):
         mine, theirs = getattr(want, name), getattr(got, name)
         if mine != theirs:
             return f"{name} differ ({len(mine)} in, {len(theirs)} out)"

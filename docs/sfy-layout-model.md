@@ -31,6 +31,43 @@ Distances are centimetres and the axes are Unreal's, left-handed, `+Z` up.
   fields: no property in the file carries them, so `decode` hands a belt back
   unflagged.
 
+### A conveyor lift is an actor with a height
+
+`LiftObj` is the one object in the model that is not placed by a pose alone.
+`pose` is its **bottom**, because `AFGBuildableConveyorLift::SetupConnections`
+puts `mConnection0` at the actor transform exactly, facing the actor's own
+forward (`lift.connectors`, and the six numbers are `Buildable.lift` in
+`registry.json`). The other end is `mTopTransform`, a `SaveGame` `FTransform`
+declared at `Buildables/FGBuildableConveyorLift.h:266-267`, and the model carries
+its two moving parts:
+
+* `height_cm` is **signed**, the way that translation is: the top sits that far
+  along the geometry's `top_offset_axis`, above the actor for a positive height
+  and below it for a negative one. It is not held at `stored_float` width — a
+  pose is ten 32-bit floats because that is what the object table writes, and
+  `mTopTransform` is a property beside it, written as doubles.
+* `top_yaw_deg` is the yaw that transform carries, **in the actor's own frame**
+  (`Hologram/FGConveyorLiftHologram.h:102-104`: "in actor local space"), so the
+  top end faces the pose's yaw plus this one. `lift.top_yaw` says it is a whole
+  number of 90 degree steps, which is what `lift.step`'s neighbour
+  `top_yaw_step_deg` records and what the validator holds it to.
+
+Which way items travel does **not** depend on the sign. `reversed_swaps_flow`
+is false: items always enter by `mConnection0`, so `flow` names the entry at the
+actor either way, and a lift that delivers *downward* into a machine port is one
+whose actor stands at the top — where its feed arrives — with a negative height.
+`GetConveyorLiftFlowDirection` reads nothing but the sign of that Z, and it
+decides which way the *mesh* runs.
+
+`emit` writes the transform from the registry's geometry and nothing else from
+the template: `mSnappedPassthroughs` goes out empty, because a template's array
+names passthroughs this blueprint has not got and both flags are read as geometry
+by `SetupConnections` and by `lift.height_range`'s floor; and `mIsReversed` is
+not written at all, because the header marks it `DEPRECATED 2023-01-30` and
+`SetupConnections`, read whole, never touches it. `decode` reads the height and
+the yaw back, so a lift takes part in `decode(emit(p)) == p` like everything
+else.
+
 ### A machine's clock and its somersloops *are* in the file
 
 Task 12 read the properties out of the game's public headers, so the clock is no
@@ -90,7 +127,7 @@ fails the build if a check drifts from that.
    library and build version the `roundtrip` check writes a file with — which is
    format, not legality.
 
-### The seventeen checks
+### The twenty checks
 
 `effect` is the effect of the rule the check names, and is blank for a check of
 this project's own — a `project` check enforces no rule and so has no effect to
@@ -100,14 +137,17 @@ report. `needs spec` marks a check that cannot run without an `SfyBuildSpec`.
 | --- | --- | --- | --- | --- |
 | `geom.bounds` | `project` | — | no | every origin, clearance-box corner and spline point inside `[-half, half]² × [0, height]` of the designer, sized from `designer_dims` and the shipped foundation's footprint |
 | `geom.hard_clearance` | `buildable.clearance` | refuse | no | no two **hard** clearance boxes lap, by a separating-axis test on the boxes' full `RelativeTransform`. Soft boxes may share space — that is how a machine stands on a foundation. A box flagged `ExcludeForSnapping` is still tested: the flag excludes it from *snapping*, not from clearance, and the finding says the flag was there |
-| `belt.capsule` | `project` | — | no | a belt's clearance chain — `Min = (-L/2, -79, -15)`, `Max = (L/2, 79, 15)` per segment, from `belt.clearance` — laps no other belt's and no hard box |
+| `belt.capsule` | `project` | — | no | a conveyor's clearance laps no other conveyor's and no hard box: for a belt, the chain `belt.clearance` lays — `Min = (-L/2, -79, -15)`, `Max = (L/2, 79, 15)` per segment; for a lift, the one box `lift.clearance` says spans it, as wide as the connector clearance the registry carries on the lift's two ports (the game's own half-extent is in `.data` and was never read) |
 | `belt.max_length` | `belt.max_length` | refuse | no | `spline_length` ≤ `mMaxSplineLength` (`limits.belt_max_spline_cm`), arc length, strict |
 | `belt.min_length` | `belt.min_length` | refuse | no | the **polyline** between stored points > `mMeshLength × 0.5001` (`limits.belt_min_length_cm`), strict |
 | `belt.incline` | `belt.incline` | refuse | no | per chord, <code>&#124;π/2 − acos(clamp(u.Z, −1, 1))&#124;</code> ≤ `mMaxIncline × 0.017453292`, with the game's `float` `π/2` and its `ZeroVector` for a chord of no length |
 | `belt.curvature` | `belt.curvature` | refuse | no | `step / acos(A·B)` ≥ `mBendRadius × 1.5 − 15` at every one of `RoundToInt(L × 0.02)` samples (see below) |
-| `ports.connected_once` | `project` | — | no | every belt end wired exactly once, no connection carrying two belts, nothing wired to a `snap_only` or `unknown` connection |
-| `ports.direction` | `project` | — | no | a link runs output → input, and meets a belt by the end `flow` names. `belt.snap_directions` is the *evidence* and not the rule enforced: its effect is `snap`, so the refusal is ours (see below) |
-| `ports.position` | `project` | — | no | a belt's ends sit within 1 cm of the ports they are wired to and leave within 0.01 rad of the port's facing |
+| `ports.connected_once` | `project` | — | no | every belt end and every lift end wired exactly once, no connection carrying two belts, nothing wired to a `snap_only` or `unknown` connection |
+| `ports.direction` | `project` | — | no | a link runs output → input, and meets a belt or a lift by the end `flow` names. `belt.snap_directions` is the *evidence* and not the rule enforced: its effect is `snap`, so the refusal is ours (see below) |
+| `ports.position` | `project` | — | no | a belt's or a lift's ends sit within 1 cm of the ports they are wired to, and a belt leaves a port — a machine's, or a lift's top — within 0.01 rad of its facing |
+| `lift.height` | `project` | — | no | a lift's height is between `lift_min_cm` and `lift_max_cm`. `lift.height_range` **clamps** into that window rather than refusing, so the refusal is ours: a lift outside it is one the game would build at a different height. The floor is `mMinimumHeight`, not `mMinimumHeightWithVerticalConnection`, which the rule takes only for a lift snapped to a passthrough — and this project authors none |
+| `lift.step` | `project` | — | no | a lift's height is a whole number of `lift_step_cm`. `lift.step` **snaps** it — `floor(raw / mStepHeight + 0.5) * mStepHeight` at `0xaa4769`–`0xaa477c` — so again the refusal is ours: an off-step lift is moved by up to half a step and ends somewhere other than the port it was drawn to |
+| `lift.placement` | `lift.placement` | refuse | no | neither end of a lift ends on a connection that already carries something. `CheckValidPlacement` tests `mHasConnectedComponent` on each snapped connection (`0xa681fa`, `0xa68253`) and adds `UFGCDInvalidPlacement` |
 | `flow.capacity` | `project` | — | **yes** | a belt carries no more than its mark does, and every machine input is fed at the group's per-machine rate. The tier speed comes from the lab dataset through `spec.belt_tiers`, which is why a spec is needed |
 | `flow.balance` | `project` | — | **yes** | per item, rows produced + belted in ≥ rows consumed + sent out |
 | `flow.boundary` | `project` | — | no | every end flagged `boundary_start` stands on the `-Y` wall and every `boundary_end` on the `+Y`, within the same 1 cm `ports.position` allows, and the items at the two walls are the spec's `external_inputs` and its `outputs` plus `surplus_outputs`. A placement with no flagged end is a *fragment* and the check stands aside on it |
@@ -120,7 +160,11 @@ Two checks are in `skipped` on **every** run, each with an `INFO` finding that
 says what it could not cover: `geom.hard_clearance`, because
 `buildable.clearance` is `partial`, and `belt.capsule`, because `belt.clearance`
 leaves the `FFGClearanceData` flag bytes and
-`GetNextDistanceExceedingTolerance` unread. They still run and their findings
+`GetNextDistanceExceedingTolerance` unread — and, since lifts joined it,
+because `lift.clearance` is `partial` too: how wide the game's own lift box is
+comes from a mutable module global at `0x19B8118` that `sfy-native` will not
+quote, so the width used here is this project's reading of the connector
+clearance and not the game's number. They still run and their findings
 still stand. `power.wires` joins them on a placement with no wires, and
 `flow.boundary` on one with no boundary end.
 
@@ -241,6 +285,13 @@ never a bound — the bounds are all in `registry.json`'s `limits`:
   inside `TestClearanceOverlap`, which is unread. Every *other* box of the same
   buildable stays under test — an Assembler's upper box is not forgiven because
   its lower one holds the port.
+* **A lift is not tested against a conveyor it is wired to** (`belt.capsule`),
+  which is the same blindness one step further. A lift's clearance box spans the
+  lift itself, so whatever meets it meets it *inside* that box: the centimetre
+  of slack two belts get where they join cannot express a belt that ends on a
+  lift's top. The exclusion rests on the same unread `TestClearanceOverlap`, and
+  it is narrow — a lift is still judged against every conveyor it is not wired
+  to, and against every hard box but the one holding a port it is wired to.
 * **`power.wires` stands aside on a placement with no wires**, because a
   placement with none is a fragment and nothing in the file says whether power
   was left out or forgotten. It says so in an `INFO` finding rather than
