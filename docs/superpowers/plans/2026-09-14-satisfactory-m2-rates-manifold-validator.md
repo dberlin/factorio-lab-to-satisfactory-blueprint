@@ -572,6 +572,23 @@ Algorithm:
 
 ---
 
+### Task 8c (added during execution, after Task 11): split rows longer than the wall
+
+Spec section 9.1: "Rows longer than the wall are split." Task 8 laid every group as one row, and the corpus gate refused 15 of 36 cells with `rows exceed the designer width`.
+
+**Files:**
+- Modify: `src/flab2bp/sfy/layout/strategy.py` (row planning), `src/flab2bp/sfy/layout/manifold.py` only if `build_row` needs a `count` override, `docs/sfy-layout-model.md`
+- Test: `tests/sfy/test_strategy.py`
+
+**Interfaces:**
+- Consumes: `build_row`, the corridor nets (a source with several sinks already gets a splitter chain at its corridor entry; several sources to one sink already get mergers).
+- Produces: a group whose single-row width exceeds the designer's usable width (`2 * half_cm` minus the two corridors) is laid as `k = ceil(count / per_row)` rows of the same recipe, `per_row = floor((usable_width - wall_margins) / pitch)`, machines divided as evenly as possible with the underclocked last machine in the last row; each split row is a separate row band in production order (all rows of one group adjacent, alternating `flip`); the group's input items are distributed to the split rows through the existing splitter-chain mechanism (one source, several sinks) and their outputs joined by the existing merger mechanism; each split row's `chain_in` demand is its own share so belt tiers stay per segment; refusal `rows exceed the designer width` remains only for a single machine wider than the usable width, with the class named.
+
+- [ ] **Step 1: Failing tests**: `screw*120` (or whichever corpus entry refuses on width in Mk3 with the fewest machines) lays out clean in Mk3 as two rows of the same recipe; a synthetic group of 7 constructors on a usable width of four pitches gives rows of 4 and 3 with the last row carrying the underclocked machine; `flow.capacity`, `flow.balance` and `spec.machines` pass with the spec; a single machine wider than the wall still refuses with the class named.
+- [ ] **Step 2: Implement**, **Step 3: re-run `scripts/sfy_audit.py --designer mk3`** and append the new table to the evidence report; **Step 4: commit**: `Split a manifold row that is longer than the wall into rows`.
+
+---
+
 ### Task 9: power poles and wires
 
 **Files:**
