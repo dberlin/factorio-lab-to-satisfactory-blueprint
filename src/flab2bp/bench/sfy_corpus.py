@@ -29,14 +29,19 @@ seconds, or whose rows contradict the spec, is a build nobody has shown fits.
 
 A width refusal is a missing feature, not a wall
 ------------------------------------------------
-Fifteen of the corpus's refusals are ``rows exceed the designer width`` and a
-reader should not take them for a designer that is simply too small.  M2 lays
-each recipe group out as ONE unbroken row, so a group wide enough to overrun the
-mark refuses even where the same machines would fit the floor perfectly well
-split across two rows.  Splitting a row is spec 9.1, on the M2 plan as Task 8c;
-until it lands, a width refusal says "M2 has no shape for this yet", not "no
-Blueprint Designer holds this".  The depth refusals are the real ceiling (R10,
-one level of rows); the width ones are a feature that has not been written.
+``rows exceed the designer width`` says a recipe group was laid out as ONE
+unbroken row wider than the mark -- which is a shape M2 had not written yet, not
+a designer that is too small: the same machines sit on the same floor perfectly
+well split across two rows.  Row splitting is spec 9.1, and it landed as Task 8c
+(``ec01f672``): every one of the corpus's fifteen width refusals turned into a
+depth refusal, and ``concrete-60`` in mk2 turned into a build.  The cause stays
+in :data:`RULED_CAUSES` because the strategy can still raise it, and this
+paragraph stays because the lesson does: a reader who takes a width refusal for
+a wall is reading a missing feature as a limit.
+
+What the depth refusals mean, by contrast, is the real M2 ceiling -- R10, one
+level of rows inside one designer -- and they say it in centimetres.  The
+measured ceiling today is two rows in an mk3.
 
 Tier is orientation, not a budget
 ---------------------------------
@@ -137,8 +142,15 @@ class SfyCorpusEntry:
       corpus doubles as a regression pin: a cause that changes, a clean build
       that starts refusing, and a refusal that starts building are all reported.
 
-    A pin is not an endorsement.  ``steel-beam-20`` in mk3 is pinned CLEAN and
-    is INVALID today; both gates report it, which is the point.
+    A pin is not an endorsement: it is what the cell MUST do, measured.  When
+    ``steel-beam-20`` in mk3 was INVALID, it stayed pinned CLEAN, because
+    pinning the defect would have made the gate go green on it.
+
+    Pins go stale when the model improves, and that is the signal working rather
+    than a fault: Task 8c turned fifteen width refusals into depth refusals in
+    one commit, ``--strict`` named all fifteen, and they were re-measured.  The
+    failure message says the cell, its pin and what it got, so it says what to
+    write.
     """
 
     url_id: str
@@ -207,9 +219,9 @@ class SfyCorpusEntry:
         return None if outcome == CLEAN else outcome
 
 
-#: The two shapes almost every refusal takes, spelled once.
+#: The shape every refusal below takes but the fluid one, spelled once.  Since
+#: Task 8c split the over-long rows, depth is the only ceiling left standing.
 _DEPTH: Final = "rows exceed the designer depth"
-_WIDTH: Final = "rows exceed the designer width"
 
 
 def _pins(mk1: str, mk2: str, mk3: str) -> tuple[tuple[str, str], ...]:
@@ -231,7 +243,7 @@ SFY_CORPUS: Final[tuple[SfyCorpusEntry, ...]] = (
         _LIST + "iron-rod*60",
         "iron-rod-60.csv",
         Tier.TRIVIAL,
-        expects=_pins(_WIDTH, _DEPTH, CLEAN),
+        expects=_pins(_DEPTH, _DEPTH, CLEAN),
         note="the other half of the first hour, and a wider constructor row",
     ),
     SfyCorpusEntry(
@@ -239,7 +251,7 @@ SFY_CORPUS: Final[tuple[SfyCorpusEntry, ...]] = (
         _LIST + "concrete*60",
         "concrete-60.csv",
         Tier.TRIVIAL,
-        expects=_pins(_WIDTH, _WIDTH, CLEAN),
+        expects=_pins(_DEPTH, CLEAN, CLEAN),
         note="limestone: the shortest chain in the corpus",
     ),
     SfyCorpusEntry(
@@ -255,7 +267,7 @@ SFY_CORPUS: Final[tuple[SfyCorpusEntry, ...]] = (
         _LIST + "wire*120&o=cable*60",
         "wire-120-cable-60.csv",
         Tier.SMALL,
-        expects=_pins(_WIDTH, _WIDTH, _WIDTH),
+        expects=_pins(_DEPTH, _DEPTH, _DEPTH),
         note="two objectives, one feeding the other: the only multi-objective URL",
     ),
     SfyCorpusEntry(
@@ -263,10 +275,10 @@ SFY_CORPUS: Final[tuple[SfyCorpusEntry, ...]] = (
         _LIST + "steel-beam*20",
         "steel-beam-20.csv",
         Tier.SMALL,
-        # mk3 is pinned CLEAN and is INVALID today: `flow.capacity` compares the
-        # belt feeding a group's underclocked last machine against the group's
-        # FULL-clock demand.  Pinning the defect instead would make the gate go
-        # green on it, so the pin stays at what this cell must do.
+        # The entry that found the gate's first defect: `flow.capacity` compared
+        # the belt feeding a group's underclocked last machine against the
+        # group's FULL-clock demand, and this is the first corpus flow with a
+        # shard on a belt at all.  Fixed in `729a7e81`; mk3 has been CLEAN since.
         expects=_pins(_DEPTH, _DEPTH, CLEAN),
         note="the Foundry: two ores into one machine, a footprint no other entry has",
     ),
@@ -275,7 +287,7 @@ SFY_CORPUS: Final[tuple[SfyCorpusEntry, ...]] = (
         _LIST + "rotor*10",
         "rotor-10.csv",
         Tier.SMALL,
-        expects=_pins(_WIDTH, _WIDTH, _WIDTH),
+        expects=_pins(_DEPTH, _DEPTH, _DEPTH),
         note="rod and screw converging on one Assembler",
     ),
     SfyCorpusEntry(
@@ -291,7 +303,7 @@ SFY_CORPUS: Final[tuple[SfyCorpusEntry, ...]] = (
         _LIST + "modular-frame*5",
         "modular-frame-5.csv",
         Tier.MID,
-        expects=_pins(_WIDTH, _DEPTH, _DEPTH),
+        expects=_pins(_DEPTH, _DEPTH, _DEPTH),
         note="six rows: an Assembler over two sub-chains",
     ),
     SfyCorpusEntry(
@@ -299,7 +311,7 @@ SFY_CORPUS: Final[tuple[SfyCorpusEntry, ...]] = (
         _LIST + "smart-plating*5",
         "smart-plating-5.csv",
         Tier.MID,
-        expects=_pins(_WIDTH, _WIDTH, _DEPTH),
+        expects=_pins(_DEPTH, _DEPTH, _DEPTH),
         note="seven rows: a project part, rotor and plate together",
     ),
     SfyCorpusEntry(
@@ -307,7 +319,7 @@ SFY_CORPUS: Final[tuple[SfyCorpusEntry, ...]] = (
         _LIST + "heavy-modular-frame*2",
         "heavy-modular-frame-2.csv",
         Tier.LARGE,
-        expects=_pins(_WIDTH, _WIDTH, _WIDTH),
+        expects=_pins(_DEPTH, _DEPTH, _DEPTH),
         note=(
             "the Manufacturer: four inputs, the deepest chain in the corpus, and "
             "wide before it is deep -- one row reaches x = 5660 cm, past the "
