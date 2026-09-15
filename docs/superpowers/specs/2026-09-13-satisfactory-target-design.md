@@ -268,8 +268,10 @@ blueprints, then total occupied volume, then belt length).
    section 14 for what that cost).
 2. **Grid-routed placement.** Machines are packed per level on the hologram
    grid (greedy then CP-SAT rectangle packing on integer grid cells), every belt
-   is routed by a 3D orthogonal router on the lattice with lifts as vertical
-   edges and lift-turns at ports.
+   is found by a geometric interval router in the shape of the DSP
+   `geometric_router`: straight runs as intervals on the 1 m lattice, turns
+   where runs meet, inclines as 2:1 ramp moves, lifts as vertical edges; never a
+   cell-by-cell search. Lift-turns are made at ports.
 3. **Continuous CP-SAT.** One model per blueprint: machine positions as integer
    grid multiples, 3D no-overlap on hard clearance boxes, belt length bounds,
    port-to-port distance bounds; spline routing as a post-pass with collision
@@ -367,17 +369,21 @@ In-game checkpoints (user):
 1. A hand-built one-constructor blueprint with a belt and a pole loads and
    places.
 2. A single-blueprint chain runs at the flow's rate.
-3. A two-blueprint stack auto-connects when placed.
+3. A grid-routed build, with its lifts and its attachment turns, pastes and
+   runs.
+4. A two-blueprint stack auto-connects when placed.
 
 Milestones, each with its own plan:
 
 - M1 Format and registry: codec, extractor, fixtures, checkpoint 1.
 - M2 Lab game parameter, spec, rates, manifold rows in one blueprint,
   validator, checkpoint 2.
-- M3 Stacking contract, lifts and passthroughs, manifest, zip, web UI,
-  checkpoint 3.
-- M4 Fluids, power and foundations completed across strategies.
-- M5 Grid-routed and continuous CP-SAT strategies, the race, the bench.
+- M3 Section 9's strategy 2 brought forward: the grid packer, the geometric
+  interval router, the serial race against manifold rows, checkpoint 3.
+- M4 Stacking contract, lifts through passthroughs, manifest, zip, web viewer,
+  checkpoint 4.
+- M5 Fluids, power completed across strategies, the continuous CP-SAT
+  experiment, the bench.
 
 ## 13. Out of scope
 
@@ -454,3 +460,9 @@ without walking the class's supers, so a Mk2 or Mk3 power pole comes out with no
 grid. And `flab2bp.bench.sfy_corpus` still reaches `flab2bp.rates.CandidatePolicy`
 for its policy type, which drags the DSP catalog -- and `Tier` -- into a
 Satisfactory-only import; moving `Tier` out is a small M3 chore.
+
+**Why M3 is now packing and routing (R-M3-0).** Section 12's milestone list is
+the order that ruling set -- section 9's strategy 2 brought forward, stacking
+and its companions moved to M4 -- and
+`docs/superpowers/plans/2026-09-15-satisfactory-m3-grid-router-race.md` is the
+plan that carries it out, both extractor gaps above included.
