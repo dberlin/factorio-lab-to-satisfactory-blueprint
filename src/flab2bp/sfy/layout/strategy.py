@@ -89,6 +89,21 @@ from flab2bp.spec import BeltTier
 
 __all__ = ["REFUSALS", "ManifoldRows"]
 
+GAME_DATA = "the game data does not describe a machine this build needs"
+"""One cause for every way the extraction leaves a hole a build falls into.
+
+A missing buildable, a machine with no hard clearance box or no belt output port,
+a belt tier the lab map has no class for: all of them are the same answer to the
+caller -- this build cannot be authored from the game data we have -- and all of
+them carry the detail that says which.
+"""
+
+GAME_LIMITS = "the game data states no limit this build needs"
+"""The same, for a ``limits`` field the registry does not carry: the hologram
+grid, the minimum belt length, the maximum incline, the bend radius, the maximum
+spline.  Separate from :data:`GAME_DATA` because a missing bound is a different
+gap from a missing machine, and a reader chasing one is not chasing the other."""
+
 REFUSALS = (
     # The brief's own list.
     "rows exceed the designer depth",
@@ -98,12 +113,22 @@ REFUSALS = (
     "run exceeds the belt ceiling",
     "fluids are M4",
     "corridor assignment exceeded the budget",
-    # Three more this shape of build can hit that the brief does not name.  Each
-    # is a real refusal with a real cause rather than a stray message, and each
-    # is reachable only for a spec the fixtures do not produce.
+    # The row builder's other causes, each kept as itself rather than folded into
+    # a designer bound it has nothing to do with.
+    "row too tall",
+    "more input items than the machine has belt ports",
+    "a row drains one of several products",
+    "a feeder crosses the chain inside it",
+    "this spec names no belt",
+    GAME_DATA,
+    GAME_LIMITS,
+    # The corridor's own, beyond the three the brief names.
+    "a trunk would have to run back down the corridor",
+    "a corridor path has no length",
+    "layout exceeded the budget",
+    # Two more this shape of build can hit that the brief does not name.
     "a row makes something the spec never sends out",
     "a row is fed from the corridor on the other side of the build",
-    "nothing in the build supplies a row's input",
     # Task 9's three: a pole line that cannot be reached, cannot be stood, or a
     # class with no power connection to wire at all.
     "wire exceeds the maximum length",
@@ -112,16 +137,30 @@ REFUSALS = (
 )
 """Every reason this strategy refuses with, and the only ones it may use."""
 
-#: The row builder's own causes, as they arrive on a ``RowError``, mapped onto
-#: the names a caller of this module sees.  A row too wide or too tall for the
-#: doubled frame it is measured in is the build being too big for the designer,
-#: which is what the caller is told.
-_ROW_CAUSES = {
-    "row too deep": "row too deep",
-    "row too wide": "rows exceed the designer width",
-    "row too tall": "rows exceed the designer depth",
-    "run exceeds the belt ceiling": "run exceeds the belt ceiling",
-}
+#: The row builder's own causes, as they arrive on a ``RowError``, mapped onto the
+#: names a caller of this module sees, by the words each message is built from.
+#: A row too WIDE for the doubled frame it is measured in is the build being too
+#: big for the designer, which is what the caller is told; every other cause is
+#: its own, because a caller told "row too deep" about a machine the registry does
+#: not carry would go and look at the wrong thing.  Ordered: the first needle a
+#: message holds wins, and :func:`_row_cause` refuses to guess at one it has not
+#: got.
+_ROW_CAUSES: tuple[tuple[str, str], ...] = (
+    ("row too deep", "row too deep"),
+    ("row too wide", "rows exceed the designer width"),
+    ("row too tall", "row too tall"),
+    ("run exceeds the belt ceiling", "run exceeds the belt ceiling"),
+    ("more input items than", "more input items than the machine has belt ports"),
+    ("drains one output item", "a row drains one of several products"),
+    ("crosses the chain", "a feeder crosses the chain inside it"),
+    ("this spec names no belt", "this spec names no belt"),
+    ("the registry states no", GAME_LIMITS),
+    ("the registry has no buildable", GAME_DATA),
+    ("has no hard clearance box", GAME_DATA),
+    ("has no clearance box", GAME_DATA),
+    ("has no belt output port", GAME_DATA),
+    ("the lab map has no conveyor class", GAME_DATA),
+)
 
 #: What a :class:`~flab2bp.sfy.layout.corridors.CorridorError`'s cause is called
 #: where a caller can see it.
@@ -129,6 +168,9 @@ _CORRIDOR_CAUSES = {
     "width": "rows exceed the designer width",
     "bridge": "corridor needs a bridge that does not fit",
     "depth": "rows exceed the designer depth",
+    "backwards": "a trunk would have to run back down the corridor",
+    "path": "a corridor path has no length",
+    "limits": GAME_LIMITS,
 }
 
 #: What a :class:`~flab2bp.sfy.layout.power.PowerError`'s cause is called where a
@@ -179,7 +221,18 @@ class ManifoldRows:
         try:
             return layout.build()
         except BudgetExhausted as exc:
-            raise _refuse(spec, "corridor assignment exceeded the budget", str(exc)) from exc
+            # The clock and the column allowance are two different bounds and a
+            # caller does something different about each: more time, or a build
+            # that is not asking for thousands of columns.  ``TransportRefusal``
+            # says which ran out.
+            spent = getattr(exc, "reason", "")
+            raise _refuse(
+                spec,
+                "corridor assignment exceeded the budget"
+                if spent == "POLICY_BOUND"
+                else "layout exceeded the budget",
+                str(exc),
+            ) from exc
         except CorridorError as exc:
             raise _refuse(spec, _CORRIDOR_CAUSES[exc.cause], exc.detail) from exc
         except RowError as exc:
@@ -200,11 +253,22 @@ def _refuse(spec: SfyBuildSpec, reason: str, detail: str = "") -> NoValidLayout:
 
 
 def _row_cause(error: RowError) -> str:
-    head = str(error).split(":", 1)[0]
-    for cause, mapped in _ROW_CAUSES.items():
-        if head.startswith(cause):
-            return mapped
-    return "row too deep"
+    """Which named refusal one of the row builder's own errors is.
+
+    Raises rather than guessing.  A default here would tell a caller "row too
+    deep" about a machine class the registry does not carry, and a wrong cause is
+    worse than a stack trace: it sends the reader to the wrong file.  Every
+    message :mod:`flab2bp.sfy.layout.manifold` raises is in :data:`_ROW_CAUSES`,
+    and a new one has to be put there deliberately.
+    """
+    message = str(error)
+    for needle, cause in _ROW_CAUSES:
+        if needle in message:
+            return cause
+    raise ValueError(
+        f"this module has no named refusal for the row builder's {message!r}; add one to "
+        "_ROW_CAUSES and to REFUSALS rather than letting it wear another cause's name"
+    )
 
 
 # --- what stands where -----------------------------------------------------
@@ -296,6 +360,19 @@ class _Layout:
 
     def build(self) -> SfyPlacement:
         self._refuse_fluids()
+        self._measure()
+        self.rows = self._lay_rows()
+        self.belt_z = max(row.geometry.belt_z_cm for row in self.rows)
+        self._plan_columns()
+        return self._placement(self._lay_corridors())
+
+    def _measure(self) -> None:
+        """Every number the rest of this build is laid out against, read once.
+
+        Apart from the designer's own half width these are all the corridor's,
+        and all of them come out of ``registry.json``; nothing below this line
+        reads a limit again.
+        """
         self.grid = _grid(self.registry)
         self.radius = turn_radius_cm(self.registry)
         self.pitch = belt_pitch_cm(self.registry)
@@ -303,10 +380,6 @@ class _Layout:
         self.lead = _lead_cm(self.registry, self.grid)
         self.lead_in = _lead_in_cm(self.registry, self.grid)
         self.half = self.designer.half_cm
-        self.rows = self._lay_rows()
-        self.belt_z = max(row.geometry.belt_z_cm for row in self.rows)
-        self._plan_columns()
-        return self._placement(self._lay_corridors())
 
     # --- rows ---------------------------------------------------------------
 
@@ -314,18 +387,22 @@ class _Layout:
         """Build every row and stand it where it belongs on the floor."""
         order = _production_order(self.spec.groups)
         measuring = _measuring_designer(self.designer)
-        built = [
-            build_row(
-                group,
-                self.registry,
-                designer=measuring,
-                belt_tiers=self.spec.belt_tiers,
-                flip=bool(index % 2),
-                next_id=self.ids,
-                lab_map=self.lab_map,
+        built: list[RowGeometry] = []
+        for index, group in enumerate(order):
+            # The clock bounds the whole of lay_out, not only the column search:
+            # a row is the largest piece of work this module does in one step.
+            self.budget.check()
+            built.append(
+                build_row(
+                    group,
+                    self.registry,
+                    designer=measuring,
+                    belt_tiers=self.spec.belt_tiers,
+                    flip=bool(index % 2),
+                    next_id=self.ids,
+                    lab_map=self.lab_map,
+                )
             )
-            for index, group in enumerate(order)
-        ]
         width = max(row.width_cm for row in built)
         if width > 2.0 * self.half + _EPS:
             raise _refuse(
@@ -471,13 +548,20 @@ class _Layout:
         theirs = {side: list(sinks.get((item, side), [])) for side in sides}
         hungry = [side for side in sides if theirs[side] and not mine[side]]
         if hungry and arriving <= 0:
+            if not any(mine.values()):
+                # Not a refusal: SfyBuildSpec's own validator turns a spec with an
+                # unsupplied input away at construction, so a spec that reaches
+                # here with one is this package disagreeing with itself.
+                raise ValueError(
+                    f"no row makes {item!r} and the spec belts none of it in, which "
+                    "SfyBuildSpec._no_dangling_demand refuses at construction; a spec that "
+                    "reaches the layout stage with it is a bug in this package"
+                )
             raise _refuse(
                 self.spec,
-                "nothing in the build supplies a row's input"
-                if not any(mine.values())
-                else "a row is fed from the corridor on the other side of the build",
-                f"{item!r} is wanted in the {'+X' if hungry[0] > 0 else '-X'} corridor and "
-                "neither a row on that side nor the spec's external inputs supply it",
+                "a row is fed from the corridor on the other side of the build",
+                f"{item!r} is wanted in the {'+X' if hungry[0] > 0 else '-X'} corridor, is made "
+                "only on the other side of the rows, and the spec belts none of it in",
             )
         if arriving > 0:
             for side, rate in _share(arriving, hungry or sides[:1], theirs).items():
@@ -541,14 +625,38 @@ class _Layout:
         a bound: two nodes have to stand at least an attachment pitch apart and
         clear of the spine's own turns, which two rows always are and which is
         checked here rather than discovered as a belt of minus a metre.
+
+        **The nodes are sorted by ``Y``, not by kind.**  A source can stand
+        between two sinks -- a row that makes some of an item the row below it
+        also makes, feeding a row above them both -- and then the spine merges it
+        in on the way past, after it has already split some off.  Which is what
+        the sort states: the spine meets what it meets in the order it gets there,
+        and :func:`_carried` reads the rate the same way.
+
+        What the spine CANNOT do is meet something outside its own span.  A source
+        above the last sink would have to run back down the corridor against
+        everything else in it, and one monotone column cannot carry two
+        directions; that is a named refusal rather than a merger standing past the
+        end of the belt it merges into.
         """
         net.sources.sort(key=lambda terminal: terminal.y)
         net.sinks.sort(key=lambda terminal: terminal.y)
-        net.nodes = [
-            _Node(y=source.y, merging=True, branch=source) for source in net.sources[1:]
-        ] + [_Node(y=sink.y, merging=False, branch=sink) for sink in net.sinks[:-1]]
+        net.nodes = sorted(
+            [_Node(y=source.y, merging=True, branch=source) for source in net.sources[1:]]
+            + [_Node(y=sink.y, merging=False, branch=sink) for sink in net.sinks[:-1]],
+            key=lambda node: (node.y, node.merging),
+        )
         if not net.nodes:
             return
+        span = (_spine_start(net), _spine_end(net))
+        stray = [node for node in net.nodes if not span[0] - _EPS <= node.y <= span[1] + _EPS]
+        if stray:
+            raise CorridorError(
+                "backwards",
+                f"the {net.item!r} trunk runs from y = {span[0]:.0f} to {span[1]:.0f} and a "
+                f"{'source' if stray[0].merging else 'sink'} of it stands at "
+                f"{stray[0].y:.0f}, outside that span",
+            )
         clear = _spine_start(net) + (0.0 if net.sources[0].wall else self.radius) + self.lead
         for node in net.nodes:
             if node.y + _EPS < clear:
@@ -573,6 +681,7 @@ class _Layout:
         belts: list[BeltRun] = []
         links: list[Link] = []
         for net in self.nets:
+            self.budget.check()  # the clock bounds the drawing as well as the search
             x = self._column_x(net.side, self.spine[net.label].column)
             stood = [self._stand(node, x) for node in net.nodes]
             attachments.extend(obj for obj, _ in stood)
@@ -834,15 +943,21 @@ class _Layout:
         route.go(fall, drop)
 
     def _room(self, x: float, crossed: tuple[int, ...], side: int) -> float:
-        """How much of a transverse is clear of the columns it crosses.
+        """How much of a transverse at ``x`` is clear of the columns it crosses.
+
+        The slope has to be over before the NEAREST crossing and may only start
+        again after the nearest one on the other side, so what bounds it is the
+        crossed column closest to ``x`` -- which is the innermost crossed one at a
+        row's end of a transverse and the outermost at the corridor's end.  Taking
+        the closest says both without the caller having to say which end it is.
 
         A crossed belt's lane is :data:`BRIDGE_CLEARANCE_BOXES` half-widths wide,
         and only past that may a bridge give up the height it climbed for.
         """
         if not crossed:
             return math.inf
-        nearest = self._column_x(side, min(crossed))
-        return abs(x - nearest) - BRIDGE_CLEARANCE_BOXES * BELT_CLEARANCE_HALF_WIDTH_CM
+        nearest = min(abs(x - self._column_x(side, column)) for column in crossed)
+        return nearest - BRIDGE_CLEARANCE_BOXES * BELT_CLEARANCE_HALF_WIDTH_CM
 
     # --- the floor and the placement ----------------------------------------
 
@@ -1032,10 +1147,13 @@ def _share(
 ) -> dict[int, Fraction]:
     """``total`` split between corridors in proportion to what each one wants.
 
-    One corridor takes the lot, which is every build the fixtures produce.  Where
-    an item is wanted on both sides the split is by the rate each side asks for,
-    in exact ``Fraction`` arithmetic, so that the two wall belts add up to the
-    rate the spec states and neither is sized for the whole build.
+    **Ours**, and the only rate this module decides: FactorioLab states what
+    crosses the boundary and says nothing about which side of a build it crosses
+    on, because it knows nothing about sides.  One corridor takes the lot, which
+    is every build the fixtures produce.  Where an item is wanted on both sides
+    the split is by the rate each side asks for, in exact ``Fraction`` arithmetic,
+    so that the two wall belts add up to the rate the spec states and neither is
+    sized for the whole build.
     """
     if len(sides) == 1:
         return {sides[0]: total}

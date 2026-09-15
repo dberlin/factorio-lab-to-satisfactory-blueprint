@@ -13,9 +13,11 @@ not, and "it laid something out" is not evidence that it laid out the build.
 
 from __future__ import annotations
 
+import math
 from fractions import Fraction
 from functools import cache
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -23,12 +25,15 @@ from flab2bp.lab.data import load_vendored
 from flab2bp.lab.flow import load_flow
 from flab2bp.lab.url import Game, parse_url
 from flab2bp.layout.base import NoValidLayout
+from flab2bp.layout.budget import WorkBudget
 from flab2bp.sfy.archive import Reader
 from flab2bp.sfy.header import read_header
 from flab2bp.sfy.labmap import load_lab_map
+from flab2bp.sfy.layout import strategy
+from flab2bp.sfy.layout.corridors import BRIDGE_CLEARANCE_BOXES, CorridorError
 from flab2bp.sfy.layout.emit import decode, emit
-from flab2bp.sfy.layout.manifold import crossing_gap_cm
-from flab2bp.sfy.layout.model import SfyPlacement
+from flab2bp.sfy.layout.manifold import RowError, crossing_gap_cm
+from flab2bp.sfy.layout.model import AttachmentObj, SfyPlacement
 from flab2bp.sfy.layout.strategy import ManifoldRows
 from flab2bp.sfy.layout.validate import validate
 from flab2bp.sfy.rates import spec_from_flow
@@ -88,6 +93,20 @@ def _assert_clean(placement: SfyPlacement, spec: SfyBuildSpec) -> None:
         assert report.by_check(cid), f"{cid} stood aside without saying why"
 
 
+def _corridor(placement: SfyPlacement, kind: str) -> list[AttachmentObj]:
+    """The attachments of ``kind`` standing in a corridor rather than in a row.
+
+    Which they are is not a threshold to write down: a corridor runs along ``Y``
+    and a row along ``X``, so an attachment in a corridor is turned a quarter
+    turn against the rows' own and the yaw says which is which.
+    """
+    return [
+        obj
+        for obj in placement.attachments
+        if obj.class_name.endswith(kind) and obj.pose.yaw_deg == 90.0
+    ]
+
+
 def _group(spec: SfyBuildSpec, recipe_id: str) -> SfyMachineGroup:
     return next(g for g in spec.groups if g.recipe_id == recipe_id)
 
@@ -101,12 +120,14 @@ def _fragment(
 ) -> SfyBuildSpec:
     """A spec built out of the fixture flow's own groups, belts and rates.
 
-    Nothing here invents a rate: every group is one FactorioLab chose, and the
-    belt floor and upgrades are the ones the flow's URL asked for.  What the
-    fragment chooses is which rows stand together, which is how a net with two
-    sinks or two sources is put in front of the strategy at all -- a two-row
-    build is all a Blueprint Designer holds, and both shapes need one row to
-    meet something else in the same corridor.
+    Every group is one FactorioLab chose, at the rates and on the belts the
+    flow's URL asked for.  What a fragment chooses is which rows stand together
+    and what crosses the boundary -- the external inputs, the outputs and the
+    surplus are this test's own, and each one is the number that balances the
+    rows it is written beside.  That is the only way to put a net with two sinks
+    or two sources in front of the strategy at all: a two-row build is all a
+    Blueprint Designer holds, and both shapes need one row to meet something else
+    in the same corridor.
     """
     source = _spec("reinforced-iron-plate-10")
     return SfyBuildSpec(
@@ -152,9 +173,10 @@ def test_iron_plate_at_sixty_does_not_fit_the_two_smaller_designers() -> None:
 def test_ten_reinforced_plates_a_minute_needs_five_rows_and_no_designer_holds_them() -> None:
     """The five-row build the brief predicted, measured rather than assumed.
 
-    Smelter, plate, rod, screw and assembler rows stack to 92 m of band; the
-    largest Blueprint Designer is 48 m deep.  The cause is named for every mark
-    the game ships, which is the honest answer to "lay this out".
+    Smelter, plate, rod, screw and assembler rows are 88 m of band between them,
+    and 110 m with the gaps their trunks turn in and the room at the two walls;
+    the largest Blueprint Designer is 48 m deep.  The cause is named for every
+    mark the game ships, which is the honest answer to "lay this out".
     """
     spec = _spec("reinforced-iron-plate-10")
     assert len(spec.groups) == 5
@@ -247,8 +269,7 @@ def test_a_source_with_two_sinks_gets_a_splitter_chain_in_the_corridor() -> None
     )
     placement = _lay_out(spec, MARK)
     _assert_clean(placement, spec)
-    splitters = [a for a in placement.attachments if a.class_name.endswith("Splitter_C")]
-    corridor = [a for a in splitters if abs(a.pose.x) > 1300.0]
+    corridor = _corridor(placement, "Splitter_C")
     assert corridor, "a source with two sinks is split in the corridor, not in a row"
 
 
@@ -264,8 +285,7 @@ def test_two_sources_into_one_sink_get_a_merger_before_the_chain_end() -> None:
     )
     placement = _lay_out(spec, MARK)
     _assert_clean(placement, spec)
-    mergers = [a for a in placement.attachments if a.class_name.endswith("Merger_C")]
-    assert [a for a in mergers if abs(a.pose.x) > 1300.0]
+    assert _corridor(placement, "Merger_C")
 
 
 def test_a_trunk_that_must_cross_an_occupied_column_rides_over_it() -> None:
@@ -319,3 +339,180 @@ def test_a_fluid_in_the_spec_is_refused_as_a_later_milestone() -> None:
 
 def test_the_strategy_names_itself() -> None:
     assert ManifoldRows().name == "manifold-rows"
+
+
+# --- the corridor's own arithmetic, pinned on its own ----------------------
+
+
+def _fresh(spec: SfyBuildSpec, mark: str = MARK) -> strategy._Layout:
+    """A layout with its numbers read and nothing laid out yet.
+
+    Two of the decisions below -- where a merger stands and how much of a
+    transverse is clear of what it crosses -- are arithmetic on a handful of
+    numbers, and a whole build is a poor place to read either of them.
+    """
+    layout = strategy._Layout(
+        spec=spec,
+        designer=designer(mark, _registry()),
+        registry=_registry(),
+        lab_map=load_lab_map(),
+        budget=WorkBudget(),
+    )
+    layout._measure()
+    return layout
+
+
+def _terminal(y: float, rate: Fraction, *, wall: bool = False) -> strategy._Terminal:
+    return strategy._Terminal(item="iron-ingot", rate=rate, side=1, y=y, wall=wall)
+
+
+def _net(sources: list[strategy._Terminal], sinks: list[strategy._Terminal]) -> strategy._Net:
+    return strategy._Net(item="iron-ingot", side=1, sources=sources, sinks=sinks)
+
+
+def test_the_nodes_stand_in_the_order_the_spine_meets_them_not_in_kind_order() -> None:
+    """A source can stand between two sinks, and then the spine merges it in on
+    the way past -- after it has already split some off.
+
+    Mergers are built from the sources and splitters from the sinks, so taking
+    them in that order would put a merger at 1000 before a splitter at 0 and the
+    belt between them would run backwards.  The sort is by ``Y``, which is the
+    order a belt running up one column actually arrives in, and
+    :func:`_carried` reads the rate the same way.
+    """
+    layout = _fresh(_spec("iron-plate-60"))
+    net = _net(
+        sources=[_terminal(-2400.0, Fraction(1), wall=True), _terminal(1000.0, Fraction(1, 2))],
+        sinks=[_terminal(0.0, Fraction(1, 4)), _terminal(2400.0, Fraction(5, 4), wall=True)],
+    )
+    layout._plan_nodes(net)
+    assert [(node.y, node.merging) for node in net.nodes] == [(0.0, False), (1000.0, True)]
+    # What the spine carries between them: one in, a quarter off, a half in.
+    assert strategy._carried(net, 0) == Fraction(1)
+    assert strategy._carried(net, 1) == Fraction(3, 4)
+    assert strategy._carried(net, 2) == Fraction(5, 4)
+
+
+def test_a_source_outside_the_span_the_trunk_runs_through_is_refused_by_its_own_cause() -> None:
+    """The reviewer's case: made at y = 1000 and y = 3000, eaten at y = 2000.
+
+    One column carries one direction, and the source above the sink would have to
+    run back down it against everything else in the corridor.  This build form
+    cannot do that, and says so: it is not a designer that is too shallow, which
+    is the cause it used to wear.
+    """
+    layout = _fresh(_spec("iron-plate-60"))
+    net = _net(
+        sources=[_terminal(1000.0, Fraction(1)), _terminal(3000.0, Fraction(1))],
+        sinks=[_terminal(2000.0, Fraction(2))],
+    )
+    with pytest.raises(CorridorError) as caught:
+        layout._plan_nodes(net)
+    assert caught.value.cause == "backwards"
+    assert strategy._CORRIDOR_CAUSES["backwards"] in strategy.REFUSALS
+
+
+def test_how_much_of_a_transverse_is_clear_is_measured_from_the_nearest_crossing() -> None:
+    """The slope has to be over before the crossing it is closest to.
+
+    At a row's end of a transverse that is the innermost column crossed; at the
+    corridor's end it is the outermost.  Taking the closest says both, and it is
+    a real number in both cases -- a ``room`` that answered "unbounded" would let
+    a belt come down through the belt it just climbed over.
+    """
+    layout = _fresh(_spec("iron-plate-60"))
+    layout.x_edge, layout.offset = 1300.0, 300.0
+    assert (layout._column_x(1, 0), layout._column_x(1, 1)) == (1600.0, 1900.0)
+    clear = BRIDGE_CLEARANCE_BOXES * 79.0
+    # A row's chain end at x = 1000: the nearest of the two crossings is column 0.
+    assert layout._room(1000.0, (0, 1), 1) == pytest.approx(600.0 - clear)
+    # A node standing at x = 2200 out in the corridor: the nearest is column 1.
+    assert layout._room(2200.0, (0, 1), 1) == pytest.approx(300.0 - clear)
+    assert layout._room(1000.0, (), 1) == math.inf
+
+
+# --- the causes nothing else reaches ---------------------------------------
+
+
+def test_every_cause_this_module_maps_onto_is_one_it_may_refuse_with() -> None:
+    """A mapping table that named a cause ``REFUSALS`` has not got would turn a
+    refusal into a ``ValueError`` at the worst moment."""
+    mapped = {cause for _, cause in strategy._ROW_CAUSES}
+    mapped |= set(strategy._CORRIDOR_CAUSES.values())
+    mapped |= set(strategy._POWER_CAUSES.values())
+    assert mapped <= set(strategy.REFUSALS)
+
+
+def test_an_unmapped_row_error_raises_rather_than_wearing_another_causes_name() -> None:
+    with pytest.raises(ValueError, match="no named refusal"):
+        strategy._row_cause(RowError("something nobody has thought of yet"))
+
+
+def test_a_row_builder_cause_keeps_its_own_name() -> None:
+    """Two of the row builder's causes, mapped where a reader would look for them."""
+    assert strategy._row_cause(RowError("row too tall: the row reaches z = 4000")) == "row too tall"
+    assert (
+        strategy._row_cause(RowError("the lab map has no conveyor class for 'conveyor-belt-mk9'"))
+        == strategy.GAME_DATA
+    )
+
+
+def test_a_product_the_spec_never_sends_out_is_refused_by_its_own_cause() -> None:
+    """Iron plate made by a row, eaten by nothing, and named in neither the
+    outputs nor the surplus: the merger chain would end on an unwired belt."""
+    flow = _spec("reinforced-iron-plate-10")
+    spec = _fragment(
+        groups=(_group(flow, "iron-ingot"), _group(flow, "iron-plate")),
+        external_inputs={"iron-ore": Fraction(3, 2)},
+        outputs={},
+        label="a row nobody drains",
+    )
+    assert _refusal(spec, MARK) == "a row makes something the spec never sends out"
+
+
+def test_an_item_made_only_on_the_other_side_of_the_rows_is_refused_by_its_own_cause() -> None:
+    """A corridor is one side of the build and a belt cannot cross the rows.
+
+    Three rows would be needed for a build to do this, and no designer is deep
+    enough for three, so the refusal is put in front of the code that raises it
+    rather than through a spec that cannot exist.
+    """
+    layout = _fresh(_spec("iron-plate-60"))
+    made = strategy._Terminal(
+        item="iron-ingot", rate=Fraction(1), side=-1, y=0.0, wall=False, link=(1, "Output1")
+    )
+    eaten = strategy._Terminal(
+        item="iron-ingot", rate=Fraction(1), side=1, y=500.0, wall=False, link=(2, "Input1")
+    )
+    with pytest.raises(NoValidLayout) as caught:
+        layout._nets_for("iron-ingot", {("iron-ingot", -1): [made]}, {("iron-ingot", 1): [eaten]})
+    assert caught.value.reason == "a row is fed from the corridor on the other side of the build"
+
+
+def test_an_item_nothing_supplies_is_this_packages_own_bug_and_not_a_refusal() -> None:
+    """``SfyBuildSpec`` turns that spec away at construction, so a spec that
+    reaches the layout stage with one is not a build anybody asked for."""
+    layout = _fresh(_spec("iron-plate-60"))
+    eaten = strategy._Terminal(
+        item="iron-ingot", rate=Fraction(1), side=1, y=500.0, wall=False, link=(2, "Input1")
+    )
+    with pytest.raises(ValueError, match="bug in this package"):
+        layout._nets_for("iron-ingot", {}, {("iron-ingot", 1): [eaten]})
+
+
+# --- the budget bounds the whole of lay_out --------------------------------
+
+
+def test_a_clock_that_has_already_run_out_refuses_before_a_row_is_built() -> None:
+    spec = _spec("iron-plate-60")
+    with pytest.raises(NoValidLayout) as caught:
+        ManifoldRows().lay_out(spec, designer(MARK, _registry()), time_budget_s=-1.0)
+    assert caught.value.reason == "layout exceeded the budget"
+
+
+def test_a_column_search_that_runs_out_of_tries_says_so_instead() -> None:
+    """The clock and the column allowance are two bounds and two answers."""
+    spec = _spec("iron-plate-60")
+    with patch.object(strategy, "COLUMN_TRIES", 1), pytest.raises(NoValidLayout) as caught:
+        _lay_out(spec, MARK)
+    assert caught.value.reason == "corridor assignment exceeded the budget"

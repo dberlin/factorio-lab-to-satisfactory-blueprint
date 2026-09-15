@@ -311,29 +311,51 @@ to be at and says nothing, so ours is 0.
 ### The refusals
 
 `ManifoldRows.lay_out` either hands back a placement the validator passes or
-raises `NoValidLayout` with one of these, and nothing else:
+raises `NoValidLayout` with one of these, and nothing else. Each is its own
+cause: a caller told "row too deep" about a machine class the registry does not
+carry would go and look at the wrong thing.
 
-`rows exceed the designer depth` · `rows exceed the designer width` ·
-`corridor needs a bridge that does not fit` · `row too deep` ·
-`run exceeds the belt ceiling` · `fluids are M4` ·
-`corridor assignment exceeded the budget` ·
-`a row makes something the spec never sends out` ·
-`a row is fed from the corridor on the other side of the build` ·
-`nothing in the build supplies a row's input` ·
-`wire exceeds the maximum length` · `no room for a power pole` ·
-`a machine has no power connection`
+| what went wrong | cause |
+| --- | --- |
+| the build is too big for the designer | `rows exceed the designer depth` · `rows exceed the designer width` · `row too deep` · `row too tall` |
+| the corridor cannot be laid | `corridor needs a bridge that does not fit` · `a trunk would have to run back down the corridor` · `a corridor path has no length` |
+| the belts cannot carry it | `run exceeds the belt ceiling` · `this spec names no belt` |
+| the machine will not take it | `more input items than the machine has belt ports` · `a row drains one of several products` · `a feeder crosses the chain inside it` |
+| the spec sends something nowhere | `a row makes something the spec never sends out` · `a row is fed from the corridor on the other side of the build` |
+| the power stage | `wire exceeds the maximum length` · `no room for a power pole` · `a machine has no power connection` |
+| a bound ran out | `corridor assignment exceeded the budget` (columns tried) · `layout exceeded the budget` (the clock) |
+| the extraction left a hole | `the game data does not describe a machine this build needs` · `the game data states no limit this build needs` |
+| not this milestone | `fluids are M4` |
 
-The last six are not in the brief's list; three are shapes of spec this build
-form cannot realise and three are the power stage's, and each is a named cause
-rather than a stray message. The
-module refuses to raise anything else: `_refuse` checks the string against
-`REFUSALS` and raises `ValueError` on a cause nobody declared.
+The module refuses to raise anything else. `_refuse` checks the string against
+`REFUSALS` and raises `ValueError` on a cause nobody declared; `_row_cause` and
+the two mapping tables beside it do the same for a cause arriving from the row
+builder, the corridor or the power stage, rather than defaulting to some other
+refusal's name. An input no row makes and the spec does not belt in is not in the
+list at all: `SfyBuildSpec`'s own validator refuses that spec at construction, so
+one reaching the layout stage is a bug in this package and is raised as one.
 
 **What fits.** Two rows and the room their trunks need to turn between them is
 42 m of band. The mk1 designer is 32 m deep and the mk2 is 40, so a two-row build
 is an mk3 one; `iron-plate-60` refuses both smaller marks on depth.
 `reinforced-iron-plate-10` is five rows and 110 m of band, which no designer
 holds, and it refuses for every mark the game ships.
+
+### One clearance box, placed in one place
+
+An `FFGClearanceData` is a `Min`/`Max` box in the frame of its own
+`RelativeTransform`, which is itself relative to the actor, so placing one means
+composing two transforms in the right order: the box's scale, then its
+`(pitch, yaw, roll)` rotator, then its offset, then the actor's rotation and
+translation. Getting a step of that wrong puts a box somewhere the game does not.
+
+`flab2bp.sfy.geometry.placed_box` is the one place it is written — returning
+`(centre, axes, half)`, an oriented box — and `box_bounds` beside it projects that
+onto the world axes for a caller measuring a band. The validator (`_place_box`,
+which adds the flags and the label a finding names), the pole placer
+(`power.box_bounds`) and the row builder (`manifold._box_bounds`) all go through
+them, so the boxes a build is measured against and the boxes it is judged against
+are the same boxes.
 
 ### The broad phase
 
