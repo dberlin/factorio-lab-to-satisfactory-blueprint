@@ -26,6 +26,9 @@ __all__ = [
     "COST_SEGMENT_SOURCES",
     "FLOW_NAME_SOURCES",
     "FLOW_SOURCES",
+    "LIFT_GEOMETRY_FIELDS",
+    "LIFT_GEOMETRY_SOURCES",
+    "LIFT_NATIVE_CLASS",
     "LIMIT_SOURCES",
     "MAX_CONNECTIONS_SOURCES",
     "MESH_BOUNDS_SOURCES",
@@ -36,6 +39,7 @@ __all__ = [
     "Buildable",
     "ClearanceBox",
     "ConveyorFlow",
+    "LiftGeometry",
     "Limits",
     "Port",
     "Recipe",
@@ -152,6 +156,19 @@ FLOW_SOURCES = ("header", "native")
 # no second entry here.
 FLOW_NAME_SOURCES = ("asset",)
 
+# Where one field of a conveyor lift's runtime geometry was read. A lift's two
+# ports sit at the actor origin with no rotation in the cooked class default
+# object, so where its ends actually are is decided at runtime and read from:
+#
+# ``header``  a declaration or its comment in ``CommunityResources/Headers.zip``
+# ``native``  the shipped DLL's machine code, quoted by the ``lift.connectors``
+#             and ``lift.top_yaw`` rules in ``data/hologram_rules.json``
+# ``docs``    a class default in the game's own Docs.json dump
+#
+# There is no fourth entry, and a lift measured off a blueprint is not one: a
+# corpus lift says what somebody once placed, not what the game computes.
+LIFT_GEOMETRY_SOURCES = ("header", "native", "docs")
+
 # Where a buildable's cost segment came from. The game's own Docs.json states
 # it as a class default -- ``mMeshLength`` on a conveyor belt, ``mMeshHeight``
 # on a lift -- and ``provenance["cost_segment"]`` names the property per native
@@ -261,6 +278,79 @@ class ConveyorFlow:
 
 
 @dataclass(frozen=True, slots=True)
+class LiftGeometry:
+    """Where a conveyor lift's two ends sit, which way they face, and how far the
+    top may be turned -- the geometry the game computes at runtime.
+
+    :attr:`Port.translation` and :attr:`Port.rotation` are both zero on a lift's
+    two ports, because the cooked class default object puts both connection
+    components at the actor origin and ``AFGBuildableConveyorLift::
+    SetupConnections`` moves them when the lift is built. This is what it moves
+    them to, per the ``lift.connectors`` rule.
+
+    ``bottom_offset`` and ``bottom_facing`` are ``mConnection0``, which is the
+    end items enter by (:attr:`ConveyorFlow.entry` names its port) and which the
+    game puts at the actor transform exactly, facing the actor's own forward.
+
+    The top end is ``mConnection1``, at ``mTopTransform``, whose translation is
+    the lift's signed height along ``top_offset_axis`` -- so
+    :meth:`top_offset` is the ``top_offset_fn`` of the design: the top's offset
+    from the actor for a lift of that height. A *negative* height is a lift
+    whose actor sits at the top; the entry is still ``mConnection0``, which is
+    what ``reversed_swaps_flow`` being false says. ``AFGBuildableConveyorLift::
+    GetConveyorLiftFlowDirection`` reads nothing but the sign of that Z, and the
+    ``mIsReversed`` the save format still carries is marked DEPRECATED in the
+    header and read by nothing that places a connection.
+
+    ``top_yaw_free`` says the top's yaw is chosen independently of the bottom's,
+    in whole ``top_yaw_step_deg`` steps -- four directions, since the lift
+    hologram's rotation step is 90 from the second placement point onward. See
+    the ``lift.top_yaw`` rule.
+
+    ``sources`` maps each of the six fields above to where it was read; every
+    value is one of :data:`LIFT_GEOMETRY_SOURCES`.
+    """
+
+    bottom_offset: Vector
+    bottom_facing: Vector
+    top_offset_axis: Vector
+    top_yaw_free: bool
+    top_yaw_step_deg: float
+    reversed_swaps_flow: bool
+    sources: dict[str, str]
+
+    def top_offset(self, height_cm: float) -> Vector:
+        """The top end's offset from the actor for a lift of ``height_cm``.
+
+        The height is signed the way ``mTopTransform``'s translation is: positive
+        for a lift whose top is above its actor, negative for one whose top is
+        below.
+        """
+        return (
+            self.top_offset_axis[0] * height_cm,
+            self.top_offset_axis[1] * height_cm,
+            self.top_offset_axis[2] * height_cm,
+        )
+
+
+#: The fields of :class:`LiftGeometry` that have to carry a source, which is
+#: every one of them: a number here with nothing behind it would be a guess at
+#: geometry, and geometry is the whole of what this says.
+LIFT_GEOMETRY_FIELDS = (
+    "bottom_offset",
+    "bottom_facing",
+    "top_offset_axis",
+    "top_yaw_free",
+    "top_yaw_step_deg",
+    "reversed_swaps_flow",
+)
+
+#: The native class whose buildables carry a :class:`LiftGeometry`. Docs.json
+#: spells it without UHT's ``A`` prefix.
+LIFT_NATIVE_CLASS = "FGBuildableConveyorLift"
+
+
+@dataclass(frozen=True, slots=True)
 class Buildable:
     """A placeable building, with whatever of its stats Docs.json carries.
 
@@ -336,6 +426,10 @@ class Buildable:
     # The item-flow order of the two conveyor ends, on the belt and lift marks
     # and on nothing else. ``None`` means this class carries no such order.
     flow: ConveyorFlow | None = None
+    # Where a conveyor lift's two ends sit once the game has placed them, on the
+    # six lift marks and on nothing else. ``None`` on every other class;
+    # :func:`load_registry` refuses a lift class that has none.
+    lift: LiftGeometry | None = None
     # How much of a spline buildable one unit of its build recipe pays for, and
     # where that number was read -- see :data:`COST_SEGMENT_SOURCES`. ``None``
     # for everything the game charges its recipe exactly once, which is
@@ -617,6 +711,57 @@ def _flow(raw: Mapping[str, Any] | None, ports: tuple[Port, ...]) -> ConveyorFlo
     return flow
 
 
+def _lift(class_name: str, native_class: str, raw: Mapping[str, Any] | None) -> LiftGeometry | None:
+    """Read a lift's runtime connector geometry, refusing one nothing backs.
+
+    A class that is not a conveyor lift may not carry it at all -- this is
+    ``AFGBuildableConveyorLift``'s ``SetupConnections``, and nothing else runs
+    it. That a lift *does* carry it is checked once over the whole registry, by
+    :func:`_require_lift_geometry`, because that is a claim about the merge and
+    not about one entry.
+
+    Every field names where it was read, from :data:`LIFT_GEOMETRY_SOURCES`, and
+    the two direction vectors have to be unit-length along one axis: they are
+    the game's own ``+X`` forward and ``FVector::UpVector``, and a vector that
+    is neither would mean something was converted on the way here.
+    """
+    if raw is None:
+        return None
+    if native_class != LIFT_NATIVE_CLASS:
+        raise RegistryError(
+            f"{class_name} is a {native_class} and carries lift connector geometry, which "
+            f"only a {LIFT_NATIVE_CLASS} has"
+        )
+    sources = {str(k): str(v) for k, v in dict(raw["sources"]).items()}
+    lift = LiftGeometry(
+        bottom_offset=_vector(raw["bottom_offset"]),
+        bottom_facing=_vector(raw["bottom_facing"]),
+        top_offset_axis=_vector(raw["top_offset_axis"]),
+        top_yaw_free=bool(raw["top_yaw_free"]),
+        top_yaw_step_deg=float(raw["top_yaw_step_deg"]),
+        reversed_swaps_flow=bool(raw["reversed_swaps_flow"]),
+        sources=sources,
+    )
+    if sorted(sources) != sorted(LIFT_GEOMETRY_FIELDS):
+        raise RegistryError(
+            f"{class_name}'s lift geometry says where "
+            f"{sorted(sources)} came from, wanted {sorted(LIFT_GEOMETRY_FIELDS)}"
+        )
+    unknown = sorted({v for v in sources.values() if v not in LIFT_GEOMETRY_SOURCES})
+    if unknown:
+        raise RegistryError(f"{class_name}'s lift geometry comes from no game source: {unknown}")
+    axes = (("bottom_facing", lift.bottom_facing), ("top_offset_axis", lift.top_offset_axis))
+    for name, axis in axes:
+        if sorted(abs(c) for c in axis) != [0.0, 0.0, 1.0]:
+            raise RegistryError(f"{class_name}'s {name} is not a unit axis: {axis}")
+    if lift.top_yaw_step_deg <= 0.0 or 360.0 % lift.top_yaw_step_deg != 0.0:
+        raise RegistryError(
+            f"{class_name}'s top yaw step is {lift.top_yaw_step_deg}, which does not "
+            "divide a full turn"
+        )
+    return lift
+
+
 def _buildables(raw: Mapping[str, Mapping[str, Any]]) -> dict[str, Buildable]:
     out: dict[str, Buildable] = {}
     for class_name, entry in raw.items():
@@ -654,10 +799,30 @@ def _buildables(raw: Mapping[str, Mapping[str, Any]]) -> dict[str, Buildable]:
                 grid_snap_cm=_opt_float(entry.get("grid_snap_cm")),
                 ports=ports,
                 flow=_flow(entry.get("flow"), ports),
+                lift=_lift(class_name, str(entry["native_class"]), entry.get("lift")),
             )
         except (KeyError, IndexError, TypeError, ValueError) as exc:
             raise RegistryError(f"buildable {class_name!r} is malformed: {exc}") from exc
     return out
+
+
+def _require_lift_geometry(buildables: Mapping[str, Buildable]) -> None:
+    """Refuse a registry whose conveyor lifts do not say where their ends are.
+
+    A lift's two ports are both at the actor origin with no rotation, so a lift
+    that states no :class:`LiftGeometry` states nothing at all about its own
+    geometry and would leave a placer to invent the one fact it most needs.
+    """
+    silent = sorted(
+        name
+        for name, buildable in buildables.items()
+        if buildable.native_class == LIFT_NATIVE_CLASS and buildable.lift is None
+    )
+    if silent:
+        raise RegistryError(
+            f"{silent} states no connector geometry, and a {LIFT_NATIVE_CLASS}'s ports say "
+            "nothing about where its ends are; re-run scripts/sfy_registry.py"
+        )
 
 
 def _recipes(raw: Mapping[str, Mapping[str, Any]]) -> dict[str, Recipe]:
@@ -792,9 +957,11 @@ def load_registry(path: Path | None = None) -> Registry:
     sources = _limits_sources(_require(data, "limits_sources"), limits)
     provenance = dict(_require(data, "provenance"))
     _governance(provenance, limits)
+    buildables = _buildables(_require(data, "buildables"))
+    _require_lift_geometry(buildables)
     return Registry(
         provenance=provenance,
-        buildables=_buildables(_require(data, "buildables")),
+        buildables=buildables,
         recipes=_recipes(_require(data, "recipes")),
         descriptors=dict(_require(data, "descriptors")),
         build_recipes=dict(_require(data, "build_recipes")),

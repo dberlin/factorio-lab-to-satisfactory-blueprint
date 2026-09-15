@@ -145,6 +145,16 @@ TARGETS: dict[str, tuple[str, str, str]] = {
         "CheckValidPlacement",
         "Hologram/FGConveyorLiftHologram.h:62",
     ),
+    "lift.connectors": (
+        "AFGBuildableConveyorLift",
+        "SetupConnections",
+        "Buildables/FGBuildableConveyorLift.h:148",
+    ),
+    "lift.top_yaw": (
+        "AFGConveyorLiftHologram",
+        "SetHologramLocationAndRotation",
+        "Hologram/FGConveyorLiftHologram.h:157",
+    ),
     "lift.clearance": (
         "AFGConveyorLiftHologram",
         "UpdateClearance",
@@ -200,6 +210,11 @@ TARGETS: dict[str, tuple[str, str, str]] = {
 # A ``Class::Method@0xRVA`` names one of several bodies the linker gave the same
 # ``Class::Method`` name -- two overloads, or a constructor emitted twice -- and
 # the run fails if nothing sits at that RVA.
+# A bare ``0xRVA`` is a function the PDB publishes under a mangling with no
+# ``Class::Method`` form at all -- a templated member such as
+# ``TTransform<double>``'s, which ``sfy-native`` has no demangler for. Such a
+# function is asked for by address; ``.pdata`` still bounds it, and the evidence
+# quotes it by address like any other.
 ALSO_READ: dict[str, tuple[str, ...]] = {
     "belt.cost": (
         "AFGBlueprintSubsystem::CalculateBlueprintCost@0x6738d0",
@@ -222,6 +237,22 @@ ALSO_READ: dict[str, tuple[str, ...]] = {
     ),
     "belt.clearance": ("AFGBuildableConveyorBelt::CreateClearanceData",),
     "lift.clearance": ("AFGBuildableConveyorLift::FitClearance",),
+    "lift.connectors": (
+        # The transform helper SetupConnections hands each connection to. The
+        # PDB names it only by a templated mangling, so it is read by address.
+        "0x4f9850",
+        "AFGBuildableConveyorLift::GetConveyorLiftFlowDirection",
+        "AFGBuildableConveyorBase::Factory_Tick",
+        # Which byte of a connection component mDirection is, from the setter
+        # the game writes it through, so the two stores above name themselves.
+        "UFGFactoryConnectionComponent::SetDirection",
+    ),
+    "lift.top_yaw": (
+        "AFGConveyorLiftHologram::UpdateTopTransform",
+        "AFGConveyorLiftHologram::GetRotationStep",
+        "AFGHologram::ApplyScrollRotationTo",
+        "AFGConveyorLiftHologram::DoMultiStepPlacement",
+    ),
     "factory.potential": (
         "AFGBuildableFactory::GetCurrentMaxPotentialForType",
         "AFGBuildableFactory::GetSlotsForPowerShardType",
@@ -333,6 +364,57 @@ EVIDENCE: dict[str, tuple[str, ...]] = {
     "lift.step": (
         "0xaa46e8", "0xaa48ca", "0xaa48db", "0xaa4965", "0xaa480f", "0xaa482c",
         "0xaa4830", "0xaa4843", "0xaa4859", "0xaa4863", "0xaa4867",
+    ),
+    "lift.connectors": (
+        # SetupConnections: the two connection members, the directions it gives
+        # them, and the top transform it reads.
+        "0x505af5", "0x505afc", "0x505b0d", "0x505b14", "0x505b1b",
+        # The two relative transforms it builds: FTransform::Identity for the
+        # bottom and mTopTransform for the top, each moved
+        # CONNECTION_RELATIVE_FORWARD (0) along its own forward axis.
+        "0x505b03", "0x505b22", "0x505b96", "0x505b9b", "0x505b9e", "0x505ba5",
+        "0x505ba8",
+        # The helper: the 96-byte copy, the quaternion's forward row, and the
+        # translation it adds the scaled forward to.
+        "0x4f9854", "0x4f98f7", "0x4f9915", "0x4f9922", "0x4f992a", "0x4f992f",
+        # Which way the two ends face when the lift meets a passthrough: the
+        # up/down vector chosen on the sign of the top transform's Z, and the
+        # -1 that makes the other end face the opposite way.
+        "0x505bad", "0x505bdf", "0x505bf9", "0x505bfb", "0x505ca0", "0x505f4f",
+        "0x505f6f", "0x505f73", "0x505f83", "0x505f93",
+        # The passthrough tests each end is behind, and the plain
+        # SetRelativeTransform each falls back to.
+        "0x505c8b", "0x505c8e", "0x505e74", "0x505e7e", "0x505f45", "0x505f49",
+        "0x50614b", "0x506155", "0x5061cb", "0x5061d8",
+        # GetConveyorLiftFlowDirection: the sign of mTopTransform's Z, and the
+        # two enum values it returns.
+        "0x4ed5e4", "0x4ed5ee", "0x4ed5f2", "0x4ed5f4", "0x4ed603", "0x4ed609",
+        # Factory_Tick, which is the base class's and which a lift does not
+        # override: the grab through mConnection0 and the push into mConnection1.
+        "0x4e1611", "0x4e1635", "0x4e1743",
+        # SetDirection, which is where +258h is mDirection.
+        "0x197e50",
+    ),
+    "lift.top_yaw": (
+        # SetHologramLocationAndRotation: the branch on mActivePointIdx, the
+        # zero rotator the first point passes, and the yaw the second builds
+        # from mFirstStepYaw before calling UpdateTopTransform.
+        "0xa87932", "0xa87938", "0xa88081", "0xa8808e", "0xa88095", "0xa880a3",
+        "0xa886e8", "0xa886fa", "0xa8870b", "0xa8871f", "0xa88728", "0xa8872c",
+        "0xa88733",
+        # GetRotationStep: 0 while the first point is live, 90 once it is not.
+        "0xa7c15b", "0xa7c162", "0xa7c19a", "0xa7c1a2",
+        # ApplyScrollRotationTo: the step, the scroll count, and the rounding
+        # that lands the yaw on a multiple of the step off the base's residue.
+        "0xaafe2c", "0xaafe3d", "0xaafe4f", "0xaafe53", "0xaafe5e", "0xaafe64",
+        "0xaafe68", "0xaafe71", "0xaafe85", "0xaafe8d", "0xaafe93", "0xaafe97",
+        # UpdateTopTransform: the rotator becomes mTopTransform's rotation, and
+        # the height times FVector::UpVector its translation.
+        "0xaa49a7", "0xaa49c2", "0xaa49d1", "0xaa49ee", "0xaa4a01", "0xaa4a0c",
+        "0xaa4a10", "0xaa4a14", "0xaa4a20", "0xaa4a2f", "0xaa4a36", "0xaa4a3d",
+        # DoMultiStepPlacement: where mFirstStepYaw is written, and the step
+        # counter that makes the next call the top's.
+        "0xa7289f", "0xa72f72", "0xa72f7a",
     ),
     "lift.placement": (
         "0xa68189", "0xa681c0", "0xa681cd", "0xa681db", "0xa681e7", "0xa681f3",
@@ -838,6 +920,115 @@ INTERPRETATIONS: dict[str, tuple[str, str, str, str]] = {
         "UpdateTopTransform feeds -- a placer should keep to multiples of "
         "mStepHeight because they are known-good, not because the game was "
         "seen to require them.",
+    ),
+    "lift.connectors": (
+        "extracted",
+        "compute",
+        "SetupConnections gives the two connections their directions outright: "
+        "`mov byte ptr [rax+258h], 0` at 0x505b0d on mConnection0 (0x505af5) "
+        "and `mov byte ptr [rax+258h], 1` at 0x505b1b on mConnection1 "
+        "(0x505b14). 0x258 is UFGFactoryConnectionComponent::mDirection -- it is "
+        "the byte UFGFactoryConnectionComponent::SetDirection writes, at "
+        "0x197e50 -- and 0 and 1 are FCD_INPUT and FCD_OUTPUT, the first two of "
+        "EFactoryConnectionDirection. Neither store is behind a "
+        "branch, and the whole function (1950 bytes over four chained .pdata "
+        "chunks) reads mIsReversed at +810h nowhere. It then places them. "
+        "0x505afc takes &mTopTransform (+7B0h) and the helper at 0x4f9850 is "
+        "called twice: with FTransform::Identity, the data import at 0x505b22, "
+        "into [rbp+180h] (0x505b96) and with mTopTransform into [rbp+1E0h] "
+        "(0x505ba5/0x505ba8). The helper copies its input whole (0x4f9854) and "
+        "adds its third argument times the rotation's forward row -- "
+        "1-2y^2-2z^2, 2(xy+zw), 2(zx-yw), with the +1.0 at 0x4f98f7 -- to the "
+        "translation at +20h/+30h (0x4f9915..0x4f992f). That argument is xmm2, "
+        "zeroed at 0x505b03 and 0x505b9b: "
+        "AFGBuildableConveyorLift::CONNECTION_RELATIVE_FORWARD, which the "
+        "header declares `static constexpr float ... = 0.f`. So the copies are "
+        "the inputs unchanged, and where mSnappedPassthroughs[0] is null "
+        "(0x505c8b/0x505c8e) mConnection0 gets Identity "
+        "(0x505e74/0x505e7e SetRelativeTransform) and where "
+        "mSnappedPassthroughs[1] is null (0x505f45/0x505f49) mConnection1 gets "
+        "mTopTransform (0x50614b/0x506155); both are then registered "
+        "(0x5061cb/0x5061d8). The passthrough branches instead orient each end "
+        "along the vertical: 0x505bdf compares the two transforms' Z and "
+        "0x505bf9 picks FVector::UpVector (0x505bad) or FVector::DownVector "
+        "(0x505bfb) -- both named by the module's own import table -- which "
+        "0x505ca0 turns into mConnection0's rotation via ToOrientationQuat and "
+        "which mConnection1 gets negated first (0x505f4f loads -1.0, "
+        "0x505f6f/0x505f73/0x505f83 multiply, 0x505f93 converts). "
+        "GetConveyorLiftFlowDirection (0x4ed5e0, 56 bytes) reads "
+        "mTopTransform's translation Z at +7E0h (0x505afc + 0x30) at 0x4ed5e4 "
+        "and returns LD_Upwards for >= 0 and LD_Downwards for < 0 "
+        "(0x4ed5ee comisd, 0x4ed5f2 jbe, 0x4ed5f4 and 0x4ed603/0x4ed609). "
+        "AFGBuildableConveyorBase::Factory_Tick, which a lift does not "
+        "override, grabs through mConnection0 (0x4e1611, call at 0x4e1635) and "
+        "pushes into mConnection1 (0x4e1743).",
+        "A conveyor lift's two ports are at the actor origin with no rotation "
+        "in the cooked class default object, and this is the runtime geometry "
+        "that replaces them. The bottom end is mConnection0: at the actor "
+        "transform exactly, facing the actor's own forward (+X), and always the "
+        "input. The top end is mConnection1: at mTopTransform, which "
+        "UpdateTopTransform makes (0, 0, height) with the top's yaw (see "
+        "lift.top_yaw), and always the output. Reversal does not swap them. "
+        "mIsReversed is a SaveGame bool the header marks DEPRECATED 2023-01-30 "
+        "with 'Instead build lifts where mConnector0 is always input, and the "
+        "other always output', GetIsReversed() is documented LEGACY and returns "
+        "IsFlowUpwards(), and SetupConnections -- read whole -- never looks at "
+        "it. A downward lift is one whose actor sits at the top and whose "
+        "mTopTransform.Z is negative; the items still enter by mConnection0. "
+        "The one case where the ends do not face the actor's forward is a "
+        "passthrough snap, where each is turned to face straight up or straight "
+        "down instead, opposite ways. A placer that wants a lift to carry items "
+        "upward puts the actor at the bottom; one that wants it to carry them "
+        "downward puts the actor at the top and gives mTopTransform a negative "
+        "Z.",
+    ),
+    "lift.top_yaw": (
+        "extracted",
+        "compute",
+        "A lift is placed in two steps, counted by mActivePointIdx "
+        "(0xa7289f sets it to 1, 0xa72f7a increments it). "
+        "SetHologramLocationAndRotation branches on it at 0xa87932/0xa87938. "
+        "The first point passes UpdateTopTransform the zero rotator "
+        "(0xa88081 xorps, 0xa8808e and 0xa88095 store pitch/yaw and roll, "
+        "0xa880a3 calls). The second reads mFirstStepYaw at 0xa886e8 (+980h), "
+        "hands it to AFGHologram::ApplyScrollRotationTo (0xa886fa), widens the "
+        "answer (0xa8870b) into an FRotator whose pitch and roll are zero "
+        "(0xa8871f, 0xa88728, 0xa8872c) and calls UpdateTopTransform with it "
+        "(0xa88733). mFirstStepYaw itself is written once, at the end of the "
+        "first step (0xa72f72). ApplyScrollRotationTo asks the hologram for its "
+        "rotation step through the vtable (0xaafe2c), floors it at 1 "
+        "(0xaafe4f) and takes its reciprocal (0xaafe53); it splits the base "
+        "yaw into a whole number of steps and a residue "
+        "(0xaafe5e roundps, 0xaafe64 mulss, 0xaafe68 subss), adds the player's "
+        "scroll count mScrollRotation (0xaafe3d, 0xaafe71) and rounds the sum "
+        "back onto the step lattice (0xaafe85 addss 0.5, 0xaafe8d roundps, "
+        "0xaafe93 mulss, 0xaafe97 addss the residue). "
+        "AFGConveyorLiftHologram::GetRotationStep returns 0 only while the "
+        "first point is still live -- `cmp dword ptr [rcx+984h], 0; jg` at "
+        "0xa7c15b/0xa7c162 and the 0 at 0xa7c19a -- and 90 otherwise "
+        "(0xa7c1a2 `mov eax,5Ah`). UpdateTopTransform then writes the rotator's "
+        "quaternion (0xaa49d1 FRotator::Quaternion, stored at "
+        "0xaa49ee/0xaa4a01) into mTopTransform at +880h, and its translation "
+        "(+8A0h/+8B0h) as the clamped height times FVector::UpVector -- the "
+        "data import at 0xaa49a7, loaded at 0xaa49c2, multiplied at "
+        "0xaa4a0c/0xaa4a10/0xaa4a14 and stored at 0xaa4a20/0xaa4a2f -- with a "
+        "unit scale (0xaa4a36/0xaa4a3d).",
+        "The top of a lift may face any of the four compass directions, "
+        "independently of the bottom. Once the first click is down, the lift "
+        "hologram's rotation step is 90 degrees, and the yaw the top is built "
+        "with is the bottom's own yaw plus whatever multiple of 90 the player "
+        "has scrolled to. The bottom's yaw is fixed at the first click and kept "
+        "in mFirstStepYaw; the top's is that number re-quantised, so a top yaw "
+        "the game can produce is always the bottom yaw plus 0, 90, 180 or 270. "
+        "mTopTransform is the top end's transform in the actor's own frame: its "
+        "translation is (0, 0, height) -- the height, positive or negative, "
+        "along FVector::UpVector and nothing sideways -- its rotation is that "
+        "yaw, and its scale is 1. A placer reproducing this picks the bottom "
+        "yaw from where the lift's input has to face, then the top yaw from "
+        "where its output has to face, and is free to pick them independently "
+        "as long as both are multiples of 90 apart. The height itself is not "
+        "this rule's: lift.height_range states the clamp UpdateTopTransform "
+        "applies before the multiply.",
     ),
     "lift.placement": (
         "extracted",

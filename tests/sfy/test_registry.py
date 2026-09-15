@@ -15,6 +15,9 @@ import pytest
 from flab2bp.sfy import docs
 from flab2bp.sfy.registry import (
     FLOW_SOURCES,
+    LIFT_GEOMETRY_FIELDS,
+    LIFT_GEOMETRY_SOURCES,
+    LIFT_NATIVE_CLASS,
     LIMIT_SOURCES,
     MAX_CONNECTIONS_SOURCES,
     PORT_DIRECTION_SOURCES,
@@ -917,6 +920,103 @@ def test_the_registry_says_which_extraction_it_was_merged_from():
     assert set(committed) == set(sfy_registry.MERGE_INPUTS)
     for name, digest in committed.items():
         assert digest == hashlib.sha256((data / name).read_bytes()).hexdigest(), name
+
+
+def test_every_lift_mark_says_where_its_two_ends_sit():
+    """The ports on a lift are both at the origin; this is what the game moves them to.
+
+    ``AFGBuildableConveyorLift::SetupConnections`` puts ``mConnection0`` at the
+    actor transform itself and ``mConnection1`` at ``mTopTransform``, which is
+    the height along ``FVector::UpVector``. Both stores are read out of the
+    binary by the ``lift.connectors`` rule, and the six marks carry the same
+    geometry because it is the class's code and not a class default.
+    """
+    reg = load_registry()
+    marks = sorted(c for c, b in reg.buildables.items() if b.native_class == LIFT_NATIVE_CLASS)
+    assert len(marks) == 6, marks
+    for class_name in marks:
+        buildable = reg.buildables[class_name]
+        # The two ports really do say nothing: this is why the geometry exists.
+        assert [p.translation for p in buildable.ports] == [(0.0, 0.0, 0.0)] * 2, class_name
+        assert [p.rotation for p in buildable.ports] == [(0.0, 0.0, 0.0)] * 2, class_name
+        lift = buildable.lift
+        assert lift is not None, class_name
+        assert lift.bottom_offset == (0.0, 0.0, 0.0), class_name
+        assert lift.bottom_facing == (1.0, 0.0, 0.0), class_name
+        assert lift.top_offset_axis == (0.0, 0.0, 1.0), class_name
+        assert lift.top_yaw_free is True, class_name
+        assert lift.top_yaw_step_deg == 90.0, class_name
+        # mIsReversed is DEPRECATED and SetupConnections never reads it: the
+        # entry is mConnection0 whichever way the lift runs.
+        assert lift.reversed_swaps_flow is False, class_name
+        # The bottom is the end items enter by, which is the flow's entry port.
+        assert buildable.flow is not None and buildable.flow.entry == "ConveyorAny0", class_name
+        assert sorted(lift.sources) == sorted(LIFT_GEOMETRY_FIELDS), class_name
+        assert all(s in LIFT_GEOMETRY_SOURCES for s in lift.sources.values()), class_name
+    # Nothing that is not a conveyor lift claims any of this.
+    assert sorted(c for c, b in reg.buildables.items() if b.lift) == marks
+
+
+def test_a_lifts_top_offset_is_the_height_along_the_up_vector():
+    """``top_offset_fn``: the top end's offset from the actor, for a signed height.
+
+    A negative height is a lift whose actor sits at the top --
+    ``GetConveyorLiftFlowDirection`` reads nothing but that sign -- and the
+    offset follows it rather than flipping which end is the input.
+    """
+    lift = load_registry().buildables["Build_ConveyorLiftMk1_C"].lift
+    assert lift is not None
+    assert lift.top_offset(0.0) == (0.0, 0.0, 0.0)
+    assert lift.top_offset(400.0) == (0.0, 0.0, 400.0)
+    assert lift.top_offset(-400.0) == (0.0, 0.0, -400.0)
+
+
+def test_the_lift_geometry_carries_the_game_it_was_read_from():
+    """The claim travels with its evidence: the two rules and the header line."""
+    geometry = load_registry().provenance["lift_geometry"]
+    assert geometry["native_class"] == LIFT_NATIVE_CLASS
+    assert geometry["rules"] == ["lift.connectors", "lift.top_yaw"]
+    rules = load_rules()
+    for rule_id in geometry["rules"]:
+        assert rules[rule_id].status == "extracted", rule_id
+    assert geometry["header"].endswith("FGBuildableConveyorLift.h:269")
+    assert "mConnector0 is always input" in geometry["header_text"]
+    assert len(geometry["applied_to"]) == 6
+    # Each field says where it was read, and the one the header states is the
+    # one the header is quoted for.
+    assert geometry["sources"]["reversed_swaps_flow"] == "header"
+    assert geometry["sources"]["bottom_offset"] == "native"
+
+
+def test_a_lift_whose_geometry_comes_from_no_game_source_is_refused(tmp_path):
+    """A number here with nothing behind it would be a guess at geometry."""
+    payload = json.loads((Path(docs.__file__).parent / "data" / "registry.json").read_text())
+    payload["buildables"]["Build_ConveyorLiftMk1_C"]["lift"]["sources"]["bottom_offset"] = "corpus"
+    path = tmp_path / "registry.json"
+    path.write_text(json.dumps(payload))
+    with pytest.raises(RegistryError, match="corpus"):
+        load_registry(path)
+
+
+def test_a_lift_with_no_connector_geometry_is_refused(tmp_path):
+    """A lift's ports say nothing, so a lift that states no geometry states nothing."""
+    payload = json.loads((Path(docs.__file__).parent / "data" / "registry.json").read_text())
+    del payload["buildables"]["Build_ConveyorLiftMk1_C"]["lift"]
+    path = tmp_path / "registry.json"
+    path.write_text(json.dumps(payload))
+    with pytest.raises(RegistryError, match="states no connector geometry"):
+        load_registry(path)
+
+
+def test_something_that_is_not_a_lift_may_not_carry_lift_geometry(tmp_path):
+    """This is one class's own code, and nothing else runs it."""
+    payload = json.loads((Path(docs.__file__).parent / "data" / "registry.json").read_text())
+    lift = payload["buildables"]["Build_ConveyorLiftMk1_C"]["lift"]
+    payload["buildables"]["Build_ConveyorBeltMk1_C"]["lift"] = lift
+    path = tmp_path / "registry.json"
+    path.write_text(json.dumps(payload))
+    with pytest.raises(RegistryError, match="only a FGBuildableConveyorLift has"):
+        load_registry(path)
 
 
 def test_boxes_the_game_ignores_when_snapping_are_marked():

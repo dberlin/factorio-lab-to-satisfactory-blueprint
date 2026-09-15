@@ -60,6 +60,16 @@ out about each instruction:
   disasm AFGConveyorBeltHologram::ValidateCurvature --out vc.json
 ```
 
+The argument is a case-sensitive substring of a `Class::Method` name, **or** a
+hexadecimal RVA. The second form is the only way to reach a function the PDB
+publishes under a mangling with no `Class::Method` form — a free function, an
+operator, or a templated member such as `UE::Math::TTransform<double>`'s — since
+no demangler is in the crate graph. An RVA the PDB publishes *nothing* at is
+still read: `.pdata` bounds it just the same, and the output names it by the
+address it was asked for rather than by a guess at what it is. That is how
+`AFGBuildableConveyorLift::SetupConnections`' transform helper at `0x4f9850` was
+read for the `lift.connectors` rule.
+
 ```json
 [{"symbol": "AFGConveyorBeltHologram::ValidateCurvature",
   "mangled": "?ValidateCurvature@AFGConveyorBeltHologram@@AEAA_NXZ",
@@ -444,6 +454,8 @@ static function annotating nothing against `rcx`, an sret function's return
 slot in `rdx` staying unannotated, a `call rel32` against a fake symbol map, a
 `.rdata` constant and the `.data` global it refuses, an indirect call named from
 a seeded import table (and the `mov` off the same slot that is not), the
+hexadecimal-RVA selector (a named function, a templated one no name reaches, an
+address the PDB publishes nothing at, and a needle that only looks like one), the
 `.pdata`/`ret`/`truncated` bounds, a leaf with two `ret`s that only the PDB's
 stated length gets right (with `.pdata` still winning where it has an entry,
 and an over-long stated length still saying `truncated`), and a synthetic

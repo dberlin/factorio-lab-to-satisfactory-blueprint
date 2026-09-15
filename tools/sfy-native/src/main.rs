@@ -1906,8 +1906,36 @@ fn member_at(spans: &[MemberSpan], displacement: u32) -> Option<&MemberSpan> {
 /// The match is a case-sensitive substring, and only symbols whose mangling
 /// yields a `Class::Method` name take part: no demangler is in the crate
 /// graph, so an operator, a destructor or a templated scope has no name to
-/// match against.
+/// match against. A needle written as a hexadecimal RVA (`0x4f9850`) matches
+/// by address instead, which is the only way to ask for a function the PDB
+/// publishes under a mangling with no `Class::Method` form -- a free function,
+/// or a templated one such as `TTransform<double>`'s members.
 fn find_functions(symbols: &[Symbol], needle: &str) -> Vec<Symbol> {
+    if let Some(rva) = needle
+        .strip_prefix("0x")
+        .or_else(|| needle.strip_prefix("0X"))
+        .and_then(|hex| u32::from_str_radix(hex, 16).ok())
+    {
+        let mut hits: Vec<Symbol> = symbols
+            .iter()
+            .filter(|symbol| symbol.rva == rva)
+            .cloned()
+            .collect();
+        hits.sort();
+        hits.dedup_by_key(|symbol| symbol.rva);
+        // A call target the PDB publishes no symbol for -- the linker folded
+        // it, or it is a static with no public record -- still has a `.pdata`
+        // entry, so it can be read; it is named by the address it was asked
+        // for, never by a guess at what it is.
+        if hits.is_empty() {
+            hits.push(Symbol {
+                rva,
+                name: None,
+                mangled: format!("{rva:#x}"),
+            });
+        }
+        return hits;
+    }
     let mut hits: Vec<Symbol> = symbols
         .iter()
         .filter(|symbol| symbol.name.as_deref().is_some_and(|n| n.contains(needle)))
@@ -2313,7 +2341,7 @@ fn run_disasm(args: &DisasmArgs) -> Result<()> {
     let hits = find_functions(&index.symbols, &args.symbol);
     if hits.is_empty() {
         bail!(
-            "no function symbol's Class::Method name contains {:?}",
+            "no function symbol's Class::Method name (or RVA) matches {:?}",
             args.symbol
         );
     }
@@ -3885,6 +3913,33 @@ mod tests {
         assert_eq!(names("Serialize"), ["FInventoryItem::Serialize"]);
         assert!(names("validatecurvature").is_empty());
         assert!(names("TArray").is_empty());
+    }
+
+    #[test]
+    fn a_hexadecimal_needle_picks_a_function_out_by_address() {
+        let symbols = vec![
+            symbol("?ValidateCurvature@AFGConveyorBeltHologram@@AEAA_NXZ", 0x30),
+            // Templated: no Class::Method form, so no name can reach it.
+            symbol("?Get@?$TArray@M@@QEBAMXZ", 0x40),
+        ];
+        let found = |needle: &str| {
+            find_functions(&symbols, needle)
+                .into_iter()
+                .map(|s| (s.rva, s.display().to_string()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            found("0x30"),
+            [(0x30, "AFGConveyorBeltHologram::ValidateCurvature".to_string())]
+        );
+        // The only way to ask for the templated one, and it keeps its mangling.
+        assert_eq!(found("0x40"), [(0x40, "?Get@?$TArray@M@@QEBAMXZ".to_string())]);
+        // An address the PDB publishes nothing at is still a function `.pdata`
+        // can bound, so it comes back named by the address it was asked for
+        // rather than by a guess at what it is.
+        assert_eq!(found("0x4f9850"), [(0x4f9850, "0x4f9850".to_string())]);
+        // A name that merely looks like one is still a name.
+        assert!(found("0xNotAnAddress").is_empty());
     }
 
     #[test]

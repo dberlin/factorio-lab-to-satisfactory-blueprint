@@ -54,6 +54,9 @@ from flab2bp.sfy.registry import (
     COST_SEGMENT_SOURCES,
     FLOW_NAME_SOURCES,
     FLOW_SOURCES,
+    LIFT_GEOMETRY_FIELDS,
+    LIFT_GEOMETRY_SOURCES,
+    LIFT_NATIVE_CLASS,
     PORT_DIRECTION_SOURCES,
     Limits,
 )
@@ -190,6 +193,61 @@ COST_SEGMENT_PROPERTY: dict[str, tuple[str, str]] = {
 COST_SEGMENT_SOURCE = "docs"
 COST_SEGMENT_RULE = "belt.cost"
 assert COST_SEGMENT_SOURCE in COST_SEGMENT_SOURCES
+
+# Where a conveyor lift's two ends sit once the game has placed them.
+#
+# A lift's cooked class default object puts both connection components at the
+# actor origin with no rotation, so the registry's two ports say nothing about
+# where a lift's ends are. ``AFGBuildableConveyorLift::SetupConnections`` is
+# where they go, and the ``lift.connectors`` rule in
+# ``data/hologram_rules.json`` quotes all of it:
+#
+#     0x505b0d  mov byte ptr [rax+258h],0   ; mConnection0 = FCD_INPUT
+#     0x505b1b  mov byte ptr [rax+258h],1   ; mConnection1 = FCD_OUTPUT
+#     0x505b96  call 0x4f9850               ;   with FTransform::Identity
+#     0x505ba8  call 0x4f9850               ;   with mTopTransform
+#     0x505e7e  mConnection0->SetRelativeTransform(the first)
+#     0x506155  mConnection1->SetRelativeTransform(the second)
+#
+# and 0x4f9850 moves its input along its own forward by
+# ``CONNECTION_RELATIVE_FORWARD``, which the header declares ``0.f`` and
+# SetupConnections passes as a zeroed xmm2 (0x505b03, 0x505b9b). So the bottom
+# is the actor transform itself and the top is ``mTopTransform``, whose
+# translation ``AFGConveyorLiftHologram::UpdateTopTransform`` builds as the
+# clamped height times ``FVector::UpVector`` (0xaa49a7 names the import,
+# 0xaa4a0c..0xaa4a14 multiply). ``lift.top_yaw`` quotes the yaw, which comes
+# out of ``ApplyScrollRotationTo(mFirstStepYaw)`` on a rotation step of 90
+# (0xa7c1a2) from the second placement point onward.
+#
+# ``reversed_swaps_flow`` is false and that is a reading, not an assumption:
+# SetupConnections is 1950 bytes over four chained ``.pdata`` chunks, all of
+# them read, and it never touches ``mIsReversed`` at +810h. The header says the
+# same outright, which is why this one field's source is the header.
+LIFT_GEOMETRY: dict[str, tuple[Any, str]] = {
+    # field -> (value, where it was read)
+    "bottom_offset": ([0.0, 0.0, 0.0], "native"),
+    "bottom_facing": ([1.0, 0.0, 0.0], "native"),
+    "top_offset_axis": ([0.0, 0.0, 1.0], "native"),
+    "top_yaw_free": (True, "native"),
+    "top_yaw_step_deg": (90.0, "native"),
+    "reversed_swaps_flow": (False, "header"),
+}
+assert tuple(LIFT_GEOMETRY) == LIFT_GEOMETRY_FIELDS
+assert all(source in LIFT_GEOMETRY_SOURCES for _value, source in LIFT_GEOMETRY.values())
+
+# The two rules the geometry above was read out of, and one instruction from
+# each that has to still be there. A game update that moves either fails the
+# merge here rather than shipping geometry read from a function that has gone.
+LIFT_GEOMETRY_RULES: dict[str, tuple[str, str]] = {
+    # rule id -> (an evidence address it must carry, what that address is)
+    "lift.connectors": ("0x505b0d", "mConnection0's direction, set to FCD_INPUT"),
+    "lift.top_yaw": ("0xa7c1a2", "the lift hologram's rotation step of 90 degrees"),
+}
+LIFT_GEOMETRY_HEADER = "Buildables/FGBuildableConveyorLift.h:269"
+LIFT_GEOMETRY_HEADER_TEXT = (
+    "DEPRECATED 2023-01-30 / Instead build lifts where mConnector0 is always input, "
+    "and the other always output."
+)
 
 # Binary values that are not what their name suggests, with the caveat recorded
 # in ``registry.json``'s provenance next to the number. ``mBendRadius`` is two
@@ -841,6 +899,60 @@ def _attach_flow(
     }
 
 
+def _attach_lift_geometry(
+    rules: dict[str, Any], buildables: dict[str, Any]
+) -> dict[str, Any]:
+    """Put the lift connector geometry on every lift mark, and return it.
+
+    The values are :data:`LIFT_GEOMETRY`, which is the same for all six marks
+    because it is ``AFGBuildableConveyorLift``'s own code and not a class
+    default: nothing in ``SetupConnections`` or ``UpdateTopTransform`` reads
+    anything a mark could differ in. What is checked here is that the two rules
+    it was read from are still the rules that were read -- present, ``extracted``
+    and still carrying the instruction the geometry turns on -- so a game build
+    that moved either stops the merge instead of shipping the old numbers under
+    a new binary.
+    """
+    for rule_id, (address, what) in LIFT_GEOMETRY_RULES.items():
+        rule = rules.get(rule_id)
+        if rule is None:
+            raise SystemExit(
+                f"the lift connector geometry was read from {rule_id}, which "
+                "data/hologram_rules.json does not carry; re-run scripts/sfy_native_rules.py"
+            )
+        if rule.status != "extracted":
+            raise SystemExit(
+                f"{rule_id} is {rule.status}, so the lift connector geometry it states is "
+                "not a reading of the whole function and cannot be attached"
+            )
+        if not any(line.startswith(f"{address}:") for line in rule.evidence):
+            raise SystemExit(
+                f"{rule_id} no longer quotes {address} ({what}), so the lift connector "
+                "geometry has to be re-read before it can be written"
+            )
+    geometry = {field: value for field, (value, _source) in LIFT_GEOMETRY.items()}
+    geometry["sources"] = {field: source for field, (_value, source) in LIFT_GEOMETRY.items()}
+    applied = []
+    for class_name, entry in sorted(buildables.items()):
+        if entry["native_class"] != LIFT_NATIVE_CLASS:
+            continue
+        entry["lift"] = json.loads(json.dumps(geometry))
+        applied.append(class_name)
+    if not applied:
+        raise SystemExit(
+            f"no buildable is a {LIFT_NATIVE_CLASS}, so the lift connector geometry has "
+            "nothing to attach to; re-run tools/sfy-extract"
+        )
+    return {
+        **geometry,
+        "native_class": LIFT_NATIVE_CLASS,
+        "rules": sorted(LIFT_GEOMETRY_RULES),
+        "header": LIFT_GEOMETRY_HEADER,
+        "header_text": LIFT_GEOMETRY_HEADER_TEXT,
+        "applied_to": applied,
+    }
+
+
 def _attach_cost_segments(
     rules: dict[str, Any], buildables: dict[str, Any]
 ) -> dict[str, Any]:
@@ -1027,7 +1139,9 @@ def main(out: Path | None = None) -> int:
     conveyor_flow = _attach_flow(
         directions, assets.get("conveyor_connections", {}), docs["buildables"]
     )
-    cost_segments = _attach_cost_segments(load_rules(), docs["buildables"])
+    rules = load_rules()
+    cost_segments = _attach_cost_segments(rules, docs["buildables"])
+    lift_geometry = _attach_lift_geometry(rules, docs["buildables"])
     mesh_bounds = _attach_mesh_bounds(assets.get("mesh_bounds", {}), docs["buildables"])
     connection_links = _fill_native_connection_links(docs["buildables"], native)
     direction_counts = _shipped_direction_counts(docs["buildables"])
@@ -1042,6 +1156,7 @@ def main(out: Path | None = None) -> int:
             "native": native["provenance"],
             "hologram_rules": rules_provenance,
             "conveyor_flow": conveyor_flow,
+            "lift_geometry": lift_geometry,
             "cost_segment": cost_segments,
             "mesh_bounds": mesh_bounds,
             "max_connections": connection_links,
@@ -1079,6 +1194,13 @@ def main(out: Path | None = None) -> int:
         f"{conveyor_flow['entry']['member']} -> {conveyor_flow['exit']['member']}",
         f"({conveyor_flow['source']}), named by the {conveyor_flow['name_source']}",
         f"on {len(conveyor_flow['applied_to'])} classes",
+    )
+    print(
+        "lift connectors:",
+        f"bottom at {lift_geometry['bottom_offset']} facing {lift_geometry['bottom_facing']},",
+        f"top along {lift_geometry['top_offset_axis']} at a"
+        f" {lift_geometry['top_yaw_step_deg']:g} degree yaw step,",
+        f"on {len(lift_geometry['applied_to'])} classes",
     )
     print("port directions resolved from:", direction_counts)
     print("port connection counts resolved from:", connection_links["sources"])

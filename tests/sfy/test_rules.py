@@ -101,6 +101,8 @@ def test_the_effects_the_shipped_rules_state():
         "lift.height_range": "clamp",
         "lift.step": "none",
         "lift.placement": "refuse",
+        "lift.connectors": "compute",
+        "lift.top_yaw": "compute",
         "lift.clearance": "compute",
         "buildable.grid_snap": "snap",
         "buildable.rotation_step": "compute",
@@ -158,6 +160,8 @@ def test_the_cost_rule_names_every_function_it_was_read_across():
         "belt.straight_tangents",
         "belt.clearance",
         "lift.clearance",
+        "lift.connectors",
+        "lift.top_yaw",
         "factory.potential",
         "manufacturer.production_boost",
     }
@@ -397,6 +401,79 @@ def test_the_production_boost_rule_states_what_n_somersloops_multiply():
     assert "mCurrentProductionBoost" in r.reads
     assert "RoundToInt(amount * boost)" in r.interpretation
     assert "not its cycle time" in r.interpretation
+
+
+def test_the_connector_rule_says_where_a_lifts_two_ends_sit_and_which_is_the_input():
+    """``lift.connectors`` is where a lift's ports go once the game places them.
+
+    The registry's two lift ports are both at the actor origin with no rotation,
+    because that is what the cooked class default object holds;
+    ``AFGBuildableConveyorLift::SetupConnections`` is what moves them, and this
+    rule is that function read whole. It has to carry the two direction stores,
+    the transform each end is given and the helper that proves neither is moved
+    along its forward.
+    """
+    r = load_rules()["lift.connectors"]
+    assert (r.status, r.effect) == ("extracted", "compute")
+    assert r.cls == "AFGBuildableConveyorLift"
+    assert r.function == "SetupConnections"
+    assert r.header == "Buildables/FGBuildableConveyorLift.h:148"
+    assert "mConnection0" in r.reads and "mConnection1" in r.reads
+    assert "mTopTransform" in r.reads
+    evidence = {line.split(":", 1)[0]: line for line in r.evidence}
+    # mConnection0 is FCD_INPUT and mConnection1 is FCD_OUTPUT, unconditionally.
+    assert "mov byte ptr [rax+258h],0" in evidence["0x505b0d"]
+    assert "mov byte ptr [rax+258h],1" in evidence["0x505b1b"]
+    # And +258h is mDirection because that is the byte SetDirection writes.
+    assert "mov byte ptr [rcx+258h],dl" in evidence["0x197e50"]
+    assert "UFGFactoryConnectionComponent::mDirection @600" in evidence["0x197e50"]
+    # Each end gets a whole transform: the identity for the bottom and
+    # mTopTransform for the top.
+    assert "SetRelativeTransform" in evidence["0x505e7e"]
+    assert "SetRelativeTransform" in evidence["0x506155"]
+    read = {name.split(" @ ")[0] for name in r.also_read}
+    assert "AFGBuildableConveyorLift::GetConveyorLiftFlowDirection" in read
+    assert "AFGBuildableConveyorBase::Factory_Tick" in read
+    assert "UFGFactoryConnectionComponent::SetDirection" in read
+    # The helper the PDB gives no Class::Method name, read by address instead.
+    assert "0x4f9850" in read
+    # Reversal is about which way the top transform points, never about which
+    # connection items enter by.
+    assert "Reversal does not swap them" in r.interpretation
+    assert "DEPRECATED 2023-01-30" in r.interpretation
+
+
+def test_the_top_yaw_rule_says_the_top_turns_in_quarter_turns_off_the_bottom():
+    """``lift.top_yaw`` is how the second placement point picks the top's facing.
+
+    The yaw handed to ``UpdateTopTransform`` is
+    ``ApplyScrollRotationTo(mFirstStepYaw)``, and the lift hologram's rotation
+    step is 90 from the second point onward -- so the top faces any of four
+    directions, relative to the bottom.
+    """
+    r = load_rules()["lift.top_yaw"]
+    assert (r.status, r.effect) == ("extracted", "compute")
+    assert r.cls == "AFGConveyorLiftHologram"
+    assert r.function == "SetHologramLocationAndRotation"
+    assert r.header == "Hologram/FGConveyorLiftHologram.h:157"
+    assert "mFirstStepYaw" in r.reads
+    assert "mActivePointIdx" in r.reads
+    assert "mScrollRotation" in r.reads
+    evidence = {line.split(":", 1)[0]: line for line in r.evidence}
+    # The rotation step, which is what makes the four directions four.
+    assert "mov eax,5Ah" in evidence["0xa7c1a2"]
+    # mFirstStepYaw goes in, and what comes back is the top's rotator.
+    assert "mFirstStepYaw" in evidence["0xa886e8"]
+    assert "AFGHologram::ApplyScrollRotationTo" in evidence["0xa886fa"]
+    assert "AFGConveyorLiftHologram::UpdateTopTransform" in evidence["0xa88733"]
+    read = {name.split(" @ ")[0] for name in r.also_read}
+    assert read >= {
+        "AFGConveyorLiftHologram::UpdateTopTransform",
+        "AFGConveyorLiftHologram::GetRotationStep",
+        "AFGHologram::ApplyScrollRotationTo",
+        "AFGConveyorLiftHologram::DoMultiStepPlacement",
+    }
+    assert "any of the four compass directions" in r.interpretation
 
 
 def test_every_rules_evidence_is_in_address_order():

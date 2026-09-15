@@ -19,14 +19,15 @@ value the game then writes, which this project has to reproduce rather than
 enforce when it authors a blueprint. Those carry the effect `compute`:
 `belt.cost`, `belt.straight_tangents`, `manufacturer.inventory_filters`,
 `buildable.rotation_step`, the two clearance builders `belt.clearance` and
-`lift.clearance`, and the two overclocking rules `factory.potential` and
-`manufacturer.production_boost`.
+`lift.clearance`, the two that say where a conveyor lift's ends go —
+`lift.connectors` and `lift.top_yaw` — and the two overclocking rules
+`factory.potential` and `manufacturer.production_boost`.
 
-Not every function here is a hologram's. Three of the rules are read out of the
-**buildable** instead — a belt's clearance boxes, a lift's, and what a power
-shard or a somersloop does to a machine — because that is where the game
-computes them; the file's name is about what it is for, which is deciding what
-this project may author.
+Not every function here is a hologram's. Four of the rules are read out of the
+**buildable** instead — a belt's clearance boxes, a lift's, where a lift's two
+connections end up, and what a power shard or a somersloop does to a machine —
+because that is where the game computes them; the file's name is about what it
+is for, which is deciding what this project may author.
 
 ## How a placement is refused
 
@@ -243,7 +244,9 @@ constructor stores its primary vtable `0xF79290` (`0x1b9ccf`), and the qword at
 | Declaration | Line | Reads | Rule |
 | --- | --- | --- | --- |
 | `CheckValidPlacement` | 62 | `mActivePointIdx`, `mSnappedConnectionComponents`, `mUpgradedConveyorLift` | `lift.placement` |
-| `UpdateTopTransform` | 65 | `mStepHeight`, `mMinimumHeight`, `mMaximumHeight`, `mMinimumHeightWithVerticalConnection` | `lift.height_range`, `lift.step` |
+| `UpdateTopTransform` | 65 | `mStepHeight`, `mMinimumHeight`, `mMaximumHeight`, `mMinimumHeightWithVerticalConnection` | `lift.height_range`, `lift.step`, and the `mTopTransform` half of `lift.top_yaw` |
+| `SetHologramLocationAndRotation` | 25 | `mActivePointIdx`, `mFirstStepYaw`, `mConnectionComponents` | `lift.top_yaw` |
+| `mFirstStepYaw` | 157 | — | the bottom's yaw, kept for the top |
 | `UpdateClearance` | 70 | `mMeshHeight`, `mSnappedPassthroughs` | `lift.clearance`, with `AFGBuildableConveyorLift::FitClearance` |
 | `GetClearanceData` | 38 | `mClearance` | hands out the one box |
 | `GetRotationStep` | 54 | `mActivePointIdx`, `mSnappedConnectionComponents`, `mSnappedBuilding` | corroborates `buildable.rotation_step` |
@@ -264,6 +267,108 @@ nothing to refuse. Note what is **not** there: no instruction in that function
 rounds a free height to a multiple of `mStepHeight`, so "every legal height is a
 whole number of steps" is arithmetic on the `BeginPlay` values rather than a rule
 read from the binary. `lift.step` says so and stays `partial`.
+
+### Where a lift's two connections sit — `lift.connectors`
+
+A lift's two ports are both at the actor origin with **no rotation** in
+`registry.json`, because that is what its cooked class default object holds. The
+geometry is set at runtime, by `AFGBuildableConveyorLift::SetupConnections`
+(`Buildables/FGBuildableConveyorLift.h:148`, `0x505a90`, 1950 bytes over four
+chained `.pdata` chunks — read whole).
+
+It starts by assigning the directions outright, neither store behind a branch:
+
+```
+0x505b0d  mov byte ptr [rax+258h],0   ; mConnection0 = FCD_INPUT
+0x505b1b  mov byte ptr [rax+258h],1   ; mConnection1 = FCD_OUTPUT
+```
+
+`+258h` is `mDirection` because that is the byte
+`UFGFactoryConnectionComponent::SetDirection` writes (`0x197e50`, in the rule's
+`also_read`), and 0 and 1 are the first two of `EFactoryConnectionDirection`.
+
+Then it places them. The unnamed helper at `0x4f9850` — the PDB gives it only a
+templated mangling, which is why the rule asks for it by address — copies a
+transform whole and adds its third argument times the rotation's forward row to
+the translation. `SetupConnections` calls it twice, with `FTransform::Identity`
+(`0x505b22`, a data import the module's own import table names) and with
+`mTopTransform` (`0x505ba5`), passing a zeroed `xmm2` both times (`0x505b03`,
+`0x505b9b`) — `AFGBuildableConveyorLift::CONNECTION_RELATIVE_FORWARD`, which the
+header declares `static constexpr float ... = 0.f` (line 212). So both copies are
+their inputs unchanged, and:
+
+| End | Member | Direction | Relative transform |
+| --- | --- | --- | --- |
+| bottom | `mConnection0` | `FCD_INPUT` | the identity — the actor transform, facing `+X` |
+| top | `mConnection1` | `FCD_OUTPUT` | `mTopTransform` — `(0, 0, height)` at the top's yaw |
+
+`SetRelativeTransform` at `0x505e7e` and `0x506155`, each behind a test that the
+matching `mSnappedPassthroughs` entry is null. Where one is **not** null the end
+is turned to face straight up or straight down instead: `0x505bdf` compares the
+two transforms' Z and picks `FVector::UpVector` (`0x505bad`) or
+`FVector::DownVector` (`0x505bfb`), and `mConnection1` gets that vector negated
+first (`0x505f4f` loads `-1.0`). All three globals are named by the DLL's import
+table, not guessed.
+
+**Reversal does not swap which end items enter by.** `mIsReversed` is still a
+`SaveGame` bool, and the header marks it `DEPRECATED 2023-01-30 / Instead build
+lifts where mConnector0 is always input, and the other always output`
+(lines 269–272); `GetIsReversed()` is documented `LEGACY` and returns
+`IsFlowUpwards()` (line 134). `SetupConnections`, read whole, never touches it.
+What reversal means is the *sign of the height*:
+`AFGBuildableConveyorLift::GetConveyorLiftFlowDirection` (`0x4ed5e0`, 56 bytes)
+reads nothing but `mTopTransform`'s translation Z at `+7E0h` and returns
+`LD_Upwards` for `>= 0`, `LD_Downwards` for `< 0`. Items still come in through
+`mConnection0`, which `AFGBuildableConveyorBase::Factory_Tick` — a lift does not
+override it — grabs through at `0x4e1611`, pushing out through `mConnection1` at
+`0x4e1743`.
+
+A placer that wants a lift to carry items upward puts the actor at the bottom;
+one that wants it to carry them downward puts the actor at the top and gives
+`mTopTransform` a negative Z. Either way the input is `mConnection0` at the
+actor.
+
+`registry.json` carries all of this as `Buildable.lift`, a `LiftGeometry` on each
+of the six marks, with a source per field.
+
+### How the top's yaw is chosen — `lift.top_yaw`
+
+A lift is placed in two clicks, counted by `mActivePointIdx`.
+`AFGConveyorLiftHologram::SetHologramLocationAndRotation` (`0xa87800`) branches on
+it at `0xa87932` and calls `UpdateTopTransform` from either arm:
+
+- **first point** (`0xa880a3`): with the **zero rotator** (`0xa8808e`,
+  `0xa88095`). The bottom's own yaw is the hologram actor's, and
+  `DoMultiStepPlacement` saves it into `mFirstStepYaw` at the end of that step
+  (`0xa72f72`) before incrementing the counter (`0xa72f7a`).
+- **second point** (`0xa88733`): with `FRotator(0, yaw, 0)` where
+  `yaw = AFGHologram::ApplyScrollRotationTo(mFirstStepYaw)` (`0xa886e8` reads
+  the member, `0xa886fa` calls).
+
+`ApplyScrollRotationTo` (`0xaafe10`) asks the hologram for its rotation step
+through the vtable (`0xaafe2c`), floors it at 1 (`0xaafe4f`), splits the base
+yaw into whole steps and a residue (`0xaafe5e`/`0xaafe64`/`0xaafe68`), adds the
+player's `mScrollRotation` (`0xaafe3d`, `0xaafe71`) and rounds the sum back onto
+the lattice (`0xaafe85` `addss 0.5`, `0xaafe8d` `roundps`, `0xaafe93` `mulss`,
+`0xaafe97` adds the residue back).
+
+And `AFGConveyorLiftHologram::GetRotationStep` (`0xa7c140`) returns **0 only
+while the first point is still live** — `cmp dword ptr [rcx+984h], 0; jg` at
+`0xa7c15b`/`0xa7c162` — and **90** otherwise (`0xa7c1a2` `mov eax,5Ah`). So the
+top's yaw is the bottom's plus whatever multiple of 90 the player has scrolled
+to: four directions, chosen independently of the bottom.
+
+`UpdateTopTransform` then writes what it was handed:
+
+```
+mTopTransform.Rotation    = rotation.Quaternion()        ; 0xaa49d1, stored 0xaa49ee/0xaa4a01
+mTopTransform.Translation = clamped height * UpVector    ; 0xaa49a7 names the import,
+                                                         ;   0xaa4a0c..0xaa4a14 multiply
+mTopTransform.Scale3D     = (1, 1, 1)                    ; 0xaa4a36/0xaa4a3d
+```
+
+— so the top end is directly above or below the bottom, never offset sideways,
+and the height is `lift.height_range`'s business rather than this rule's.
 
 ### What a lift's clearance is — `lift.clearance`
 
@@ -493,7 +598,7 @@ anything. Five values:
 `flab2bp.sfy.rules.load_rules` refuses it on an `extracted` rule, because a
 branch that was read says what it does. `compute` is the opposite case and is
 allowed beside `extracted`: the code was read in full, and it does nothing to a
-placement because it is not a validator. The shipped twenty-two:
+placement because it is not a validator. The shipped twenty-four:
 
 | `effect` | rules |
 | --- | --- |
@@ -501,7 +606,7 @@ placement because it is not a validator. The shipped twenty-two:
 | `clamp` | `lift.height_range` |
 | `snap` | `belt.snap_directions`, `buildable.grid_snap` |
 | `none` | `lift.step` |
-| `compute` | `belt.cost`, `belt.clearance`, `lift.clearance`, `belt.straight_tangents`, `buildable.rotation_step`, `manufacturer.inventory_filters`, `factory.potential`, `manufacturer.production_boost` |
+| `compute` | `belt.cost`, `belt.clearance`, `lift.clearance`, `lift.connectors`, `lift.top_yaw`, `belt.straight_tangents`, `buildable.rotation_step`, `manufacturer.inventory_filters`, `factory.potential`, `manufacturer.production_boost` |
 
 Two of those deserve their own sentence. `buildable.clearance` is `partial` —
 the box-against-box test is in `AFGHologram::TestClearanceOverlap`, which was
@@ -528,7 +633,7 @@ multiple of it.
 
 ## What was extracted, and what was not
 
-`hologram_rules.json` carries twenty-two rules; eighteen are `extracted` and
+`hologram_rules.json` carries twenty-four rules; twenty are `extracted` and
 four `partial`. A `partial` rule is a **bound the placer must not assume it
 knows** — its `comparison` names where the comparison actually is, and its
 `interpretation` is a lead for the next extraction, not a constraint.

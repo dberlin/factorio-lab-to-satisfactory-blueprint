@@ -287,7 +287,17 @@ conveyor flow order or a mesh box, and how many
 asset paths it kept. Each belt and lift mark carries
 `flow: {"entry", "exit", "source"}` — the two port names items enter and leave
 by, from step 4 — and `provenance.conveyor_flow` carries the header line, the
-functions, their RVAs and the instructions behind it. Every limit also gets
+functions, their RVAs and the instructions behind it. Each **lift** mark also
+carries `lift`, the connector geometry `AFGBuildableConveyorLift::
+SetupConnections` gives its two ends: where the bottom sits and which way it
+faces, the axis the top's height runs along, the 90-degree step the top's yaw
+turns in, and that reversing a lift does not swap which end items enter by.
+Every one of those six fields names where it was read, and
+`provenance.lift_geometry` names the two rules — `lift.connectors` and
+`lift.top_yaw` — and the header line behind them. A lift's two ports are both at
+the actor origin with no rotation, so this is the only thing in the registry
+that says where a lift's ends are; `load_registry` refuses a lift mark that
+carries none. Every limit also gets
 `provenance.limits[key].governed_by` —
 `{"rule": <rule id>, "effect": <effect>, "status": <status>}` for the hologram
 rule that governs it, with the effect and the status copied from that rule, or

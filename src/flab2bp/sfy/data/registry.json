@@ -4381,6 +4381,34 @@
    "height_cm": null,
    "length_per_cost_cm": 200.0,
    "length_per_cost_source": "docs",
+   "lift": {
+    "bottom_facing": [
+     1.0,
+     0.0,
+     0.0
+    ],
+    "bottom_offset": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "reversed_swaps_flow": false,
+    "sources": {
+     "bottom_facing": "native",
+     "bottom_offset": "native",
+     "reversed_swaps_flow": "header",
+     "top_offset_axis": "native",
+     "top_yaw_free": "native",
+     "top_yaw_step_deg": "native"
+    },
+    "top_offset_axis": [
+     0.0,
+     0.0,
+     1.0
+    ],
+    "top_yaw_free": true,
+    "top_yaw_step_deg": 90.0
+   },
    "manufacturing_speed": null,
    "max_potential": null,
    "mesh_bounds_cm": [
@@ -4467,6 +4495,34 @@
    "height_cm": null,
    "length_per_cost_cm": 200.0,
    "length_per_cost_source": "docs",
+   "lift": {
+    "bottom_facing": [
+     1.0,
+     0.0,
+     0.0
+    ],
+    "bottom_offset": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "reversed_swaps_flow": false,
+    "sources": {
+     "bottom_facing": "native",
+     "bottom_offset": "native",
+     "reversed_swaps_flow": "header",
+     "top_offset_axis": "native",
+     "top_yaw_free": "native",
+     "top_yaw_step_deg": "native"
+    },
+    "top_offset_axis": [
+     0.0,
+     0.0,
+     1.0
+    ],
+    "top_yaw_free": true,
+    "top_yaw_step_deg": 90.0
+   },
    "manufacturing_speed": null,
    "max_potential": null,
    "mesh_bounds_cm": [
@@ -4553,6 +4609,34 @@
    "height_cm": null,
    "length_per_cost_cm": 200.0,
    "length_per_cost_source": "docs",
+   "lift": {
+    "bottom_facing": [
+     1.0,
+     0.0,
+     0.0
+    ],
+    "bottom_offset": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "reversed_swaps_flow": false,
+    "sources": {
+     "bottom_facing": "native",
+     "bottom_offset": "native",
+     "reversed_swaps_flow": "header",
+     "top_offset_axis": "native",
+     "top_yaw_free": "native",
+     "top_yaw_step_deg": "native"
+    },
+    "top_offset_axis": [
+     0.0,
+     0.0,
+     1.0
+    ],
+    "top_yaw_free": true,
+    "top_yaw_step_deg": 90.0
+   },
    "manufacturing_speed": null,
    "max_potential": null,
    "mesh_bounds_cm": [
@@ -4639,6 +4723,34 @@
    "height_cm": null,
    "length_per_cost_cm": 200.0,
    "length_per_cost_source": "docs",
+   "lift": {
+    "bottom_facing": [
+     1.0,
+     0.0,
+     0.0
+    ],
+    "bottom_offset": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "reversed_swaps_flow": false,
+    "sources": {
+     "bottom_facing": "native",
+     "bottom_offset": "native",
+     "reversed_swaps_flow": "header",
+     "top_offset_axis": "native",
+     "top_yaw_free": "native",
+     "top_yaw_step_deg": "native"
+    },
+    "top_offset_axis": [
+     0.0,
+     0.0,
+     1.0
+    ],
+    "top_yaw_free": true,
+    "top_yaw_step_deg": 90.0
+   },
    "manufacturing_speed": null,
    "max_potential": null,
    "mesh_bounds_cm": [
@@ -4725,6 +4837,34 @@
    "height_cm": null,
    "length_per_cost_cm": 200.0,
    "length_per_cost_source": "docs",
+   "lift": {
+    "bottom_facing": [
+     1.0,
+     0.0,
+     0.0
+    ],
+    "bottom_offset": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "reversed_swaps_flow": false,
+    "sources": {
+     "bottom_facing": "native",
+     "bottom_offset": "native",
+     "reversed_swaps_flow": "header",
+     "top_offset_axis": "native",
+     "top_yaw_free": "native",
+     "top_yaw_step_deg": "native"
+    },
+    "top_offset_axis": [
+     0.0,
+     0.0,
+     1.0
+    ],
+    "top_yaw_free": true,
+    "top_yaw_step_deg": 90.0
+   },
    "manufacturing_speed": null,
    "max_potential": null,
    "mesh_bounds_cm": [
@@ -4811,6 +4951,34 @@
    "height_cm": null,
    "length_per_cost_cm": 200.0,
    "length_per_cost_source": "docs",
+   "lift": {
+    "bottom_facing": [
+     1.0,
+     0.0,
+     0.0
+    ],
+    "bottom_offset": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "reversed_swaps_flow": false,
+    "sources": {
+     "bottom_facing": "native",
+     "bottom_offset": "native",
+     "reversed_swaps_flow": "header",
+     "top_offset_axis": "native",
+     "top_yaw_free": "native",
+     "top_yaw_step_deg": "native"
+    },
+    "top_offset_axis": [
+     0.0,
+     0.0,
+     1.0
+    ],
+    "top_yaw_free": true,
+    "top_yaw_step_deg": 90.0
+   },
    "manufacturing_speed": null,
    "max_potential": null,
    "mesh_bounds_cm": [
@@ -39828,7 +39996,7 @@
   "hologram_rules": {
    "dll": "FactoryGameEGS-FactoryGame-Win64-Shipping.dll",
    "dll_sha256": "65fc5a6bde6d44782da387976b144a41a6b94e4fa78ec6e1bc49c3dad2d47513",
-   "extracted": "2026-09-14",
+   "extracted": "2026-09-15",
    "headers_sha256": "f4d96098afb214ee73d73365425db69c839e07a07fe498ff5c8334af0c0f2a5f",
    "method": "sfy-native disasm, one run per rule; reads, constants, calls and the entry RVA are the tool's, the evidence lines are copied from it by address, and only comparison/interpretation/status are written by hand. The blueprint corpus is not an input and is never evidence for a rule.",
    "pdb_guid": "A2691F7C-B45E-7947-65C6-535DE373BA04",
@@ -39837,9 +40005,52 @@
   "inputs_sha256": {
    "assets.json": "0562165b4064d5c424ce2fbc68f94df0a7e39f9acb1edb604324537752ad56ef",
    "docs.json": "cf6cc33614d050144e1b869c0e318e9c5413002e26164c91ebb06eb096b1fbbf",
-   "hologram_rules.json": "3e6e5e1fdbb71d8b51c6040d848dbd57cac37dce166bdc9064a5412d84c9d654",
+   "hologram_rules.json": "e054cbb315cf71c97ed7cfe6c14ea4013f66ed73171c125b6dab99a3416f3881",
    "native.json": "c6b204d7a5ba3fd7c7389ae50d22b8b3f1deafe623b8c4d0a8bb5c028078a11f",
    "native_directions.json": "4c6857ad39ce0b15fae789fabea4d6ff0e917e157d9eeb57a55ccd72d62e295c"
+  },
+  "lift_geometry": {
+   "applied_to": [
+    "Build_ConveyorLiftMk1_C",
+    "Build_ConveyorLiftMk2_C",
+    "Build_ConveyorLiftMk3_C",
+    "Build_ConveyorLiftMk4_C",
+    "Build_ConveyorLiftMk5_C",
+    "Build_ConveyorLiftMk6_C"
+   ],
+   "bottom_facing": [
+    1.0,
+    0.0,
+    0.0
+   ],
+   "bottom_offset": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "header": "Buildables/FGBuildableConveyorLift.h:269",
+   "header_text": "DEPRECATED 2023-01-30 / Instead build lifts where mConnector0 is always input, and the other always output.",
+   "native_class": "FGBuildableConveyorLift",
+   "reversed_swaps_flow": false,
+   "rules": [
+    "lift.connectors",
+    "lift.top_yaw"
+   ],
+   "sources": {
+    "bottom_facing": "native",
+    "bottom_offset": "native",
+    "reversed_swaps_flow": "header",
+    "top_offset_axis": "native",
+    "top_yaw_free": "native",
+    "top_yaw_step_deg": "native"
+   },
+   "top_offset_axis": [
+    0.0,
+    0.0,
+    1.0
+   ],
+   "top_yaw_free": true,
+   "top_yaw_step_deg": 90.0
   },
   "limits": {
    "belt_bend_radius_cm": {
