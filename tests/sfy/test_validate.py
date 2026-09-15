@@ -40,9 +40,9 @@ from flab2bp.sfy.layout.validate import (
     RULE_FOR,
     Severity,
     _first_difference,
-    _lift_box,
     _place_box,
     _round_to_int,
+    lift_box,
     validate,
 )
 from flab2bp.sfy.registry import Port, Registry, load_registry
@@ -1110,7 +1110,7 @@ def test_a_lift_box_is_the_rules_span_and_the_binarys_width() -> None:
 
     height_cm = 400.0
     placement = _lift_out_of_a_machine(height_cm)
-    box = _lift_box(placement.lifts[0], registry)
+    box = lift_box(placement.lifts[0], registry)
     assert box.half == pytest.approx((height_cm / 2.0, 95.0, 95.0))
 
 

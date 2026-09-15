@@ -84,6 +84,8 @@ __all__ = [
     "Report",
     "Severity",
     "WorldBox",
+    "lift_box",
+    "lift_half_width",
     "validate",
 ]
 
@@ -491,7 +493,7 @@ def _belt_chain(run: BeltRun) -> tuple[WorldBox, ...]:
     return tuple(chain)
 
 
-def _lift_box(lift: LiftObj, registry: Registry) -> WorldBox:
+def lift_box(lift: LiftObj, registry: Registry) -> WorldBox:
     """The ONE box ``lift.clearance`` lays along a conveyor lift.
 
     ``AFGConveyorLiftHologram::UpdateClearance`` hands the lift's height and its
@@ -507,7 +509,7 @@ def _lift_box(lift: LiftObj, registry: Registry) -> WorldBox:
     constant, so the tool reads it the other way instead -- by its PDB symbol,
     through ``sfy-native data`` -- and the rule carries the bytes, the
     ``(100.0, 100.0)`` they hold and the ``(95.0, 95.0)`` left after the ``-5``
-    shrink.  :func:`_lift_half_width` takes that from
+    shrink.  :func:`lift_half_width` takes that from
     :attr:`Limits.lift_clearance_half_extent_cm`, so both of this box's
     dimensions are the game's.
 
@@ -525,7 +527,7 @@ def _lift_box(lift: LiftObj, registry: Registry) -> WorldBox:
     if _dot(side, side) <= 1e-12:  # a vertical lift, which is every lift
         side = _cross((0.0, 1.0, 0.0), along)
     side = _unit(side)
-    across = _lift_half_width(lift, registry)
+    across = lift_half_width(lift, registry)
     return WorldBox(
         owner=lift.id,
         label=f"{lift.class_name} {lift.id} lift box",
@@ -535,8 +537,8 @@ def _lift_box(lift: LiftObj, registry: Registry) -> WorldBox:
     )
 
 
-def _lift_half_width(lift: LiftObj, registry: Registry) -> float:
-    """Half the width :func:`_lift_box` gives a lift: the game's, where it is read.
+def lift_half_width(lift: LiftObj, registry: Registry) -> float:
+    """Half the width :func:`lift_box` gives a lift: the game's, where it is read.
 
     :attr:`Limits.lift_clearance_half_extent_cm` is what
     ``AFGBuildableConveyorLift::FitClearance`` builds the box from -- the two
@@ -607,7 +609,7 @@ class Context:
         :func:`_belt_chain`'s job.  Nor are lifts, for the same reason and with
         the same answer: a lift's class carries no box either, and
         ``AFGConveyorLiftHologram::UpdateClearance`` builds one at placement
-        time out of the height -- :func:`_lift_box`.
+        time out of the height -- :func:`lift_box`.
         """
         out: list[WorldBox] = []
         for obj in self.placement.objects:
@@ -638,7 +640,7 @@ class Context:
         return {
             **self.belt_chains,
             **{
-                lift.id: (_lift_box(lift, self.registry),)
+                lift.id: (lift_box(lift, self.registry),)
                 for lift in self.placement.lifts
                 if abs(lift.height_cm) > 0.0
             },
@@ -929,7 +931,7 @@ def _capsule(ctx: Context) -> Iterable[Finding]:
     differ, and that is the only place they are entitled to.
 
     A LIFT is judged here too, with one box rather than a chain -- see
-    :func:`_lift_box`, and the third paragraph of :data:`_CAPSULE_UNREAD` for
+    :func:`lift_box`, and the third paragraph of :data:`_CAPSULE_UNREAD` for
     what about that box is the game's and what is not.  Two conveyors WIRED to
     each other are
     not tested against each other at all when one of them is a lift's neighbour:
