@@ -8,6 +8,7 @@ emitter writes must be that file, not merely something like it.
 
 from __future__ import annotations
 
+import math
 from dataclasses import replace
 from fractions import Fraction
 from functools import cache
@@ -15,7 +16,7 @@ from functools import cache
 import pytest
 
 from flab2bp.sfy.archive import Reader
-from flab2bp.sfy.codec import Blueprint
+from flab2bp.sfy.codec import Blueprint, read_sbp_file
 from flab2bp.sfy.geometry import port_forward, world_port
 from flab2bp.sfy.header import BlueprintHeader, read_header
 from flab2bp.sfy.labmap import load_lab_map
@@ -31,6 +32,7 @@ from flab2bp.sfy.layout.emit import (
     TOP_TRANSFORM,
     TRANSLATION,
     EmitError,
+    _lift_top,
     decode,
     emit,
 )
@@ -639,3 +641,29 @@ def test_the_link_onto_a_lift_comes_back_naming_the_machine_first() -> None:
     entry, _ = belt_ends(registry, LIFT)
     placement = decode(_emit(_lift_placement()), registry)
     assert placement.links == (Link((4, "Output0"), (7, entry)),)
+
+
+def test_every_conveyor_lift_the_game_wrote_reads_back_as_a_height_and_a_yaw() -> None:
+    """The corpus as a FORMAT fixture: a file the game wrote has to decode.
+
+    Not as evidence of what is legal -- a community blueprint carries clipped
+    geometry and older game versions, and no bound here comes from one.  What
+    757 lifts written by the game itself do establish is the shape and the
+    NOISE of the property: 12 of them sit 8.5e-05 cm off their own offset axis,
+    which is float conversion rather than a lift leaning sideways, and a reader
+    that refuses them is a reader that cannot open the game's own files.
+    """
+    registry = load_registry()
+    seen = 0
+    for path in fixture_paths():
+        for header, data in read_sbp_file(path).objects:
+            if header.kind != ACTOR or "ConveyorLift" not in header.class_name:
+                continue
+            seen += 1
+            height, top_yaw = _lift_top(registry, header, data)
+            assert math.isfinite(height) and math.isfinite(top_yaw)
+            # Every one of them lands on the 90 degree lattice
+            # ``GetRotationStep`` hands out.  That is a corroboration and not
+            # the source: ``lift.top_yaw`` is what the validator cites.
+            assert top_yaw % 90.0 == 0.0, (path.name, header.name, top_yaw)
+    assert seen > 700, "the corpus should carry hundreds of lifts to read"

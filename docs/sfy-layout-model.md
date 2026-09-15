@@ -49,8 +49,8 @@ its two moving parts:
 * `top_yaw_deg` is the yaw that transform carries, **in the actor's own frame**
   (`Hologram/FGConveyorLiftHologram.h:102-104`: "in actor local space"), so the
   top end faces the pose's yaw plus this one. `lift.top_yaw` says it is a whole
-  number of 90 degree steps, which is what `lift.step`'s neighbour
-  `top_yaw_step_deg` records and what the validator holds it to.
+  number of 90 degree steps, which is what the registry's `top_yaw_step_deg`
+  records and what the `lift.top_yaw` **check** holds it to.
 
 Which way items travel does **not** depend on the sign. `reversed_swaps_flow`
 is false: items always enter by `mConnection0`, so `flow` names the entry at the
@@ -127,7 +127,7 @@ fails the build if a check drifts from that.
    library and build version the `roundtrip` check writes a file with — which is
    format, not legality.
 
-### The twenty checks
+### The twenty-one checks
 
 `effect` is the effect of the rule the check names, and is blank for a check of
 this project's own — a `project` check enforces no rule and so has no effect to
@@ -145,7 +145,8 @@ report. `needs spec` marks a check that cannot run without an `SfyBuildSpec`.
 | `ports.connected_once` | `project` | — | no | every belt end and every lift end wired exactly once, no connection carrying two belts, nothing wired to a `snap_only` or `unknown` connection |
 | `ports.direction` | `project` | — | no | a link runs output → input, and meets a belt or a lift by the end `flow` names. `belt.snap_directions` is the *evidence* and not the rule enforced: its effect is `snap`, so the refusal is ours (see below) |
 | `ports.position` | `project` | — | no | a belt's or a lift's ends sit within 1 cm of the ports they are wired to, and a belt leaves a port — a machine's, or a lift's top — within 0.01 rad of its facing |
-| `lift.height` | `project` | — | no | a lift's height is between `lift_min_cm` and `lift_max_cm`. `lift.height_range` **clamps** into that window rather than refusing, so the refusal is ours: a lift outside it is one the game would build at a different height. The floor is `mMinimumHeight`, not `mMinimumHeightWithVerticalConnection`, which the rule takes only for a lift snapped to a passthrough — and this project authors none |
+| `lift.height` | `project` | — | no | a lift's height is between `lift_min_cm` and `lift_max_cm`. `lift.height_range` **clamps** into that window rather than refusing, so the refusal is ours: a lift outside it is one the game would build at a different height. The floor is `mMinimumHeight`, not `mMinimumHeightWithVerticalConnection`, which the rule takes only for a lift snapped to a passthrough — and this project authors none. Where the game is *looser* than this check is stated with it: `UpdateTopTransform` rewrites `mMinimumHeight` to 2.5 or 3.5 steps (250 or 350 cm) for the length of the call when the connection the top snapped to has a vertical normal (`0xaa48ba`/`0xaa48c2`, restored at `0xaa4a6f`), so a 400 cm floor is stricter there |
+| `lift.top_yaw` | `project` | — | no | a lift's `top_yaw_deg` is a whole number of `top_yaw_step_deg` steps — 90 degrees, which is what `GetRotationStep` hands out once the first placement point is down (`0xa7c1a2`) and what `ApplyScrollRotationTo` rounds onto. `lift.top_yaw` **computes** the yaw and refuses nothing, so the refusal is ours: an off-lattice top is a lift no player could build |
 | `lift.step` | `project` | — | no | a lift's height is a whole number of `lift_step_cm`. `lift.step` **snaps** it — `floor(raw / mStepHeight + 0.5) * mStepHeight` at `0xaa4769`–`0xaa477c` — so again the refusal is ours: an off-step lift is moved by up to half a step and ends somewhere other than the port it was drawn to |
 | `lift.placement` | `lift.placement` | refuse | no | neither end of a lift ends on a connection that already carries something. `CheckValidPlacement` tests `mHasConnectedComponent` on each snapped connection (`0xa681fa`, `0xa68253`) and adds `UFGCDInvalidPlacement` |
 | `flow.capacity` | `project` | — | **yes** | a belt carries no more than its mark does, and every machine input is fed at the group's per-machine rate. The tier speed comes from the lab dataset through `spec.belt_tiers`, which is why a spec is needed |
@@ -271,6 +272,7 @@ never a bound — the bounds are all in `registry.json`'s `limits`:
 | `HALF_PI_F32` | 1.5707963705062866 | Unreal's `PI` is a `float`, so the `π/2` `ValidateIncline` subtracts `acos` from is 4.4e-8 rad off `math.pi / 2` — which is the whole elevation of a level chord |
 | `ZERO_NORMAL` | 1e-8 | the **squared** length below which `GetSafeNormal` hands back `ZeroVector`. Both callers then *use* that zero vector rather than stopping |
 | `PORT_CM` / `PORT_ANGLE_RAD` | 1 cm / 0.01 rad | the slack on M1b's stated assumption that a belt begins at its port and leaves along its facing |
+| `LIFT_YAW_TOLERANCE_DEG` | 1e-6 | noise, not slack: a top yaw goes into the file as four doubles and comes back through `atan2`, so a quarter turn is not always exactly 90 |
 | `CAPSULE_SEGMENT_CM` | 50 | `belt.clearance` leaves `GetNextDistanceExceedingTolerance` unread, so the game's segment **lengths** cannot be reproduced; shorter boxes hug the spline more closely than the game's, never less |
 | `CURVATURE_SAMPLES` | 2048 | parameter steps used to invert arc length; a resolution, four orders below the 50 cm the rule samples at |
 | `DEG_TO_RAD` | 0.017453292 | the game's own `float` constant at `0xaa57de`, not `math.pi / 180`: the incline branch is strict, so at exactly 35° the two spellings disagree |

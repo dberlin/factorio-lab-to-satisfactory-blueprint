@@ -266,6 +266,17 @@ and then *clamps* it between the minimum — the vertical-connection one when th
 lift meets a passthrough, the ordinary one otherwise — and `mMaximumHeight`.
 There is no disqualifier for either, because neither refuses anything.
 
+`mMinimumHeight` itself is not always the `BeginPlay` value while that call
+runs. When the connection the top snapped to has a **vertical normal**, the
+function overwrites it with 2.5 or 3.5 times `mStepHeight` — 250 or 350 cm
+rather than 400 — and puts the saved value back on the way out (`0xaa4871` the
+snapped connection, `0xaa4885` `GetConnectorNormal`, `0xaa4896`/`0xaa489d` the
+`|Z| > 0.5` test, `0xaa48b2`/`0xaa48a8` the two constants at `0x12bd258` and
+`0x12d6478`, `0xaa48ba`/`0xaa48c2` the multiply and the store, `0xaa4a6f` the
+restore). A validator that keeps to 400 is therefore *stricter* than the game
+for a lift that meets a vertical connection, which is the safe direction and is
+said out loud in the `lift.height` check.
+
 The snap is `lift.step`, `extracted`/`snap`:
 `FHologramHelpers::CalcPoleHeight` hands the raw height back (`0xaa474f`) and
 `0xaa4769`–`0xaa477c` compute `floor(raw / mStepHeight + 0.5) * mStepHeight` —

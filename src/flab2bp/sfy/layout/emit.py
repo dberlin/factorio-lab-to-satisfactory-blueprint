@@ -208,11 +208,21 @@ _ROTATION_TOLERANCE = 1e-6
 be read back as that degree: an actor's rotation is four 32-bit floats, whose
 last digit lands around 6e-8."""
 
-_TOP_OFFSET_TOLERANCE_CM = 1e-6
+_TOP_OFFSET_TOLERANCE_CM = 1e-3
 """How far a lift's top may sit off its own offset axis and still be read as a
-height.  Ours, and the same kind of number as :data:`_ROTATION_TOLERANCE`: the
-game multiplies one vector by one scalar, so anything sideways is arithmetic
-noise up to here and a lift this model cannot state past it."""
+height.
+
+Ours, and a **decoding** tolerance rather than a geometry rule: it says how much
+float noise a file may carry in a number the game wrote, not how far a lift this
+project authors may lean.  ``UpdateTopTransform`` multiplies one scalar by
+``FVector::UpVector`` (``lift.top_yaw``, ``0xaa4a0c``), so nothing sideways is
+ever intended -- but a transform that has been through the game's own
+double/float conversions comes back with a little of it anyway: 12 of the 757
+lifts in the fixture corpus carry 8.5e-05 cm on one horizontal axis, and at
+1e-6 this refused to read files the game itself had written.  A thousandth of a
+centimetre is two orders above that noise and four below anything a placement
+could mean.  What this project WRITES is exact, because :func:`_set_top_transform`
+multiplies the axis by the height itself."""
 
 
 class EmitError(ValueError):

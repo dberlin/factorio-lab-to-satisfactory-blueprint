@@ -117,6 +117,14 @@ PORT_CM = 1.0
 stated assumption is that a belt begins AT its port, and this is the slack that
 assumption is allowed."""
 
+LIFT_YAW_TOLERANCE_DEG = 1e-6
+"""How far a lift's top yaw may sit off the step the build gun turns it in.
+
+Ours, and noise rather than slack: a yaw is written as a quaternion of four
+doubles and read back through ``atan2``, so a quarter turn does not always come
+back as exactly 90.  A lift meant to be turned is turned by a whole step or by
+nothing."""
+
 PORT_ANGLE_RAD = 0.01
 """How far a belt may leave off its port's facing.  Ours, for the same reason:
 ``flab2bp.sfy.geometry.port_forward`` says in as many words that "a belt leaves
@@ -495,6 +503,13 @@ def _lift_box(lift: LiftObj, registry: Registry) -> WorldBox:
     carry -- as the box's full width and depth.  That is this project's reading
     of a number the game does keep about a lift's connections, and
     :data:`_CAPSULE_UNREAD` says so; it is not the game's own box.
+
+    Reading the image at ``0x19B8118`` by hand gives ``(100.0, 100.0)`` -- 95 cm
+    each way after ``FitClearance``'s ``-5`` shrink -- which is the same 2 m
+    square this arrives at from the other direction.  That is recorded in the
+    ``lift.clearance`` rule as what a reader will see and is **not** what this
+    width rests on: the tool will not quote a mutable global, so nothing here
+    may be justified by it until it comes out of ``sfy-native``'s own output.
     """
     geometry = lift_geometry(registry, lift.class_name)
     bottom, _ = lift.bottom_end(geometry)
@@ -1525,10 +1540,27 @@ def _lift_height(ctx: Context) -> Iterable[Finding]:
     The floor is ``mMinimumHeight``.  ``lift_min_vertical_cm``
     (``mMinimumHeightWithVerticalConnection``) is NOT used: the rule's own
     comparison takes that floor only when ``mSnappedPassthroughs[0]`` is set
-    (``0xaa494d``..``0xaa495d``), which is a lift built through a foundation
-    passthrough, and this project authors no passthroughs -- ``emit`` writes
-    that array empty.  A placer that starts snapping lifts to passthroughs has
-    to bring the other floor with it.
+    (the select at ``0xaa4946``..``0xaa495d``, gated on that array and nothing
+    else), which is a lift built through a foundation passthrough, and this
+    project authors no passthroughs -- ``emit`` writes that array empty.  A
+    placer that starts snapping lifts to passthroughs has to bring the other
+    floor with it.
+
+    **Where this check is stricter than the game, and knows it.**
+    ``mMinimumHeight`` is not always the ``BeginPlay`` value either: when the
+    connection the top snapped to has a vertical normal, ``UpdateTopTransform``
+    overwrites it for the length of the call with 2.5 or 3.5 times
+    ``mStepHeight`` -- 250 or 350 cm rather than 400 -- and puts the saved value
+    back at ``0xaa4a6f``.  It reads the snapped connection (``0xaa4871``), asks
+    it for ``GetConnectorNormal`` (``0xaa4885``), tests the normal's
+    ``|Z| > 0.5`` (``0xaa4896``/``0xaa489d``/``0xaa48a1``) and picks 2.5
+    (``0xaa48b2``) or 3.5 (``0xaa48a8``) on its sign before multiplying by the
+    step (``0xaa48ba``) and storing it (``0xaa48c2``).  So for a lift whose top
+    meets a vertical connection the game would accept a shorter lift than this
+    check does.  Refusing one is safe in the direction that matters -- it turns
+    away a build the game would have taken, never the reverse -- and this
+    project authors no such lift today; a placer that starts doing so should
+    read that floor rather than loosen this one.
 
     The bound is on the SIZE of the drop: the sign of ``height_cm`` says which
     way items travel, and both branches of the clamp are the same window.
@@ -1585,6 +1617,56 @@ def _lift_step(ctx: Context) -> Iterable[Finding]:
             lift.id,
             height_cm=round(lift.height_cm, 3),
             step_cm=step,
+        )
+
+
+@check("lift.top_yaw")
+def _lift_top_yaw(ctx: Context) -> Iterable[Finding]:
+    """A lift's top faces one of the four directions the build gun can give it.
+
+    This project's own rule, over the game's own step.  ``lift.top_yaw`` is a
+    ``compute`` rule -- it works out a number the game then writes and turns no
+    placement away -- so the refusal is ours, and what it rests on is that the
+    step is not a preference: ``AFGConveyorLiftHologram::GetRotationStep``
+    returns **90** once the first placement point is down and 0 only while it is
+    still live (``0xa7c19a`` ``xor eax,eax`` against ``0xa7c1a2`` ``mov
+    eax,5Ah``), ``AFGHologram::ApplyScrollRotationTo`` rounds the yaw onto that
+    lattice (``0xaafe85``..``0xaafe97``), and ``UpdateTopTransform`` stores the
+    quaternion of the rotator it is handed into ``mTopTransform``
+    (``0xaa49d1``, stored at ``0xaa49ee``/``0xaa4a01``).  A top yaw off the
+    lattice is therefore not a yaw the build gun can produce at all: pasting one
+    is authoring a lift no player could build, and the blueprint would not be
+    the build that was costed.
+
+    The step is the registry's own ``top_yaw_step_deg``, and ``top_yaw_free``
+    beside it says whether the top may be turned at all -- a class that says it
+    may not is held to a yaw of zero rather than to a lattice.
+    """
+    for lift in ctx.placement.lifts:
+        geometry = lift_geometry(ctx.registry, lift.class_name)
+        step = geometry.top_yaw_step_deg
+        if not geometry.top_yaw_free:
+            if abs(lift.top_yaw_deg) > LIFT_YAW_TOLERANCE_DEG:
+                yield ctx.finding(
+                    "lift.top_yaw",
+                    f"lift {lift.id}'s top is turned {lift.top_yaw_deg:.1f} degrees and the "
+                    "registry says this class's top yaw is not free",
+                    lift.id,
+                    top_yaw_deg=round(lift.top_yaw_deg, 3),
+                )
+            continue
+        if not step:
+            continue
+        off = min(lift.top_yaw_deg % step, step - lift.top_yaw_deg % step)
+        if off <= LIFT_YAW_TOLERANCE_DEG:
+            continue
+        yield ctx.finding(
+            "lift.top_yaw",
+            f"lift {lift.id}'s top is turned {lift.top_yaw_deg:.1f} degrees, which is "
+            f"{off:.1f} off the {step:.0f} degree step the build gun turns a lift's top in",
+            lift.id,
+            top_yaw_deg=round(lift.top_yaw_deg, 3),
+            step_deg=step,
         )
 
 

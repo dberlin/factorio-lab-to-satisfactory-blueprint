@@ -312,8 +312,13 @@ may not invent one in its place. The first consequence is concrete —
   through belts are refused.
 - Per belt run: length <= max spline length, incline <= max incline, and
   horizontal radius of curvature >= the `belt.curvature` floor (not
-  `mBendRadius`). Per lift: height within min/max and the vertical-connection
-  minimum when attached to a port; height a multiple of `lift_step_cm`. The
+  `mBendRadius`). Per lift: height within min/max, where the minimum is
+  `mMinimumHeight` — `mMinimumHeightWithVerticalConnection` is the floor only
+  when the lift meets a **passthrough**, which is the gate
+  `UpdateTopTransform` reads (`mSnappedPassthroughs`, `0xaa4946`..`0xaa495d`;
+  see `docs/sfy-hologram-rules.md`), and this project authors no passthroughs.
+  Height a multiple of `lift_step_cm`, and a top yaw that is a whole number of
+  90 degree steps. The
   multiple is the **game's own snap** — `UpdateTopTransform` rounds the height
   onto a multiple of `mStepHeight` (`lift.step`, `extracted`/`snap`, and
   `lift_step_cm` is governed by it in the registry) — and the *refusal* is

@@ -360,6 +360,11 @@ EVIDENCE: dict[str, tuple[str, ...]] = {
         "0xaa46b8", "0xaa46cf", "0xaa46e8", "0xaa4946", "0xaa494d", "0xaa4953",
         "0xaa495d", "0xaa4965", "0xaa4968", "0xaa4979", "0xaa497d", "0xaa4987",
         "0xaa4998", "0xaa499f", "0xaa4a6f", "0xaa4a7d",
+        # The floor the function writes for itself when the connection the top
+        # snapped to faces up or down: the normal, the |Z| > 0.5 test, the two
+        # multiples of the step, and the store into mMinimumHeight.
+        "0xaa4871", "0xaa487b", "0xaa4885", "0xaa488a", "0xaa4896", "0xaa489d",
+        "0xaa48a1", "0xaa48a3", "0xaa48a8", "0xaa48b2", "0xaa48ba", "0xaa48c2",
     ),
     "lift.step": (
         # The step itself, and the five instructions that quantise the raw
@@ -899,7 +904,22 @@ INTERPRETATIONS: dict[str, tuple[str, str, str, str]] = {
         "clamps into [minimum, mMaximumHeight] rather than refusing, so there "
         "is no disqualifier for it and no blueprint can carry a lift outside "
         "the range. The minimum is mMinimumHeightWithVerticalConnection when "
-        "the lift meets a passthrough and mMinimumHeight otherwise. The "
+        "the lift meets a passthrough and mMinimumHeight otherwise -- and "
+        "mMinimumHeight itself is not always the BeginPlay value: when the top "
+        "has snapped to a connection whose normal is vertical, "
+        "UpdateTopTransform overwrites it for the length of the call with 2.5 "
+        "or 3.5 times mStepHeight, i.e. 250 or 350 cm rather than 400. It "
+        "takes the snapped connection (0xaa4871, skipped when null at "
+        "0xaa487b), asks it for GetConnectorNormal (0xaa4885), reads that "
+        "vector's Z (0xaa488a) and tests |Z| against 0.5 (0xaa4896 andps, "
+        "0xaa489d comiss, 0xaa48a1 jbe); past that test 0xaa48a3 compares the "
+        "Z against xmm7 -- which 0xaa47c0 `xorps xmm7, xmm7` has zeroed on the "
+        "path through, so this is the sign of the normal -- and takes 2.5 "
+        "(0xaa48b2, 0x12bd258) or 3.5 (0xaa48a8, 0x12d6478), multiplies by "
+        "mStepHeight (0xaa48ba) and stores it into mMinimumHeight (0xaa48c2). "
+        "The saved value goes back at 0xaa4a6f, so the rewrite lasts one call. "
+        "A placer that refuses below 400 cm is therefore stricter than the "
+        "game for a lift whose top meets a vertical connection. The "
         "numbers are not constructor immediates: "
         "AFGConveyorLiftHologram::BeginPlay computes all three from the "
         "buildable's mesh height H as H*2, H*24 and H-50, which "
@@ -1113,8 +1133,14 @@ INTERPRETATIONS: dict[str, tuple[str, str, str, str]] = {
         "AFGBuildableConveyorLift::CLEARANCE_EXTENT_2D "
         "(Buildables/FGBuildableConveyorLift.h:211) -- but a static initialised "
         "at start-up lives in .data, which sfy-native will not quote, so that "
-        "is a consistent reading and not a value this rule states. A placer "
-        "must therefore not compute a lift's footprint from "
+        "is a consistent reading and not a value this rule states. Reading the "
+        "image at 0x19B8118 by hand gives (100.0, 100.0) -- a 2 m square "
+        "footprint, 95 cm each way after FitClearance's -5 shrink -- and that "
+        "is recorded here as what a reader will see and NOT as something this "
+        "rule states: it is a mutable global, the tool will not quote it, and "
+        "nothing in this project's own geometry may be justified by it until "
+        "it comes out of the tool's own output. A placer must therefore not "
+        "compute a lift's footprint from "
         "this rule; take the boxes registry.json already carries per buildable, "
         "or the mesh box, and treat the width as unknown. Nothing here refuses "
         "anything -- the effect is compute -- and whether the box overlaps is "

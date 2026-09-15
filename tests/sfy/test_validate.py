@@ -1187,3 +1187,22 @@ def test_a_lifts_clearance_is_judged_against_a_hard_box_it_is_not_wired_to() -> 
         ),
     )
     assert _findings(crowded, "belt.capsule") == ["belt.capsule"]
+
+
+def test_lift_top_yaw_refuses_a_turn_the_build_gun_cannot_make() -> None:
+    """``lift.top_yaw`` computes the yaw in 90 degree steps; off the lattice is ours.
+
+    ``GetRotationStep`` returns 90 once the first placement point is down
+    (``0xa7c1a2``), and ``ApplyScrollRotationTo`` rounds onto that lattice, so a
+    lift whose top is turned 37 degrees is not a lift any player could build --
+    even one that ends straight in a port, where the turn changes nothing about
+    where the end sits.
+    """
+    placement = _lift_out_of_a_machine()
+    assert _findings(placement, "lift.top_yaw") == []
+    for yaw in (90.0, 180.0, -90.0):
+        assert _findings(_lift(placement, top_yaw_deg=yaw), "lift.top_yaw") == []
+    assert _findings(_lift(placement, top_yaw_deg=37.0), "lift.top_yaw") == ["lift.top_yaw"]
+    into = _lift_into_a_machine()
+    assert _findings(into, "lift.top_yaw") == []
+    assert _findings(_lift(into, top_yaw_deg=37.0), "lift.top_yaw") == ["lift.top_yaw"]
