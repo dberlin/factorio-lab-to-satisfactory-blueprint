@@ -20,7 +20,6 @@ from pathlib import Path
 
 import pytest
 
-from flab2bp.bench.corpus import Tier
 from flab2bp.bench.sfy_corpus import (
     CLEAN,
     DESIGNER_MARKS,
@@ -32,6 +31,7 @@ from flab2bp.bench.sfy_corpus import (
     entry,
     is_ruled_cause,
 )
+from flab2bp.bench.tier import Tier
 from flab2bp.lab.flow import load_flow
 from flab2bp.layout.base import LayoutAttemptFailure, NoValidLayout, SpecInfeasible
 from flab2bp.sfy.layout.model import MachineObj, PoleObj, Pose, SfyPlacement
@@ -503,18 +503,18 @@ def _import_probe() -> dict[str, list[str]]:
     """Import the corpus in a fresh interpreter and report what came with it.
 
     A fresh one is the only honest check: inside this interpreter the DSP
-    modules are long since imported by other tests.  Two questions are asked at
-    once -- what the bake-off package costs, and what ``sfy_corpus`` adds on top
-    of the one module it genuinely needs (``bench.corpus``, for ``Tier``).
+    modules are long since imported by other tests.  Nothing is imported ahead
+    of ``sfy_corpus``, so every module the probe reports is one reading the
+    Satisfactory corpus paid for.
     """
     probe = """
 import importlib, json, sys
-importlib.import_module("flab2bp.bench.corpus")
-before = {m for m in sys.modules if m.startswith("flab2bp.dsp")}
 importlib.import_module("flab2bp.bench.sfy_corpus")
-after = {m for m in sys.modules if m.startswith("flab2bp.dsp")}
 print(json.dumps({
-    "added": sorted(after - before),
+    "dsp": sorted(
+        m for m in sys.modules
+        if m.startswith(("flab2bp.dsp", "flab2bp.rates"))
+    ),
     "bench": sorted(m for m in sys.modules if m.startswith("flab2bp.bench.")),
     "layout": sorted(m for m in sys.modules if m.startswith("flab2bp.layout")),
 }))
@@ -531,28 +531,26 @@ print(json.dumps({
 
 
 def test_importing_the_satisfactory_corpus_adds_no_dsp_module_of_its_own() -> None:
-    """The Satisfactory corpus must not drag MORE of the DSP stack behind it.
+    """A list of Satisfactory URLs must load none of the other game's stack.
 
-    Said plainly, because this test is easy to read as more than it is:
-    importing ``flab2bp.bench.sfy_corpus`` today loads NINE ``flab2bp.dsp``
-    modules.  It reuses exactly one thing from the DSP side -- ``Tier``, out of
-    ``flab2bp.bench.corpus`` -- and THAT module imports
+    Until M3 this was the weaker claim that ``sfy_corpus`` adds nothing on top
+    of what ``bench.corpus`` already pulls, which was nine ``flab2bp.dsp``
+    modules and five ``flab2bp.rates`` ones: the corpus reused exactly one name
+    from the DSP side -- ``Tier`` -- and ``bench.corpus`` imports
     ``flab2bp.rates.CandidatePolicy``, the DSP rate solver, which brings
     ``dsp.catalog``, ``registry``, ``rules``, ``colliders``, ``provenance``,
     ``quaternion`` and the two geometry kernels with it.
 
-    This test pins that seam where it is; it does not close it.  After
-    ``bench.corpus`` is in, reading ``sfy_corpus`` must add no FURTHER DSP
-    module -- so a new import here is caught, while the nine already on the
-    other side of ``Tier`` stay.  Closing it means moving ``Tier`` into a leaf
-    module that imports nothing, which is an M3 chore: ``Tier`` is a name the
-    DSP corpus reads too, so moving it is a change to the other game's gate and
-    does not belong in a Satisfactory fix round.
+    ``Tier`` now lives in :mod:`flab2bp.bench.tier`, which imports nothing but
+    ``enum``, so the seam is closed rather than pinned: reading this corpus
+    loads no DSP module and no rate solver at all.  ``flab2bp.sfy.pipeline``
+    and ``flab2bp.sfy.layout.strategy``, the other two imports, each pull none
+    of their own.
     """
     probe = _import_probe()
-    assert probe["added"] == [], (
-        "importing flab2bp.bench.sfy_corpus pulled DSP modules that "
-        f"flab2bp.bench.corpus had not already pulled: {probe['added']}"
+    assert probe["dsp"] == [], (
+        "importing flab2bp.bench.sfy_corpus pulled the DSP catalog or the DSP "
+        f"rate solver: {probe['dsp']}"
     )
 
 
@@ -593,6 +591,18 @@ def test_importing_the_satisfactory_corpus_does_not_run_the_bake_off_package() -
         "flab2bp.bench.scoring",
     ):
         assert heavy not in loaded, f"{heavy} was imported by reading the corpus"
+
+
+def test_the_dsp_corpus_still_offers_tier_under_the_name_it_always_had() -> None:
+    """Moving ``Tier`` out may not move it for the other game's gate.
+
+    ``flab2bp.bench.corpus.Tier`` is what the DSP corpus, the runner and the
+    sweep all read, so the leaf is where the enum lives and ``bench.corpus``
+    re-exports the same object.
+    """
+    import flab2bp.bench.corpus as dsp_corpus
+
+    assert dsp_corpus.Tier is Tier
 
 
 def test_the_bake_off_package_still_re_exports_every_name_it_used_to() -> None:

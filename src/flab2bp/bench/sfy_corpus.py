@@ -46,26 +46,27 @@ measured ceiling today is two rows in an mk3.
 
 Tier is orientation, not a budget
 ---------------------------------
-The DSP corpus makes :class:`~flab2bp.bench.corpus.Tier` set the CP-SAT budget.
+The DSP corpus makes :class:`~flab2bp.bench.tier.Tier` set the CP-SAT budget.
 There is no CP-SAT here: the manifold strategy either lays the rows out in well
 under a second or refuses on arithmetic, so the audit's budget is the one number
 its ``--budget`` flag carries and the tier says only how big the chain is.
 
-What importing this module still costs
---------------------------------------
-Nine ``flab2bp.dsp`` modules, and they are not free-standing: importing ``Tier``
-imports :mod:`flab2bp.bench.corpus`, which imports
+What importing this module costs
+--------------------------------
+No DSP module and no rate solver.  It used to cost nine ``flab2bp.dsp`` modules
+and five ``flab2bp.rates`` ones, none of them free-standing: importing ``Tier``
+imported :mod:`flab2bp.bench.corpus`, which imports
 :class:`flab2bp.rates.CandidatePolicy`, which is the DSP rate solver and brings
 ``flab2bp.dsp.catalog``, ``registry``, ``rules``, ``colliders``, ``provenance``,
 ``quaternion`` and the two geometry kernels with it.  A list of twelve
-Satisfactory URLs has no use for any of them.
+Satisfactory URLs has no use for any of them, so ``Tier`` now lives in the leaf
+:mod:`flab2bp.bench.tier`, which imports nothing but ``enum``, and
+``bench.corpus`` re-exports it for the other game's gate.
 
-``tests/sfy/test_corpus.py`` pins exactly that and no more: with
-``bench.corpus`` already imported, reading this module must add no further DSP
-module.  The guard therefore holds the seam where it is rather than closing it
--- closing it means moving ``Tier`` into a leaf module that imports nothing,
-which is an M3 chore and deliberately not done here, because moving a name the
-DSP corpus reads is a change to the other game's gate.
+``tests/sfy/test_corpus.py`` measures that in a fresh interpreter: reading this
+module must load no ``flab2bp.dsp`` or ``flab2bp.rates`` module at all, no DSP
+placer or router, and none of the bake-off package beyond its lazy
+``__init__``.
 """
 
 from __future__ import annotations
@@ -74,7 +75,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Literal
 
-from flab2bp.bench.corpus import Tier
+from flab2bp.bench.tier import Tier
 from flab2bp.sfy.layout.strategy import REFUSALS
 from flab2bp.sfy.pipeline import DESIGNER_MARKS
 
