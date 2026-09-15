@@ -402,7 +402,7 @@ and the height is `lift.height_range`'s business rather than this rule's.
 `UpdateClearance` builds the three doubles `(-5, -5, -5)`, tests both
 `mSnappedPassthroughs` and hands the lift's height, `mMeshHeight`, a module
 global and that `-5` vector to `AFGBuildableConveyorLift::FitClearance`
-(`0x4e5dd0`, 375 bytes, `.pdata`). Both functions are now read whole, and the
+(`0x4e5dd0`, 375 bytes, `.pdata`). Both functions are read whole, and the
 **span** between the lift's two ends comes out of them:
 
 ```
@@ -414,16 +414,26 @@ with `P = 200` when the first passthrough flag is set and `Q = 50` when the
 second is. The box is then `centre ± extent`, where the centre is `top` scaled
 by a vector and the extent is that module global shrunk by 5 cm per axis.
 
-**The rule is still `partial`, and not because of a callee.** Both globals live
-in `.data`, and `sfy-native` refuses to quote a mutable global as a constant, so
-the box's half-width and its axis are not in the evidence. `FitClearance` reads
-exactly two doubles from the first, and the class declares one static
-two-component constant, `CLEARANCE_EXTENT_2D`
-(`Buildables/FGBuildableConveyorLift.h:211`) — a consistent reading, not a value
-the rule states. A placer must take a lift's footprint from the boxes
-`registry.json` carries, or from `mesh_bounds_cm`, and treat the width here as
-unknown. The effect is `compute`: nothing in either function turns a placement
-away.
+**The half-extent is read, through the symbol rather than the operand.** The
+first global is the one static the class declares,
+`AFGBuildableConveyorLift::CLEARANCE_EXTENT_2D`
+(`Buildables/FGBuildableConveyorLift.h:211`), and it lives in `.data`, which
+`sfy-native`'s operand annotation refuses to quote because a mutable global is
+not a constant. So the rule reads it the other way — `sfy-native data` resolves
+the PDB symbol, refuses any RVA outside `.data`/`.rdata`, and prints the bytes —
+and the rule carries the result under `data_reads`: 16 bytes at `0x19b8118` in
+`.data`, `(100.0, 100.0)`, which the `-5` leaves at `(95.0, 95.0)`. That is
+`registry.json`'s `lift_clearance_half_extent_cm`, so a lift's footprint is a
+2 m square column and a placer may take it from here. The number is an
+**initialiser**, what the image holds before the game runs; the rule says so
+once, beside the bytes.
+
+**The rule is still `partial`, and not because of a callee.** What is left is
+the box's *centre*: `FitClearance` scales it by a third vector reached through
+the pointer at `0xEE7CC0`, and a pointer's target is an address the loader
+filled in rather than a symbol anything names, so where along its axis the game
+puts the box is not in the evidence. The effect is `compute`: nothing in either
+function turns a placement away.
 
 ## Pipelines — `Hologram/FGPipelineHologram.h`
 
