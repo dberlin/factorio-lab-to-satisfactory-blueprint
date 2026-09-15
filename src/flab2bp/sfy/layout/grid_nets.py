@@ -15,7 +15,16 @@ sends it out.  The exception is :func:`~flab2bp.sfy.spec.direct_pairs`: where
 one group makes exactly what another eats, machine for machine, the flow is N
 independent one-to-one flows that FactorioLab has already balanced, so it
 becomes N nets of one source and one sink rather than one N-to-N tree.  That is
-a property of the rates, read off the spec, and not a layout decision.
+a property of the rates, read off the spec, and not a layout decision, and it
+replaces exactly ONE item's flow: the groups a pair joins go on eating the ore
+they eat and making the plate they make, and every one of those items gets its
+net the way any group's does.
+
+**Two readers, one numbering.**  :func:`net_plan` settles which nets there are,
+what they carry and what they are called, from the spec alone; :func:`nets_for`
+is that list with the placed machines' ports put on it.  The packer reads the
+first (it needs ids and ports before it has a pose to give anything) and the
+router reads the second, so a weight fed back under net 3 lands on net 3.
 
 **A wall terminal set is a CHOICE, not a sum.**  A machine port is one place a
 belt really starts, so a net with three machine sources has three belts leaving
@@ -48,7 +57,7 @@ reads: :mod:`flab2bp.sfy.layout.rrr` passes ``ceil(measures.radius / grid)``.
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterator, Sequence
 from dataclasses import dataclass
 from fractions import Fraction
 from itertools import count
@@ -67,8 +76,10 @@ __all__ = [
     "TAP_CLEAR_NODES",
     "GridNet",
     "NetError",
+    "NetPlan",
     "belt_class_for",
     "facing_for",
+    "net_plan",
     "nets_for",
     "snapped",
     "tap_nodes",
@@ -128,6 +139,41 @@ class NetError(ValueError):
         super().__init__(detail)
         self.cause = cause
         self.detail = detail
+
+
+@dataclass(frozen=True, slots=True)
+class NetPlan:
+    """One net as the SPEC states it, before anything has been placed.
+
+    A net's identity and its rates are a property of the spec and of nothing
+    else, so they are settled here and read by both of the stages that need
+    them: the packer, which weights its objective by how far a net's ports are
+    apart and needs the ids before it has any poses, and :func:`nets_for`, which
+    puts the placed machines' ports on them afterwards.
+
+    ``sources`` and ``sinks`` name MACHINE ports, as ``(machine index, port
+    name)``, and the index is the position in the flat machine list
+    :func:`net_plan` documents.  An empty tuple on a side means no machine is on
+    it, which in a complete spec is the designer wall -- the ``-Y`` wall for a
+    source and the ``+Y`` wall for a sink (R-M3-5).  The wall carries no machine
+    index and no port name, so what it moves is not in ``per_source`` or
+    ``per_sink``: it is the spec's own ``external_inputs`` and ``outputs``, and
+    :func:`nets_for` reads it from there.  ``rate`` is what the item moves in
+    total either way.
+
+    ``paired`` marks the one-to-one nets a
+    :func:`~flab2bp.sfy.spec.direct_pairs` pairing makes: one source, one sink,
+    and a rate FactorioLab has already balanced between them.
+    """
+
+    id: int
+    item_id: str
+    sources: tuple[tuple[int, str], ...]
+    sinks: tuple[tuple[int, str], ...]
+    rate: Fraction
+    per_source: tuple[Fraction, ...]
+    per_sink: tuple[Fraction, ...]
+    paired: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,6 +243,65 @@ def _belt_class(lab_map: LabMap, tier: BeltTier) -> str:
 # --- the nets --------------------------------------------------------------
 
 
+def net_plan(spec: SfyBuildSpec, registry: Registry) -> tuple[NetPlan, ...]:
+    """Every net this spec has to belt, numbered, before anything is placed.
+
+    THE place net ids come from.  The packer needs them before it knows where a
+    machine stands -- its objective weights a net by how far its ports are apart
+    -- and :func:`nets_for` needs them after; two readers numbering the same
+    nets from two pieces of code is exactly how they come to disagree, so they
+    read the same list and only one of them adds poses to it.
+
+    **The machine index is the position in the flat machine list**, and the
+    order is stated here because both sides build that list: the spec's groups
+    in spec order, and within a group its machines in index order, so group
+    ``g``'s machine ``i`` is at ``sum(count of every earlier group) + i``.
+
+    The direct pairs come first, one net per machine pair, because they are the
+    spec's own statement that the flow is already balanced one to one.  A pair
+    replaces ONE item's producer-to-consumer net and nothing else: the groups it
+    joins go on eating and making everything else they eat and make, and those
+    items get their nets the way any group's do.  ``direct_pairs`` is what makes
+    that safe -- it reports a pair only where no other group touches the item
+    and the spec neither belts it in nor sends it out -- so the paired ITEM is
+    the one thing dropped from the trees, rather than the paired GROUPS.
+
+    An item with nowhere to come from or nowhere to go makes NO net.  A complete
+    spec has neither, so this arises only for the hand-built fragments the
+    layout stages are tested on, where an item that goes nowhere is nothing to
+    route rather than an error.
+    """
+    first = _first_machine(spec)
+    ids = count(1)
+    plans: list[NetPlan] = []
+    paired: set[str] = set()
+    for pair in direct_pairs(spec):
+        paired.add(pair.item)
+        maker = _group_index(spec, pair.producer)
+        eater = _group_index(spec, pair.consumer)
+        out_port = _port_name(pair.producer, pair.item, "output", registry)
+        in_port = _port_name(pair.consumer, pair.item, "input", registry)
+        for index in range(pair.producer.count):
+            rate = _share(pair.producer, pair.producer.outputs_per_machine[pair.item], index)
+            plans.append(
+                NetPlan(
+                    id=next(ids),
+                    item_id=pair.item,
+                    sources=((first[maker] + index, out_port),),
+                    sinks=((first[eater] + index, in_port),),
+                    rate=rate,
+                    per_source=(rate,),
+                    per_sink=(rate,),
+                    paired=True,
+                )
+            )
+    for item_id in _loose_items(spec, paired):
+        plan = _tree_plan(spec, item_id, registry, first, ids)
+        if plan is not None:
+            plans.append(plan)
+    return tuple(plans)
+
+
 def nets_for(
     spec: SfyBuildSpec,
     machines: Sequence[MachineObj],
@@ -204,120 +309,155 @@ def nets_for(
     registry: Registry,
     lab_map: LabMap,
 ) -> tuple[GridNet, ...]:
-    """Every belt tree this build has to lay, in the order they are numbered.
+    """:func:`net_plan`'s nets, with the placed machines' ports put on them.
 
-    The direct pairs come first, one net per machine pair, because they are the
-    spec's own statement that the flow is already balanced one to one; then one
-    net per remaining item, with every producer's port as a source, every
-    consumer's port as a sink, and the designer wall standing in for whatever
-    the spec belts in or sends out (R-M3-5).
+    Which nets there are, what they carry and what they are numbered is the
+    plan's; all this adds is where each port really is -- the terminal -- and
+    the designer wall, which has no machine index to carry and is read off the
+    spec here (R-M3-5).
 
-    An item with no source or no sink makes NO net.  A complete spec has neither
-    -- ``_no_dangling_demand`` and the surplus outputs see to that -- so this
-    arises only for the hand-built fragments the layout stages are tested on,
-    where an item that goes nowhere is nothing to route rather than an error.
-
-    ``lab_map`` is read once, here, to prove the spec's own belt can be named in
-    the game before the router spends a budget on a build whose conveyors turn
-    out to have no class.
+    ``lab_map`` is read once, to prove the spec's own belt can be named in the
+    game before the router spends a budget on a build whose conveyors turn out
+    to have no class.
     """
     belt_class_for(spec, lab_map)(spec.belt_items_per_second, spec.belt_item_id)
-    by_group = _machines_by_group(spec, machines)
-    ids = count(1)
+    placed = _machines_in_spec_order(spec, machines)
     nets: list[GridNet] = []
-    paired: set[int] = set()
-    for pair in direct_pairs(spec):
-        paired |= {id(pair.producer), id(pair.consumer)}
-        makers = by_group[id(pair.producer)]
-        eaters = by_group[id(pair.consumer)]
-        outputs = tuple(sorted(pair.producer.outputs_per_machine))
-        inputs = tuple(sorted(pair.consumer.inputs_per_machine))
-        for index, (maker, eater) in enumerate(zip(makers, eaters, strict=True)):
-            rate = _share(pair.producer, pair.producer.outputs_per_machine[pair.item], index)
-            nets.append(
-                GridNet(
-                    id=next(ids),
-                    item_id=pair.item,
-                    sources=(_terminal(maker, pair.item, outputs, "output", lattice, registry),),
-                    sinks=(_terminal(eater, pair.item, inputs, "input", lattice, registry),),
-                    rate=rate,
-                    per_sink=(rate,),
-                    per_source=(rate,),
-                )
+    for plan in net_plan(spec, registry):
+        sources = [_at(placed, port, lattice, registry) for port in plan.sources]
+        sinks = [_at(placed, port, lattice, registry) for port in plan.sinks]
+        per_source = list(plan.per_source)
+        per_sink = list(plan.per_sink)
+        # A paired item is never belted in or out -- ``direct_pairs`` reports a
+        # pair only where the spec does neither -- so these are zero there.
+        inward = _inward(spec, plan.item_id)
+        outward = _outward(spec, plan.item_id)
+        if inward:
+            wall = _wall_terminals(lattice, inward=True)
+            sources.extend(wall)
+            per_source.extend([inward] * len(wall))
+        if outward:
+            wall = _wall_terminals(lattice, inward=False)
+            sinks.extend(wall)
+            per_sink.extend([outward] * len(wall))
+        nets.append(
+            GridNet(
+                id=plan.id,
+                item_id=plan.item_id,
+                sources=tuple(sources),
+                sinks=tuple(sinks),
+                rate=plan.rate,
+                per_sink=tuple(per_sink),
+                per_source=tuple(per_source),
             )
-    for item_id in _loose_items(spec, paired):
-        net = _tree_net(spec, item_id, by_group, paired, lattice, registry, next(ids))
-        if net is not None:
-            nets.append(net)
+        )
     return tuple(nets)
 
 
-def _loose_items(spec: SfyBuildSpec, paired: Collection[int]) -> tuple[str, ...]:
-    """Every item a net may still have to move, in a stable order.
+def _at(
+    placed: Sequence[MachineObj], port: tuple[int, str], lattice: Lattice, registry: Registry
+) -> Terminal:
+    """One of the plan's ``(machine index, port name)`` pairs, where it stands."""
+    machine = placed[port[0]]
+    return terminal_for(
+        machine, _named_port(registry, machine.class_name, port[1]), lattice, registry
+    )
 
-    Sorted, because the order nets are routed in is the order they are offered
-    the floor: an order that depended on a dict's insertion would make one pack
-    route differently from the same pack read back out of a file.
+
+def _loose_items(spec: SfyBuildSpec, paired: Collection[str]) -> tuple[str, ...]:
+    """Every item a tree may still have to move, in a stable order.
+
+    Everything the groups eat or make and everything the spec belts in or sends
+    out, less the items a direct pair already belts one to one.  Sorted, because
+    the order nets are routed in is the order they are offered the floor: an
+    order that depended on a dict's insertion would make one pack route
+    differently from the same pack read back out of a file.
     """
     items: set[str] = set(spec.external_inputs) | set(spec.outputs) | set(spec.surplus_outputs)
     for group in spec.groups:
-        if id(group) in paired:
-            continue
         items |= set(group.inputs_per_machine) | set(group.outputs_per_machine)
-    return tuple(sorted(items))
+    return tuple(sorted(items - set(paired)))
 
 
-def _tree_net(
+def _tree_plan(
     spec: SfyBuildSpec,
     item_id: str,
-    by_group: Mapping[int, Sequence[MachineObj]],
-    paired: Collection[int],
-    lattice: Lattice,
     registry: Registry,
-    net_id: int,
-) -> GridNet | None:
-    """One item's whole tree, or ``None`` where it has nowhere to come from or go."""
-    sources: list[Terminal] = []
-    sinks: list[Terminal] = []
+    first: Sequence[int],
+    ids: Iterator[int],
+) -> NetPlan | None:
+    """One item's whole tree, or ``None`` where it has nowhere to come from or go.
+
+    Every group that makes the item is a source and every group that eats it is
+    a sink, whether or not one of them is half of a direct pair on some OTHER
+    item: a pair is a statement about one item's flow and says nothing about the
+    ore its producer eats or the plate its consumer makes.
+    """
+    sources: list[tuple[int, str]] = []
+    sinks: list[tuple[int, str]] = []
     per_source: list[Fraction] = []
     per_sink: list[Fraction] = []
-    for group in spec.groups:
-        if id(group) in paired:
-            continue
+    for index, group in enumerate(spec.groups):
         if item_id in group.outputs_per_machine:
-            names = tuple(sorted(group.outputs_per_machine))
-            for index, machine in enumerate(by_group[id(group)]):
-                sources.append(_terminal(machine, item_id, names, "output", lattice, registry))
-                per_source.append(_share(group, group.outputs_per_machine[item_id], index))
+            name = _port_name(group, item_id, "output", registry)
+            for machine in range(group.count):
+                sources.append((first[index] + machine, name))
+                per_source.append(_share(group, group.outputs_per_machine[item_id], machine))
         if item_id in group.inputs_per_machine:
-            names = tuple(sorted(group.inputs_per_machine))
-            for index, machine in enumerate(by_group[id(group)]):
-                sinks.append(_terminal(machine, item_id, names, "input", lattice, registry))
-                per_sink.append(_share(group, group.inputs_per_machine[item_id], index))
-    drawn = sum(per_sink, Fraction(0))
-    outward = spec.outputs.get(item_id, Fraction(0)) + spec.surplus_outputs.get(
-        item_id, Fraction(0)
-    )
-    inward = spec.external_inputs.get(item_id, Fraction(0))
-    if inward:
-        wall = _wall_terminals(lattice, inward=True)
-        sources.extend(wall)
-        per_source.extend([inward] * len(wall))
-    if outward:
-        wall = _wall_terminals(lattice, inward=False)
-        sinks.extend(wall)
-        per_sink.extend([outward] * len(wall))
-    if not sources or not sinks:
+            name = _port_name(group, item_id, "input", registry)
+            for machine in range(group.count):
+                sinks.append((first[index] + machine, name))
+                per_sink.append(_share(group, group.inputs_per_machine[item_id], machine))
+    inward, outward = _inward(spec, item_id), _outward(spec, item_id)
+    if not (sources or inward) or not (sinks or outward):
         return None
-    return GridNet(
-        id=net_id,
+    return NetPlan(
+        id=next(ids),
         item_id=item_id,
         sources=tuple(sources),
         sinks=tuple(sinks),
-        rate=drawn + outward,
-        per_sink=tuple(per_sink),
+        rate=sum(per_sink, Fraction(0)) + outward,
         per_source=tuple(per_source),
+        per_sink=tuple(per_sink),
+        paired=False,
     )
+
+
+def _inward(spec: SfyBuildSpec, item_id: str) -> Fraction:
+    """What the spec belts in at the ``-Y`` wall for this item -- R-M3-5."""
+    return spec.external_inputs.get(item_id, Fraction(0))
+
+
+def _outward(spec: SfyBuildSpec, item_id: str) -> Fraction:
+    """What has to leave by the ``+Y`` wall: the objective and the surplus."""
+    return spec.outputs.get(item_id, Fraction(0)) + spec.surplus_outputs.get(item_id, Fraction(0))
+
+
+def _group_index(spec: SfyBuildSpec, group: SfyMachineGroup) -> int:
+    """Which of the spec's groups this one IS, by identity rather than by value.
+
+    Two groups can be equal models and still be two rows of machines, so the
+    comparison is ``is`` and not ``==``.
+    """
+    for index, other in enumerate(spec.groups):
+        if other is group:
+            return index
+    raise NetError("data", f"{group.recipe_class} is not one of this spec's groups")
+
+
+def _first_machine(spec: SfyBuildSpec) -> tuple[int, ...]:
+    """Where each group's machines start in the flat machine list.
+
+    The list is the spec's groups in spec order with each group's machines in
+    index order, which is the order :func:`net_plan` numbers ports in and the
+    order the packer builds its machines in.
+    """
+    out: list[int] = []
+    start = 0
+    for group in spec.groups:
+        out.append(start)
+        start += group.count
+    return tuple(out)
 
 
 def _share(group: SfyMachineGroup, per_machine: Fraction, index: int) -> Fraction:
@@ -332,25 +472,22 @@ def _share(group: SfyMachineGroup, per_machine: Fraction, index: int) -> Fractio
     return per_machine
 
 
-def _machines_by_group(
+def _machines_in_spec_order(
     spec: SfyBuildSpec, machines: Sequence[MachineObj]
-) -> dict[int, tuple[MachineObj, ...]]:
-    """Which placed machines are which group's, in the order they were placed.
+) -> tuple[MachineObj, ...]:
+    """The placed machines in the order :func:`net_plan` indexes them.
 
     Matched on the recipe class and the machine class together, which is what a
     group is in a placement: two groups on the same recipe at different clocks
     are told apart by nothing a :class:`~...model.MachineObj` carries, so they
     are served in placement order.  A placement with fewer machines than the
     spec runs is refused rather than silently short-belted.
-
-    Keyed by ``id(group)`` rather than by the group: two groups can be equal
-    models and still be two rows of machines.
     """
     pool: dict[tuple[str, str], list[MachineObj]] = {}
     for machine in machines:
         pool.setdefault((machine.recipe_class, machine.class_name), []).append(machine)
     taken: dict[tuple[str, str], int] = {}
-    out: dict[int, tuple[MachineObj, ...]] = {}
+    out: list[MachineObj] = []
     for group in spec.groups:
         key = (group.recipe_class, group.machine_class)
         start = taken.get(key, 0)
@@ -362,32 +499,22 @@ def _machines_by_group(
                 f"{group.machine_class} the spec runs {group.recipe_class} on",
             )
         taken[key] = start + group.count
-        out[id(group)] = tuple(placed)
-    return out
+        out.extend(placed)
+    return tuple(out)
 
 
-# --- terminals -------------------------------------------------------------
+def _port_name(group: SfyMachineGroup, item_id: str, direction: str, registry: Registry) -> str:
+    """Which port of this group's machines carries ``item_id``.
 
-
-def _terminal(
-    machine: MachineObj,
-    item_id: str,
-    items: Sequence[str],
-    direction: str,
-    lattice: Lattice,
-    registry: Registry,
-) -> Terminal:
-    """The terminal for the port of ``machine`` that carries ``item_id``.
-
-    Which port that is is this project's own assignment, and it is stated once,
-    here: ``items`` -- the recipe's own items in that direction, in id order --
-    take the machine's belt ports of that direction in name order.  Nothing in
-    the game ties an ingredient to a connection (a Manufacturer eats out of
-    whichever of its four inputs the belt arrives on), so any total order will
-    do and a STATED one is what makes two runs of the same build belt the same
-    item to the same port.
+    This project's own assignment, and it is stated once, here: the group's own
+    items in that direction, in id order, take the machine's belt ports of that
+    direction in name order.  Nothing in the game ties an ingredient to a
+    connection -- a Manufacturer eats out of whichever of its four inputs the
+    belt arrives on -- so any total order will do, and a STATED one is what
+    makes two runs of the same build belt the same item to the same port.
     """
-    buildable = _buildable(registry, machine.class_name)
+    buildable = _buildable(registry, group.machine_class)
+    items = sorted(group.outputs_per_machine if direction == "output" else group.inputs_per_machine)
     ports = sorted(
         (port for port in buildable.ports if port.kind == "belt" and port.direction == direction),
         key=lambda port: port.name,
@@ -395,10 +522,20 @@ def _terminal(
     if len(items) > len(ports):
         raise NetError(
             "ports",
-            f"more input items than the machine has belt ports: {machine.class_name} has "
+            f"more input items than the machine has belt ports: {group.machine_class} has "
             f"{len(ports)} belt {direction} ports and its recipe moves {len(items)} items",
         )
-    return terminal_for(machine, ports[items.index(item_id)], lattice, registry)
+    return ports[items.index(item_id)].name
+
+
+def _named_port(registry: Registry, class_name: str, name: str) -> Port:
+    for port in _buildable(registry, class_name).ports:
+        if port.name == name:
+            return port
+    raise NetError("data", f"{class_name} has no port called {name!r}")
+
+
+# --- terminals -------------------------------------------------------------
 
 
 def terminal_for(machine: MachineObj, port: Port, lattice: Lattice, registry: Registry) -> Terminal:

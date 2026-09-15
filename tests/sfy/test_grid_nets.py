@@ -30,6 +30,7 @@ from flab2bp.sfy.layout.grid_nets import (
     GridNet,
     NetError,
     belt_class_for,
+    net_plan,
     nets_for,
     tap_nodes,
     terminal_for,
@@ -40,8 +41,9 @@ from flab2bp.sfy.layout.manifold import hard_footprint_cm
 from flab2bp.sfy.layout.model import MachineObj, Pose
 from flab2bp.sfy.layout.strategy import _measure
 from flab2bp.sfy.registry import Registry, load_registry
-from flab2bp.sfy.spec import SfyBuildSpec, SfyMachineGroup, designer
+from flab2bp.sfy.spec import SfyBuildSpec, SfyMachineGroup, designer, direct_pairs
 from flab2bp.spec import BeltTier
+from tests.sfy.conftest import flow_spec
 
 CONSTRUCTOR = "Build_ConstructorMk1_C"
 SMELTER = "Build_SmelterMk1_C"
@@ -476,3 +478,111 @@ def test_a_belt_class_is_the_game_class_the_lab_map_gives_the_tier() -> None:
     belt_class = belt_class_for(spec, _lab_map())
     assert belt_class(Fraction(1, 2), "iron-ingot") == "Build_ConveyorBeltMk1_C"
     assert belt_class(Fraction(3, 2), "iron-ingot") == "Build_ConveyorBeltMk2_C"
+
+
+# --- one spec, one numbering, and every item it moves ----------------------
+
+
+def _flow_machines(spec: SfyBuildSpec) -> tuple[MachineObj, ...]:
+    """One machine per machine the spec runs, in the order the plan indexes them.
+
+    The flat list :func:`~flab2bp.sfy.layout.grid_nets.net_plan` documents: the
+    spec's groups in spec order, each group's machines in index order.  Where
+    they stand is nothing to do with the nets -- a row per group, far enough
+    apart that every port lands inside the designer -- which is the point of the
+    plan being pose-independent.
+    """
+    out: list[MachineObj] = []
+    for index, group in enumerate(spec.groups):
+        out.extend(
+            _row(
+                100 * (index + 1),
+                group.machine_class,
+                group.recipe_class,
+                group.count,
+                -900.0 + 1800.0 * index,
+                0.0,
+            )
+        )
+    return tuple(out)
+
+
+def test_a_direct_pairs_groups_keep_the_nets_for_everything_else_they_move() -> None:
+    """A pair replaces ONE item's flow, and its groups go on eating and making.
+
+    ``iron-plate-60`` is the whole of it: three smelters pair one to one with
+    three constructors on the ingot between them, and the smelters still eat ore
+    belted in at the ``-Y`` wall while the constructors' plates still leave by
+    the ``+Y`` wall.  Dropping the paired GROUPS from the trees -- rather than
+    the paired ITEM -- left both of those unbelted, which is a build that routes
+    clean and starves.
+    """
+    spec = flow_spec("iron-plate-60")
+    machines = _flow_machines(spec)
+    lattice = _lattice()
+
+    nets = nets_for(spec, machines, lattice, _registry(), _lab_map())
+
+    by_item: dict[str, list[GridNet]] = {}
+    for net in nets:
+        by_item.setdefault(net.item_id, []).append(net)
+    assert sorted(by_item) == ["iron-ingot", "iron-ore", "iron-plate"]
+
+    smelters = {machine.id for machine in machines if machine.class_name == SMELTER}
+    constructors = {machine.id for machine in machines if machine.class_name == CONSTRUCTOR}
+
+    ore = by_item["iron-ore"][0]
+    assert {terminal.kind for terminal in ore.sources} == {"wall"}
+    assert {terminal.node[1] for terminal in ore.sources} == {lattice.open_lines.start}
+    assert {terminal.port[0] for terminal in ore.sinks if terminal.port} == smelters
+    assert ore.rate == spec.external_inputs["iron-ore"]
+
+    ingots = by_item["iron-ingot"]
+    assert len(ingots) == len(smelters)
+    assert [(len(net.sources), len(net.sinks)) for net in ingots] == [(1, 1)] * len(smelters)
+    assert {net.sources[0].port[0] for net in ingots if net.sources[0].port} == smelters
+    assert {net.sinks[0].port[0] for net in ingots if net.sinks[0].port} == constructors
+
+    plates = by_item["iron-plate"][0]
+    assert {terminal.port[0] for terminal in plates.sources if terminal.port} == constructors
+    assert {terminal.kind for terminal in plates.sinks} == {"wall"}
+    assert {terminal.node[1] for terminal in plates.sinks} == {lattice.open_lines.stop - 1}
+    assert plates.rate == spec.outputs["iron-plate"]
+
+
+def test_the_plan_numbers_the_nets_and_nets_for_only_says_where_they_stand() -> None:
+    """One source for net ids: the packer reads the plan, the router reads the nets.
+
+    The packer needs a net's id and its ports before any machine has a pose, so
+    it reads :func:`~flab2bp.sfy.layout.grid_nets.net_plan`; the router reads
+    :func:`~flab2bp.sfy.layout.grid_nets.nets_for`, which is that same list with
+    the placed machines' ports on it.  What is asserted is that they are the
+    same list: the same ids in the same order, and each net's machine terminals
+    on exactly the ``(machine index, port name)`` pairs the plan named.
+    """
+    spec = flow_spec("iron-plate-60")
+    machines = _flow_machines(spec)
+
+    plans = net_plan(spec, _registry())
+    nets = nets_for(spec, machines, _lattice(), _registry(), _lab_map())
+
+    assert [net.id for net in nets] == [plan.id for plan in plans]
+    assert [plan.id for plan in plans] == list(range(1, len(plans) + 1))
+    for net, plan in zip(nets, plans, strict=True):
+        assert net.item_id == plan.item_id
+        assert net.rate == plan.rate
+        for terminals, named, rates, mine in (
+            (net.sources, plan.sources, net.per_source, plan.per_source),
+            (net.sinks, plan.sinks, net.per_sink, plan.per_sink),
+        ):
+            # The machine ports come first and in the plan's order; whatever
+            # follows them is the wall, which carries no machine and no name.
+            ports = [terminal.port for terminal in terminals[: len(named)]]
+            assert ports == [(machines[index].id, name) for index, name in named]
+            assert all(terminal.kind == "wall" for terminal in terminals[len(named) :])
+            assert tuple(rates)[: len(named)] == tuple(mine)
+
+    paired = direct_pairs(spec)
+    assert [plan.paired for plan in plans] == [True] * sum(
+        pair.producer.count for pair in paired
+    ) + [False] * (len(plans) - sum(pair.producer.count for pair in paired))
