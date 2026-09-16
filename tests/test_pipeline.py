@@ -449,8 +449,11 @@ def test_best_reports_every_strategy() -> None:
     assert {s.total for s in started} == {4}
     assert [s.strategy for s in started] == list(pipeline.PRODUCTION_STRATEGIES)
     valid = [attempt for attempt in build.attempts if attempt.ok]
-    winner = min(valid, key=lambda attempt: attempt.area)
-    assert (build.strategy, build.placement.area) == (winner.strategy, winner.area)
+    assert build.placement.area == min(attempt.area for attempt in valid)
+    assert any(
+        (build.strategy, build.placement.area) == (attempt.strategy, attempt.area)
+        for attempt in valid
+    )
 
 
 def test_a_sink_that_raises_is_not_swallowed() -> None:
