@@ -7,6 +7,12 @@ that out, judge it, and write it into a blueprint.  :func:`write` puts the two
 halves the game wants -- ``<name>.sbp`` and ``<name>.sbpcfg`` -- side by side in
 a directory.
 
+``best`` races production strategies serially under one monotonic deadline,
+with at most an equal share per arm. Only validator-clean placements compete;
+their ordering is blueprint count, occupied volume, belt length, then the
+stable strategy order. Explicit strategies run alone with the whole budget.
+Refusing opponents remain attached to a successful winner.
+
 FactorioLab's flow is not optional here
 ---------------------------------------
 The DSP path may re-derive a recipe selection when no flow is supplied; this one
@@ -36,11 +42,13 @@ one copy of the truth.
 
 from __future__ import annotations
 
+import math
 import re
+import time
 from dataclasses import dataclass, replace
 from functools import cache
 from pathlib import Path
-from typing import Final
+from typing import Final, cast
 
 from flab2bp.lab.capture import UrlValidator, capture_flow_csv
 from flab2bp.lab.data import load_vendored
@@ -48,25 +56,32 @@ from flab2bp.lab.flow import FlowSelection, flow_from_text, load_flow
 from flab2bp.lab.games import Game
 from flab2bp.lab.schema import Dataset
 from flab2bp.lab.url import LabRequest, parse_url
-from flab2bp.layout.base import LayoutAttemptFailure, SpecInfeasible
+from flab2bp.layout.base import LayoutAttemptFailure, NoValidLayout, PlacementStats, SpecInfeasible
 from flab2bp.sfy.archive import Reader
 from flab2bp.sfy.codec import Blueprint, write_sbp_file, write_sbpcfg
 from flab2bp.sfy.header import BlueprintHeader, BlueprintRecord, read_header
 from flab2bp.sfy.labmap import LabMap, load_lab_map
 from flab2bp.sfy.layout.emit import emit
+from flab2bp.sfy.layout.measure import Measure, measure, race_key
 from flab2bp.sfy.layout.model import SfyPlacement
-from flab2bp.sfy.layout.strategy import ManifoldRows
+from flab2bp.sfy.layout.protocol import SfyLayoutStrategy
 from flab2bp.sfy.layout.validate import Report, validate
 from flab2bp.sfy.rates import RatesRefusal, spec_from_flow
 from flab2bp.sfy.registry import Registry, load_registry
 from flab2bp.sfy.spec import DESIGNER_CLASSES, Designer, SfyBuildSpec
 from flab2bp.sfy.spec import designer as designer_for_mark
+from flab2bp.sfy.strategy_names import (
+    SFY_PRODUCTION_STRATEGIES,
+    SFY_STRATEGY_CHOICES,
+    SfyStrategyName,
+)
 from flab2bp.sfy.templates import TemplateLibrary
 
 __all__ = [
     "CORPUS_DIR",
     "DEFAULT_DESIGNER_MARK",
     "DESIGNER_MARKS",
+    "STRATEGIES",
     "SfyBuild",
     "build",
     "lab_map",
@@ -96,8 +111,25 @@ DESIGNER_MARKS: Final = tuple(sorted(DESIGNER_CLASSES))
 #: rather than restating it.
 DEFAULT_DESIGNER_MARK: Final = "mk1"
 
-#: How the strategy is named in a report and on :attr:`SfyBuild.strategy`.
-STRATEGY: Final = ManifoldRows.name
+#: Loaded on first use, never while importing a corpus, CLI or audit vocabulary.
+#: Dict insertion order is not race order: SFY_PRODUCTION_STRATEGIES is.
+STRATEGIES: dict[str, SfyLayoutStrategy] = {}
+
+
+def _strategy(name: str) -> SfyLayoutStrategy:
+    if name not in STRATEGIES:
+        if name == "manifold-rows":
+            from flab2bp.sfy.layout.strategy import ManifoldRows
+
+            STRATEGIES[name] = ManifoldRows()
+        elif name == "grid-routed":
+            from flab2bp.sfy.layout.grid import GridRouted
+
+            STRATEGIES[name] = GridRouted()
+        else:
+            raise ValueError(f"unknown Satisfactory strategy {name!r}")
+    return STRATEGIES[name]
+
 
 #: Characters a blueprint file name may carry.  The game reads its blueprints
 #: out of a directory by file name, and a name is free text: a slug keeps a
@@ -160,9 +192,9 @@ class SfyBuild:
     ``blueprint`` and ``record`` are ``None`` on exactly one path: the placement
     was laid out and judged, and then could not be WRITTEN -- a class the corpus
     has no template of, a link to a port an object does not have.  That is a
-    refusal like any other rather than a crash (the shape
-    :mod:`flab2bp.pipeline` uses for the same failure), so the reason is in
-    ``refused`` and there is simply no file to hand over.
+    refusal rather than a crash, so the reason is in ``refused`` and there is
+    no file to hand over. A successful winner can ALSO have ``refused`` entries:
+    those are losing strategies, not a failure of this build.
     """
 
     spec: SfyBuildSpec
@@ -170,6 +202,7 @@ class SfyBuild:
     report: Report
     strategy: str
     designer: Designer
+    measure: Measure
     blueprint: Blueprint | None
     record: BlueprintRecord | None
     refused: tuple[LayoutAttemptFailure, ...] = ()
@@ -183,6 +216,7 @@ class SfyBuild:
 def build(
     url: str,
     *,
+    strategy: SfyStrategyName = "best",
     designer: str = DEFAULT_DESIGNER_MARK,
     time_budget_s: float = 15.0,
     flow: Path | None = None,
@@ -199,6 +233,8 @@ def build(
 ) -> SfyBuild:
     """Turn a FactorioLab Satisfactory URL into a pasteable blueprint.
 
+    :param strategy: ``best`` races both production strategies; a named
+        strategy runs alone. The budget is shared, never multiplied.
     :param designer: which Blueprint Designer mark to build inside, one of
         :data:`DESIGNER_MARKS`.  Its floor and height come from the registry.
     :param flow: a FactorioLab CSV export; :param flow_text: the same export as
@@ -209,9 +245,13 @@ def build(
         or two were.
     :raises SpecInfeasible: the flow and the rate model cannot both be right, or
         the build needs something M2 does not carry (a fluid).
-    :raises NoValidLayout: the spec does not fit the requested designer.  The
-        cause is one of :data:`flab2bp.sfy.layout.refusals.REFUSALS`.
+    :raises NoValidLayout: no strategy returned a validator-clean placement
+        in its share. ``attempt_failures`` preserves each strategy's cause.
     """
+    if strategy not in SFY_STRATEGY_CHOICES:
+        raise ValueError("Satisfactory strategy must be one of " + ", ".join(SFY_STRATEGY_CHOICES))
+    if not math.isfinite(time_budget_s) or time_budget_s <= 0:
+        raise ValueError("time_budget_s must be a positive finite number")
     request = _request(url)
     selection = _flow(
         url,
@@ -236,15 +276,75 @@ def build(
         raise SpecInfeasible(exc.cause, item=_label(request)) from exc
 
     mark = designer_for_mark(designer, registry())
-    placement = ManifoldRows().lay_out(
-        spec,
-        mark,
-        time_budget_s=time_budget_s,
-        registry=registry(),
-        lab_map=lab_map(),
-    )
+    # Load shared data before starting the one layout clock. Each arm gets at
+    # most an equal share, capped by what remains of the total deadline. An
+    # overrunning in-process arm cannot make the next arm start a fresh budget.
+    game_registry, mapping, library = registry(), lab_map(), template_library()
+    names = SFY_PRODUCTION_STRATEGIES if strategy == "best" else (strategy,)
+    share = time_budget_s / len(names)
+    deadline = time.monotonic() + time_budget_s
+    failures: list[LayoutAttemptFailure] = []
+    winner: tuple[SfyPlacement, Report, Measure, str] | None = None
+    best_key: tuple[int, float, float, int] | None = None
+    for strategy_name in names:
+        now = time.monotonic()
+        arm_deadline = min(deadline, now + share)
+        try:
+            if now >= arm_deadline:
+                raise NoValidLayout("layout exceeded the budget")
+            candidate = _strategy(strategy_name).lay_out(
+                spec,
+                mark,
+                time_budget_s=arm_deadline - now,
+                absolute_deadline=arm_deadline,
+                registry=game_registry,
+                lab_map=mapping,
+            )
+            if time.monotonic() > arm_deadline:
+                raise NoValidLayout("layout exceeded the budget")
+            candidate_report = validate(candidate, spec, game_registry, library=library)
+            if not candidate_report.ok:
+                raise NoValidLayout(
+                    "validation failed: "
+                    + "; ".join(
+                        f"{finding.check}: {finding.message}" for finding in candidate_report.errors
+                    )
+                )
+            candidate_measure = measure(candidate, game_registry)
+            if time.monotonic() > arm_deadline:
+                raise NoValidLayout("layout exceeded the budget")
+        except NoValidLayout as exc:
+            failures.append(
+                LayoutAttemptFailure(
+                    candidate=spec.label or "this build",
+                    strategy=strategy_name,
+                    reason=exc.reason,
+                    projection_failures=exc.projection_failures,
+                    stats=cast(PlacementStats, dict(exc.stats)),
+                    children=exc.attempt_failures
+                    or tuple(
+                        LayoutAttemptFailure(spec.label or "this build", strategy_name, detail)
+                        for detail in exc.attempt_reasons
+                    ),
+                )
+            )
+            continue
+        key = race_key(candidate_measure, SFY_PRODUCTION_STRATEGIES.index(strategy_name))
+        if best_key is None or key < best_key:
+            best_key = key
+            winner = candidate, candidate_report, candidate_measure, strategy_name
+
+    if winner is None:
+        reasons = tuple(str(failure) for failure in failures)
+        raise NoValidLayout(
+            failures[0].reason if len(failures) == 1 else "; ".join(reasons),
+            spec_label=spec.label,
+            budget_s=time_budget_s,
+            attempt_reasons=reasons,
+            attempt_failures=tuple(failures),
+        )
+    placement, report, measured, winning_strategy = winner
     placement = replace(placement, short_desc=name or _slug(spec, mark))
-    report = validate(placement, spec, registry(), library=template_library())
 
     header = newest_fixture_header()
     try:
@@ -264,14 +364,16 @@ def build(
             spec=spec,
             placement=placement,
             report=report,
-            strategy=STRATEGY,
+            strategy=winning_strategy,
             designer=mark,
+            measure=measured,
             blueprint=None,
             record=None,
             refused=(
+                *failures,
                 LayoutAttemptFailure(
                     candidate=spec.label or "this build",
-                    strategy=STRATEGY,
+                    strategy=winning_strategy,
                     reason=f"blueprint encoding failed: {exc}",
                 ),
             ),
@@ -281,10 +383,12 @@ def build(
         spec=spec,
         placement=placement,
         report=report,
-        strategy=STRATEGY,
+        strategy=winning_strategy,
         designer=mark,
+        measure=measured,
         blueprint=blueprint,
         record=BlueprintRecord.new(placement.description),
+        refused=tuple(failures),
     )
 
 

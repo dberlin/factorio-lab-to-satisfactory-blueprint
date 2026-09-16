@@ -85,9 +85,9 @@ still asked FIRST, because it is one belt fewer; the wall is the fallback, and
 :attr:`RoutedTree.boundaries` records every crossing so a build's description
 can say how many belts to bring to it and where.  A source that cannot merge
 into the exit tree gets its own way out for the same reason.  Each crossing is
-its own belt carrying its own branch's rate, which the tiers follow from
-:func:`_flows` without a special case: a branch that starts at the wall has no
-parent to draw from.
+its own belt carrying only the flow of its connected component. Boundary rates
+are balanced after the machine branches are known; any imported share still
+owed to a machine-rooted component is merged in before the tree is built.
 
 **Tiers come after the tree, from what each PIECE carries** (R-M3-7).  A trunk
 above a tap carries its own sink's draw plus everything the tap feeds, so the
@@ -105,31 +105,49 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from fractions import Fraction
 
 from flab2bp.layout.budget import WorkBudget, expired
-from flab2bp.sfy.geometry import port_forward, world_port
+from flab2bp.layout.geometric_motion import MotionWitness
+from flab2bp.sfy.geometry import box_bounds, port_forward, world_port
 from flab2bp.sfy.layout.corridors import Measures
 from flab2bp.sfy.layout.grid_nets import (
     LATTICE_TOUCH_CM,
     TAP_CLEAR_NODES,
     GridNet,
     NetError,
+    _node_on_ray,
     facing_for,
     snapped,
     tap_nodes,
 )
 from flab2bp.sfy.layout.lattice import (
     GROUND_LEVEL,
+    BoxBounds,
     Lattice,
     Node,
     Occupancy,
+    _belt_boxes,
     belt_levels,
 )
 from flab2bp.sfy.layout.manifold import MERGER_CLASS, SPLITTER_CLASS
-from flab2bp.sfy.layout.model import AttachmentObj, Pose, Vector
-from flab2bp.sfy.layout.realise import Realised, RealiseError, Terminal, realise
+from flab2bp.sfy.layout.model import AttachmentObj, Pose, Vector, belt_ends
+from flab2bp.sfy.layout.motion import (
+    CutProof,
+    FixedPathSummary,
+    MotionPreparationExhausted,
+    MotionProfile,
+    PathProof,
+    lift_heights,
+    motion_profile,
+)
+from flab2bp.sfy.layout.realise import (
+    Realised,
+    RealiseError,
+    Terminal,
+    realise,
+)
 from flab2bp.sfy.layout.router import (
     BudgetCause,
     Routed,
@@ -226,6 +244,8 @@ class RoutedTree:
     paths: tuple[tuple[Node, ...], ...]
     taps: tuple[tuple[Node, int], ...]
     boundaries: tuple[tuple[int, Node], ...]
+    #: Piece witnesses follow each branch's actual attachment cuts.
+    proofs: tuple[tuple[PathProof, ...], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -307,6 +327,10 @@ class _Tap:
     index: int
     node: Node
     side: Node
+    cut: CutProof | None = None
+    piece: int = 0
+    stood: _Stood | None = None
+    terminal: Terminal | None = None
 
 
 @dataclass(slots=True)
@@ -327,6 +351,9 @@ class _Branch:
     pinned: Fraction
     tap: _Tap | None
     merging: bool
+    motion: MotionWitness | None = None
+    proofs: tuple[PathProof, ...] = ()
+    summaries: tuple[FixedPathSummary, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -356,6 +383,21 @@ class _Try:
     #: What to close for the next query, which is not always the same thing --
     #: see :func:`_shut_column`.
     shut: tuple[Node, ...] = ()
+    #: A realised tap could instead be discharged by an independent wall crossing.
+    wall_fallback: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class _Physical:
+    """One hard-object box or conservative belt-segment hull, not a node shadow.
+
+    Only a belt's directly linked END segment gets a lift-contact exemption;
+    later segments of that same belt can still collide with the shaft.
+    """
+
+    object_id: int
+    bounds: BoxBounds
+    contacts: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -366,6 +408,7 @@ class _Played:
     stranded: tuple[tuple[GridNet, Routed], ...]
     realised: tuple[Realised, ...]
     columns: tuple[tuple[int, Node, Node], ...]
+    physical: tuple[tuple[int, tuple[_Physical, ...]], ...]
     length_cm: float
 
     @property
@@ -405,13 +448,17 @@ class _Run:
     owners: dict[int, int] = field(default_factory=dict)
     #: Every node a committed PATH stands on, and whose it is.
     held: dict[Node, int] = field(default_factory=dict)
+    #: Actual realised objects, cached once per admitted net, released with its stakes.
+    physical: dict[int, tuple[_Physical, ...]] = field(default_factory=dict)
+    profile: MotionProfile | None = None
+    proofs: dict[int, tuple[tuple[PathProof, ...], ...]] = field(default_factory=dict)
 
     # -- the search ---------------------------------------------------------
 
     def query(
         self,
-        starts: Collection[Node],
-        goals: Collection[Node],
+        starts: Collection[Terminal],
+        goals: Collection[Terminal],
         opened: Collection[Node],
         closed: Collection[Node],
     ) -> Routed:
@@ -423,16 +470,30 @@ class _Run:
         that could drift apart would be two different stories about the same
         refusal.
         """
+        if self.profile is None:
+            if expired(self.deadline):
+                return _out_of_time()
+            if self.budget.left is not None:
+                if self.budget.left <= 0:
+                    return Routed(None, RouteFailureKind.BUDGET, (), 0, BudgetCause.ALLOWANCE)
+                self.budget.left -= 1
+            self.work += 1
+            self.profile = motion_profile(
+                self.lattice, self.measures, self.registry, self.lift_class, self.transitions
+            )
         routed = route_net(
             self.occupancy,
-            starts=tuple(starts),
-            goals=tuple(goals),
+            starts=tuple(terminal.node for terminal in starts),
+            goals=tuple(terminal.node for terminal in goals),
             opened=tuple(opened),
             closed=tuple(closed),
             pressure=self.pressure,
             budget=self.budget,
             deadline=self.deadline,
             transitions=self.transitions,
+            profile=self.profile,
+            sources=starts,
+            sinks=goals,
         )
         self.work += routed.work
         if routed.wall:
@@ -485,6 +546,8 @@ class _Run:
             self.held[node] = net_id
 
     def release(self, net_id: int) -> None:
+        self.proofs.pop(net_id, None)
+        self.physical.pop(net_id, None)
         for stake in self.staked.pop(net_id, []):
             self.occupancy.rip_up(stake)
             self.owners.pop(stake, None)
@@ -544,12 +607,14 @@ class _Run:
         owner = self.occupancy.owner.get(index)
         return owner is None or owner in self.staked.get(net_id, ())
 
-    def tap_sites(self, branches: Sequence[_Branch], net: GridNet) -> dict[Node, _Tap]:
+    def tap_sites(
+        self, branches: Sequence[_Branch], net: GridNet, *, merging: bool = False
+    ) -> dict[Node, _Tap]:
         """Every node a belt of this net may leave the tree from -- R-M3-7.
 
-        Keyed by the node the side port stands on, because that is what a query
-        is offered: the tap node itself is where the attachment goes and no belt
-        ever stands there.
+        Keyed by the actual attachment side port. ``tap_access`` moves the
+        search endpoint one normal step outside the trunk's shadow; the tap
+        itself remains where the attachment stands and no belt ever stands.
 
         A side node is offered only when it is THIS net's to open.  The world
         may deny it; another belt may be standing on it; and -- the case the
@@ -575,13 +640,80 @@ class _Run:
             across = (node[1] - ahead[1], ahead[0] - node[0])
             for sign in (1, -1):
                 side = (node[0] + sign * across[0], node[1] + sign * across[1], node[2])
+                tap = _Tap(branch=index, index=position, node=node, side=side)
+                stood = _stand_at(self, tap, ahead, merging=merging, object_id=-1)
+                side_terminal = _tap_port(self, stood.obj, stood.side)
+                side = side_terminal.node
                 if not self.lattice.holds(side) or side in self.held:
                     continue
                 if self.occupancy.base[self.lattice.index(side)] == 0:
                     continue
                 if self.foreign(side, net.id):
                     continue
-                out[side] = _Tap(branch=index, index=position, node=node, side=side)
+                tap = replace(tap, side=side, stood=stood)
+                if branches[index].proofs:
+                    if self.profile is None:
+                        raise ValueError("a certified branch lost its geometry profile")
+                    parent = branches[index]
+                    if not parent.summaries:
+                        parent.summaries = tuple(
+                            FixedPathSummary(
+                                proof, self.profile, budget=self.budget, deadline=self.deadline
+                            )
+                            for proof in parent.proofs
+                        )
+                    before = _tap_port(self, stood.obj, stood.through_in)
+                    after = _tap_port(self, stood.obj, stood.through_out)
+                    cut = None
+                    piece_index = 0
+                    for candidate_piece, summary in enumerate(parent.summaries):
+                        try:
+                            _ = summary.proof.path.index(node)
+                            before_index = summary.proof.path.index(before.node)
+                            after_index = summary.proof.path.index(after.node)
+                        except ValueError:
+                            continue
+                        cut = summary.cut(before_index, after_index, before, after)
+                        piece_index = candidate_piece
+                        break
+                    if cut is None:
+                        continue
+                    tap = replace(tap, cut=cut, piece=piece_index, stood=stood)
+                out[side] = tap
+        return out
+
+    def tap_access(
+        self,
+        branches: Sequence[_Branch],
+        net: GridNet,
+        closed: Collection[Node],
+        *,
+        merging: bool = False,
+    ) -> dict[Node, _Tap]:
+        """Offer the free node one normal step beyond each attachment side.
+
+        The side port is in its trunk's one-node shadow. Opening every possible
+        side for a search also opens a parallel corridor and permits ramp vias
+        through other candidates. Instead the query begins or ends outside that
+        shadow; the chosen path retains the single normal step to the true port.
+        This applies equally to splitter departures and merger approaches.
+        """
+        out: dict[Node, _Tap] = {}
+        for side, tap in self.tap_sites(branches, net, merging=merging).items():
+            if tap.stood is None:
+                raise ValueError("a tap candidate lost its registry connector geometry")
+            port = _side(self, tap.stood, side)
+            access = (
+                side[0] + round(port.facing[0]),
+                side[1] + round(port.facing[1]),
+                side[2],
+            )
+            if side in closed or access in closed or not self.lattice.holds(access):
+                continue
+            if not self.occupancy.flags[self.lattice.index(access)]:
+                continue
+            terminal = replace(port, node=access)
+            out[access] = replace(tap, terminal=terminal)
         return out
 
 
@@ -626,10 +758,10 @@ def route_all(
         lift_class=lift_class,
         transitions=sfy_transitions(
             lattice.n + 1,
-            _lift_heights(lattice, registry),
+            lift_heights(lattice, registry),
             incline_run_nodes(registry.limits, lattice.grid_cm),
         ),
-        clear=max(TAP_CLEAR_NODES, math.ceil(measures.radius / measures.grid)),
+        clear=TAP_CLEAR_NODES,
         stakes=_stake_ids(nets),
     )
     order = tuple(sorted(nets, key=lambda net: (-net.rate, net.id)))
@@ -691,7 +823,11 @@ def _play(run: _Run, order: Sequence[GridNet]) -> _Played:
             continue
         attempt = _route_one(run, net)
         if attempt.tree is None:
-            run.note(_in_the_doorway(run, net))
+            if (
+                attempt.routed is None
+                or attempt.routed.kind is not RouteFailureKind.MOTION_EXHAUSTED
+            ):
+                run.note(_in_the_doorway(run, net))
             stranded.append((net, attempt.routed if attempt.routed else _out_of_time()))
             continue
         trees.append(attempt.tree)
@@ -702,6 +838,7 @@ def _play(run: _Run, order: Sequence[GridNet]) -> _Played:
         stranded=tuple(stranded),
         realised=tuple(realised),
         columns=tuple(columns),
+        physical=tuple(run.physical.items()),
         length_cm=_belt_length_cm(realised),
     )
 
@@ -789,21 +926,12 @@ def _fell_short(routed: Routed | None) -> bool:
 
 
 def _in_the_shadow(walked: Sequence[Node], sides: Collection[Node]) -> tuple[Node, ...]:
-    """Tap sides a path STOOD on rather than started or ended at.
+    """Refuse any candidate side opened by an overlapping machine-port reach.
 
-    Every tap side a query is offered has to be opened for it, because the
-    kernel starts only on a passable node -- and an opened node is passable for
-    the whole path, not only for its first step.  So a path may leave one tap
-    and then run along the line of tap sides beside its own trunk, which is a
-    belt a grid step from another belt: 58 cm of lap, and a collision the
-    validator would report.
-
-    Nothing in a movement table can say "you may stand here only first", so this
-    is checked on the path that comes back.  ``walked`` is the path with the one
-    end that is ALLOWED to be a tap side cut off it -- the first node of a
-    branch that leaves a splitter, the last of one that feeds a merger -- and
-    anything of ``sides`` left in it is a node the next query is asked to shut.
-    A correction, not congestion: nothing is charged for it.
+    Tap access no longer opens side nodes. A query still opens its machine
+    reaches, however, and those must not turn another attachment's side into
+    a transit node. The selected side is joined to the path only AFTER this
+    check. A correction, not congestion: nothing is charged for it.
     """
     return tuple(node for node in walked if node in sides)
 
@@ -818,6 +946,11 @@ def _route_one(run: _Run, net: GridNet) -> _Try:
     that refused it are charged and closed and the same net asks again, a
     bounded number of times (:data:`REALISE_RETRIES`, :data:`LIFT_RETRIES`).
 
+    A tapped tree rejected by the realiser gets one boundary alternative within
+    that same retry allowance: optional taps with a corresponding wall entry
+    or exit are omitted. Geometry and history still apply; only the topology
+    changes, so the rejected tap's nodes need not be closed for that retry.
+
     The first query already has :func:`_shut_shafts` closed against it, so none
     of those tries is spent on a lift out of the net's own port -- a move the
     movement table offers and the column check can only ever refuse.
@@ -828,8 +961,31 @@ def _route_one(run: _Run, net: GridNet) -> _Try:
     closed: set[Node] = set(_shut_shafts(run, net))
     lift_tries = 0
     realise_tries = 0
+    allow_taps = True
     while True:
-        attempt = _attempt(run, net, closed)
+        before_work = run.budget.left
+        before_charge = run.work
+        try:
+            attempt = _attempt(run, net, closed, allow_taps=allow_taps)
+        except MotionPreparationExhausted as failure:
+            spent = (
+                0
+                if before_work is None or run.budget.left is None
+                else before_work - run.budget.left
+            )
+            attempt = _Try(
+                failure="route",
+                routed=Routed(
+                    None,
+                    RouteFailureKind.BUDGET,
+                    (),
+                    spent,
+                    BudgetCause.DEADLINE if failure.deadline else BudgetCause.ALLOWANCE,
+                ),
+            )
+        finally:
+            if before_work is not None and run.budget.left is not None:
+                run.work += max(0, before_work - run.budget.left - (run.work - before_charge))
         if attempt.tree is not None:
             return attempt
         run.release(net.id)
@@ -844,6 +1000,9 @@ def _route_one(run: _Run, net: GridNet) -> _Try:
             realise_tries += 1
             if realise_tries >= REALISE_RETRIES:
                 return attempt
+        if attempt.failure == "realise" and attempt.wall_fallback and allow_taps:
+            allow_taps = False
+            continue
         # A net's own port is never closed against it.  A corner at the first
         # node of a run, and a lift whose bottom stands on the port it leaves,
         # both name a node the net cannot do without; closing it would not
@@ -860,7 +1019,7 @@ def _route_one(run: _Run, net: GridNet) -> _Try:
             return attempt
 
 
-def _attempt(run: _Run, net: GridNet, closed: Collection[Node]) -> _Try:
+def _attempt(run: _Run, net: GridNet, closed: Collection[Node], *, allow_taps: bool = True) -> _Try:
     """One whole tree for one net: search every branch, then build them all.
 
     The search comes first and the building second, and not the other way round,
@@ -876,7 +1035,7 @@ def _attempt(run: _Run, net: GridNet, closed: Collection[Node]) -> _Try:
     to_wall = next((sink for sink in sinks if sink.wall), None)
     routed: Routed | None = None
     for sink in sinks:
-        taps = run.tap_sites(branches, net)
+        taps = run.tap_access(branches, net, closed) if allow_taps or from_wall is None else {}
         starts: dict[Node, int | _Tap] = {}
         opened: set[Node] = set(sink.opened)
         for index in unused:
@@ -885,81 +1044,277 @@ def _attempt(run: _Run, net: GridNet, closed: Collection[Node]) -> _Try:
                 starts[node] = index
         for side, tap in taps.items():
             starts[side] = tap
-            opened.add(side)
-        routed = run.query(starts, sink.nodes, opened, closed) if starts else None
-        if _fell_short(routed) and from_wall is not None:
+        sides = tuple(tap.side for tap in taps.values())
+        routed = (
+            run.query(_query_starts(starts, sources), sink.terminals, opened, closed)
+            if starts
+            else None
+        )
+        path = routed.path if routed is not None and routed.path is not None else ()
+        stray = _in_the_shadow(path[1:], sides)
+        if (_fell_short(routed) or stray) and from_wall is not None:
             # Another entry of its own.  A tap is preferred because it is one
             # belt fewer, so the wall is asked second and only where the tree
-            # had no tap to offer or no way from one to here.
+            # had no legal route from a tap.
             starts = dict.fromkeys(sources[from_wall].nodes, from_wall)
             opened = set(sink.opened)
-            routed = run.query(starts, sink.nodes, opened, closed)
+            routed = run.query(_query_starts(starts, sources), sink.terminals, opened, closed)
+            path = routed.path if routed.path is not None else ()
+            stray = _in_the_shadow(path[1:], sides)
         if routed is None:
             return _Try(failure="route", routed=_nowhere_to_start())
         if routed.path is None:
             return _Try(failure="route", routed=routed)
-        path = _cut_loops(routed.path)
-        stray = _in_the_shadow(path[1:], taps)
         if stray:
             return _Try(failure="shadow", shut=stray, routed=routed)
         head = starts[path[0]]
-        if isinstance(head, _Tap):
-            branches.append(
-                _Branch(
-                    path=path,
-                    source=None,
-                    sink=sink.at(path[-1]),
-                    pinned=sink.rate,
-                    tap=head,
-                    merging=False,
-                )
-            )
-        else:
-            branches.append(
-                _Branch(
-                    path=path,
-                    source=sources[head].at(path[0]),
-                    sink=sink.at(path[-1]),
-                    pinned=sink.rate,
-                    tap=None,
-                    merging=False,
-                )
-            )
-            if not sources[head].wall:
-                unused.remove(head)
-        run.stake(net.id, path)
+        selected_tap = head if isinstance(head, _Tap) else None
+        source = _tap_terminal(head) if isinstance(head, _Tap) else sources[head].at(path[0])
+        _commit_branch(
+            run,
+            net,
+            branches,
+            routed,
+            source,
+            sink.at(path[-1]),
+            sink.rate,
+            tap=selected_tap,
+            merging=False,
+        )
+        if not isinstance(head, _Tap) and not sources[head].wall:
+            unused.remove(head)
     for index in tuple(unused):
-        taps = run.tap_sites(branches, net)
-        opened = set(sources[index].opened) | set(taps)
-        routed = run.query(sources[index].nodes, tuple(taps), opened, closed) if taps else None
+        taps = (
+            run.tap_access(branches, net, closed, merging=True)
+            if allow_taps or to_wall is None
+            else {}
+        )
+        opened = set(sources[index].opened)
+        routed = (
+            run.query(
+                sources[index].terminals,
+                tuple(_tap_terminal(tap) for tap in taps.values()),
+                opened,
+                closed,
+            )
+            if taps
+            else None
+        )
+        path = routed.path if routed is not None and routed.path is not None else ()
+        sides = tuple(tap.side for tap in taps.values())
+        stray = _in_the_shadow(path[:-1], sides)
         merged = routed is not None and routed.path is not None
-        if _fell_short(routed) and to_wall is not None:
+        if (_fell_short(routed) or stray) and to_wall is not None:
             # An exit of its own, for the same reason and in the same order: a
             # merger into the tree is one belt fewer than a second way out.
             opened = set(sources[index].opened) | set(to_wall.opened)
-            routed = run.query(sources[index].nodes, to_wall.nodes, opened, closed)
+            routed = run.query(sources[index].terminals, to_wall.terminals, opened, closed)
             merged = False
+            path = routed.path if routed.path is not None else ()
+            stray = _in_the_shadow(path[:-1], sides)
         if routed is None:
             return _Try(failure="route", routed=_nowhere_to_go())
         if routed.path is None:
             return _Try(failure="route", routed=routed)
-        path = _cut_loops(routed.path)
-        stray = _in_the_shadow(path[:-1], taps)
         if stray:
             return _Try(failure="shadow", shut=stray, routed=routed)
-        branches.append(
-            _Branch(
-                path=path,
-                source=sources[index].at(path[0]),
-                sink=None if merged else _wall_end(to_wall, path[-1]),
-                pinned=sources[index].rate,
-                tap=taps[path[-1]] if merged else None,
-                merging=merged,
-            )
+        merge_tap = taps[path[-1]] if merged else None
+        sink_terminal = (
+            _tap_terminal(merge_tap) if merge_tap is not None else _wall_end(to_wall, path[-1])
+        )
+        _commit_branch(
+            run,
+            net,
+            branches,
+            routed,
+            sources[index].at(path[0]),
+            sink_terminal,
+            sources[index].rate,
+            tap=merge_tap,
+            merging=merged,
         )
         unused.remove(index)
-        run.stake(net.id, path)
+    balances = _boundary_flows(branches, sources, sinks)
+    if balances is None:
+        return _Try(failure="route", routed=_nowhere_to_go())
+    roots, imports = balances
+    for root, rate in imports.items():
+        root_source = branches[root].source
+        if rate == 0 or root_source is None or root_source.kind == "wall":
+            continue
+        if from_wall is None:
+            return _Try(failure="route", routed=_nowhere_to_start())
+        # Geometry using a machine source does not discharge the wall's supply
+        # obligation. Merge the missing share into THIS component, not a nearby
+        # component whose own sources already cover its sinks.
+        taps = {
+            side: tap
+            for side, tap in run.tap_access(branches, net, closed, merging=True).items()
+            if roots[tap.branch] == root
+        }
+        if not taps:
+            return _Try(failure="route", routed=_nowhere_to_go())
+        wall = sources[from_wall]
+        routed = run.query(
+            wall.terminals, tuple(_tap_terminal(tap) for tap in taps.values()), wall.opened, closed
+        )
+        if routed.path is None:
+            return _Try(failure="route", routed=routed)
+        path = routed.path
+        stray = _in_the_shadow(path[:-1], tuple(tap.side for tap in taps.values()))
+        if stray:
+            return _Try(failure="shadow", shut=stray, routed=routed)
+        tap = taps[path[-1]]
+        _commit_branch(
+            run,
+            net,
+            branches,
+            routed,
+            wall.at(path[0]),
+            _tap_terminal(tap),
+            rate,
+            tap=tap,
+            merging=True,
+        )
+        roots.append(root)
     return _build(run, net, branches, routed)
+
+
+def _tap_terminal(tap: _Tap) -> Terminal:
+    if tap.terminal is None:
+        raise ValueError("a query tap lost its actual connector terminal")
+    return tap.terminal
+
+
+def _query_starts(
+    starts: Mapping[Node, int | _Tap], sources: Sequence[_Endpoint]
+) -> tuple[Terminal, ...]:
+    return tuple(
+        _tap_terminal(origin) if isinstance(origin, _Tap) else sources[origin].at(node)
+        for node, origin in starts.items()
+    )
+
+
+def _commit_branch(
+    run: _Run,
+    net: GridNet,
+    branches: list[_Branch],
+    routed: Routed,
+    source: Terminal,
+    sink: Terminal,
+    rate: Fraction,
+    *,
+    tap: _Tap | None,
+    merging: bool,
+) -> None:
+    """Publish the selected attachment, both parent proofs and child together."""
+    if routed.path is None or routed.motion is None:
+        raise ValueError("a production branch cannot commit without its motion witness")
+    revised: tuple[PathProof, ...] | None = None
+    if tap is not None:
+        if tap.stood is None or tap.cut is None:
+            raise ValueError("a production tap cannot commit without both parent cut proofs")
+        object_id = next(run.ids)
+        stood = replace(tap.stood, obj=replace(tap.stood.obj, id=object_id))
+
+        def assigned(terminal: Terminal) -> Terminal:
+            if terminal.port is None:
+                raise ValueError("an attachment proof lost its connector")
+            return replace(terminal, port=(object_id, terminal.port[1]))
+
+        cut = replace(tap.cut, sink=assigned(tap.cut.sink), source=assigned(tap.cut.source))
+        left, right = cut.pieces()
+        parent = branches[tap.branch]
+        revised = (*parent.proofs[: tap.piece], left, right, *parent.proofs[tap.piece + 1 :])
+        if merging:
+            sink = assigned(sink)
+        else:
+            source = assigned(source)
+        tap = replace(tap, stood=stood, terminal=sink if merging else source, cut=None)
+    proof = PathProof(routed.path, source, sink, routed.motion)
+    branch = _Branch(
+        routed.path,
+        None if tap is not None and not merging else source,
+        None if tap is not None and merging else sink,
+        rate,
+        tap,
+        merging,
+        routed.motion,
+        (proof,),
+    )
+    if tap is not None and revised is not None:
+        branches[tap.branch].proofs = revised
+        branches[tap.branch].summaries = ()
+    branches.append(branch)
+    run.stake(net.id, routed.path)
+    if tap is not None:
+        endpoint = routed.path[-1] if merging else routed.path[0]
+        run.stake(net.id, (endpoint, tap.side))
+
+
+def _boundary_flows(
+    branches: Sequence[_Branch], sources: Sequence[_Endpoint], sinks: Sequence[_Endpoint]
+) -> tuple[list[int], dict[int, Fraction]] | None:
+    """Balance wall crossings against the fixed obligations in each component.
+
+    A wall is one FLOW with many possible crossings. Pinning every output
+    crossing to that entire flow duplicates it; treating its input as merely a
+    geometric fallback loses it when a local producer can reach the sink.
+    Machine rates remain authoritative. A disconnected component with excess
+    production but no output, or demand the external input cannot cover, is
+    unroutable in this topology rather than permission to change those rates.
+    """
+    made = {end.terminals[0].node: end.rate for end in sources if not end.wall}
+    drawn = {end.terminals[0].node: end.rate for end in sinks if not end.wall}
+    roots: list[int] = []
+    supply: dict[int, Fraction] = {}
+    demand: dict[int, Fraction] = {}
+    exits: dict[int, int] = {}
+    for index, branch in enumerate(branches):
+        root = roots[branch.tap.branch] if branch.tap is not None else index
+        roots.append(root)
+        supply.setdefault(root, Fraction(0))
+        demand.setdefault(root, Fraction(0))
+        if branch.source is not None and branch.source.kind != "wall":
+            supply[root] += made[branch.source.node]
+        if branch.sink is not None:
+            if branch.sink.kind == "wall":
+                exits[root] = index
+            else:
+                demand[root] += drawn[branch.sink.node]
+    imports = {root: max(demand[root] - rate, Fraction(0)) for root, rate in supply.items()}
+    if any(supply[root] > demand[root] and root not in exits for root in supply):
+        return None
+    remaining = next((end.rate for end in sources if end.wall), Fraction(0)) - sum(
+        imports.values(), Fraction(0)
+    )
+    if remaining < 0:
+        return None
+    if remaining:
+        if not exits:
+            return None
+        # Imported flow beyond internal consumption belongs to an output.
+        # Prefer a component already entered from the wall to avoid a merger.
+        root = next(iter(exits))
+        for candidate in exits:
+            source = branches[candidate].source
+            if source is not None and source.kind == "wall":
+                root = candidate
+                break
+        imports[root] += remaining
+    for root, index in exits.items():
+        rate = supply[root] + imports[root] - demand[root]
+        if rate <= 0:
+            return None
+        branches[index].pinned = rate
+    for root, rate in imports.items():
+        source = branches[root].source
+        if source is not None and source.kind == "wall" and rate <= 0:
+            return None
+    exported = sum((branches[index].pinned for index in exits.values()), Fraction(0))
+    if exported != next((end.rate for end in sinks if end.wall), Fraction(0)):
+        return None
+    return roots, imports
 
 
 def _build(run: _Run, net: GridNet, branches: Sequence[_Branch], routed: Routed | None) -> _Try:
@@ -974,6 +1329,8 @@ def _build(run: _Run, net: GridNet, branches: Sequence[_Branch], routed: Routed 
     try:
         realised = _lay(run, net, branches, children, flows)
     except RealiseError as failure:
+        wall_source = any(terminal.kind == "wall" for terminal in net.sources)
+        wall_sink = any(terminal.kind == "wall" for terminal in net.sinks)
         return _Try(
             failure="realise",
             nodes=failure.nodes,
@@ -981,9 +1338,14 @@ def _build(run: _Run, net: GridNet, branches: Sequence[_Branch], routed: Routed 
             if failure.cause == "lift"
             else tuple(failure.nodes),
             routed=routed,
+            wall_fallback=any(
+                branch.tap is not None and (wall_sink if branch.merging else wall_source)
+                for branch in branches
+            ),
         )
     columns = tuple((low, high) for laid in realised for low, high in laid.lift_columns)
-    blocked = _blocked_column(run, net, realised)
+    physical = _physical(realised, run.registry)
+    blocked = _blocked_column(run, net, realised, physical)
     if blocked:
         return _Try(
             failure="lift",
@@ -993,6 +1355,8 @@ def _build(run: _Run, net: GridNet, branches: Sequence[_Branch], routed: Routed 
         )
     for low, high in columns:
         run.stake(net.id, _column(low, high))
+    run.physical[net.id] = physical
+    run.proofs[net.id] = tuple(branch.proofs for branch in branches)
     return _Try(
         tree=RoutedTree(
             net=net,
@@ -1003,6 +1367,7 @@ def _build(run: _Run, net: GridNet, branches: Sequence[_Branch], routed: Routed 
                 if branch.tap is not None
             ),
             boundaries=_boundaries(branches),
+            proofs=tuple(branch.proofs for branch in branches),
         ),
         realised=realised,
         columns=columns,
@@ -1080,18 +1445,29 @@ def _lay(
         )
     for index, branch in enumerate(branches):
         cuts = [_tap_of(branches[child]).index for child in children[index]]
-        pieces = _pieces(branch.path, cuts)
+        pieces = (
+            [proof.path for proof in branch.proofs] if branch.proofs else _pieces(branch.path, cuts)
+        )
         joins = [stood[child] for child in children[index]]
         for position, piece in enumerate(pieces):
+            proof = branch.proofs[position] if branch.proofs else None
             source = (
-                _through(run, joins[position - 1], piece[0], leaving=True)
-                if position
-                else _start(run, branch, stood.get(index))
+                proof.source
+                if proof is not None
+                else (
+                    _through(run, joins[position - 1], piece[0], leaving=True)
+                    if position
+                    else _start(run, branch, stood.get(index))
+                )
             )
             sink = (
-                _through(run, joins[position], piece[-1], leaving=False)
-                if position < len(joins)
-                else _end(run, branch, stood.get(index))
+                proof.sink
+                if proof is not None
+                else (
+                    _through(run, joins[position], piece[-1], leaving=False)
+                    if position < len(joins)
+                    else _end(run, branch, stood.get(index))
+                )
             )
             rate = flows[index][position]
             out.append(
@@ -1107,6 +1483,7 @@ def _lay(
                     item_id=net.item_id,
                     rate=rate,
                     ids=run.ids,
+                    motion=branch.proofs[position].motion if branch.proofs else branch.motion,
                 )
             )
     return tuple(out)
@@ -1118,7 +1495,7 @@ def _start(run: _Run, branch: _Branch, stood: _Stood | None) -> Terminal:
         return branch.source
     if stood is None or branch.tap is None:
         raise RealiseError("stub", (), "a branch with no source and no tap has no beginning")
-    return _side(run, stood, branch.tap.side)
+    return replace(_side(run, stood, branch.tap.side), node=branch.path[0])
 
 
 def _end(run: _Run, branch: _Branch, stood: _Stood | None) -> Terminal:
@@ -1127,7 +1504,7 @@ def _end(run: _Run, branch: _Branch, stood: _Stood | None) -> Terminal:
         return branch.sink
     if stood is None or branch.tap is None:
         raise RealiseError("stub", (), "a branch with no sink and no tap has no end")
-    return _side(run, stood, branch.tap.side)
+    return replace(_side(run, stood, branch.tap.side), node=branch.path[-1])
 
 
 def _stand(run: _Run, branches: Sequence[_Branch], child: int) -> _Stood:
@@ -1140,16 +1517,26 @@ def _stand(run: _Run, branches: Sequence[_Branch], child: int) -> _Stood:
     """
     branch = branches[child]
     tap = _tap_of(branch)
-    path = branches[tap.branch].path
-    ahead = path[tap.index + 1]
+    if tap.stood is not None:
+        if tap.stood.obj.id < 0:
+            stood = replace(tap.stood, obj=replace(tap.stood.obj, id=next(run.ids)))
+            branch.tap = replace(tap, stood=stood)
+            return stood
+        return tap.stood
+    ahead = branches[tap.branch].path[tap.index + 1]
+    return _stand_at(run, tap, ahead, merging=branch.merging, object_id=next(run.ids))
+
+
+def _stand_at(run: _Run, tap: _Tap, ahead: Node, *, merging: bool, object_id: int) -> _Stood:
+    """Read attachment ports without emitting an object for a candidate tap."""
     flow = (ahead[0] - tap.node[0], ahead[1] - tap.node[1])
-    class_name = MERGER_CLASS if branch.merging else SPLITTER_CLASS
+    class_name = MERGER_CLASS if merging else SPLITTER_CLASS
     buildable = run.registry.buildables.get(class_name)
     if buildable is None:
         raise NetError("data", f"the registry does not describe {class_name}")
     here = run.lattice.world(tap.node)
     pose = Pose(here[0], here[1], here[2], math.degrees(math.atan2(flow[1], flow[0])))
-    obj = AttachmentObj(id=next(run.ids), class_name=class_name, pose=pose)
+    obj = AttachmentObj(id=object_id, class_name=class_name, pose=pose)
     ports = [port for port in buildable.ports if port.kind == "belt"]
     left = (-flow[1], flow[0])
     on_left = (tap.side[0] - tap.node[0], tap.side[1] - tap.node[1]) == left
@@ -1157,7 +1544,7 @@ def _stand(run: _Run, branches: Sequence[_Branch], child: int) -> _Stood:
     # A splitter takes one belt in and sends three out, a merger the other way
     # round, so which direction the SIDE port has is the class's own answer and
     # not a third thing to decide here.
-    side_direction = "input" if branch.merging else "output"
+    side_direction = "input" if merging else "output"
     return _Stood(
         obj=obj,
         through_in=_pick(ports, class_name, "input", lambda t: t[0] < -LATTICE_TOUCH_CM, _straight),
@@ -1215,6 +1602,15 @@ def _side(run: _Run, stood: _Stood, node: Node) -> Terminal:
     return _port_terminal(run, stood.obj, stood.side, node)
 
 
+def _tap_port(run: _Run, obj: AttachmentObj, port: Port) -> Terminal:
+    """Actual connector and first outward lattice node, including off-grid ports."""
+    transform = obj.pose.transform()
+    world = world_port(transform, port)
+    facing = facing_for(port_forward(transform, port), run.lattice, port.name)
+    node = _node_on_ray(world, facing, run.lattice, port.name)
+    return _port_terminal(run, obj, port, node)
+
+
 def _port_terminal(run: _Run, obj: AttachmentObj, port: Port, node: Node) -> Terminal:
     """One attachment port as a terminal, checked against the lattice it claims.
 
@@ -1226,16 +1622,14 @@ def _port_terminal(run: _Run, obj: AttachmentObj, port: Port, node: Node) -> Ter
     """
     transform = obj.pose.transform()
     world = snapped(world_port(transform, port), node, run.lattice)
-    if run.lattice.node(world) != node:
-        raise NetError(
-            "data",
-            f"{obj.class_name}'s {port.name} stands at {world}, which is not the lattice "
-            f"node {node} a run cut here would end on",
-        )
+    from flab2bp.sfy.layout.realise import _stub
+
+    facing = facing_for(port_forward(transform, port), run.lattice, port.name)
+    _ = _stub(world, run.lattice.world(node), facing, end=0, at=node)
     return Terminal(
         node=node,
         world=world,
-        facing=facing_for(port_forward(transform, port), run.lattice, port.name),
+        facing=facing,
         port=(obj.id, port.name),
         kind="tap",
     )
@@ -1247,6 +1641,12 @@ def _pieces(path: Sequence[Node], cuts: Sequence[int]) -> list[tuple[Node, ...]]
     The attachment occupies the node itself and its two through ports stand on
     the nodes either side, so the piece before a cut ends one node short of it
     and the piece after starts one node past it.
+
+    Cuts come from ``tap_nodes`` with ``clear >= TAP_CLEAR_NODES`` (three).
+    A ramp's flat half may belong to a straight run, but that clearance keeps
+    both through-port nodes off its source, via and landing in either path
+    direction. Slicing therefore leaves every ramp whole inside one piece;
+    it does not need another ramp decoder here.
 
     A piece with no nodes in it is refused rather than built: two attachments
     would be standing on adjacent nodes with no belt between them, which
@@ -1274,29 +1674,102 @@ def _pieces(path: Sequence[Node], cuts: Sequence[int]) -> list[tuple[Node, ...]]
 # --- the lift columns ------------------------------------------------------
 
 
-def _blocked_column(run: _Run, net: GridNet, realised: Sequence[Realised]) -> tuple[Node, ...]:
-    """The ends of the first lift whose column is not this net's to stand in.
+def _physical(realised: Sequence[Realised], registry: Registry) -> tuple[_Physical, ...]:
+    """Cache physical bounds once; curved belt hulls remain conservative AABBs."""
+    links: dict[tuple[int, str], int] = {}
+    for laid in realised:
+        for link in laid.links:
+            links[link.a] = link.b[0]
+            links[link.b] = link.a[0]
+    boxes: list[_Physical] = []
+    for laid in realised:
+        for belt in laid.belts:
+            entry, exit_end = belt_ends(registry, belt.class_name)
+            last = len(belt.points) - 2
+            for index, bounds in enumerate(_belt_boxes(belt)):
+                contacts: list[int] = []
+                for at_end, port in ((index == 0, entry), (index == last, exit_end)):
+                    other = links.get((belt.id, port))
+                    if at_end and other is not None:
+                        contacts.append(other)
+                boxes.append(_Physical(belt.id, bounds, tuple(contacts)))
+        for obj in laid.attachments:
+            transform = obj.pose.transform()
+            for box in registry.buildables[obj.class_name].clearance:
+                if not box.soft:
+                    boxes.append(_Physical(obj.id, box_bounds(box, transform)))
+        for lift in laid.lifts:
+            column_box = lift_box(lift, registry)
+            centre, reach = column_box.centre, column_box.reach
+            column_bounds: BoxBounds = (
+                (centre[0] - reach[0], centre[1] - reach[1], centre[2] - reach[2]),
+                (centre[0] + reach[0], centre[1] + reach[1], centre[2] + reach[2]),
+            )
+            boxes.append(_Physical(lift.id, column_bounds))
+    return tuple(boxes)
 
-    The movement table names no intermediate node for a lift, so this is where
-    the column is enforced: every node of it at every level strictly between the
-    ends, and every node the lift's own clearance box meets.  The nodes returned
-    are the lift's two ENDS and not the column -- they are the nodes the kernel
-    tests, and charging a node no query can see teaches the search nothing.
+
+def _overlap(left: BoxBounds, right: BoxBounds) -> bool:
+    return all(
+        min(left[1][axis], right[1][axis]) - max(left[0][axis], right[0][axis]) > TOUCH_CM
+        for axis in range(3)
+    )
+
+
+def _blocked_column(
+    run: _Run,
+    net: GridNet,
+    realised: Sequence[Realised],
+    physical: tuple[_Physical, ...],
+) -> tuple[Node, ...]:
+    """Refuse occupied centre shafts or physical overlap, never overlap of shadows.
+
+    Flags already expand world geometry by a belt's clearance. Expanding a lift
+    to virtual belt centres and consulting those flags charges that clearance
+    twice. Compare the retained physical boxes instead. Node shadows are only
+    a fail-closed fallback for foreign stakes with no registered geometry.
     """
+    own_bounds = {part.object_id: part.bounds for part in physical}
+    own_stakes = run.staked.get(net.id, ())
+    half = run.lattice.designer.half_cm
     for laid in realised:
         for lift, (low, high) in zip(laid.lifts, laid.lift_columns, strict=True):
-            box = lift_box(lift, run.registry)
-            centre, reach = box.centre, box.reach
-            nodes = [
-                *(node for node in _column(low, high) if node not in (low, high)),
-                *_box_nodes(
-                    run.lattice,
-                    (centre[0] - reach[0], centre[1] - reach[1], centre[2] - reach[2]),
-                    (centre[0] + reach[0], centre[1] + reach[1], centre[2] + reach[2]),
-                ),
-            ]
-            if any(not run.available(net.id, node) for node in nodes):
+            bounds = own_bounds[lift.id]
+            if any(
+                not run.available(net.id, node)
+                for node in _column(low, high)
+                if node not in (low, high)
+            ):
                 return (low, high)
+            if (
+                any(
+                    bounds[0][axis] < -half - TOUCH_CM or bounds[1][axis] > half + TOUCH_CM
+                    for axis in (0, 1)
+                )
+                or bounds[0][2] < run.lattice.grid_cm - TOUCH_CM
+                or bounds[1][2] > run.lattice.n * run.lattice.grid_cm + TOUCH_CM
+            ):
+                return (low, high)
+            if any(_overlap(bounds, other) for other in run.occupancy.static_bounds):
+                return (low, high)
+            if any(
+                _overlap(bounds, part.bounds)
+                for owner, parts in run.physical.items()
+                if owner != net.id
+                for part in parts
+            ):
+                return (low, high)
+            if any(
+                _overlap(bounds, part.bounds)
+                for part in physical
+                if part.object_id != lift.id and lift.id not in part.contacts
+            ):
+                return (low, high)
+            for node in _box_nodes(run.lattice, *bounds):
+                index = run.lattice.index(node)
+                for stake in run.occupancy._claims.get(index, ()):
+                    if stake not in own_stakes and run.owners.get(stake) not in run.physical:
+                        return (low, high)
     return ()
 
 
@@ -1345,10 +1818,9 @@ def _column(low: Node, high: Node) -> tuple[Node, ...]:
 def _box_nodes(lattice: Lattice, low: Vector, high: Vector) -> list[Node]:
     """Every node whose belt box meets the world box ``[low, high]``.
 
-    The read-only mirror of :func:`~flab2bp.sfy.layout.lattice._mark_box`'s node
-    range: the same "meets" reading -- the two boxes must really lap, by more
-    than :data:`~flab2bp.sfy.layout.validate.TOUCH_CM` -- so that asking whether
-    a lift's box is clear and marking one as occupied cannot disagree.
+    Used only to fail closed on unregistered foreign claims. World flags are
+    already expanded by a belt's clearance and MUST NOT be read through this
+    second expansion; registered geometry is compared as physical bounds.
     """
     grid, half = lattice.grid_cm, lattice.designer.half_cm
     across = BELT_CLEARANCE_HALF_WIDTH_CM
@@ -1390,28 +1862,6 @@ def _endpoints(terminals: Sequence[Terminal], rates: Sequence[Fraction]) -> tupl
     return tuple(out)
 
 
-def _cut_loops(path: Sequence[Node]) -> tuple[Node, ...]:
-    """``path`` with any node it visits twice, and everything between, spliced out.
-
-    The kernel certifies a path and leaves loops in it -- cutting them needs the
-    ramp context whoever turns a path into belts owns -- and this is that cut:
-    where a node appears twice the steps between are a closed walk, and the step
-    out of the first occurrence is the step out of the second, so removing them
-    leaves a path the movement table still admits.
-    """
-    seen: dict[Node, int] = {}
-    out: list[Node] = []
-    for node in path:
-        at = seen.get(node)
-        if at is not None:
-            del out[at + 1 :]
-            seen = {held: index for held, index in seen.items() if index <= at}
-            continue
-        seen[node] = len(out)
-        out.append(node)
-    return tuple(out)
-
-
 def _tap_of(branch: _Branch) -> _Tap:
     if branch.tap is None:
         raise NetError("data", "a branch of the tree lost the tap it was routed from")
@@ -1426,27 +1876,6 @@ def _belt_length_cm(realised: Sequence[Realised]) -> float:
         for belt in laid.belts
         for a, b in zip(belt.points, belt.points[1:], strict=False)
     )
-
-
-def _lift_heights(lattice: Lattice, registry: Registry) -> range:
-    """The lift heights this designer allows, in levels -- R-M3-3.
-
-    ``lift_min_cm``, ``lift_max_cm`` and ``lift_step_cm`` are the game's and are
-    read; the ceiling is the lattice's own topmost landable level.  A registry
-    that states no window builds no lifts, which is a legal table rather than an
-    error: the movement graph simply offers none.
-    """
-    limits = registry.limits
-    low_cm, high_cm, step_cm = limits.lift_min_cm, limits.lift_max_cm, limits.lift_step_cm
-    if low_cm is None or high_cm is None or step_cm is None:
-        return range(0)
-    grid = lattice.grid_cm
-    low = round(low_cm / grid)
-    high = min(round(high_cm / grid), lattice.n - GROUND_LEVEL)
-    step = max(round(step_cm / grid), 1)
-    if high < low:
-        return range(0)
-    return range(low, high + 1, step)
 
 
 def _out_of_time() -> Routed:
@@ -1472,5 +1901,17 @@ def _restore(run: _Run, best: _Played) -> None:
     for tree in best.trees:
         for path in tree.paths:
             run.stake(tree.net.id, path)
+        run.proofs[tree.net.id] = tree.proofs
+        for proofs in tree.proofs:
+            for proof in proofs:
+                for terminal in (proof.source, proof.sink):
+                    if terminal.kind == "tap":
+                        # Access-node paths retain their connector displacement
+                        # as a stub, so restore its ownership along with proof.
+                        side = _node_on_ray(
+                            terminal.world, terminal.facing, run.lattice, "restored tap"
+                        )
+                        run.stake(tree.net.id, (terminal.node, side))
     for net_id, low, high in best.columns:
         run.stake(net_id, _column(low, high))
+    run.physical.update(best.physical)

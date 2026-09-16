@@ -7,39 +7,15 @@ that matters most here is the one that walks every stage, makes it raise its own
 error type, and asserts that what comes out is a named cause rather than a stack
 trace.
 
-Two shapes of build, and why
-----------------------------
-The build that is laid out, validated and round-tripped is :func:`_chain`, a
-hand-built fragment of one machine per stage, stated here the way
-:mod:`tests.sfy.test_packer`'s and :mod:`tests.sfy.test_rrr`'s fragments are.
-FactorioLab's own flows are in
-:func:`test_a_corpus_flow_does_not_route_yet_and_says_which_nets`, and that test
-is an ``xfail(strict=True)``: every committed flow runs several machines on one
-recipe, so its ore net is ONE stream from the ``-Y`` wall to several machine
-ports, and two defects below this strategy stop that being belted today --
-
-1. :func:`~flab2bp.sfy.layout.packer.pack` prices a wall-fed sink at its
-   distance to the wall line, so every such port lands exactly
-   ``port_apron_nodes`` (four) nodes off the wall, and the trunk that reaches it
-   is four nodes long where a tap needs ``2 * clear + 1`` (nine) straight nodes.
-   The second and third sinks then have nowhere to start and the net strands
-   ``DYNAMIC_ACCESS``;
-2. given room -- the same six machines placed by hand well off the wall -- the
-   trunk IS tapped, and the branch that leaves the tap turns after three grid
-   steps.  An attachment turn costs ``box + lead_in`` = 301 cm and three steps
-   are 300, so :func:`~flab2bp.sfy.layout.realise.realise` refuses the corner by
-   one centimetre; the router's cost is one per flat step and gives it no reason
-   to leave a fourth.
-
-Both are reproduced in ``task-10-report.md`` and neither is this module's to
-fix.  The test is strict, so it fails the moment either is, which is when the
-corpus flows belong in it.
+The corpus headline exercises FactorioLab's pinned iron-plate flow, including
+its multiple wall entries and exits. A small two-stage fragment isolates the
+strategy's stage errors and round-trip contract.
 """
 
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator, Sequence
 from fractions import Fraction
 from typing import Any
 
@@ -48,15 +24,17 @@ import pytest
 from flab2bp.layout.base import NoValidLayout
 from flab2bp.layout.budget import TransportRefusal
 from flab2bp.sfy import pipeline
+from flab2bp.sfy.labmap import load_lab_map
 from flab2bp.sfy.layout import grid
-from flab2bp.sfy.layout.corridors import CorridorError
+from flab2bp.sfy.layout.corridors import CorridorError, Measures
 from flab2bp.sfy.layout.emit import decode, emit
-from flab2bp.sfy.layout.grid import ARRANGEMENTS, GridRouted
-from flab2bp.sfy.layout.grid_nets import NetError
+from flab2bp.sfy.layout.grid import GridRouted
+from flab2bp.sfy.layout.grid_nets import GridNet, NetError
+from flab2bp.sfy.layout.lattice import Occupancy
 from flab2bp.sfy.layout.manifold import RowError
 from flab2bp.sfy.layout.measure import measure
 from flab2bp.sfy.layout.model import SfyPlacement
-from flab2bp.sfy.layout.packer import NO_ARRANGEMENT, OVER_BUDGET, PackError, pack
+from flab2bp.sfy.layout.packer import NO_ARRANGEMENT, OVER_BUDGET, Pack, PackError, pack
 from flab2bp.sfy.layout.power import PowerError
 from flab2bp.sfy.layout.protocol import SfyLayoutStrategy
 from flab2bp.sfy.layout.realise import RealiseError
@@ -83,9 +61,8 @@ BUDGET_S = 120.0
 #: What a clean report stands aside on, and nothing else: the two partial rules.
 ALWAYS_SKIPPED = {"geom.hard_clearance", "belt.capsule"}
 
-#: The one belt the fragments below fund, and the one upgrade above it.  Written
-#: here because a fragment is not a FactorioLab flow: the committed exports are
-#: what ``spec_from_flow`` reads and they are used in the ``xfail`` below.
+#: The fragments fund one belt tier and its next upgrade. The corpus headline
+#: instead reads the committed FactorioLab export through ``spec_from_flow``.
 MK1_BELT = BeltTier(item_id="conveyor-belt-mk1", items_per_second=Fraction(1))
 MK2_BELT = BeltTier(item_id="conveyor-belt-mk2", items_per_second=Fraction(2))
 
@@ -104,11 +81,8 @@ def _registry() -> Registry:
 def _chain() -> SfyBuildSpec:
     """A two-stage fragment: a smelter feeding a constructor, one machine each.
 
-    A fragment rather than a flow, and stated here for the reason
-    :mod:`tests.sfy.test_rrr`'s is: what is being tested is the STRATEGY's loop
-    -- that it packs, routes, powers, floors and describes one build -- and the
-    committed flows all run several machines on a recipe, which is the shape two
-    defects below this module refuse (see this file's docstring).
+    This fragment isolates the strategy loop from corpus packing complexity;
+    the headline below separately covers FactorioLab's multi-machine flow.
     """
     groups = tuple(
         SfyMachineGroup(
@@ -186,28 +160,40 @@ def test_a_chain_lays_out_in_mk1_and_validates_clean(laid_out: SfyPlacement) -> 
     assert min(machine.id for machine in laid_out.machines) == 1
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=NoValidLayout,
-    reason=(
-        "a corpus flow runs several machines on one recipe, so its wall net is one stream "
-        "to several ports; the packer stands those ports four nodes off the wall where a tap "
-        "needs nine, and a tap branch that turns after three grid steps is refused by one "
-        "centimetre.  Both are defects below this strategy -- see task-10-report.md"
-    ),
-)
-def test_a_corpus_flow_does_not_route_yet_and_says_which_nets() -> None:
-    """FactorioLab's own ``iron-plate-60``, which this strategy cannot belt today.
-
-    Kept as a strict ``xfail`` rather than deleted: it is the test the brief
-    asks for, it names the two defects in its reason, and it turns into a
-    failure the moment either of them is fixed.
-    """
+def test_iron_plate_60_lays_out_in_mk1_and_validates_clean() -> None:
+    """The pinned multi-machine flow is routed completely, not a smaller fragment."""
     spec = flow_spec("iron-plate-60")
     placement = _lay_out(spec, time_budget_s=BUDGET_S)
     report = validate(placement, spec, _registry())
     assert [finding.message for finding in report.errors] == []
     assert report.ok
+
+
+def test_a_valid_fourth_arrangement_uses_the_unspent_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = grid._Run._route
+    attempts = 0
+
+    def route(
+        run: grid._Run,
+        nets: Sequence[GridNet],
+        occupancy: Occupancy,
+        measures: Measures,
+        ids: Iterator[int],
+        ends: float,
+    ) -> RoutingOutcome:
+        nonlocal attempts
+        attempts += 1
+        if attempts <= 3:
+            return _stranded(nets, RouteFailureKind.SEALED_POCKET)
+        return original(run, nets, occupancy, measures, ids, ends)
+
+    monkeypatch.setattr(grid._Run, "_route", route)
+    spec = _chain()
+    placement = _lay_out(spec, time_budget_s=BUDGET_S)
+    assert attempts > 3
+    assert validate(placement, spec, _registry()).ok
 
 
 def test_the_description_names_the_strategy_and_counts_lifts_and_attachments(
@@ -226,7 +212,6 @@ def test_the_description_names_the_strategy_and_counts_lifts_and_attachments(
 
     assert description.splitlines()[0].startswith("iron rod")
     assert "grid-routed" in description
-    assert f"of {ARRANGEMENTS}" in description
     assert "rip-up rounds" in description
     assert f"{counted.lifts} conveyor lifts" in description
     assert f"{counted.attachments} conveyor attachments" in description
@@ -399,12 +384,7 @@ def _stranded(nets: object, kind: RouteFailureKind) -> RoutingOutcome:
 def test_a_net_nobody_could_route_is_named_in_the_refusal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Every arrangement tried and a net still stranded: the cause names the nets.
-
-    The router RETURNS its failures rather than raising them, so this is the one
-    refusal the strategy reaches by exhausting its own loop.  The packer is left
-    real, so the loop really packs :data:`ARRANGEMENTS` arrangements.
-    """
+    """Geometric failures stay named, but the overall deadline is still a bound."""
     tried: list[int] = []
 
     def stranding(nets: object, occupancy: object, **kwargs: object) -> RoutingOutcome:
@@ -412,12 +392,13 @@ def test_a_net_nobody_could_route_is_named_in_the_refusal(
         return _stranded(nets, RouteFailureKind.SEALED_POCKET)
 
     monkeypatch.setattr(grid, "route_all", stranding)
+    monkeypatch.setattr(grid, "expired", lambda deadline: len(tried) >= 4)
     with pytest.raises(NoValidLayout) as caught:
         _lay_out(_chain(), time_budget_s=BUDGET_S)
-    assert caught.value.reason == "a belt could not be routed"
+    assert caught.value.reason == "routing exceeded the budget"
     assert caught.value.attempt_reasons
     assert "iron-ore" in caught.value.attempt_reasons[0]
-    assert len(tried) == ARRANGEMENTS
+    assert len(tried) == 4
 
 
 def test_a_net_the_clock_never_reached_refuses_the_budget_instead(
@@ -431,22 +412,17 @@ def test_a_net_the_clock_never_reached_refuses_the_budget_instead(
     """
 
     def stranding(nets: object, occupancy: object, **kwargs: object) -> RoutingOutcome:
+        monkeypatch.setattr(grid, "expired", lambda deadline: True)
         return _stranded(nets, RouteFailureKind.BUDGET)
 
     monkeypatch.setattr(grid, "route_all", stranding)
     assert _refusal(_chain(), time_budget_s=BUDGET_S) == "routing exceeded the budget"
 
 
-def test_a_later_pack_that_runs_out_of_clock_reports_what_routing_found(
+def test_a_later_pack_timeout_is_not_masked_by_earlier_routing_evidence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The second arrangement's clock is not the run's answer, the first one's routing is.
-
-    Once a build has been packed and routed, "packing exceeded the budget" would
-    send a reader off to shrink machines that really did stand.  A FIRST
-    arrangement that runs out has nothing behind it and says so, which is the
-    test above this one.
-    """
+    """An earlier geometric miss cannot turn a later search bound into a pin."""
     packs: list[int] = []
 
     def once(*args: object, **kwargs: object) -> object:
@@ -460,7 +436,7 @@ def test_a_later_pack_that_runs_out_of_clock_reports_what_routing_found(
 
     monkeypatch.setattr(grid, "pack", once)
     monkeypatch.setattr(grid, "route_all", stranding)
-    assert _refusal(_chain(), time_budget_s=BUDGET_S) == "a belt could not be routed"
+    assert _refusal(_chain(), time_budget_s=BUDGET_S) == OVER_BUDGET
     assert len(packs) == 2
 
 
@@ -498,3 +474,33 @@ def test_the_time_budget_is_a_wall_the_strategy_keeps() -> None:
     reason = _refusal(_chain(), absolute_deadline=time.monotonic() - 1.0)
     assert reason == OVER_BUDGET
     assert reason in REFUSALS
+
+
+def test_continuation_preserves_initial_shares_without_extending_the_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = grid._Run(_chain(), designer(MARK, _registry()), _registry(), load_lab_map(), 115.0)
+    monkeypatch.setattr(time, "monotonic", lambda: 100.0)
+    assert tuple(run._slice(index) for index in range(1, 6)) == (105.0, 107.5, 115.0, 115.0, 115.0)
+
+
+def test_finalizing_a_routed_arrangement_cannot_extend_the_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = grid._Run._placement
+
+    def finish(
+        run: grid._Run,
+        packed: Pack,
+        occupancy: Occupancy,
+        outcome: RoutingOutcome,
+        nets: Sequence[GridNet],
+        arrangement: int,
+        ids: Iterator[int],
+    ) -> SfyPlacement:
+        placement = original(run, packed, occupancy, outcome, nets, arrangement, ids)
+        monkeypatch.setattr(grid, "expired", lambda deadline: True)
+        return placement
+
+    monkeypatch.setattr(grid._Run, "_placement", finish)
+    assert _refusal(_chain(), time_budget_s=BUDGET_S) == "routing exceeded the budget"

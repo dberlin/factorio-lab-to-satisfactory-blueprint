@@ -22,6 +22,7 @@ from flab2bp.layout.base import (
 )
 from flab2bp.layout.observe import SearchObserver
 from flab2bp.rates import DEFAULT_CANDIDATE_POLICIES, CandidatePolicy
+from flab2bp.sfy import pipeline as sfy_pipeline
 from flab2bp.web import jobs as jobs_module
 from flab2bp.web.jobs import Builder, InvalidOptions, Options, parse_options, run_build
 from flab2bp.web.payload import Json, JsonValue
@@ -1380,3 +1381,62 @@ class TestFlowReachesTheSolver:
             assert "flow" not in options
         finally:
             builder.shutdown()
+
+
+@pytest.fixture(scope="module")
+def satisfactory_build() -> sfy_pipeline.SfyBuild:
+    flow = Path(__file__).resolve().parents[1] / "fixtures" / "sfy_flows" / "iron-plate-60.csv"
+    url = flow.read_text(encoding="utf-8").splitlines()[0].strip().strip('"')
+    return sfy_pipeline.build(url, flow=flow, designer="mk3", strategy="manifold-rows")
+
+
+def test_a_satisfactory_winner_with_a_loser_still_has_downloads(
+    satisfactory_build: sfy_pipeline.SfyBuild,
+) -> None:
+    loser = LayoutAttemptFailure(
+        satisfactory_build.spec.label,
+        "grid-routed",
+        "a belt could not be routed",
+    )
+    winner = dataclasses.replace(satisfactory_build, refused=(loser,))
+    builder = Builder(solve=lambda _o, _p, _s, _t: winner)
+    try:
+        job = builder.submit(Options(url="https://factoriolab.github.io/sfy/list"))
+        snap = _settled(builder, job.id)
+        assert snap["state"] == "done" and snap["refusal"] is None
+        result = _object(snap["result"])
+        refused = result["refused"]
+        assert isinstance(refused, list) and len(refused) == 1
+        assert _object(refused[0])["strategy"] == "grid-routed"
+        assert _object(refused[0])["reason"] == "a belt could not be routed"
+        assert result["strategy"] == "manifold-rows"
+        assert set(job.artifacts) == {"iron-plate-mk3.sbp", "iron-plate-mk3.sbpcfg"}
+    finally:
+        builder.shutdown()
+
+
+def test_an_unencodable_satisfactory_winner_is_refused_without_downloads(
+    satisfactory_build: sfy_pipeline.SfyBuild,
+) -> None:
+    failure = LayoutAttemptFailure(
+        satisfactory_build.spec.label,
+        "manifold-rows",
+        "blueprint encoding failed: template",
+    )
+    failed = dataclasses.replace(
+        satisfactory_build,
+        blueprint=None,
+        record=None,
+        refused=(failure,),
+    )
+    builder = Builder(solve=lambda _o, _p, _s, _t: failed)
+    try:
+        job = builder.submit(Options(url="https://factoriolab.github.io/sfy/list"))
+        snap = _settled(builder, job.id)
+        assert snap["state"] == "refused" and snap["error"] is None
+        assert _object(snap["result"])["artifacts"] == []
+        refused = _object(snap["refusal"])
+        assert "encoding failed" in str(refused)
+        assert job.artifacts == {}
+    finally:
+        builder.shutdown()

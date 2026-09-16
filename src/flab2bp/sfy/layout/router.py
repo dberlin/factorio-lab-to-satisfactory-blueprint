@@ -41,14 +41,14 @@ explicit ``deadline`` argument, not the ledger's own field.
 sequence, and it names an incline's VIA as a node of its own, on the level the
 belt departs from: a climb reads as one flat grid step followed by one step that
 is both along and up.  A lift, having no intermediate, reads as a single
-``(0, 0, +-h)`` step.  Loops are left in -- splicing them out needs the ramp
-context (``routing_domain._cut_loops``) that belongs to whoever turns a path
-into belts.
+``(0, 0, +-h)`` step. Constrained paths carry their exact motion witness;
+coordinate-only loop deletion or landing relocation would invalidate it and
+is not performed.
 
-**What a refusal may claim.**  Only complete exhaustion proves anything: it
-alone fills :attr:`Routed.wall`, with the nodes on the boundary of the
-searched component that another net is holding.  A budget or deadline stop
-names nobody -- it did not finish looking.
+**What a refusal may claim.** Only complete physical exhaustion fills
+:attr:`Routed.wall`, with occupied nodes on the searched component's boundary.
+Motion-state exhaustion is distinct: it proves no legal geometric continuation,
+not a sealed physical pocket. Budget and deadline stops likewise name nobody.
 """
 
 from __future__ import annotations
@@ -58,16 +58,18 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from flab2bp.layout.budget import expired
+from flab2bp.layout.budget import WorkBudget, expired
 from flab2bp.sfy.layout.lattice import Node, Occupancy
 from flab2bp.sfy.layout.transitions import FLAT_STEPS
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from flab2bp.layout.budget import WorkBudget
+    from flab2bp.layout.geometric_motion import MotionWitness
     from flab2bp.layout.geometric_router import GeometricResult
     from flab2bp.layout.geometric_world import GeometricTransition
+    from flab2bp.sfy.layout.motion import MotionProfile
+    from flab2bp.sfy.layout.realise import Terminal
 
 #: The movement table as the kernel takes it: a row per source level.
 TransitionTable = tuple[tuple["GeometricTransition", ...], ...]
@@ -105,6 +107,8 @@ class RouteFailureKind(Enum):
     #: The query was never admissible: no endpoint on the lattice, or no start
     #: a belt may stand on.  Charged nothing.
     DYNAMIC_ACCESS = "dynamic-access"
+    #: Physical coordinates may connect, but no legal geometry state does.
+    MOTION_EXHAUSTED = "motion-exhausted"
     #: A bound ended it.  Proves nothing about the net.
     BUDGET = "budget"
 
@@ -135,6 +139,7 @@ class Routed:
     wall: tuple[Node, ...]
     work: int
     cause: BudgetCause = BudgetCause.UNKNOWN
+    motion: MotionWitness | None = None
 
     def __post_init__(self) -> None:
         if self.cause is not BudgetCause.UNKNOWN and self.kind is not RouteFailureKind.BUDGET:
@@ -155,6 +160,9 @@ def route_net(
     deadline: float | None,
     transitions: TransitionTable,
     blame: dict[Node, float] | None = None,
+    profile: MotionProfile | None = None,
+    sources: Collection[Terminal] = (),
+    sinks: Collection[Terminal] = (),
 ) -> Routed:
     """The cheapest belt path from ``starts`` to ``goals``, or why there is none.
 
@@ -174,8 +182,9 @@ def route_net(
     window serves a whole pass.  ``blame``, when given, collects a point against
     every node named in a wall.
 
-    The returned path is the kernel's own certified sequence of nodes, loops and
-    all: cutting them needs the ramp context the realiser owns, not this.
+    The returned path is the kernel's certified node sequence. With ``profile``,
+    ``sources`` and ``sinks`` describe actual terminals and ``Routed.motion``
+    retains the selected geometry; changing that path requires a new proof.
     """
     lattice = occupancy.lattice
     levels = lattice.n + 1
@@ -211,6 +220,34 @@ def route_net(
 
     # The kernel returns its exact charge on every normal exit.
     start_left = budget.left if budget.left is not None else 1 << 62
+    allowance = min(MAX_SEARCH_WORK, start_left)
+    preparation = WorkBudget(left=allowance)
+    motion = None
+    if profile is not None:
+        from flab2bp.sfy.layout.motion import MotionPreparationExhausted, compile_policy
+
+        if not sources or not sinks:
+            raise ValueError("a constrained route needs its actual source and sink terminals")
+        try:
+            motion = compile_policy(
+                profile,
+                tuple(terminal for terminal in sources if terminal.node in start_nodes),
+                tuple(terminal for terminal in sinks if terminal.node in goal_nodes),
+                budget=preparation,
+                deadline=deadline,
+            )
+        except MotionPreparationExhausted as failure:
+            work = allowance - (preparation.left or 0)
+            if budget.left is not None:
+                budget.left -= work
+            return Routed(
+                None,
+                RouteFailureKind.BUDGET,
+                (),
+                work,
+                BudgetCause.DEADLINE if failure.deadline else BudgetCause.ALLOWANCE,
+            )
+    preparation_work = allowance - (preparation.left or 0)
     world = GeometricWorld(
         nx=levels,
         ny=levels,
@@ -221,7 +258,7 @@ def route_net(
         history=occupancy.history,
         transitions=transitions,
     )
-    max_work = min(MAX_SEARCH_WORK, start_left)
+    max_work = allowance - preparation_work
     result = geometric_router.route(
         geometric_router.GeometricQuery(
             world=world,
@@ -230,10 +267,11 @@ def route_net(
             pressure=pressure,
             max_work=max_work,
             deadline=deadline,
+            motion=motion,
         )
     )
     outcome = geometric_router.summarize(result)
-    work = outcome.work
+    work = preparation_work + outcome.work
     if budget.left is not None:
         budget.left = start_left - work
 
@@ -243,11 +281,21 @@ def route_net(
         # is what ended it, and anything short of that with an expired clock was
         # the clock.
         cause = (
-            BudgetCause.ALLOWANCE if work >= max_work or deadline is None else BudgetCause.DEADLINE
+            BudgetCause.ALLOWANCE
+            if outcome.work >= max_work or deadline is None
+            else BudgetCause.DEADLINE
         )
         return Routed(None, RouteFailureKind.BUDGET, (), work, cause)
     if outcome.path is not None:
-        return Routed(tuple(world.cell(index) for index in outcome.path), None, (), work)
+        return Routed(
+            tuple(world.cell(index) for index in outcome.path),
+            None,
+            (),
+            work,
+            motion=outcome.motion,
+        )
+    if outcome.motion_exhausted:
+        return Routed(None, RouteFailureKind.MOTION_EXHAUSTED, (), work)
     wall = _wall(occupancy, result, flags, transitions, blame)
     return Routed(None, RouteFailureKind.SEALED_POCKET, wall, work)
 

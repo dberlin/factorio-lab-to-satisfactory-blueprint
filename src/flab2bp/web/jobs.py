@@ -27,6 +27,8 @@ from collections import OrderedDict
 from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Final, Literal, cast
 from urllib.parse import urlsplit
 
@@ -51,11 +53,16 @@ from flab2bp.rates import DEFAULT_CANDIDATE_POLICIES, CandidatePolicy
 from flab2bp.rates.adjust import ProliferatorTier
 from flab2bp.rates.machine_choice import MachineRank
 from flab2bp.sfy import pipeline as sfy_pipeline
-from flab2bp.web.payload import Json, JsonValue, describe, projection_failure, refusal
+from flab2bp.sfy.strategy_names import (
+    SFY_PRODUCTION_STRATEGIES,
+    SFY_STRATEGY_CHOICES,
+    SfyStrategyName,
+)
+from flab2bp.web.payload import Json, JsonValue, describe, describe_sfy, projection_failure, refusal
 from flab2bp.web.trace import TraceCollector, TraceRing
 
 State = Literal["queued", "running", "done", "refused", "error"]
-WebStrategyName = Literal["best", "freeform", "sequence-pair", "hierarchical", "transport-routing"]
+WebStrategyName = pipeline.StrategyName | SfyStrategyName
 
 #: The projected total, in seconds, past which a submitted job says out loud
 #: that it will take a while.  This is a WARNING and not a bound: how long to
@@ -82,10 +89,7 @@ class Options:
     proliferator_tier: ProliferatorTier | None = None
     machine_rank: MachineRank = MachineRank.EXACT
     power_tower: str | None = None
-    #: Which Blueprint Designer a Satisfactory build would be laid out in.
-    #: Carried and validated, but not yet acted on: the web build path for
-    #: Satisfactory is M3, and until then :func:`parse_options` refuses an sfy
-    #: URL outright rather than running it through the DSP pipeline.
+    #: Which Blueprint Designer a Satisfactory build is laid out in.
     designer: str = sfy_pipeline.DEFAULT_DESIGNER_MARK
     name: str = ""
     #: Mirrors ``--allow-invalid``.  Off by default: a blueprint that pastes
@@ -106,8 +110,14 @@ class Options:
     trace: bool = False
 
     @property
+    def game(self) -> Game | None:
+        return _game_named_by(self.url)
+
+    @property
     def effective_candidate_count(self) -> int:
         """Candidates this request executes after flow pinning."""
+        if self.game is Game.SFY:
+            return 1
         return 1 if self.flow.strip() or self.fetch_flow else len(self.candidate_policies)
 
     @property
@@ -119,11 +129,15 @@ class Options:
         time against this so "still working" has a scale, not so it can promise
         an exact finish time.
         """
+        if self.game is Game.SFY:
+            return self.budget_s
         return self.attempt_count * self.budget_s
 
     @property
     def attempt_count(self) -> int:
         """Layout attempts this job runs: one per candidate per strategy."""
+        if self.game is Game.SFY:
+            return len(SFY_PRODUCTION_STRATEGIES) if self.strategy == "best" else 1
         per_spec = pipeline.PRODUCTION_STRATEGY_COUNT if self.strategy == "best" else 1
         return self.effective_candidate_count * per_spec
 
@@ -137,6 +151,8 @@ class Options:
         is submitted raced, so it carries the race's grace; an explicit
         strategy solves serially and carries the atomic one.
         """
+        if self.game is Game.SFY:
+            return 0.0
         return RACE_COMPLETION_GRACE_S if self.strategy == "best" else ATOMIC_COMPLETION_GRACE_S
 
     @property
@@ -149,6 +165,8 @@ class Options:
         strategy multipliers land on it.  Rates, encoding and queueing are
         still on top: it is a scale for the wait, not a finish time.
         """
+        if self.game is Game.SFY:
+            return self.budget_s
         return self.attempt_count * (self.budget_s + self.completion_grace_s)
 
     @property
@@ -161,6 +179,12 @@ class Options:
         """
         if self.projected_total_s <= WARN_TOTAL_SECONDS:
             return None
+        if self.game is Game.SFY:
+            return (
+                f"Satisfactory {self.strategy} shares {self.budget_s:g}s across "
+                f"{self.attempt_count} layout(s), over the {WARN_TOTAL_SECONDS:g}s mark. "
+                "It will still run."
+            )
         return (
             f"{self.effective_candidate_count} candidate(s) x {self.strategy} at "
             f"{self.budget_s:g}s per layout is up to {self.projected_total_s:g}s of "
@@ -269,21 +293,12 @@ def parse_options(raw: JsonValue) -> Options:
     if not isinstance(url, str) or not url.strip():
         raise InvalidOptions("'url' is required")
 
-    # Refused here rather than later: everything below this point validates a
-    # DSP search, and `run_build` would hand an sfy URL to `pipeline.build`,
-    # which reads it against DSP's dataset. Wiring `flab2bp.sfy.pipeline` into
-    # the job runner is M3; until it is, saying so is the honest answer.
-    if _game_named_by(url.strip()) is Game.SFY:
-        raise InvalidOptions("Satisfactory builds are not available in the web UI yet")
-
+    game = _game_named_by(url.strip())
     strategy = raw.get("strategy", "best")
-    match strategy:
-        case "best" | "freeform" | "sequence-pair" | "hierarchical" | "transport-routing":
-            web_strategy: WebStrategyName = strategy
-        case _:
-            raise InvalidOptions(
-                "'strategy' must be one of " + ", ".join(pipeline.STRATEGY_CHOICES)
-            )
+    choices = SFY_STRATEGY_CHOICES if game is Game.SFY else pipeline.STRATEGY_CHOICES
+    if not isinstance(strategy, str) or strategy not in choices:
+        raise InvalidOptions("'strategy' must be one of " + ", ".join(choices))
+    web_strategy = cast(WebStrategyName, strategy)
 
     raw_band = raw.get("band", "portable")
     if not isinstance(raw_band, str):
@@ -385,6 +400,8 @@ def parse_options(raw: JsonValue) -> Options:
     trace = raw.get("trace", False)
     if not isinstance(trace, bool):
         raise InvalidOptions("'trace' must be a boolean")
+    if game is Game.SFY and trace:
+        raise InvalidOptions("'trace' is not available for Satisfactory builds")
 
     return Options(
         url=url.strip(),
@@ -418,6 +435,8 @@ class Job:
     result: Json | None = None
     #: The refusal, on ``refused`` -- a result with reasons, not a failure.
     refusal: Json | None = None
+    #: Binary artifacts live only as long as this job's existing history entry.
+    artifacts: dict[str, bytes] = field(default_factory=dict, repr=False)
     #: The message, on ``error``.
     error: str | None = None
     #: The last thing ``pipeline.build`` said it was doing.  ``None`` until the
@@ -456,7 +475,7 @@ def run_build(
     on_progress: pipeline.ProgressSink,
     search_observer: SearchObserver | None = None,
     trace_queue: object | None = None,
-) -> pipeline.Build:
+) -> pipeline.Build | sfy_pipeline.SfyBuild:
     """Run one build through the pipeline's shared CPU-allocation policy.
 
     ``--flow`` arrives as CSV text and goes through ``flow_from_text``'s
@@ -475,9 +494,20 @@ def run_build(
     observer to call at all, so this is its only route to the parent. The
     caller (:meth:`Builder._run`) creates and owns it -- see there for why.
     """
+    if options.game is Game.SFY:
+        return sfy_pipeline.build(
+            options.url,
+            strategy=cast(SfyStrategyName, options.strategy),
+            designer=options.designer,
+            time_budget_s=options.budget_s,
+            name=options.name,
+            flow_text=options.flow or None,
+            fetch_flow=options.fetch_flow,
+            fetch_url_validator=_validate_web_fetch_url if options.fetch_flow else None,
+        )
     return pipeline.build(
         options.url,
-        strategy=options.strategy,
+        strategy=cast(pipeline.StrategyName, options.strategy),
         band=options.band,
         candidate_policies=options.candidate_policies,
         time_budget_s=options.budget_s,
@@ -499,7 +529,8 @@ def run_build(
 #: something the builder reaches in and sets, so a test can substitute a solve
 #: that reports whatever sequence it wants to see rendered.
 Solve = Callable[
-    [Options, pipeline.ProgressSink, SearchObserver | None, object | None], pipeline.Build
+    [Options, pipeline.ProgressSink, SearchObserver | None, object | None],
+    pipeline.Build | sfy_pipeline.SfyBuild,
 ]
 
 
@@ -597,7 +628,15 @@ class Builder:
                     None if collector is None else collector.observer,
                     trace_queue,
                 )
-                result = describe(build, allow_invalid=job.options.allow_invalid)
+                artifacts: dict[str, bytes] = {}
+                if isinstance(build, sfy_pipeline.SfyBuild):
+                    if build.blueprint is not None and build.record is not None and build.report.ok:
+                        with TemporaryDirectory(prefix="flab2bp-sfy-") as directory:
+                            paths = sfy_pipeline.write(build, Path(directory))
+                            artifacts = {path.name: path.read_bytes() for path in paths}
+                    result = describe_sfy(build, artifacts=artifacts, job_id=job.id)
+                else:
+                    result = describe(build, allow_invalid=job.options.allow_invalid)
             except NoValidLayout as exc:
                 # Not an error. A spec nobody can lay out reports which pairs
                 # were tried and why each gave up, and that is the most useful
@@ -624,9 +663,18 @@ class Builder:
             else:
                 with job._lock:
                     job.state = "done"
-                    job.leg_trace_dropped = _sum_trace_dropped(
-                        a.placement.stats for a in build.attempts
-                    ) + _sum_trace_dropped(f.stats for f in build.refused)
+                    if isinstance(build, sfy_pipeline.SfyBuild):
+                        if build.blueprint is None or build.record is None:
+                            job.state = "refused"
+                            job.refusal = refusal(
+                                build.refused,
+                                message="this build produced no blueprint",
+                            )
+                        job.artifacts = artifacts
+                    else:
+                        job.leg_trace_dropped = _sum_trace_dropped(
+                            a.placement.stats for a in build.attempts
+                        ) + _sum_trace_dropped(f.stats for f in build.refused)
                     job.result = result
                     job.finished_at = time.monotonic()
         finally:
@@ -658,6 +706,8 @@ class Builder:
                 "warning": job.options.warning,
                 "options": {
                     "url": job.options.url,
+                    "game": job.options.game.value if job.options.game is not None else None,
+                    "designer": job.options.designer,
                     "strategy": job.options.strategy,
                     "band": job.options.band,
                     "candidate_policies": [

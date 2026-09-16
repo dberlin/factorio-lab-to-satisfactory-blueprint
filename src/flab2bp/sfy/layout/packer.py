@@ -31,9 +31,9 @@ wall is the same rectangle: a grown footprint, and every apron, lies inside
 **The apron is DERIVED** -- see :func:`port_apron_nodes`.  A lift can never land
 on a port node (its column would run through the machine it serves), so every
 approach to a port is horizontal and the last corner before it is an attachment
-turn, which needs that turn's ``box + lead_in`` of straight run beside it.  An
-apron is that run in whole nodes: ``apron_nodes`` nodes along the port's facing,
-one node wide, tied to the yaw.
+turn, which needs the grid turn's ``reach + lead_in`` of straight run beside it.  An
+apron reserves that many grid steps along the port's facing, including both
+the port node and the final approach node, tied to the yaw.
 
 What an apron keeps out of is a DIFFERENT rectangle from what a machine keeps
 out of, and a larger one: an apron is somewhere a belt centreline really has to
@@ -61,8 +61,15 @@ cumulative cut, measured it and removed it: no cheap surrogate reached 0.55 AUC
 (``m3-router-reference.md`` §2.4).  So this model carries no reachability
 constraint of any kind.  What it carries instead is EVIDENCE -- a
 :class:`Feedback` of the nets the router could not lay and the nodes it blamed,
-priced as objective terms rather than as constraints, so that a second
-arrangement is drawn towards a floor the router has already been over.
+so that a second arrangement is drawn away from a floor the router has already
+been over.
+
+The two halves of that evidence enter the model differently.  A failed net
+raises what pulling its own ports together is worth.  The :data:`HOT_NODES`
+hottest ground positions become fixed one-node keep-outs, keeping the feedback
+model proportional to machines times selected nodes rather than floor area.
+If those keep-outs prove infeasible, packing retries with failed-net weights
+alone: routing evidence is not proof that the machines cannot fit.
 
 **The net ids are the router's, because there is only one place they come
 from.**  :func:`~flab2bp.sfy.layout.grid_nets.net_plan` numbers every net a spec
@@ -92,12 +99,13 @@ import math
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from heapq import nsmallest
 from itertools import count
 from typing import Final
 
 from ortools.sat.python import cp_model
 
-from flab2bp.sfy.layout.corridors import Measures, attachment_turn
+from flab2bp.sfy.layout.corridors import Measures, attachment_turn_tight
 from flab2bp.sfy.layout.grid_nets import NetPlan, net_plan, terminal_for
 from flab2bp.sfy.layout.lattice import GROUND_LEVEL, Lattice, Node
 from flab2bp.sfy.layout.manifold import (
@@ -185,36 +193,24 @@ a two-machine model less than its own presolve and get ``UNKNOWN`` back from a
 problem with two rectangles in it.
 """
 
-_DETERMINISTIC_TIME_HOT: Final = 1.0
-"""What a blame table costs on top, when there is one.
-
-Measured, and the reason it is a term of its own rather than a bigger floor for
-everyone: a one-machine model with a blame history over half the designer
-charges 1.01 deterministic units before its search starts -- the summed-area
-tables are read through ``add_element``, which presolve works hard on -- and it
-proves optimality immediately afterwards.  At a flat budget of 1.0 that model
-comes back ``FEASIBLE`` with a machine standing in the blamed half; at 2.0 it
-comes back ``OPTIMAL`` with the machine clear of it, in 0.45 s.  Charging every
-pack that extra unit would spend it on models that have no table to presolve.
-"""
-
 _SEED_MODULUS: Final = 2**31 - 1
 """``random_seed`` is an int32 field, so a caller's seed is taken modulo it."""
 
 
 def port_apron_nodes(measures: Measures) -> int:
-    """How much straight run one belt port keeps clear of other machines, in nodes.
+    """How many grid steps a belt port keeps clear of other machines.
 
     DERIVED, never written.  Task 7 measured that a lift can never land on a
     port node -- its column would run through the machine it serves -- so every
     approach to a port is horizontal and the last corner before it is an
-    attachment turn standing on the corner.  What such a turn costs beside its
-    own box is :func:`~flab2bp.sfy.layout.corridors.attachment_turn`'s ``cost``,
-    which is ``measures.box + measures.lead_in``, and the apron is that length
-    in whole grid steps.  Both figures come out of ``registry.json`` through
-    :class:`~flab2bp.sfy.layout.corridors.Measures`.
+    attachment turn standing on the corner.  The grid realiser charges
+    :func:`~flab2bp.sfy.layout.corridors.attachment_turn_tight`'s ``cost``:
+    ``reach + lead_in``, not the manifold's soft attachment box.  The apron is
+    that length in whole grid steps, not an inclusive node count: its reserved
+    line contains one more node than this value. Both figures come from
+    ``registry.json`` through :class:`~flab2bp.sfy.layout.corridors.Measures`.
     """
-    return math.ceil(attachment_turn(measures).cost / measures.grid)
+    return math.ceil(attachment_turn_tight(measures).cost / measures.grid)
 
 
 @dataclass(frozen=True, slots=True)
@@ -223,13 +219,12 @@ class Feedback:
 
     ``failed_nets`` is net id to weight: a net with no tree is worth
     ``1 + weight`` of an ordinary net's distance, so the next arrangement pulls
-    its terminals together first.  ``hot_nodes`` is the router's blame projected
-    onto the ground plane -- a node that turned a search away costs whatever
-    machine stands on it.
+    its terminals together first.  ``hot_nodes`` is the router's blame, summed
+    over levels at each ground position.  The heaviest :data:`HOT_NODES`
+    positions are kept clear of machines for the next routing attempt.
 
-    Both are EVIDENCE and neither is a constraint: the DSP packer proved that no
-    cheap surrogate predicts routability, so a floor the router failed on is
-    made expensive rather than illegal.
+    Failed-net weights remain active if no arrangement can honour the hot
+    positions; :func:`pack` then retries without the keep-outs.
     """
 
     failed_nets: Mapping[int, float]
@@ -312,8 +307,8 @@ class _Apron:
 class _Shape:
     """One buildable at one yaw: the ground it denies, and where its belts leave.
 
-    Three rectangles about the machine's own node, all in whole centimetres and
-    all rounded OUTWARD, which is stricter and never laxer.
+    Two rectangles about the machine's own node, in whole centimetres and
+    rounded OUTWARD, which is stricter and never laxer.
 
     ``box`` is what two machines keep out of each other: the hard footprint
     turned by the yaw and inflated by HALF a grid step on every side, so that
@@ -331,14 +326,10 @@ class _Shape:
     :meth:`~flab2bp.sfy.layout.lattice.Occupancy.free` already denies.  Reserving
     an apron nearer than that would reserve nodes the router cannot use, so the
     apron is held off this rectangle rather than off ``box``.
-
-    ``inside`` is the footprint UNINFLATED, in node offsets: the window the
-    hot-node summed-area table reads.
     """
 
     box: tuple[int, int, int, int]
     keepout: tuple[int, int, int, int]
-    inside: tuple[int, int, int, int]
     aprons: tuple[_Apron, ...]
 
 
@@ -423,12 +414,6 @@ def _shapes(
             _Shape(
                 box=_grown(turned, half_step),
                 keepout=_grown(turned, belt),
-                inside=(
-                    math.ceil(turned[0] / grid),
-                    math.ceil(turned[1] / grid),
-                    math.floor(turned[2] / grid),
-                    math.floor(turned[3] / grid),
-                ),
                 aprons=tuple(aprons),
             )
         )
@@ -525,6 +510,26 @@ def _build(
         stand.group.machine_class: _shapes(stand.group.machine_class, lattice, registry, stand_cm)
         for stand in stands
     }
+    # A variable-width/height rectangle relaxes away their yaw correlation.
+    # Keep the invariant area bound explicitly: even the smallest allowed
+    # orientation of every machine must fit inside the same open-floor domain.
+    # Aprons are not counted; their reservations may legally overlap.
+    minimum_areas = {
+        class_name: min(
+            (shape.box[2] - shape.box[0]) * (shape.box[3] - shape.box[1]) for shape in turns
+        )
+        for class_name, turns in shapes.items()
+    }
+    occupied = sum(minimum_areas[stand.group.machine_class] for stand in stands)
+    available = (high - low) ** 2
+    if occupied > available:
+        raise PackError(
+            NO_ARRANGEMENT,
+            f"minimum occupied rectangle area exceeds the open-floor packing domain: "
+            f"{occupied} cm2 > {available} cm2 for {len(stands)} machines "
+            f"(hard footprints plus the packer's one-step separation)",
+        )
+    _check_scaled_area(stands, shapes, high - low)
 
     model = cp_model.CpModel()
     xs: list[cp_model.IntVar] = []
@@ -619,8 +624,62 @@ def _build(
         hot=bool(feedback and feedback.hot_nodes),
         walled=any(not net.sources or not net.sinks for net in nets),
     )
+    _hot_keepouts(model, lattice, stands, keep_x, keep_y, feedback)
     _add_objective(model, nets, registry, lattice, stands, shapes, xs, ys, yaws, feedback)
     return _Build(model=model, xs=xs, ys=ys, yaws=yaws)
+
+
+def _check_scaled_area(
+    stands: Sequence[_Stand], shapes: Mapping[str, tuple[_Shape, ...]], side: int
+) -> None:
+    """Refute only exact conservative-scale obstructions to the same square.
+
+    For each axis, every chain of disjoint original intervals fits in ``side``.
+    An unbounded integer knapsack over ALL allowed side lengths therefore bounds
+    its transformed length by ``capacity``.  Longest-path compaction preserves
+    those separating orders in a transformed ``capacity`` square.  Every pair
+    still separates on at least one axis, so its total transformed area cannot
+    exceed ``capacity ** 2``.  Taking each machine's minimum over complete yaw
+    products can only weaken that necessary bound, never invent an obstruction.
+
+    The three floor scales 1/2, 2/3, 3/4 are ours: a small proof search, not game
+    dimensions or a claim that failing to find a certificate implies feasibility.
+    The 3/4 scale proves the measured modular-frame case that ordinary area misses.
+    Each costs O(distinct lengths * side / gcd(lengths)) time and O(side / gcd)
+    memory; zero weights are skipped.  Knapsack allows unused capacity and
+    unlimited multiplicities, both relaxations of the actual machine inventory.
+    """
+    dimensions = {
+        name: tuple((shape.box[2] - shape.box[0], shape.box[3] - shape.box[1]) for shape in turns)
+        for name, turns in shapes.items()
+    }
+    lengths = sorted({length for turns in dimensions.values() for pair in turns for length in pair})
+    unit = math.gcd(*lengths)
+    for numerator in (1, 2, 3):
+        weights = {length: (length // unit) * numerator // (numerator + 1) for length in lengths}
+        best = [0] * (side // unit + 1)
+        for length, weight in weights.items():
+            if weight == 0:
+                continue
+            step = length // unit
+            for room in range(step, len(best)):
+                best[room] = max(best[room], best[room - step] + weight)
+        capacity = best[-1]
+        if capacity == 0:
+            continue
+        areas = {
+            name: min(weights[width] * weights[height] for width, height in turns)
+            for name, turns in dimensions.items()
+        }
+        occupied = sum(areas[stand.group.machine_class] for stand in stands)
+        if occupied > capacity * capacity:
+            raise PackError(
+                NO_ARRANGEMENT,
+                f"minimum conservatively scaled rectangle area exceeds the open-floor "
+                f"packing domain: {occupied} > {capacity} ** 2 at scale "
+                f"{numerator}/{numerator + 1}, with exact side-chain capacity "
+                f"for {side} cm (hard footprints plus the packer's one-step separation)",
+            )
 
 
 def _edges(
@@ -742,7 +801,7 @@ def _add_aprons(
                 hi = model.new_int_var(low, high, f"a{axis}_{machine}_{index}_hi")
                 for literal, shape in zip(yaws[machine], turns, strict=True):
                     port = shape.aprons[index]
-                    run = (apron - 1) * port.step[axis]
+                    run = apron * port.step[axis]
                     model.add(
                         lo == grid * node + grid * (port.node[axis] + min(run, 0))
                     ).only_enforce_if(literal)
@@ -761,12 +820,17 @@ def _add_aprons(
 
 def _keep_apart(
     model: cp_model.CpModel,
-    apron_x: tuple[cp_model.IntVar, cp_model.IntVar],
-    apron_y: tuple[cp_model.IntVar, cp_model.IntVar],
+    apron_x: tuple[cp_model.LinearExprT, cp_model.LinearExprT],
+    apron_y: tuple[cp_model.LinearExprT, cp_model.LinearExprT],
     box_x: tuple[cp_model.IntVar, cp_model.IntVar],
     box_y: tuple[cp_model.IntVar, cp_model.IntVar],
 ) -> None:
-    """One apron and one machine's keepout miss each other on at least one side."""
+    """Two rectangles miss each other on at least one side.
+
+    The first may be degenerate and may be a pair of constants: an apron is a
+    node LINE and a blamed node is a single node, and both are held off a
+    machine by the same four ways two rectangles can miss.
+    """
     sides = [model.new_bool_var("") for _ in range(4)]
     model.add(box_x[1] <= apron_x[0]).only_enforce_if(sides[0])
     model.add(apron_x[1] <= box_x[0]).only_enforce_if(sides[1])
@@ -816,9 +880,9 @@ def _add_objective(
     yaws: Sequence[Sequence[cp_model.IntVar]],
     feedback: Feedback | None,
 ) -> None:
-    """What an arrangement costs: belt to run, floor the router blamed.
+    """What an arrangement costs in belt to run.
 
-    Three sums, all in the same scaled units and all minimised together:
+    Two sums, in the same scaled units and minimised together:
 
     * every net's Manhattan distance, in nodes, from the centroid of its
       sources' port nodes to each of its sinks', weighted ``1 + failed``;
@@ -826,9 +890,7 @@ def _add_objective(
       that weight -- the smallest multiple that makes the pair's own total
       strictly fall towards that distance from below and strictly rise past it,
       so the minimum is exactly at a shortest belt rather than anywhere under
-      it;
-    * every machine's share of the blame history under its footprint, read out
-      of a summed-area table and only when there is any.
+      it.
 
     A net with no machine source is fed from the ``-Y`` wall and one with no
     machine sink drains to the ``+Y`` wall (R-M3-5), and a wall is a whole LINE
@@ -861,7 +923,6 @@ def _add_objective(
                 terms.append(2 * weight * _span(model, span - shortest, 0, 2 * lattice.n))
         if centre is not None and not net.sinks:
             terms.append(weight * _span(model, centre[1], lines.stop - 1, lattice.n))
-    terms.extend(_hot_terms(model, lattice, stands, shapes, xs, ys, yaws, feedback))
     model.minimize(sum(terms))
 
 
@@ -957,75 +1018,58 @@ def _span(
     return out
 
 
-def _hot_terms(
+HOT_NODES: Final = 8
+"""How many of the router's blamed nodes one arrangement is held off.
+
+**Ours**, a model-size bound rather than a game fact.  The router may blame any
+number of nodes; only the eight heaviest ground positions become constraints.
+"""
+
+
+def _hot_floor(feedback: Feedback | None) -> tuple[tuple[tuple[int, int], float], ...]:
+    """The hottest distinct ground positions, summing blame from all levels."""
+    if feedback is None:
+        return ()
+    floor: dict[tuple[int, int], float] = {}
+    for (i, j, _level), weight in feedback.hot_nodes.items():
+        floor[i, j] = floor.get((i, j), 0.0) + weight
+    return tuple(nsmallest(HOT_NODES, floor.items(), key=lambda pair: (-pair[1], pair[0])))
+
+
+def _hot_keepouts(
     model: cp_model.CpModel,
     lattice: Lattice,
     stands: Sequence[_Stand],
-    shapes: Mapping[str, tuple[_Shape, ...]],
-    xs: Sequence[cp_model.IntVar],
-    ys: Sequence[cp_model.IntVar],
-    yaws: Sequence[Sequence[cp_model.IntVar]],
+    keep_x: Sequence[tuple[cp_model.IntVar, cp_model.IntVar]],
+    keep_y: Sequence[tuple[cp_model.IntVar, cp_model.IntVar]],
     feedback: Feedback | None,
-) -> list[cp_model.LinearExpr]:
-    """What each machine's own footprint costs in blame the router already paid.
+) -> None:
+    """Leave the worst of the floor the router blamed open for it to use.
 
-    A summed-area table over the blame projected onto the ground plane turns
-    "how much history is under this machine" into one table lookup per candidate
-    node, which is the trick that makes an O(1) surrogate out of an oracle
-    thousands of times slower (``m3-router-reference.md`` §2.4).  The table is
-    per SHAPE rather than per machine -- two machines of a class at one yaw
-    cover the same nodes -- and none of it is built when nothing is hot.
+    The :data:`HOT_NODES` heaviest blamed nodes, each held out of every
+    machine's belt keepout.  "Out of the keepout" rather than "out of the
+    footprint" is the whole point: what the router wants back is a node a belt
+    can really stand on, and
+    :meth:`~flab2bp.sfy.layout.lattice.Occupancy.free` denies a node its belt box
+    cannot clear a hard box at.  A machine merely standing beside a blamed node
+    leaves it as unusable as one standing on it.
+
+    Each fixed node is tested against the machine's belt-inflated rectangle:
+    this reserves a usable belt centreline, not a square of guessed game
+    clearance.  The four-way disjunction is constant-size per machine and hot
+    position, with no ``(n + 1) ** 2`` element table to expand during presolve.
+
+    The weights select the nodes but do not price them.  These constraints may
+    be infeasible even when the machines fit; :func:`pack` retries with only
+    failed-net weights if that is proved.
     """
     if feedback is None or not feedback.hot_nodes:
-        return []
-    side = lattice.n + 1
-    ground = [[0] * side for _ in range(side)]
-    for (i, j, _level), weight in feedback.hot_nodes.items():
-        if 0 <= i < side and 0 <= j < side:
-            ground[i][j] += round(_WEIGHT_SCALE * weight)
-    area = [[0] * (side + 1) for _ in range(side + 1)]
-    for i in range(side):
-        for j in range(side):
-            area[i + 1][j + 1] = ground[i][j] + area[i][j + 1] + area[i + 1][j] - area[i][j]
-    tables: dict[tuple[int, int, int, int], list[int]] = {}
-    terms: list[cp_model.LinearExpr] = []
-    for machine, stand in enumerate(stands):
-        under = model.new_int_var(0, area[side][side], f"hot{machine}")
-        index = model.new_int_var(0, side * side - 1, f"at{machine}")
-        model.add(index == xs[machine] * side + ys[machine])
-        for literal, shape in zip(yaws[machine], shapes[stand.group.machine_class], strict=True):
-            table = tables.get(shape.inside)
-            if table is None:
-                table = _hot_table(area, shape.inside, side)
-                tables[shape.inside] = table
-            at_yaw = model.new_int_var(0, area[side][side], "")
-            model.add_element(index, table, at_yaw)
-            model.add(under == at_yaw).only_enforce_if(literal)
-        terms.append(under)
-    return terms
-
-
-def _hot_table(
-    area: Sequence[Sequence[int]], inside: tuple[int, int, int, int], side: int
-) -> list[int]:
-    """How much blame one shape covers from each node, flattened x-major.
-
-    x-major because that is the lattice's own layout
-    (:class:`~flab2bp.layout.geometric_world.GridIndex`), so an index built here
-    reads the same way as one built there.
-    """
-    out: list[int] = []
-    for i in range(side):
-        for j in range(side):
-            x0 = min(max(i + inside[0], 0), side)
-            y0 = min(max(j + inside[1], 0), side)
-            x1 = min(max(i + inside[2] + 1, 0), side)
-            y1 = min(max(j + inside[3] + 1, 0), side)
-            if x1 <= x0 or y1 <= y0:
-                out.append(0)
-                continue
-            out.append(area[x1][y1] - area[x0][y1] - area[x1][y0] + area[x0][y0])
-    return out
+        return
+    grid = _whole_grid(lattice.grid_cm)
+    for node, _weight in _hot_floor(feedback):
+        at = (grid * node[0], grid * node[1])
+        for machine in range(len(stands)):
+            _keep_apart(model, (at[0], at[0]), (at[1], at[1]), keep_x[machine], keep_y[machine])
 
 
 # --- the pack --------------------------------------------------------------
@@ -1077,17 +1121,16 @@ def pack(
     solver.parameters.random_seed = seed % _SEED_MODULUS
     solver.parameters.max_deterministic_time = max(
         _DETERMINISTIC_TIME_FLOOR, _DETERMINISTIC_TIME_PER_MACHINE * len(stands)
-    ) + (_DETERMINISTIC_TIME_HOT if feedback is not None and feedback.hot_nodes else 0.0)
-    if deadline is not None:
-        left = deadline - time.monotonic()
-        if left <= 0.0:
-            raise PackError(
-                OVER_BUDGET,
-                f"the deadline passed {-left:.3f} s before the packer was called, so no "
-                "arrangement was searched for at all",
-            )
-        solver.parameters.max_time_in_seconds = left
+    )
+    _wall(solver, deadline, stands)
     status = solver.solve(build.model)
+    if status == cp_model.INFEASIBLE and feedback is not None and feedback.hot_nodes:
+        # Blame is evidence, not a proof the machines cannot fit.  Drop only the
+        # keep-outs after INFEASIBLE; keep failed-net weights and the original
+        # deadline.  UNKNOWN is a budget result, never permission to ignore blame.
+        build = _build(spec, registry, lattice, read, stands, Feedback(feedback.failed_nets, {}))
+        _wall(solver, deadline, stands)
+        status = solver.solve(build.model)
     name = solver.status_name(status)
     if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         return Pack(
@@ -1108,6 +1151,24 @@ def pack(
         f"the packer reached its budget with no arrangement at all ({name}) for the "
         f"{len(stands)} machines this spec runs",
     )
+
+
+def _wall(solver: cp_model.CpSolver, deadline: float | None, stands: Sequence[_Stand]) -> None:
+    """Give ``solver`` what is left of the caller's wall, or refuse to start.
+
+    Read afresh at every solve rather than once, so that the retry a build with
+    unsatisfiable blame needs cannot spend the wall twice.
+    """
+    if deadline is None:
+        return
+    left = deadline - time.monotonic()
+    if left <= 0.0:
+        raise PackError(
+            OVER_BUDGET,
+            f"the deadline passed {-left:.3f} s before the packer could search for an "
+            f"arrangement of the {len(stands)} machines this spec runs",
+        )
+    solver.parameters.max_time_in_seconds = left
 
 
 def _placed(

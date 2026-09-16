@@ -14,7 +14,7 @@ import hashlib
 import json
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from pathlib import Path
 
@@ -34,10 +34,12 @@ from flab2bp.bench.sfy_corpus import (
 from flab2bp.bench.tier import Tier
 from flab2bp.lab.flow import load_flow
 from flab2bp.layout.base import LayoutAttemptFailure, NoValidLayout, SpecInfeasible
+from flab2bp.sfy.layout.measure import Measure
 from flab2bp.sfy.layout.model import MachineObj, PoleObj, Pose, SfyPlacement
 from flab2bp.sfy.layout.refusals import REFUSALS
 from flab2bp.sfy.layout.validate import Finding, Report, Severity
 from flab2bp.sfy.spec import Designer
+from flab2bp.sfy.strategy_names import SFY_STRATEGY_CHOICES, SfyStrategyName
 from scripts import sfy_audit
 
 # --- the corpus itself ------------------------------------------------------
@@ -49,8 +51,8 @@ def test_the_corpus_spans_the_tiers_the_plan_asked_for() -> None:
     assert len({e.url_id for e in SFY_CORPUS}) == len(SFY_CORPUS)
     assert {e.tier for e in SFY_CORPUS} >= {Tier.TRIVIAL, Tier.SMALL, Tier.MID}
     fluid = entry("plastic-20")
-    assert fluid.expected == "refuse"
-    assert fluid.expected_cause == "fluids are M5"
+    assert fluid.expected("manifold-rows") == "refuse"
+    assert fluid.expected_cause("manifold-rows") == "fluids are M5"
 
 
 @pytest.mark.parametrize("item", SFY_CORPUS, ids=lambda e: e.url_id)
@@ -96,45 +98,64 @@ def test_the_corpus_ruled_causes_are_refusals() -> None:
 
 def test_an_entry_that_expects_a_refusal_must_name_a_cause_the_rulings_allow() -> None:
     with pytest.raises(ValueError, match="no ruling allows"):
-        _made(expects=(("mk3", "the solver did not feel like it"),), designers=("mk3",))
+        _made(expects=((("grid-routed", "mk3"), "packing exceeded the budget"),))
 
 
-def test_an_entry_must_pin_exactly_the_marks_it_is_built_in() -> None:
-    """``--strict`` compares a cell with its pin, so a mark with none is silent."""
+def test_a_measured_strategy_must_pin_exactly_the_marks_it_is_built_in() -> None:
     with pytest.raises(ValueError, match="one expectation per mark"):
-        _made(expects=(("mk1", CLEAN),), designers=("mk1", "mk3"))
+        _made(expects=((("grid-routed", "mk1"), CLEAN),), designers=("mk1", "mk3"))
     with pytest.raises(ValueError, match="one expectation per mark"):
-        _made(expects=(("mk1", CLEAN), ("mk3", CLEAN)), designers=("mk1",))
+        _made(expects=((("grid-routed", "mk1"), CLEAN), (("grid-routed", "mk3"), CLEAN)))
 
 
-def test_an_entry_may_not_pin_the_same_mark_twice() -> None:
-    with pytest.raises(ValueError, match="same mark twice"):
-        _made(expects=(("mk1", CLEAN), ("mk1", "fluids are M5")), designers=("mk1",))
+def test_an_entry_may_not_pin_the_same_strategy_and_mark_twice() -> None:
+    with pytest.raises(ValueError, match="same strategy and mark twice"):
+        _made(expects=((("best", "mk3"), CLEAN), (("best", "mk3"), "fluids are M5")))
 
 
 def test_an_entry_may_only_ask_for_designer_marks_that_exist() -> None:
     with pytest.raises(ValueError, match="mk9"):
-        _made(expects=(("mk9", CLEAN),), designers=("mk9",))
+        _made(expects=((("best", "mk9"), CLEAN),), designers=("mk9",))
 
 
-def test_the_summary_expectation_is_the_largest_marks_pin() -> None:
-    """``expected`` / ``expected_cause`` read the best chance the entry has."""
-    built = _made(expects=(("mk1", "fluids are M5"), ("mk3", CLEAN)), designers=("mk1", "mk3"))
-    assert built.largest == "mk3"
-    assert (built.expected, built.expected_cause) == ("clean", None)
-    refusing = _made(
-        expects=(("mk1", "fluids are M5"), ("mk3", "row too deep")), designers=("mk1", "mk3")
+def test_the_summary_expectation_is_the_requested_strategys_largest_marks_pin() -> None:
+    item = _made(
+        expects=(
+            (("manifold-rows", "mk1"), "fluids are M5"),
+            (("manifold-rows", "mk3"), CLEAN),
+            (("grid-routed", "mk1"), "row too deep"),
+            (("grid-routed", "mk3"), "a belt could not be routed"),
+        ),
+        designers=("mk1", "mk3"),
     )
-    assert (refusing.expected, refusing.expected_cause) == ("refuse", "row too deep")
+    assert item.largest == "mk3"
+    assert (item.expected("manifold-rows"), item.expected_cause("manifold-rows")) == (
+        "clean",
+        None,
+    )
+    assert item.expected_cause("grid-routed") == "a belt could not be routed"
 
 
-def test_every_corpus_entry_pins_every_mark_it_is_run_in() -> None:
-    """The regression pin only pins what it names, so it must name all of them."""
+def test_every_corpus_entry_preserves_complete_measured_manifold_pins() -> None:
     for item in SFY_CORPUS:
-        assert {mark for mark, _ in item.expects} == set(item.designers), item.url_id
+        assert {mark for (strategy, mark), _ in item.expects if strategy == "manifold-rows"} == set(
+            item.designers
+        ), item.url_id
 
 
-def _made(*, expects: tuple[tuple[str, str], ...], designers: tuple[str, ...]) -> SfyCorpusEntry:
+def test_unmeasured_strategies_do_not_inherit_a_rivals_pin() -> None:
+    item = _made(expects=((("manifold-rows", "mk3"), CLEAN),))
+    strategies: tuple[SfyStrategyName, ...] = ("grid-routed", "best")
+    for strategy in strategies:
+        with pytest.raises(KeyError):
+            item.expectation(strategy, "mk3")
+
+
+def _made(
+    *,
+    expects: tuple[tuple[tuple[SfyStrategyName, str], str], ...],
+    designers: tuple[str, ...] = ("mk3",),
+) -> SfyCorpusEntry:
     return SfyCorpusEntry(
         "invented",
         "https://factoriolab.github.io/sfy/list?v=11&o=iron-plate*60",
@@ -160,6 +181,10 @@ class _Built:
     report: Report
     placement: SfyPlacement
     refused: tuple[LayoutAttemptFailure, ...] = ()
+    strategy: str = "manifold-rows"
+    measure: Measure = Measure(1, 1230000.0, 650.0, 0, 0)
+    blueprint: object | None = b"encoded"
+    record: object | None = b"record"
 
 
 def _placement() -> SfyPlacement:
@@ -176,14 +201,28 @@ def _placement() -> SfyPlacement:
 
 
 def _raises(exc: Exception) -> sfy_audit.BuildFn:
-    def build(url: str, *, designer: str, time_budget_s: float, flow: Path) -> _Built:
+    def build(
+        url: str,
+        *,
+        designer: str,
+        time_budget_s: float,
+        flow: Path,
+        strategy: SfyStrategyName,
+    ) -> _Built:
         raise exc
 
     return build
 
 
 def _returns(built: _Built) -> sfy_audit.BuildFn:
-    def build(url: str, *, designer: str, time_budget_s: float, flow: Path) -> _Built:
+    def build(
+        url: str,
+        *,
+        designer: str,
+        time_budget_s: float,
+        flow: Path,
+        strategy: SfyStrategyName,
+    ) -> _Built:
         return built
 
     return build
@@ -295,6 +334,8 @@ def test_a_placement_that_could_not_be_written_is_a_refusal_the_gate_fails_on() 
             _Built(
                 report=Report(findings=()),
                 placement=_placement(),
+                blueprint=None,
+                record=None,
                 refused=(
                     LayoutAttemptFailure(
                         candidate="iron-plate*60",
@@ -332,12 +373,15 @@ def _clean_cell(url_id: str, mark: str) -> sfy_audit.Cell:
         entry(url_id),
         mark,
         15.0,
+        strategy="manifold-rows",
         build=_returns(_Built(report=Report(findings=()), placement=_placement())),
     )
 
 
 def _refusing_cell(url_id: str, mark: str, cause: str) -> sfy_audit.Cell:
-    return sfy_audit.run_cell(entry(url_id), mark, 15.0, build=_raises(NoValidLayout(cause)))
+    return sfy_audit.run_cell(
+        entry(url_id), mark, 15.0, strategy="manifold-rows", build=_raises(NoValidLayout(cause))
+    )
 
 
 def test_a_cell_that_did_what_the_corpus_pins_it_to_do_passes_both_gates() -> None:
@@ -442,13 +486,159 @@ def test_the_report_says_FAIL_and_names_the_cell_when_one_misses() -> None:
     assert "dirty" in text
 
 
+@pytest.mark.parametrize("strategy", SFY_STRATEGY_CHOICES)
+def test_strict_pins_are_per_requested_strategy(strategy: SfyStrategyName) -> None:
+    item = _made(
+        expects=(
+            (("manifold-rows", "mk3"), "rows exceed the designer depth"),
+            (("grid-routed", "mk3"), CLEAN),
+            (("best", "mk3"), "a belt could not be routed"),
+        )
+    )
+    cell = sfy_audit.run_cell(
+        item,
+        "mk3",
+        15.0,
+        strategy=strategy,
+        build=_returns(_Built(Report(findings=()), _placement(), strategy="grid-routed")),
+    )
+    assert cell.strategy == strategy
+    assert cell.winner == "grid-routed"
+    assert cell.key == (strategy, "invented", "mk3")
+    assert cell.gate_ok
+    assert cell.strict_ok == (strategy == "grid-routed")
+
+
+def test_a_successful_race_with_loser_refusals_is_clean_and_reports_the_winner() -> None:
+    failure = LayoutAttemptFailure("iron", "manifold-rows", "rows exceed the designer depth")
+    placement = replace(
+        _placement(),
+        description="routing: 3 rip-up rounds over 2 nets, none stranded, 40 work\n"
+        "turns: 4 arc, 2 attachment; 1 lift transitions",
+    )
+    built = _Built(
+        Report(findings=()),
+        placement,
+        refused=(failure,),
+        strategy="grid-routed",
+        measure=Measure(1, 456000.0, 780.0, 1, 3),
+    )
+    cell = sfy_audit.run_cell(_entry(), "mk3", 15.0, strategy="best", build=_returns(built))
+    assert cell.verdict == "CLEAN" and cell.gate_ok
+    text = sfy_audit.render_report([cell], head="abc123", budget_s=15.0, dirty=False)
+    assert "| best | iron-plate-60 | mk3 | grid-routed | CLEAN |" in text
+    assert "| 456000 | 780 | 1 | 3 | 3 | 4 arc, 2 attachment; 1 lift transitions |" in text
+    assert "rows exceed the designer depth" in text
+
+
+@pytest.mark.parametrize("missing", ("blueprint", "record"))
+def test_ruled_loser_cannot_hide_an_encoding_failure(missing: str) -> None:
+    built = _Built(
+        Report(findings=()),
+        _placement(),
+        refused=(LayoutAttemptFailure("iron", "grid-routed", "a belt could not be routed"),),
+        blueprint=None if missing == "blueprint" else b"encoded",
+        record=None if missing == "record" else b"record",
+    )
+    cell = sfy_audit.run_cell(_entry(), "mk3", 15.0, build=_returns(built))
+    assert cell.verdict == "REFUSED"
+    assert not cell.gate_ok
+
+
+@pytest.mark.parametrize(
+    ("grid_cause", "allowed"),
+    (
+        ("a belt could not be routed", True),
+        ("the packer found no arrangement", True),
+        ("routing exceeded the budget", False),
+        ("packing exceeded the budget", False),
+        ("grid placement failed validation", False),
+        ("RuntimeError", False),
+    ),
+)
+def test_a_failed_race_requires_every_attempt_to_have_a_ruled_cause(
+    grid_cause: str,
+    allowed: bool,
+) -> None:
+    exc = NoValidLayout(
+        "no strategy built",
+        attempt_failures=(
+            LayoutAttemptFailure("iron", "manifold-rows", "rows exceed the designer depth"),
+            LayoutAttemptFailure("iron", "grid-routed", grid_cause),
+        ),
+    )
+    cell = sfy_audit.run_cell(_entry(), "mk3", 15.0, build=_raises(exc))
+    assert cell.gate_ok == allowed
+    if allowed:
+        pinned = _made(expects=((("best", "mk3"), cell.cause),))
+        repeated = sfy_audit.run_cell(pinned, "mk3", 15.0, build=_raises(exc))
+        assert repeated.strict_ok
+
+
+def test_unpinned_strategy_is_reported_as_unmeasured_not_as_pinned() -> None:
+    item = _made(expects=((("manifold-rows", "mk3"), "row too deep"),))
+    cell = sfy_audit.run_cell(
+        item,
+        "mk3",
+        15.0,
+        strategy="grid-routed",
+        build=_returns(_Built(Report(findings=()), _placement(), strategy="grid-routed")),
+    )
+    assert cell.strict_ok and not cell.expected
+    text = sfy_audit.render_report([cell], head="abc123", budget_s=15.0, dirty=False, strict=True)
+    assert "1 unpinned" in text
+    assert "as pinned" not in text
+
+
+@pytest.mark.parametrize("has_winner", (False, True))
+def test_report_preserves_nested_attempt_diagnostics_beside_canonical_causes(
+    has_winner: bool,
+) -> None:
+    failure = LayoutAttemptFailure(
+        "iron",
+        "grid-routed",
+        "a belt could not be routed",
+        children=(
+            LayoutAttemptFailure(
+                "iron",
+                "grid-routed",
+                "arrangement 2: 6 machines in 4800 cm",
+                children=(
+                    LayoutAttemptFailure(
+                        "iron",
+                        "grid-routed",
+                        "stranded net iron-plate to constructor-4",
+                    ),
+                ),
+            ),
+        ),
+    )
+    builder = (
+        _returns(_Built(Report(findings=()), _placement(), refused=(failure,)))
+        if has_winner
+        else _raises(
+            NoValidLayout(
+                "no strategy built",
+                attempt_reasons=(str(failure),),
+                attempt_failures=(failure,),
+            )
+        )
+    )
+    cell = sfy_audit.run_cell(_entry(), "mk3", 15.0, build=builder)
+    assert cell.gate_ok
+    assert cell.cause == ("" if has_winner else "a belt could not be routed")
+    text = sfy_audit.render_report([cell], head="abc123", budget_s=15.0, dirty=False)
+    assert "arrangement 2: 6 machines in 4800 cm" in text
+    assert "stranded net iron-plate to constructor-4" in text
+
+
 # --- where the report lands -------------------------------------------------
 
 
-def _whole_matrix() -> list[sfy_audit.Cell]:
+def _whole_matrix(strategy: SfyStrategyName = "best") -> list[sfy_audit.Cell]:
     """A verdict on every corpus square, without building any of them."""
     return [
-        sfy_audit.Cell(url_id=item.url_id, designer=mark, verdict="CLEAN")
+        sfy_audit.Cell(url_id=item.url_id, designer=mark, verdict="CLEAN", strategy=strategy)
         for item in SFY_CORPUS
         for mark in item.designers
     ]
@@ -457,7 +647,7 @@ def _whole_matrix() -> list[sfy_audit.Cell]:
 def test_a_run_over_the_whole_matrix_writes_the_committed_evidence() -> None:
     path, committed = sfy_audit.report_path(_whole_matrix(), today=date(2026, 9, 14))
     assert committed
-    assert path == EVIDENCE_DIR / "sfy-m2-audit-2026-09-14.md"
+    assert path == EVIDENCE_DIR / "sfy-m3-audit-2026-09-14-best.md"
 
 
 def test_a_run_over_one_mark_leaves_the_committed_evidence_alone() -> None:
@@ -466,7 +656,7 @@ def test_a_run_over_one_mark_leaves_the_committed_evidence_alone() -> None:
     path, committed = sfy_audit.report_path(cells, marks=["mk1"], today=date(2026, 9, 14))
     assert not committed
     assert path.parent.parts[-2:] == ("out", "sfy")
-    assert path.name == "audit-2026-09-14-mk1-all-entries.md"
+    assert path.name == "audit-2026-09-14-best-mk1-all-entries.md"
     assert EVIDENCE_DIR not in path.parents
 
 
@@ -474,7 +664,7 @@ def test_a_run_over_one_entry_names_the_entry_in_the_untracked_file() -> None:
     cells = [cell for cell in _whole_matrix() if cell.url_id == "plastic-20"]
     path, committed = sfy_audit.report_path(cells, only=["plastic-20"], today=date(2026, 9, 14))
     assert not committed
-    assert path.name == "audit-2026-09-14-all-marks-plastic-20.md"
+    assert path.name == "audit-2026-09-14-best-all-marks-plastic-20.md"
 
 
 def test_a_run_the_wall_clock_cap_cut_off_does_not_count_as_the_whole_matrix() -> None:
@@ -486,7 +676,7 @@ def test_a_run_the_wall_clock_cap_cut_off_does_not_count_as_the_whole_matrix() -
     assert not sfy_audit.covers_matrix(cells)
     path, committed = sfy_audit.report_path(cells, today=date(2026, 9, 14))
     assert not committed
-    assert path.name == "audit-2026-09-14-all-marks-all-entries.md"
+    assert path.name == "audit-2026-09-14-best-all-marks-all-entries.md"
 
 
 def test_an_explicit_report_path_wins_over_either_default() -> None:
@@ -495,6 +685,38 @@ def test_an_explicit_report_path_wins_over_either_default() -> None:
         path, committed = sfy_audit.report_path(cells, requested=asked)
         assert path == asked
         assert not committed, "a named path is never the committed evidence by default"
+
+
+def test_matrix_completeness_cannot_mix_strategy_squares() -> None:
+    manifold = _whole_matrix("manifold-rows")
+    grid = _whole_matrix("grid-routed")
+    mixed = manifold[:18] + grid[18:]
+    assert not sfy_audit.covers_matrix(mixed)
+    assert not sfy_audit.covers_matrix(manifold, strategies=SFY_STRATEGY_CHOICES)
+    assert sfy_audit.covers_matrix(manifold)
+    assert sfy_audit.covers_matrix(manifold + grid + _whole_matrix("best"))
+
+
+def test_partial_and_other_strategy_reports_cannot_overwrite_complete_evidence() -> None:
+    today = date(2026, 9, 15)
+    combined = EVIDENCE_DIR / "sfy-m3-audit-2026-09-15.md"
+    with pytest.raises(ValueError, match="partial matrix"):
+        sfy_audit.report_path(_whole_matrix()[:1], requested=combined, today=today)
+    with pytest.raises(ValueError, match="strategy matrix"):
+        sfy_audit.report_path(_whole_matrix(), requested=combined, today=today)
+    with pytest.raises(ValueError, match="strategy matrix"):
+        sfy_audit.report_path(
+            _whole_matrix("grid-routed"),
+            requested=EVIDENCE_DIR / "sfy-m3-audit-2026-09-15-manifold-rows.md",
+            today=today,
+        )
+
+
+def test_all_three_complete_matrices_share_one_combined_evidence_report() -> None:
+    cells = [cell for strategy in SFY_STRATEGY_CHOICES for cell in _whole_matrix(strategy)]
+    path, committed = sfy_audit.report_path(cells, today=date(2026, 9, 15))
+    assert committed
+    assert path == EVIDENCE_DIR / "sfy-m3-audit-2026-09-15.md"
 
 
 def test_the_marks_a_cell_may_be_run_in_are_the_designers_the_spec_can_size() -> None:
@@ -521,7 +743,9 @@ print(json.dumps({
         if m.startswith(("flab2bp.dsp", "flab2bp.rates"))
     ),
     "bench": sorted(m for m in sys.modules if m.startswith("flab2bp.bench.")),
-    "layout": sorted(m for m in sys.modules if m.startswith("flab2bp.layout")),
+    "layout": sorted(
+        m for m in sys.modules if m.startswith(("flab2bp.layout", "flab2bp.sfy.layout"))
+    ),
 }))
 """
     result = subprocess.run(
@@ -575,6 +799,10 @@ def test_importing_the_satisfactory_corpus_loads_no_placer_or_router() -> None:
         "flab2bp.layout.finalize",
         "flab2bp.layout._geometric_kernel",
         "flab2bp.layout._sequence_kernel",
+        "flab2bp.sfy.layout.strategy",
+        "flab2bp.sfy.layout.grid",
+        "flab2bp.sfy.layout.packer",
+        "flab2bp.sfy.layout.router",
     ):
         assert heavy not in loaded, f"{heavy} was imported by reading the corpus"
 

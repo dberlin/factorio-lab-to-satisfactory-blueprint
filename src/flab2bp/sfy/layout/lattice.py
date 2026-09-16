@@ -103,6 +103,7 @@ from flab2bp.sfy.registry import Registry
 from flab2bp.sfy.spec import Designer
 
 __all__ = [
+    "BoxBounds",
     "GROUND_LEVEL",
     "Lattice",
     "Node",
@@ -112,6 +113,7 @@ __all__ = [
 ]
 
 Node = tuple[int, int, int]
+BoxBounds = tuple[Vector, Vector]
 
 GROUND_LEVEL = 2
 """The lowest level a belt centreline may stand on -- R-M3-3.
@@ -141,11 +143,22 @@ class Lattice:
     through the ceiling, both of which ``geom.bounds`` refuses.  They are stated
     once here so that :meth:`Occupancy.free` and the flattening cannot disagree
     about them.
+
+    ``object_lines`` is the shared standing domain for turn and tap attachments:
+    the open belt lines whose registry-measured attachment box fits wholly in
+    the designer. A box may touch the wall (``geom.bounds`` uses ``TOUCH_CM``).
+    The belt and attachment extents are independent containment requirements,
+    not margins to add: insetting ``open_lines`` by the full attachment extent
+    would unnecessarily discard another line per side with the shipped registry.
     """
 
     designer: Designer
     #: ``limits.hologram_grid_cm``: the build gun's own smallest move.
     grid_cm: float
+    #: Attachment clearance half-extent, read by :meth:`over` from the registry.
+    #: Zero preserves direct construction for node-only geometry; callers that
+    #: stand attachments use :meth:`over` to include their measured extent.
+    object_half_cm: float = 0.0
     #: Nodes per axis, minus one: the designer's side in grid steps.
     n: int = field(init=False)
     #: The flat index codec, shared with the DSP router so that one statement of
@@ -153,6 +166,8 @@ class Lattice:
     codec: GridIndex = field(init=False)
     #: The lines ``i`` (and ``j``) a belt may stand on at all.
     open_lines: range = field(init=False)
+    #: The open belt lines on which the attachment box stays inside the designer.
+    object_lines: range = field(init=False)
     #: The levels ``k`` a belt may stand on at all.
     open_levels: range = field(init=False)
 
@@ -176,9 +191,16 @@ class Lattice:
         up = _lines_within(
             0.0, self.designer.height_cm, BELT_CLEARANCE_HALF_HEIGHT_CM, 0.0, self.grid_cm
         )
+        standing = _lines_within(-half, half, self.object_half_cm, -half, self.grid_cm)
+        lines = range(max(across.start, 0), min(across.stop, n + 1))
         object.__setattr__(self, "n", n)
         object.__setattr__(self, "codec", GridIndex(0, 0, n + 1, n + 1))
-        object.__setattr__(self, "open_lines", range(max(across.start, 0), min(across.stop, n + 1)))
+        object.__setattr__(self, "open_lines", lines)
+        object.__setattr__(
+            self,
+            "object_lines",
+            range(max(standing.start, lines.start), min(standing.stop, lines.stop)),
+        )
         object.__setattr__(
             self, "open_levels", range(max(up.start, GROUND_LEVEL), min(up.stop, n + 1))
         )
@@ -196,7 +218,11 @@ class Lattice:
                 "the registry states no hologram_grid_cm, so there is no grid to lay "
                 "nodes on and none may be invented here"
             )
-        return cls(designer, grid_cm)
+        # Imported where it is used: the corridor's measures are a reading of the
+        # same registry, and nothing about where a NODE is needs them.
+        from flab2bp.sfy.layout.corridors import attachment_box_cm
+
+        return cls(designer, grid_cm, attachment_box_cm(registry))
 
     def world(self, node: Node) -> Vector:
         """Where ``node`` is, in centimetres -- R-M3-1."""
@@ -249,7 +275,7 @@ class Lattice:
 
 
 def _lines_within(lo: float, hi: float, half: float, origin: float, grid: float) -> range:
-    """The lines along one axis whose belt box lies wholly inside ``[lo, hi]``."""
+    """The lines along one axis whose box lies wholly inside ``[lo, hi]``."""
     first = math.ceil((lo + half - TOUCH_CM - origin) / grid)
     last = math.floor((hi - half + TOUCH_CM - origin) / grid)
     return range(first, last + 1)
@@ -305,6 +331,8 @@ class Occupancy:
     owner: dict[int, int]
     #: Congestion history per node, as the DSP kernel reads it: absent is 0.0.
     history: array[float]
+    #: Physical world boxes BEFORE expansion by a hypothetical belt centreline.
+    static_bounds: list[BoxBounds]
     _paths: dict[int, tuple[Node, ...]] = field(default_factory=dict, repr=False)
     _claims: dict[int, list[int]] = field(default_factory=dict, repr=False)
 
@@ -447,6 +475,7 @@ def occupancy_for(
         base=b"",
         owner={},
         history=array("d", bytes(8 * size)),
+        static_bounds=[],
     )
     standing: tuple[MachineObj | AttachmentObj, ...] = (*machines, *attachments)
     for obj in standing:
@@ -502,6 +531,7 @@ def _mark_box(occupancy: Occupancy, low: Vector, high: Vector) -> None:
     is axis-aligned, which is exact for the quarter-turn yaws a grid-snapped
     build uses and conservative -- stricter, never laxer -- for any other.
     """
+    occupancy.static_bounds.append((low, high))
     lattice = occupancy.lattice
     grid, half = lattice.grid_cm, lattice.designer.half_cm
     across = BELT_CLEARANCE_HALF_WIDTH_CM

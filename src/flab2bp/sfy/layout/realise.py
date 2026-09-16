@@ -1,15 +1,15 @@
 """One lattice path as conveyors, attachment turns and conveyor lifts.
 
-Task 5's router hands back a PATH and nothing else: a tuple of lattice nodes,
-4-connected in ``XY``, climbing by the 2:1 incline the movement table offers and
-hopping levels by a lift.  This module is what turns one of those into the
+A path is a tuple of lattice nodes, optionally carrying its exact native motion
+witness: 4-connected in ``XY``, climbing by the movement table's 2:1 incline and
+hopping levels by a lift. This module turns it into the
 objects a blueprint holds -- :class:`~flab2bp.sfy.layout.model.BeltRun`,
 :class:`~flab2bp.sfy.layout.model.AttachmentObj`,
 :class:`~flab2bp.sfy.layout.model.LiftObj` and the
 :class:`~flab2bp.sfy.layout.model.Link` between them.  It invents no geometry of
 its own: :class:`~flab2bp.sfy.layout.corridors.Route` walks the cursor through
 straights, inclines and quarter turns,
-:func:`~flab2bp.sfy.layout.corridors.choose_turn` decides every right angle and
+:func:`resolve_turns` resolves or replays every right angle and
 :func:`~flab2bp.sfy.layout.corridors.lay_path` cuts the result into conveyors --
 the same machinery a manifold build is laid with.
 
@@ -24,10 +24,10 @@ node in between.  Consecutive pieces that point the same way and climb at the
 same rate are one straight, so a corner is a change of DIRECTION and nothing
 else.
 
-**What a corner costs, and where the space comes from.**  Global constraint 8:
-at every turn the realiser takes whichever of arc and attachment costs the least
-space where it stands, which is exactly what ``choose_turn`` answers.  The
-attachment it weighs is
+**What a corner costs, and where the space comes from.** Global constraint 8:
+an authored path prefers cheaper turns among globally feasible assignments.
+A witnessed path replays its selected turn identities without reselection.
+The attachment it weighs is
 :func:`~flab2bp.sfy.layout.corridors.attachment_turn_tight`, not the manifold's
 :func:`~flab2bp.sfy.layout.corridors.attachment_turn`: a splitter's clearance is
 ``CT_Soft`` and a grid-routed corner stands in open floor, so what the turn
@@ -37,14 +37,16 @@ is a grid step of difference and it is the difference between a three-node leg
 turning and not.
 
 The space a corner is offered is the FREE length of the straight either side --
-the leg's own length, less what the corner before it already spent, less what
-the leg must keep for itself.  A flat leg keeps nothing.  An incline keeps
+the leg's own length, less the previous corner's geometric reach, less what
+the leg must keep for itself. The minimum belt between two attachment corners
+is charged once, not once per end. A flat leg keeps nothing. An incline keeps
 :func:`~flab2bp.sfy.layout.corridors.descent_run_cm` of run, because the rise is
 fixed by the two levels and shortening the run past that angle is a belt
-``belt.incline`` refuses: so a turn may eat into a climb, but only down to the
-game's own steepest chord.  Where neither turn fits, the corner is refused and
-Task 7's rip-up loop is told which nodes pinched it; this module never
-re-routes.
+``belt.incline`` refuses: an arc may eat into a climb, but only down to the
+game's own steepest chord. An attachment requires actual flat runs on both
+sides, because its ports face horizontally. Geometry determines which turns
+are eligible before their costs are compared. If none fits, Task 7's rip-up
+loop is told which nodes pinched it; this module never re-routes.
 
 **Where this is stricter than the game, and it is ours.**  R-M3-4: a belt is cut
 only at a port, an attachment or a lift, and every piece between two cuts is at
@@ -66,20 +68,17 @@ shipped registry gives and are examples, never constants.
 from __future__ import annotations
 
 import math
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from fractions import Fraction
 from typing import Literal
 
+from flab2bp.layout.geometric_motion import MotionWitness
 from flab2bp.sfy.layout.corridors import (
     CorridorError,
     Measures,
     Route,
     Turn,
-    arc_turn,
-    attachment_turn_tight,
-    choose_turn,
-    descent_run_cm,
     lay_path,
 )
 from flab2bp.sfy.layout.lattice import Lattice, Node
@@ -94,10 +93,11 @@ from flab2bp.sfy.layout.model import (
     belt_ends,
     lift_geometry,
 )
+from flab2bp.sfy.layout.turns import eligible, fits_turn, free_run, options
 from flab2bp.sfy.layout.validate import PORT_ANGLE_RAD, TOUCH_CM
 from flab2bp.sfy.registry import Registry
 
-__all__ = ["RealiseError", "Realised", "Terminal", "realise"]
+__all__ = ["RealiseError", "Realised", "Terminal", "realise", "resolve_turns"]
 
 _EPS = 1e-9
 
@@ -405,60 +405,34 @@ def _stub(head: Vector, tail: Vector, facing: Vector, *, end: int | None, at: No
 # --- turning a run into a route --------------------------------------------
 
 
-def _options(measures: Measures) -> tuple[Turn, Turn]:
-    """The two turns a grid-routed corner is weighed against."""
-    return (arc_turn(measures), attachment_turn_tight(measures))
-
-
-def _free(move: _Move, registry: Registry) -> float:
-    """How much of a leg a corner may take, which is all of it unless it climbs.
-
-    A climb's rise is fixed by the two levels it joins, so the run a turn eats
-    out of it makes it steeper; ``descent_run_cm`` is the shortest run
-    ``belt.incline`` allows for that rise, and what is left over is the only
-    part a corner may have.
-    """
-    if abs(move.rise) <= TOUCH_CM:
-        return move.run
-    return max(0.0, move.run - descent_run_cm(move.rise, registry))
-
-
-def _turns(
+def resolve_turns(
     moves: Sequence[_Move],
     path: Sequence[Node],
     measures: Measures,
     registry: Registry,
+    lattice: Lattice,
+    selected: Mapping[int, int] | None = None,
 ) -> tuple[list[Turn | None], list[float], list[float]]:
-    """Which turn each corner takes, and what it takes out of the legs either side.
+    """Resolve a fixed run exactly, preserving cheaper feasible prefixes.
 
-    The sweep runs once, from the upstream end: a corner is offered what is left
-    of the leg behind it -- the leg's free length less what the corner before it
-    spent -- and the whole free length of the leg ahead.  Nothing needs a second
-    pass, because the next corner is then offered what this one left it, so the
-    two spends on a leg can never add to more than the leg has.
+    Each boundary has at most two options. Backward feasibility retains both
+    reaches until the following leg discharges their obligations, then forward
+    replay chooses the cheapest option with a feasible suffix. Thus a cheap arc
+    cannot discard a costlier attachment whose smaller reach is needed later.
+    Selection cost and geometric reach stay distinct on a shared leg.
 
-    Two numbers come back per corner because :class:`Turn` states two: ``cost``
-    is what the turn spends of the straight and is what the choice is made on;
-    ``reach`` is where the turn takes hold and is what the cursor has to stop
-    short by.  An arc's are equal, an attachment's are not -- it stands on the
-    corner with its ports one reach out, but it also denies the shortest legal
-    belt beyond them.
-
-    The attachment weighed is
-    :func:`~flab2bp.sfy.layout.corridors.attachment_turn_tight`: a grid-routed
-    corner stands in open floor, not in a packed corridor column, so its soft box
-    is not this path's to keep clear.  That function is where the difference is
-    argued.
+    ``selected`` keys are original path indices, not merged-leg indices. When
+    supplied every corner is specified, including a sink-stub turn recorded by
+    the motion witness's explicit final endpoint action.
     """
-    corners: list[Turn | None] = [None] * (len(moves) - 1)
-    reach_start = [0.0] * len(moves)
-    reach_end = [0.0] * len(moves)
-    spent = [0.0] * len(moves)
-    free = [_free(move, registry) for move in moves]
-    for index in range(len(moves) - 1):
-        here, there = moves[index], moves[index + 1]
+    free = [free_run(move.run, move.rise, registry) for move in moves]
+    offered = options(measures)
+    candidates: list[list[Turn | None]] = []
+    expected: set[int] = set()
+    for index, (here, there) in enumerate(zip(moves, moves[1:], strict=False)):
         if _dot(here.direction, there.direction) >= _PARALLEL:
-            continue  # a change of slope, not of direction: no turn stands here
+            candidates.append([None])
+            continue
         if _cross(here.direction, there.direction) < 0.5:
             raise RealiseError(
                 "corner",
@@ -466,22 +440,69 @@ def _turns(
                 "the path doubles back on itself, and a belt has no way to turn through "
                 "half a circle on one node",
             )
-        along = free[index] - spent[index]
-        across = free[index + 1]
-        turn = choose_turn(measures, along, across, options=_options(measures))
-        if turn.cost > along + _EPS or turn.cost > across + _EPS:
+        at = here.end if here.end is not None else len(path) - 1
+        expected.add(at)
+        choices = list(enumerate(offered))
+        if selected is not None:
+            if at in selected:
+                action = selected[at]
+                if type(action) is not int or not 0 <= action < len(offered):
+                    raise RealiseError("corner", _blame(path, at), "invalid selected turn action")
+                choices = [(action, offered[action])]
+            else:
+                raise RealiseError("corner", _blame(path, at), "missing selected turn action")
+        choices.sort(key=lambda choice: (choice[1].cost, choice[0]))
+        legal: list[Turn | None] = [
+            turn
+            for _, turn in choices
+            if eligible(turn, here.rise, there.rise, path[at], lattice)
+            and fits_turn(turn, free[index], 0.0)
+            and fits_turn(turn, free[index + 1], 0.0)
+        ]
+        if not legal:
             raise RealiseError(
                 "corner",
-                _blame(path, here.end),
-                f"a corner with {along:.0f} cm of run into it and {across:.0f} cm out has "
-                f"room for neither an arc nor an attachment, the cheaper of which costs "
-                f"{turn.cost:.0f} cm of each",
+                _blame(path, at),
+                f"a corner with {free[index]:.0f} cm of run into it and "
+                f"{free[index + 1]:.0f} cm out has no eligible selected turn that fits",
             )
-        corners[index] = turn
-        spent[index] += turn.cost
-        spent[index + 1] += turn.cost
-        reach_end[index] = turn.reach
-        reach_start[index + 1] = turn.reach
+        candidates.append(legal)
+    if selected is not None:
+        extra = set(selected) - expected
+        if extra:
+            at = min(extra)
+            raise RealiseError("corner", _blame(path, at), "turn action where no corner exists")
+
+    def compatible(previous: Turn | None, following: Turn | None, run: float) -> bool:
+        return following is None or fits_turn(
+            following, run, previous.reach if previous is not None else 0.0
+        )
+
+    for index in range(len(candidates) - 2, -1, -1):
+        candidates[index] = [
+            turn
+            for turn in candidates[index]
+            if any(
+                compatible(turn, following, free[index + 1]) for following in candidates[index + 1]
+            )
+        ]
+        if not candidates[index]:
+            raise RealiseError(
+                "corner",
+                _blame(path, moves[index + 1].end),
+                "consecutive corners have no legal turn assignment on their shared leg",
+            )
+    corners: list[Turn | None] = []
+    reach_start = [0.0] * len(moves)
+    reach_end = [0.0] * len(moves)
+    previous: Turn | None = None
+    for index, feasible in enumerate(candidates):
+        turn = next(option for option in feasible if compatible(previous, option, free[index]))
+        corners.append(turn)
+        if turn is not None:
+            reach_end[index] = turn.reach
+            reach_start[index + 1] = turn.reach
+        previous = turn
     return (corners, reach_start, reach_end)
 
 
@@ -491,6 +512,8 @@ def _route(
     path: Sequence[Node],
     measures: Measures,
     registry: Registry,
+    lattice: Lattice,
+    selected: Mapping[int, int] | None = None,
 ) -> tuple[Route, tuple[str, ...]]:
     """One run of the path as a :class:`Route`, and the kind of every turn in it.
 
@@ -499,7 +522,9 @@ def _route(
     attachment's input port stands a reach back from the corner it sits on --
     and :meth:`Route.turn` puts it down again one reach the other side.
     """
-    corners, reach_start, reach_end = _turns(moves, path, measures, registry)
+    corners, reach_start, reach_end = resolve_turns(
+        moves, path, measures, registry, lattice, selected
+    )
     route = Route(point=start, heading=moves[0].direction)
     for index, move in enumerate(moves):
         route.go(move.run - reach_start[index] - reach_end[index], move.rise)
@@ -608,6 +633,58 @@ def _snap(yaw: float, step: float, edge: _LiftEdge) -> float:
 # --- the whole path --------------------------------------------------------
 
 
+def _replay_motion(
+    path: Sequence[Node],
+    motion: MotionWitness,
+    lattice: Lattice,
+    registry: Registry,
+    lift_class: str,
+) -> dict[int, int]:
+    """Validate original-coordinate primitive provenance, not compiler states."""
+    from flab2bp.sfy.layout.motion import motion_moves
+
+    primitives = motion_moves(lattice, registry, lift_class)
+    selected: dict[int, int] = {}
+    index = 0
+    for step in motion.steps:
+        if (
+            type(step.path_index) is not int
+            or step.path_index != index
+            or type(step.move) is not int
+            or not 0 <= step.move < len(primitives)
+            or index >= len(path) - 1
+        ):
+            raise RealiseError(
+                "leg", tuple(path[index : index + 3]), "invalid motion primitive index"
+            )
+        dx, dy, dz, via = primitives[step.move]
+        end = index + (2 if via else 1)
+        here = path[index]
+        target = (here[0] + dx, here[1] + dy, here[2] + dz)
+        if end >= len(path) or path[end] != target:
+            raise RealiseError(
+                "leg", tuple(path[index : end + 1]), "motion primitive does not match path geometry"
+            )
+        if via and path[index + 1] != (here[0] + dx // 2, here[1] + dy // 2, here[2]):
+            raise RealiseError(
+                "leg", tuple(path[index : end + 1]), "motion ramp via must lie on its source level"
+            )
+        if type(step.action) is not int or step.action < -1:
+            raise RealiseError("corner", _blame(path, index), "invalid selected turn action")
+        if step.action != -1:
+            selected[index] = step.action
+        index = end
+    if index != len(path) - 1:
+        raise RealiseError(
+            "leg", tuple(path[index:]), "motion witness does not cover the entire path"
+        )
+    if type(motion.final_action) is not int or motion.final_action < -1:
+        raise RealiseError("corner", (path[-1],), "invalid selected endpoint action")
+    if motion.final_action != -1:
+        selected[len(path) - 1] = motion.final_action
+    return selected
+
+
 def realise(
     path: Sequence[Node],
     *,
@@ -621,6 +698,7 @@ def realise(
     item_id: str,
     rate: Fraction,
     ids: Iterator[int],
+    motion: MotionWitness | None = None,
 ) -> Realised:
     """``path`` as belts, attachment turns and lifts, wired end to end.
 
@@ -644,6 +722,9 @@ def realise(
             f"the path runs {nodes[0]} to {nodes[-1]} and the terminals stand on "
             f"{source.node} and {sink.node}",
         )
+    selected = (
+        _replay_motion(nodes, motion, lattice, registry, lift_class) if motion is not None else None
+    )
     spans, edges = _lift_edges(nodes)
     runs = [_merge(_steps(nodes, span, lattice.grid_cm)) for span in spans]
     first = _stub(source.world, lattice.world(nodes[0]), source.facing, end=0, at=nodes[0])
@@ -658,6 +739,38 @@ def realise(
     )
     if last is not None:
         runs[-1] = _merge([*runs[-1], last])
+    for moves, facing, node, first_end in (
+        (runs[0], source.facing, nodes[0], True),
+        (runs[-1], (-sink.facing[0], -sink.facing[1], 0.0), nodes[-1], False),
+    ):
+        if moves and _dot(
+            moves[0].direction if first_end else moves[-1].direction,
+            _horizontal(facing),
+        ) < math.cos(PORT_ANGLE_RAD):
+            raise RealiseError(
+                "stub", (node,), "the terminal's belt does not follow its facing ray"
+            )
+    if (
+        not edges
+        and not any(runs)
+        and _dot(_horizontal(source.facing), _horizontal((-sink.facing[0], -sink.facing[1], 0.0)))
+        < math.cos(PORT_ANGLE_RAD)
+    ):
+        raise RealiseError(
+            "stub", (nodes[0],), "directly linked terminals have incompatible headings"
+        )
+    if selected is not None:
+        corners = {
+            here.end
+            for moves in runs
+            for here, there in zip(moves, moves[1:], strict=False)
+            if _dot(here.direction, there.direction) < _PARALLEL
+        }
+        extra = selected.keys() - corners
+        if extra:
+            raise RealiseError(
+                "corner", _blame(nodes, min(extra)), "turn action where no corner exists"
+            )
 
     lifts = _lifts(runs, edges, source, sink, lattice, registry, lift_class, ids)
     entry, exit_end = belt_ends(registry, lift_class)
@@ -685,7 +798,16 @@ def realise(
             if index == 0
             else lifts[index - 1].top_end(lift_geometry(registry, lift_class))[0]
         )
-        route, kinds = _route(moves, start, nodes, measures, registry)
+        span_selected = (
+            {
+                at: action
+                for at, action in selected.items()
+                if spans[index][0] <= at <= spans[index][1]
+            }
+            if selected is not None
+            else None
+        )
+        route, kinds = _route(moves, start, nodes, measures, registry, lattice, span_selected)
         turns.extend(kinds)
         try:
             laid = lay_path(
@@ -845,6 +967,9 @@ def _flat_at_cuts(
 
     This is the rule ``Measures.lead_in`` is named for; no length is demanded
     beyond it, because the flat piece's own length is already R-M3-4's business.
+
+    Internal attachment cuts are checked when their turns are selected in
+    ``resolve_turns``; they are not present in this span's upstream/downstream endpoints.
     """
     for cut, move, node in (
         (upstream, moves[0], path[span[0]]),

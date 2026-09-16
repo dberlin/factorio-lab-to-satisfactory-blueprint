@@ -47,9 +47,8 @@ measured ceiling today is two rows in an mk3.
 Tier is orientation, not a budget
 ---------------------------------
 The DSP corpus makes :class:`~flab2bp.bench.tier.Tier` set the CP-SAT budget.
-There is no CP-SAT here: the manifold strategy either lays the rows out in well
-under a second or refuses on arithmetic, so the audit's budget is the one number
-its ``--budget`` flag carries and the tier says only how big the chain is.
+The audit's budget is the one number its ``--budget`` flag carries; the tier
+says only how big the chain is, not how much time either strategy receives.
 
 What importing this module costs
 --------------------------------
@@ -83,6 +82,7 @@ from typing import Final, Literal
 from flab2bp.bench.tier import Tier
 from flab2bp.sfy.layout.refusals import REFUSALS
 from flab2bp.sfy.pipeline import DESIGNER_MARKS
+from flab2bp.sfy.strategy_names import SFY_STRATEGY_CHOICES, SfyStrategyName
 
 __all__ = [
     "CLEAN",
@@ -127,6 +127,9 @@ _LIST: Final = "https://factoriolab.github.io/sfy/list?v=11&o="
 #: * ``fluids are M5`` -- R4.  The milestone reorder of 2026-09-15 (spec section
 #:   12) moved piping from M4 to M5; the cause is named for the milestone that
 #:   will carry it, so the string is the later one.
+#: * ``a belt could not be routed`` and ``the packer found no arrangement`` --
+#:   M3 Task 11's ruled grid outcomes. Budget exhaustion, invalid geometry and
+#:   crashes remain failures, never evidence that a layout is impossible.
 #:
 #: Four of the strategies' causes are deliberately absent.  ``corridor
 #: assignment exceeded the budget`` is a clock running out, not a shape being
@@ -144,6 +147,8 @@ RULED_CAUSES: Final = (
     "run exceeds the belt ceiling",
     "corridor needs a bridge that does not fit",
     "fluids are M5",
+    "a belt could not be routed",
+    "the packer found no arrangement",
 )
 
 
@@ -156,9 +161,10 @@ def is_ruled_cause(cause: str) -> bool:
 class SfyCorpusEntry:
     """One URL, its captured flow, and what each designer mark is expected to do.
 
-    ``expects`` pins one outcome per mark -- :data:`CLEAN`, or the ruled cause
-    that mark refuses with -- and every one of them is a MEASUREMENT taken by
-    ``scripts/sfy_audit.py``, not a wish.  That makes the pair of gates mean two
+    ``expects`` pins an outcome per ``(requested strategy, mark)`` -- :data:`CLEAN`,
+    or a ruled cause -- and every pin is a MEASUREMENT taken by
+    ``scripts/sfy_audit.py``, not a wish. An unmeasured strategy has no pins.
+    Once measured, a strategy pins every mark. That makes the gates mean two
     different things:
 
     * the default gate asks only whether each cell is CLEAN or refuses for a
@@ -184,10 +190,9 @@ class SfyCorpusEntry:
     url: str
     flow_file: str
     tier: Tier
-    #: ``(mark, CLEAN or a ruled cause)`` for every mark in ``designers``.  A
-    #: tuple of pairs rather than a mapping because the entry is frozen and
-    #: hashable, the way ``CorpusEntry.budget_floors`` already is.
-    expects: tuple[tuple[str, str], ...] = ()
+    #: ``((strategy, mark), CLEAN or a ruled cause)``. Frozen and hashable;
+    #: absent strategies are explicitly unmeasured, never copied from a rival.
+    expects: tuple[tuple[tuple[SfyStrategyName, str], str], ...] = ()
     designers: tuple[str, ...] = DESIGNER_MARKS
     note: str = ""
 
@@ -200,18 +205,25 @@ class SfyCorpusEntry:
             )
         pinned = dict(self.expects)
         if len(pinned) != len(self.expects):
-            raise ValueError(f"{self.url_id} pins the same mark twice in `expects`")
-        if set(pinned) != set(self.designers):
-            raise ValueError(
-                f"{self.url_id} is built in {', '.join(self.designers)} but pins "
-                f"{', '.join(sorted(pinned)) or 'nothing'}; --strict needs exactly "
-                "one expectation per mark, so a mark with none would be pinned to "
-                "nothing at all"
-            )
+            raise ValueError(f"{self.url_id} pins the same strategy and mark twice in `expects`")
+        for strategy in {strategy for strategy, _ in pinned}:
+            if strategy not in SFY_STRATEGY_CHOICES:
+                raise ValueError(f"{self.url_id} pins unknown strategy {strategy!r}")
+            marks = {mark for name, mark in pinned if name == strategy}
+            if marks != set(self.designers):
+                raise ValueError(
+                    f"{self.url_id}: {strategy} needs exactly one expectation per mark "
+                    f"in {', '.join(self.designers)}"
+                )
         stray = tuple(
-            f"{mark}={outcome!r}"
-            for mark, outcome in self.expects
-            if outcome != CLEAN and not is_ruled_cause(outcome)
+            f"{strategy}/{mark}={outcome!r}"
+            for (strategy, mark), outcome in self.expects
+            if outcome != CLEAN
+            and not (
+                all(is_ruled_cause(cause) for cause in outcome.split("; "))
+                if strategy == "best"
+                else is_ruled_cause(outcome)
+            )
         )
         if stray:
             raise ValueError(
@@ -225,24 +237,25 @@ class SfyCorpusEntry:
         """The committed export this entry is built from."""
         return FLOWS_DIR / self.flow_file
 
-    def expectation(self, mark: str) -> str:
-        """What ``mark`` is pinned to do: :data:`CLEAN`, or a refusal cause."""
-        return dict(self.expects)[mark]
+    def expectation(self, strategy: SfyStrategyName, mark: str) -> str:
+        """The measured outcome; ``best`` joins distinct attempt causes with ``; ``.
+
+        Raises ``KeyError`` for an unmeasured strategy.
+        """
+        return dict(self.expects)[strategy, mark]
 
     @property
     def largest(self) -> str:
         """The biggest mark this entry is run in -- its best chance of fitting."""
         return [m for m in DESIGNER_MARKS if m in self.designers][-1]
 
-    @property
-    def expected(self) -> Literal["clean", "refuse"]:
-        """What the largest mark is expected to do, for a one-line summary."""
-        return "clean" if self.expectation(self.largest) == CLEAN else "refuse"
+    def expected(self, strategy: SfyStrategyName) -> Literal["clean", "refuse"]:
+        """The largest mark's measured outcome for this requested strategy."""
+        return "clean" if self.expectation(strategy, self.largest) == CLEAN else "refuse"
 
-    @property
-    def expected_cause(self) -> str | None:
-        """The largest mark's expected refusal cause, or ``None`` if it builds."""
-        outcome = self.expectation(self.largest)
+    def expected_cause(self, strategy: SfyStrategyName) -> str | None:
+        """The largest mark's refusal cause, or ``None`` if it builds."""
+        outcome = self.expectation(strategy, self.largest)
         return None if outcome == CLEAN else outcome
 
 
@@ -252,9 +265,11 @@ _DEPTH: Final = "rows exceed the designer depth"
 _BRIDGE: Final = "corridor needs a bridge that does not fit"
 
 
-def _pins(mk1: str, mk2: str, mk3: str) -> tuple[tuple[str, str], ...]:
-    """One expectation per mark, in mark order, as ``expects`` wants them."""
-    return (("mk1", mk1), ("mk2", mk2), ("mk3", mk3))
+def _pins(
+    mk1: str, mk2: str, mk3: str, *, strategy: SfyStrategyName = "manifold-rows"
+) -> tuple[tuple[tuple[SfyStrategyName, str], str], ...]:
+    """Measured outcomes in mark order; existing measurements are manifold-only."""
+    return (((strategy, "mk1"), mk1), ((strategy, "mk2"), mk2), ((strategy, "mk3"), mk3))
 
 
 SFY_CORPUS: Final[tuple[SfyCorpusEntry, ...]] = (

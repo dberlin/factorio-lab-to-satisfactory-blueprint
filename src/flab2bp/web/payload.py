@@ -20,7 +20,7 @@ Two rules the CLI already follows and this must not break:
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from fractions import Fraction
 from typing import cast
 
@@ -32,6 +32,7 @@ from flab2bp.layout.base import (
     Placement,
     ProjectionFailureRecord,
 )
+from flab2bp.sfy import pipeline as sfy_pipeline
 from flab2bp.spec import BuildSpec
 
 #: Recursive JSON values, with no escape hatch for non-serialisable objects.
@@ -299,6 +300,61 @@ def describe(build: pipeline.Build, *, allow_invalid: bool = False) -> Json:
         "refused": _array(attempt_failure(attempt) for attempt in build.refused),
         "report": _report_block(build.report),
         "attempts": attempts,
+    }
+
+
+def describe_sfy(
+    build: sfy_pipeline.SfyBuild,
+    *,
+    artifacts: Mapping[str, bytes],
+    job_id: str,
+) -> Json:
+    """Satisfactory's report and file pair, not DSP viewer geometry."""
+    measured = build.measure
+    return {
+        "game": "sfy",
+        "blueprint": None,
+        "valid": build.report.ok,
+        "strategy": build.strategy,
+        "designer": build.designer.mark,
+        "candidate": build.spec.label,
+        "machines": build.spec.machine_count,
+        "title": build.placement.short_desc,
+        "description": build.placement.description,
+        "flow_pinned": build.flow_pinned,
+        "outputs": _rates(dict(build.spec.outputs)),
+        "external_inputs": _rates(dict(build.spec.external_inputs)),
+        "measure": {
+            "blueprints": measured.blueprints,
+            "volume_cm3": measured.volume_cm3,
+            "belt_cm": measured.belt_cm,
+            "lifts": measured.lifts,
+            "attachments": measured.attachments,
+        },
+        "refused": _array(attempt_failure(failure) for failure in build.refused),
+        "report": {
+            "ok": build.report.ok,
+            "checks_run": _array(build.report.checks_run),
+            "skipped": _array(build.report.skipped),
+            "findings": _array(
+                {
+                    "check": finding.check,
+                    "severity": finding.severity.value,
+                    "message": finding.message,
+                    "objects": _array(finding.objects),
+                }
+                for finding in build.report.findings
+            ),
+        },
+        "artifacts": _array(
+            {
+                "name": name,
+                "url": f"/api/build/{job_id}/artifacts/{name}",
+                "content_type": "application/octet-stream",
+                "size_bytes": len(content),
+            }
+            for name, content in artifacts.items()
+        ),
     }
 
 

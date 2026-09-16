@@ -471,3 +471,73 @@ the order that ruling set -- section 9's strategy 2 brought forward, stacking
 and its companions moved to M4 -- and
 `docs/superpowers/plans/2026-09-15-satisfactory-m3-grid-router-race.md` is the
 plan that carries it out, both extractor gaps above included.
+
+## 15. M3 implementation status — acceptance remains open
+
+The grid packer, geometric interval router, conveyor realiser, negotiated nets,
+power placement and serial strategy race are implemented. CLI strategy selection
+and backend binary downloads use the real Satisfactory pipeline; this is not the
+M4 web viewer. The extractor and import-cost chores above are complete.
+
+**Measured corpus, not milestone completion.** The turn-aware run at `fdd54806`
+plus the reviewed working-tree changes uses 15 seconds per cell and records
+1.2 mean runnable processes. The complete table is
+[`sfy-m3-audit-2026-09-15.md`](../evidence/sfy-m3-audit-2026-09-15.md).
+
+| Requested strategy | CLEAN | REFUSED | Unruled budget failures |
+| --- | ---: | ---: | ---: |
+| manifold-rows | 7 | 29 | 0 |
+| grid-routed | 5 | 31 | 14 |
+| best | 7 | 29 | 12 |
+
+The 108-cell gate **fails**: 19 CLEAN, 63 ruled refusals and 26 unruled budget
+failures, with no INVALID or CRASH. Later packing timeouts propagate unchanged;
+earlier geometric failures cannot mask them. No timeout is pinned as geometric
+impossibility; 72 grid/best cells remain unpinned.
+
+**Turn legality is now part of the shared interval search, but acceptance has
+not improved overall.** Explicit primitive/turn/endpoint witnesses survive
+realisation, tap cuts and rip-up/restore. The new short-corner regression passes.
+Grid gains plate/mk2, but concrete/mk1 now exhausts its budget under both grid
+and best: the earlier manifold-depth conversion is not reproduced within15s.
+The net matrix change is20→19 CLEAN and25→26 budget failures.
+
+The approved arrangement continuation and original deadline are unchanged.
+Five of the manifold's seven clean cells are now also grid-clean; rod/mk3 and
+steel-beam/mk3 still exhaust grid's routing budget. The common-clean comparison:
+
+| Entry | Mark | Manifold volume, cm³ | Grid volume, cm³ | Manifold belt, cm | Grid belt, cm |
+| --- | --- | ---: | ---: | ---: | ---: |
+| iron-plate-60 | mk1 | 7.5072e9 | 7.616e9 | 7382 | 6300 |
+| iron-plate-60 | mk2 | 9.384e9 | 1.241e10 | 8182 | 9300 |
+| iron-plate-60 | mk3 | 1.12608e10 | 1.5912e10 | 8982 | 9600 |
+| concrete-60 | mk2 | 4.704e9 | 8.4e9 | 10260 | 9800 |
+| concrete-60 | mk3 | 1.08288e10 | 1.008e10 | 10540 | 10600 |
+
+The race retains all seven manifold successes but no longer adds concrete/mk1.
+It selects grid for concrete/mk3 and manifold for the other six. Volume precedes
+belt length in the specified race key, so concrete/mk3's smaller volume wins
+despite slightly more belt. No timeout has been pinned to conceal this regression.
+
+**Checkpoint 3 follows the user-approved amended contract.**
+The previously generated pairs in `out/sfy/` contain two complete flat factories
+(concrete/mk1 and plate/mk1) and a separately labelled lift-and-attachment
+transport witness. Their recorded binary/physical round trips and validator
+contracts passed before this amendment; the artifacts were not replaced.
+Current tests regenerate and validate the plate factory and transport witness.
+Fresh concrete/mk1 generation within15s is no longer established by the audit.
+The transport witness is not a complete corpus factory or a routing benchmark;
+no current complete grid-clean factory contains a lift. Current plate/mk3 has
+eleven attachment corners and two taps. In-game paste, snapping and throughput
+checks remain pending; generated instructions disclose partial clearance checks.
+
+Supply-aware forest admission and bounded dense local repair were measured but
+did not recover a valid factory/placement; neither speculative policy was shipped.
+The remaining acceptance work is resolving budget failures and completing
+measured pins, plus the in-game checkpoint result. Search failure is not proof
+of game impossibility, and passing unit tests does not close these gates.
+
+The turn-aware consolidated gate passes1,815 SFY/CLI/web/native tests. Independent
+native review is clean; the SFY review's tap-stub restore shadow finding has a
+failing-before/passing-after regression and clean re-review. This establishes the
+implemented legality contract, not the still-failing factory completion gate.

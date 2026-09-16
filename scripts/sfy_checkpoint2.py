@@ -48,12 +48,13 @@ from pathlib import Path
 
 from flab2bp.layout.base import NoValidLayout
 from flab2bp.sfy import pipeline
-from flab2bp.sfy.codec import read_sbp_file, read_sbpcfg, write_sbpcfg
+from flab2bp.sfy.codec import read_sbp_file, read_sbpcfg, write_sbp, write_sbpcfg
 from flab2bp.sfy.layout.emit import decode
 from flab2bp.sfy.layout.model import BeltRun, SfyPlacement
 from flab2bp.sfy.layout.validate import Report, validate
 from flab2bp.sfy.registry import Registry
 from flab2bp.sfy.spec import SfyBuildSpec, foundation_cm
+from flab2bp.sfy.strategy_names import SfyStrategyName
 
 REPO = Path(__file__).resolve().parent.parent
 FLOWS = REPO / "tests" / "fixtures" / "sfy_flows"
@@ -163,7 +164,13 @@ class Written:
     report: Report
 
 
-def build_case(case: Case, out_dir: Path, *, time_budget_s: float) -> Written:
+def build_case(
+    case: Case,
+    out_dir: Path,
+    *,
+    time_budget_s: float,
+    strategy: SfyStrategyName = "manifold-rows",
+) -> Written:
     """Build one case in the smallest of its marks that holds it, and write it.
 
     A refusal in a smaller mark is a RESULT, not a failure: it says the build
@@ -176,6 +183,7 @@ def build_case(case: Case, out_dir: Path, *, time_budget_s: float) -> Written:
             build = pipeline.build(
                 case.url,
                 designer=mark,
+                strategy=strategy,
                 flow=FLOWS / case.flow,
                 time_budget_s=time_budget_s,
                 name=case.name,
@@ -199,6 +207,8 @@ def _check(case: Case, build: pipeline.SfyBuild, sbp: Path, cfg: Path) -> Report
     again = read_sbp_file(sbp)
     if again != build.blueprint:
         raise CheckFailed(f"{sbp.name} does not re-read as the blueprint that was assembled")
+    if write_sbp(again) != sbp.read_bytes():
+        raise CheckFailed(f"{sbp.name} does not decode and re-encode to itself")
     raw = cfg.read_bytes()
     if write_sbpcfg(read_sbpcfg(raw)) != raw:
         raise CheckFailed(f"{cfg.name} does not decode and re-encode to itself")
@@ -317,7 +327,11 @@ def refusal(case: Case, *, time_budget_s: float) -> dict[str, str]:
     for mark in case.designer.split():
         try:
             pipeline.build(
-                case.url, designer=mark, flow=FLOWS / case.flow, time_budget_s=time_budget_s
+                case.url,
+                designer=mark,
+                strategy="manifold-rows",
+                flow=FLOWS / case.flow,
+                time_budget_s=time_budget_s,
             )
         except Exception as exc:  # noqa: BLE001 -- every refusal shape is a finding here
             out[mark] = f"{type(exc).__name__}: {exc}"
@@ -466,9 +480,9 @@ def _pair_section(entry: Written, registry: Registry) -> list[str]:
         "",
         "Belts in, at the `-Y` wall (x measured east from the `-X` corner):",
     ]
-    out += _belt_lines(entries, placement, registry, spec.external_inputs)
+    out += _belt_lines(entries, placement, registry)
     out += ["", "Belts out, at the `+Y` wall:"]
-    out += _belt_lines(exits, placement, registry, {**spec.outputs, **spec.surplus_outputs})
+    out += _belt_lines(exits, placement, registry)
     out += [
         "",
         "Expected output: "
@@ -477,9 +491,9 @@ def _pair_section(entry: Written, registry: Registry) -> list[str]:
         ),
         "",
         "What to look for:",
-        "- every belt runs, and nothing is backed up at a merger for more than a minute",
+        "- every belt runs, and transport does not remain backed up",
         "- every machine's panel shows the clock listed above",
-        "- the last merger on the `+Y` wall carries the expected output rate",
+        "- all output belts on the `+Y` wall together carry the expected output rate",
         "",
     ]
     if any(group.clock != 1 or group.last_clock != 1 for group in spec.groups):
@@ -525,7 +539,6 @@ def _belt_lines(
     ends: list[tuple[BeltRun, bool]],
     placement: SfyPlacement,
     registry: Registry,
-    wanted: dict[str, Fraction],
 ) -> list[str]:
     if not ends:
         return ["- (none)"]
@@ -533,7 +546,7 @@ def _belt_lines(
     for run, is_start in ends:
         point = run.start if is_start else run.end
         paced = _foundations_from_west(point[0], placement, registry)
-        rate = wanted.get(run.item_id)
+        rate = run.items_per_second
         carries = f" carrying {_per_minute(rate):g} {run.item_id}/min" if rate is not None else ""
         lines.append(
             f"- **{run.item_id}** at x = {point[0]:.0f} cm "

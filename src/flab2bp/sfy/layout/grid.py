@@ -12,7 +12,7 @@ What this module does, and what the six beside it do
 ----------------------------------------------------
 This one assembles, and it is a LOOP rather than a pipeline.  It reads every
 limit once into a :class:`~flab2bp.sfy.layout.corridors.Measures`, builds the
-lattice, and then for each of :data:`ARRANGEMENTS` tries:
+lattice, and then tries deterministic arrangements while the deadline permits:
 
 1. :func:`~flab2bp.sfy.layout.packer.pack` stands the machines, seeded by the
    arrangement number and priced by what the last round's routing learned;
@@ -28,8 +28,9 @@ lattice, and then for each of :data:`ARRANGEMENTS` tries:
 Where something IS stranded, the stranded net ids and the router's blame are
 folded into a :class:`~flab2bp.sfy.layout.packer.Feedback`, decayed by
 :data:`~flab2bp.sfy.layout.packer.DECAY` at the boundary, and the machines are
-packed again against a floor the router has already been over.  After the last
-arrangement the build is refused.
+packed again against a floor the router has already been over. The first
+three arrangements reserve shares of the remaining time; later arrangements
+may use whatever remains under the same absolute deadline.
 
 **The router RETURNS its failures.**  That is
 :mod:`~flab2bp.sfy.layout.rrr`'s own decision and it is why this module is a
@@ -84,41 +85,34 @@ from flab2bp.sfy.layout.model import (
     MachineObj,
     SfyPlacement,
 )
-from flab2bp.sfy.layout.packer import OVER_BUDGET, Feedback, Pack, PackError, pack
+from flab2bp.sfy.layout.packer import Feedback, Pack, PackError, pack
 from flab2bp.sfy.layout.power import PowerError, PowerPlan
 from flab2bp.sfy.layout.realise import Realised, RealiseError
 from flab2bp.sfy.layout.refusals import GAME_DATA, GAME_LIMITS, refuse
-from flab2bp.sfy.layout.router import RouteFailureKind
 from flab2bp.sfy.layout.rrr import BLAME_WEIGHT, RoutingOutcome, route_all
 from flab2bp.sfy.layout.strategy import _dataset, _measure, _row_cause
 from flab2bp.sfy.registry import LIFT_NATIVE_CLASS, Registry, load_registry
 from flab2bp.sfy.spec import Designer, SfyBuildSpec
 
-__all__ = ["ARRANGEMENTS", "GridRouted"]
+__all__ = ["INITIAL_ARRANGEMENTS", "GridRouted"]
 
-ARRANGEMENTS: Final = 3
-"""How many arrangements one run may pack before it refuses.
+INITIAL_ARRANGEMENTS: Final = 3
+"""How many initial arrangements reserve separate shares of the remaining time.
 
-**Ours.**  The first is packed on the geometry alone and every one after it is
-packed against evidence the router paid for, so the number is how many times
-this strategy is willing to buy that evidence.  Three rather than two because
-the second arrangement is the first that has any feedback at all and a lever
-tried once has not been tried; three rather than more because each arrangement
-costs a whole pack AND a whole rip-up negotiation, and the wall a caller hands
-over is 15 seconds by default.
+**Ours.** Preserve the measured three-arrangement schedule, but do not refuse
+just because three early attempts finished. Further deterministic arrangements
+may use the caller's remaining deadline. This is a scheduling horizon, not a
+retry cap or an extension of the total wall.
 """
 
-PACK_SHARE: Final = 1.0 / 3.0
-"""What share of one arrangement's slice of the wall the PACKER may have.
+PACK_SHARE: Final = 2.0 / 3.0
+"""Packing's share of one arrangement's existing wall-clock slice.
 
-**Ours**, and the answer to "split the budget so at least one arrangement can
-route".  The wall left when an arrangement starts is divided equally among the
-arrangements still to come, and a third of that slice is the packer's: the
-packer holds an incumbent almost at once and its own
-``max_deterministic_time`` bounds it long before this does, while the router
-negotiates across up to ``RRR_MAX`` rounds and spends every second it is given.
-A slice rather than the whole remaining wall so that a first arrangement which
-cannot be routed at all cannot eat the budget the second one needs.
+Ours, measured on the pinned plate chain: at the default 15-second budget,
+the former 1.67-second pack yielded an unroutable 87000-cost incumbent.
+A 3-second pack yielded a 69000-cost incumbent that routed in one round.
+Two thirds gives packing 3.33 seconds and routing 1.67 seconds in the first
+five-second slice, without extending the total deadline or losing retries.
 """
 
 STRANDED_WEIGHT: Final = 1.0
@@ -241,18 +235,6 @@ class GridRouted:
             raise refuse(spec, _row_cause(exc), str(exc)) from exc
 
 
-def _out_of_clock(error: Exception) -> bool:
-    """Whether a packing failure was a BOUND rather than a build that will not fit.
-
-    Two different things wear one exception type here: the packer refuses
-    :data:`~flab2bp.sfy.layout.packer.NO_ARRANGEMENT` when it PROVED the machines
-    do not stand, and :data:`~flab2bp.sfy.layout.packer.OVER_BUDGET` when the
-    clock stopped it holding nothing.  Only the second is a reason to stop trying
-    arrangements and report what the routing already found.
-    """
-    return isinstance(error, BudgetExhausted) or getattr(error, "cause", "") == OVER_BUDGET
-
-
 def _named(causes: Mapping[str, str], cause: str, stage: str) -> str:
     """One stage's own cause as a named refusal, or a refusal to guess at it.
 
@@ -306,44 +288,39 @@ class _Run:
         feedback: Feedback | None = None
         outcome: RoutingOutcome | None = None
         tried = 0
-        for arrangement in range(1, ARRANGEMENTS + 1):
+        for arrangement in itertools.count(1):
             if arrangement > 1 and expired(self.deadline):
                 break
             ends = self._slice(arrangement)
-            try:
-                packed = self._pack(lattice, measures, feedback, arrangement, ends)
-            except (PackError, BudgetExhausted) as exc:
-                # A LATER arrangement that ran out of clock is not this run's
-                # answer: the build has already been packed and routed once, and
-                # what a caller wants to hear about is what the routing found.
-                # Telling them "packing exceeded the budget" would send them off
-                # to shrink a build whose machines really did stand.  A FIRST
-                # arrangement that runs out has nothing behind it and is raised.
-                if outcome is None or not _out_of_clock(exc):
-                    raise
-                break
+            packed = self._pack(lattice, measures, feedback, arrangement, ends)
             tried = arrangement
             ids = _numbering(packed.machines)
             occupancy = occupancy_for(lattice, packed.machines, (), (), (), self.registry)
             nets = nets_for(self.spec, packed.machines, lattice, self.registry, self.lab_map)
             outcome = self._route(nets, occupancy, measures, ids, ends)
+            if expired(self.deadline):
+                break
             if not outcome.stranded:
-                return self._placement(packed, occupancy, outcome, nets, arrangement, ids)
+                placement = self._placement(packed, occupancy, outcome, nets, arrangement, ids)
+                if expired(self.deadline):
+                    raise refuse(
+                        self.spec,
+                        "routing exceeded the budget",
+                        "the layout deadline expired while finalizing the routed arrangement",
+                    )
+                return placement
             feedback = _folded(feedback, outcome)
         raise self._unrouted(outcome, tried)
 
     # --- the wall -----------------------------------------------------------
 
     def _slice(self, arrangement: int) -> float:
-        """When this arrangement has to be done: its equal share of what is left.
-
-        Equal shares of the REMAINING wall rather than of the original one, so an
-        arrangement that came in under its slice hands the rest on, and the last
-        arrangement's slice is the whole of what is left -- which is
-        :attr:`deadline` exactly.
-        """
-        left = max(self.deadline - time.monotonic(), 0.0)
-        return time.monotonic() + left / (ARRANGEMENTS - arrangement + 1)
+        """The first three reserve shares; later attempts use the remaining wall."""
+        slots = max(INITIAL_ARRANGEMENTS - arrangement + 1, 1)
+        if slots == 1:
+            return self.deadline
+        now = time.monotonic()
+        return now + max(self.deadline - now, 0.0) / slots
 
     # --- the stages ---------------------------------------------------------
 
@@ -358,7 +335,7 @@ class _Run:
         """One arrangement of the machines, seeded by which arrangement it is.
 
         The seed is the arrangement number, so two runs of the same spec walk
-        the same three arrangements in the same order: the feedback is what
+        the same sequence of arrangements: the feedback is what
         makes the second differ from the first, and a seed that came from a
         clock would make it differ from itself.
         """
@@ -482,7 +459,9 @@ class _Run:
             wires=power.wires,
             foundations=foundations(self.designer, self.registry, ids),
             links=tuple(links),
-            description=self._description(packed, outcome, nets, arrangement, power),
+            description=self._description(
+                packed, outcome, nets, arrangement, power, occupancy.lattice
+            ),
             short_desc=f"{self.spec.label or 'grid routed'}: {len(packed.machines)} machines",
         )
 
@@ -493,6 +472,7 @@ class _Run:
         nets: Sequence[GridNet],
         arrangement: int,
         power: PowerPlan,
+        lattice: Lattice,
     ) -> str:
         """The manifest's precursor: what a reader cannot measure off the blueprint.
 
@@ -504,18 +484,24 @@ class _Run:
         like this" wants.
         """
         turns, taps = _attachments_by_role(outcome.realised)
-        corners = sum(_flat_corners(path) for tree in outcome.trees for path in tree.paths)
+        arcs = sum(laid.turns.count("arc") for laid in outcome.realised)
         lifts = sum(len(laid.lifts) for laid in outcome.realised)
         lines = [
             f"{self.spec.label or 'grid routed'} in a {self.designer.mark} designer, "
             f"grid-routed: every machine on the hologram grid and every belt searched for"
         ]
-        for run in sorted(self.spec.external_inputs):
-            lines.append(f"entry: {run} at the -Y wall")
-        for run in sorted({*self.spec.outputs, *self.spec.surplus_outputs}):
-            lines.append(f"exit: {run} at the +Y wall")
+        for tree in outcome.trees:
+            for branch, node in tree.boundaries:
+                entering = node == tree.paths[branch][0]
+                label, wall = ("entry", "-Y") if entering else ("exit", "+Y")
+                x, _, z = lattice.world(node)
+                y = -self.designer.half_cm if entering else self.designer.half_cm
+                lines.append(
+                    f"{label}: {tree.net.item_id} at the {wall} wall, "
+                    f"belt crossing ({x:g}, {y:g}, {z:g}) cm"
+                )
         lines.append(
-            f"arrangement {arrangement} of {ARRANGEMENTS}: {len(packed.machines)} machines "
+            f"arrangement {arrangement}: {len(packed.machines)} machines "
             f"packed {packed.status} at objective {packed.objective:.0f}"
         )
         lines.append(
@@ -526,45 +512,22 @@ class _Run:
             f"authored: {lifts} conveyor lifts, {turns + taps} conveyor attachments "
             f"({taps} standing on a tap, {turns} turning a corner)"
         )
-        # Two counts and no arithmetic between them.  Every corner is made either
-        # by an attachment standing on it or by bending the belt, and only the
-        # first leaves an object behind: ``realise`` does not report which it
-        # chose, and ``corners`` is what the PATHS hold, which is a floor on what
-        # the realiser was offered (a stub out of a port standing off its own
-        # node can put a right angle where no three path nodes show one).  So an
-        # arc count here would be a subtraction that can go the wrong way.
-        lines.append(
-            f"turns: {turns} made by a conveyor attachment, {corners} right angles in the "
-            f"routed paths"
-        )
+        lines.append(f"turns: {arcs} arc, {turns} attachment; {lifts} lift transitions")
         lines += [f"power: {line}" for line in power.lines]
         return "\n".join(lines)
 
-    # --- the refusal the loop reaches by running out of arrangements ---------
+    # --- the refusal after the last attempted arrangement -------------------
 
     def _unrouted(self, outcome: RoutingOutcome | None, tried: int) -> Exception:
-        """What to say when every arrangement left a net with no tree.
-
-        Two different answers, and the router's own evidence is what tells them
-        apart.  A net stranded by a BOUND proves nothing about the build -- more
-        seconds would have changed it -- so naming the nets would send a reader
-        looking for a pocket nobody censused; a net stranded by the geometry is
-        named, because moving what is in its way is the thing to do about it.
-        """
-        if outcome is None or all(
-            routed.kind is RouteFailureKind.BUDGET for _, routed in outcome.stranded
-        ):
-            spent = "the clock ran out before any arrangement routed every net"
-            if outcome is not None and outcome.stranded:
-                spent = f"{len(outcome.stranded)} nets were still unrouted when the clock ran out"
-            return refuse(self.spec, "routing exceeded the budget", spent)
-        named = ", ".join(f"net {net.id} ({net.item_id})" for net, _ in outcome.stranded)
-        return refuse(
-            self.spec,
-            "a belt could not be routed",
-            f"{tried} of {ARRANGEMENTS} arrangements were packed and routed and these nets "
-            f"still have no tree: {named}",
-        )
+        """The absolute deadline ended continuation, not a proof of impossibility."""
+        spent = "the clock ran out before any arrangement routed every net"
+        if outcome is not None and outcome.stranded:
+            named = ", ".join(f"net {net.id} ({net.item_id})" for net, _ in outcome.stranded)
+            spent = (
+                f"{len(outcome.stranded)} nets were still unrouted when the clock ran out "
+                f"after {tried} arrangements: {named}"
+            )
+        return refuse(self.spec, "routing exceeded the budget", spent)
 
     # --- the refusal that comes before any geometry -------------------------
 
@@ -634,38 +597,7 @@ def _numbering(machines: Sequence[MachineObj]) -> Iterator[int]:
 
 
 def _attachments_by_role(realised: Sequence[Realised]) -> tuple[int, int]:
-    """``(turns, taps)``: what the conveyor attachments in a build are doing.
-
-    Read off the SHAPE the two stages hand back rather than off a class name,
-    which cannot tell them apart -- both are splitters and mergers.
-    :func:`~flab2bp.sfy.layout.rrr.route_all` stands a tap as a ``Realised`` of
-    one attachment and nothing else; every attachment that arrives with belts
-    beside it was authored by :func:`~flab2bp.sfy.layout.realise.realise` to
-    turn one of them.
-    """
-    turns = sum(len(laid.attachments) for laid in realised if laid.belts)
-    taps = sum(len(laid.attachments) for laid in realised if not laid.belts)
+    """Count realised attachment turns separately from tree junctions."""
+    turns = sum(laid.turns.count("attachment") for laid in realised)
+    taps = sum(len(laid.attachments) for laid in realised) - turns
     return (turns, taps)
-
-
-def _flat_corners(path: Sequence[Node]) -> int:
-    """How many right angles a committed path makes on the flat.
-
-    A corner is a node whose step in differs from its step out at one level.  A
-    climb and a lift are not corners -- the level changes, and what happens
-    there is a ramp or a shaft rather than a turn -- so both are skipped, which
-    is the same reading :func:`~flab2bp.sfy.layout.grid_nets.tap_nodes` ends a
-    straight run on.
-
-    A FLOOR on what the realiser was offered rather than an exact count of it:
-    a stub from a port that stands off its own node can put a right angle where
-    no three path nodes show one.  The description says the two counts side by
-    side for that reason and never subtracts one from the other.
-    """
-    corners = 0
-    for before, here, after in zip(path, path[1:], path[2:], strict=False):
-        if before[2] != here[2] or here[2] != after[2]:
-            continue
-        if (here[0] - before[0], here[1] - before[1]) != (after[0] - here[0], after[1] - here[1]):
-            corners += 1
-    return corners

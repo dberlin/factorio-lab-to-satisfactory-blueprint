@@ -26,6 +26,7 @@ from itertools import count
 import pytest
 
 from flab2bp.layout.budget import WorkBudget
+from flab2bp.layout.geometric_motion import MotionStep, MotionWitness
 from flab2bp.sfy.geometry import port_forward, world_port
 from flab2bp.sfy.layout.corridors import (
     ARC,
@@ -46,6 +47,7 @@ from flab2bp.sfy.layout.model import (
     belt_ends,
     lift_geometry,
 )
+from flab2bp.sfy.layout.motion import motion_moves
 from flab2bp.sfy.layout.realise import Realised, RealiseError, Terminal, realise
 from flab2bp.sfy.layout.router import route_net
 from flab2bp.sfy.layout.strategy import _measure
@@ -216,6 +218,7 @@ def _run(
     sink: Terminal,
     *,
     measures: Measures | None = None,
+    motion: MotionWitness | None = None,
 ) -> Realised:
     return realise(
         path,
@@ -229,6 +232,7 @@ def _run(
         item_id=ITEM,
         rate=RATE,
         ids=_ids(),
+        motion=motion,
     )
 
 
@@ -358,6 +362,205 @@ def test_a_corner_with_three_node_legs_is_laid_as_an_attachment_turn() -> None:
     _judge(realised, maker, eater, only=BELT_CHECKS)
 
 
+def test_two_attachment_turns_share_one_minimum_belt_on_the_leg_between_them() -> None:
+    lattice, measures = _lattice(), _measures()
+    gap = math.ceil((2 * measures.reach + measures.lead_in) / lattice.grid_cm)
+
+    def path_with_gap(steps: int) -> tuple[Node, ...]:
+        first = (10, 10, GROUND_LEVEL)
+        second = (10, 10 + steps, GROUND_LEVEL)
+        return _join(
+            _line((5, 10, GROUND_LEVEL), first),
+            _line(first, second),
+            _line(second, (15, 10 + steps, GROUND_LEVEL)),
+        )
+
+    path = path_with_gap(gap)
+    realised = _run_wall_corner(path)
+    assert realised.turns == (ATTACHMENT, ATTACHMENT)
+    assert len(realised.belts) == 3
+    assert _chord_cm(realised.belts[1]) == gap * lattice.grid_cm - 2 * measures.reach
+    _judge(realised, only=BELT_CHECKS | {"geom.bounds"})
+
+    with pytest.raises(RealiseError) as caught:
+        _run_wall_corner(path_with_gap(gap - 1))
+    assert caught.value.cause == "corner"
+    assert (10, 10 + gap - 1, GROUND_LEVEL) in caught.value.nodes
+
+
+def test_turn_assignment_keeps_costlier_small_reach_for_a_later_corner() -> None:
+    """A cheap first arc must not hide the attachment needed on a shared leg."""
+    z = GROUND_LEVEL
+    path = _join(
+        _line((5, 10, z), (10, 10, z)),
+        _line((10, 10, z), (10, 13, z)),
+        _line((10, 13, z), (15, 13, z)),
+    )
+    # Arc costs 200 and reaches 200; attachment costs 201 but reaches only 100.
+    # The second arc fits after the attachment, not after the cheaper first arc.
+    realised = _run_wall_corner(path, measures=replace(_measures(), radius=200.0))
+    assert realised.turns == (ATTACHMENT, ARC)
+
+
+@pytest.mark.parametrize("at_source", [True, False])
+def test_exact_node_terminal_refuses_a_sideways_heading(at_source: bool) -> None:
+    path = _line((5, 10, GROUND_LEVEL), (10, 10, GROUND_LEVEL))
+    source = _wall(path[0], (0.0, 1.0, 0.0) if at_source else (1.0, 0.0, 0.0))
+    sink = _wall(path[-1], (-1.0, 0.0, 0.0) if at_source else (0.0, 1.0, 0.0))
+    with pytest.raises(RealiseError) as caught:
+        _run(path, source, sink)
+    assert caught.value.cause == "stub"
+    assert (path[0] if at_source else path[-1]) in caught.value.nodes
+
+
+def _flat_motion(path: Sequence[Node], selected: dict[int, int]) -> MotionWitness:
+    shapes = motion_moves(_lattice(), _registry(), LIFT)
+    return MotionWitness(
+        initial_state=0,
+        final_state=0,
+        steps=tuple(
+            MotionStep(
+                path_index=index,
+                move=shapes.index((b[0] - a[0], b[1] - a[1], b[2] - a[2], False)),
+                source=0,
+                target=0,
+                action=selected.get(index, -1),
+            )
+            for index, (a, b) in enumerate(zip(path, path[1:], strict=False))
+        ),
+        final_action=selected.get(len(path) - 1, -1),
+    )
+
+
+def test_witness_keeps_selected_arc_instead_of_cheaper_attachment() -> None:
+    z = GROUND_LEVEL
+    path = _join(_line((5, 10, z), (10, 10, z)), _line((10, 10, z), (10, 15, z)))
+    source, sink = _wall(path[0], (1.0, 0.0, 0.0)), _wall(path[-1], (0.0, -1.0, 0.0))
+    assert _run(path, source, sink).turns == (ATTACHMENT,)
+    realised = _run(path, source, sink, motion=_flat_motion(path, {5: 0}))
+    assert realised.turns == (ARC,)
+    assert realised.attachments == ()
+    _judge(realised, only=BELT_CHECKS)
+
+
+def test_witness_does_not_substitute_a_feasible_turn_for_an_infeasible_selection() -> None:
+    z = GROUND_LEVEL
+    path = _join(
+        _line((5, 10, z), (10, 10, z)),
+        _line((10, 10, z), (10, 13, z)),
+        _line((10, 13, z), (15, 13, z)),
+    )
+    source, sink = _wall(path[0], (1.0, 0.0, 0.0)), _wall(path[-1], (-1.0, 0.0, 0.0))
+    measures = replace(_measures(), radius=200.0)
+    realised = _run(path, source, sink, measures=measures, motion=_flat_motion(path, {5: 1, 8: 0}))
+    assert realised.turns == (ATTACHMENT, ARC)
+    with pytest.raises(RealiseError) as caught:
+        _run(path, source, sink, measures=measures, motion=_flat_motion(path, {5: 0, 8: 0}))
+    assert caught.value.cause == "corner"
+
+
+@pytest.mark.parametrize("selected", [{}, {5: 2}, {4: 0, 5: 0}])
+def test_witness_refuses_missing_invalid_or_extra_turn_actions(selected: dict[int, int]) -> None:
+    z = GROUND_LEVEL
+    path = _join(_line((5, 10, z), (10, 10, z)), _line((10, 10, z), (10, 15, z)))
+    with pytest.raises(RealiseError) as caught:
+        _run(
+            path,
+            _wall(path[0], (1.0, 0.0, 0.0)),
+            _wall(path[-1], (0.0, -1.0, 0.0)),
+            motion=_flat_motion(path, selected),
+        )
+    assert caught.value.cause == "corner"
+
+
+@pytest.mark.parametrize("defect", ["index", "shape", "missing", "extra"])
+def test_witness_refuses_changed_primitive_sequence(defect: str) -> None:
+    path = _line((5, 10, GROUND_LEVEL), (10, 10, GROUND_LEVEL))
+    motion = _flat_motion(path, {})
+    steps = list(motion.steps)
+    if defect == "index":
+        steps[0] = replace(steps[0], path_index=1)
+    elif defect == "shape":
+        shapes = motion_moves(_lattice(), _registry(), LIFT)
+        steps[0] = replace(steps[0], move=shapes.index((0, 1, 0, False)))
+    elif defect == "missing":
+        steps.pop()
+    else:
+        steps.append(steps[-1])
+    with pytest.raises(RealiseError) as caught:
+        _run(
+            path,
+            _wall(path[0], (1.0, 0.0, 0.0)),
+            _wall(path[-1], (-1.0, 0.0, 0.0)),
+            motion=replace(motion, steps=tuple(steps)),
+        )
+    assert caught.value.cause == "leg"
+
+
+def test_source_stub_corner_action_belongs_to_first_native_primitive() -> None:
+    z = GROUND_LEVEL
+    path = _line((10, 10, z), (10, 15, z))
+    world = _lattice().world(path[0])
+    source = Terminal(
+        node=path[0],
+        world=(world[0] - 500.0, world[1], world[2]),
+        facing=(1.0, 0.0, 0.0),
+        port=None,
+        kind="wall",
+    )
+    sink = _wall(path[-1], (0.0, -1.0, 0.0))
+    realised = _run(path, source, sink, motion=_flat_motion(path, {0: 0}))
+    assert realised.turns == (ARC,)
+    with pytest.raises(RealiseError) as caught:
+        _run(path, source, sink, motion=_flat_motion(path, {}))
+    assert caught.value.cause == "corner"
+
+
+@pytest.mark.parametrize("action,kind", ((0, ARC), (1, ATTACHMENT)))
+def test_sink_stub_corner_replays_its_explicit_endpoint_action(action: int, kind: str) -> None:
+    path = _line((5, 10, GROUND_LEVEL), (10, 10, GROUND_LEVEL))
+    world = _lattice().world(path[-1])
+    sink = Terminal(
+        node=path[-1],
+        world=(world[0], world[1] + 500.0, world[2]),
+        facing=(0.0, -1.0, 0.0),
+        port=None,
+        kind="wall",
+    )
+    realised = _run(
+        path,
+        _wall(path[0], (1.0, 0.0, 0.0)),
+        sink,
+        motion=_flat_motion(path, {len(path) - 1: action}),
+    )
+    assert realised.turns == (kind,)
+    with pytest.raises(RealiseError) as caught:
+        _run(path, _wall(path[0], (1.0, 0.0, 0.0)), sink, motion=_flat_motion(path, {}))
+    assert caught.value.cause == "corner"
+
+
+def test_witness_ramp_counts_via_atomically_and_requires_source_level() -> None:
+    z = GROUND_LEVEL
+    path = ((10, 10, z), (11, 10, z), (12, 10, z + 1), (13, 10, z + 1))
+    shapes = motion_moves(_lattice(), _registry(), LIFT)
+    motion = MotionWitness(
+        initial_state=0,
+        final_state=0,
+        steps=(
+            MotionStep(0, shapes.index((2, 0, 1, True)), 0, 0),
+            MotionStep(2, shapes.index((1, 0, 0, False)), 0, 0),
+        ),
+    )
+    source, sink = _wall(path[0], (1.0, 0.0, 0.0)), _wall(path[-1], (-1.0, 0.0, 0.0))
+    realised = _run(path, source, sink, motion=motion)
+    assert realised.turns == ()
+    assert realised.belts[0].points[-1][0] == sink.world
+    wrong_via = (path[0], (11, 10, z + 1), *path[2:])
+    with pytest.raises(RealiseError) as caught:
+        _run(wrong_via, source, sink, motion=motion)
+    assert caught.value.cause == "leg"
+
+
 def test_a_corner_with_two_node_legs_refuses_naming_the_corner() -> None:
     path, maker, eater = _l_path(2)
     source, sink = _terminal(maker, "Output0"), _terminal(eater, "Input0")
@@ -367,6 +570,61 @@ def test_a_corner_with_two_node_legs_refuses_naming_the_corner() -> None:
         _run(path, source, sink)
     assert caught.value.cause == "corner"
     assert corner in caught.value.nodes
+
+
+def _wall_corner(line: int, axis: int = 0, upper: bool = False) -> tuple[tuple[Node, ...], Node]:
+    """An L path along a wall, turning inward with room for either turn."""
+    lattice = _lattice()
+    leg = math.ceil(_measures().radius / lattice.grid_cm) + 1
+    middle = lattice.n // 2
+
+    def node(normal: int, tangent: int) -> Node:
+        normal = lattice.n - normal if upper else normal
+        i, j = (normal, tangent) if axis == 0 else (tangent, normal)
+        return (i, j, GROUND_LEVEL)
+
+    corner = node(line, middle)
+    path = _join(
+        _line(node(line, middle - leg), corner),
+        _line(corner, node(line + leg, middle)),
+    )
+    return path, corner
+
+
+def _run_wall_corner(path: Sequence[Node], *, measures: Measures | None = None) -> Realised:
+    source = (float(path[1][0] - path[0][0]), float(path[1][1] - path[0][1]), 0.0)
+    sink = (float(path[-2][0] - path[-1][0]), float(path[-2][1] - path[-1][1]), 0.0)
+    return _run(path, _wall(path[0], source), _wall(path[-1], sink), measures=measures)
+
+
+@pytest.mark.parametrize(("axis", "upper"), [(0, False), (0, True), (1, False), (1, True)])
+def test_a_wall_corner_refuses_an_attachment_and_names_its_nodes(axis: int, upper: bool) -> None:
+    path, corner = _wall_corner(_lattice().open_lines.start, axis, upper)
+    leg = math.ceil(attachment_turn_tight(_measures()).cost / _lattice().grid_cm)
+    at = path.index(corner)
+    path = path[at - leg : at + leg + 1]
+    with pytest.raises(RealiseError) as caught:
+        _run_wall_corner(path)
+    assert caught.value.cause == "corner"
+    at = path.index(corner)
+    assert caught.value.nodes == path[at - 1 : at + 2]
+
+
+def test_an_attachment_can_stand_on_the_first_object_line() -> None:
+    path, corner = _wall_corner(_lattice().object_lines.start)
+    realised = _run_wall_corner(path)
+    assert realised.turns == (ATTACHMENT,)
+    assert realised.attachments[0].pose.location[:2] == _lattice().world(corner)[:2]
+    _judge(realised, only=BELT_CHECKS | {"geom.bounds"})
+
+
+def test_a_legal_arc_near_the_wall_needs_no_object_standing_room() -> None:
+    path, _ = _wall_corner(_lattice().open_lines.start)
+    realised = _run_wall_corner(path)
+    assert realised.turns == (ARC,)
+    assert realised.attachments == ()
+    assert len(realised.belts) == 1
+    _judge(realised, only=BELT_CHECKS | {"geom.bounds"})
 
 
 def test_a_cut_one_node_from_a_port_is_refused_as_a_leg() -> None:
@@ -428,6 +686,43 @@ def test_an_incline_run_is_one_leg_at_thirty_five_degrees_or_under() -> None:
     )
     assert angle <= limit
     _judge(realised, maker, only=BELT_CHECKS)
+
+
+def _incline_corner(levels: int) -> tuple[tuple[Node, ...], Node]:
+    path = [(10, 10, GROUND_LEVEL)]
+    for level in range(levels):
+        path.extend(
+            (
+                (10, 11 + 2 * level, GROUND_LEVEL + level),
+                (10, 12 + 2 * level, GROUND_LEVEL + level + 1),
+            )
+        )
+    crest = path[-1]
+    path.extend(_line(crest, (15, crest[1], crest[2]))[1:])
+    return tuple(path), crest
+
+
+@pytest.mark.parametrize("at_start", [True, False])
+def test_an_attachment_turn_cannot_cut_a_long_incline(at_start: bool) -> None:
+    """Six ramps leave room for an attachment, but no legal arc or flat ports."""
+    path, corner = _incline_corner(6)
+    if at_start:
+        path = tuple(reversed(path))
+    with pytest.raises(RealiseError) as caught:
+        _run_wall_corner(path)
+    assert caught.value.cause == "corner"
+    assert corner in caught.value.nodes
+
+
+@pytest.mark.parametrize("at_start", [True, False])
+def test_an_arc_can_turn_at_a_long_incline_without_an_attachment(at_start: bool) -> None:
+    path, _ = _incline_corner(7)
+    if at_start:
+        path = tuple(reversed(path))
+    realised = _run_wall_corner(path)
+    assert realised.turns == (ARC,)
+    assert realised.attachments == ()
+    _judge(realised, only=BELT_CHECKS | {"geom.bounds"})
 
 
 def test_a_ramp_reads_the_same_whichever_end_the_path_starts_from() -> None:
@@ -637,7 +932,7 @@ def test_a_manufacturer_input_gets_its_stub_inside_the_first_belt() -> None:
 
 
 def _room(node: Node, step: tuple[int, int], want: int) -> bool:
-    lines = _lattice().open_lines
+    lines = _lattice().object_lines
     end = (node[0] + step[0] * want, node[1] + step[1] * want)
     return end[0] in lines and end[1] in lines
 
@@ -647,9 +942,10 @@ def _random_path(rng: random.Random) -> tuple[tuple[Node, ...], Vector, Vector]:
 
     Legs are at least seven nodes so that a turn at each end has the room the
     attachment costs, and every climb and every lift is followed by seven more,
-    so that this is a test about the belts rather than about the corners.  The
-    path never ends on a lift, because a lift at the designer wall is a terminal
-    with no belt to reach it and rule 4's business rather than R-M3-4's.
+    so that this is a test about the belts rather than about the corners. Turns
+    stay inside object_lines. The path never ends on a lift, because a lift at
+    the designer wall is a terminal with no belt to reach it and rule 4's business
+    rather than R-M3-4's.
     """
     lines = _lattice().open_lines
     levels = _lattice().open_levels

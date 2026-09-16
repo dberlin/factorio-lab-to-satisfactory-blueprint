@@ -11,6 +11,7 @@ against each other rather than each against a number written here.
 from __future__ import annotations
 
 import ast
+import math
 import subprocess
 import sys
 from fractions import Fraction
@@ -20,6 +21,7 @@ from itertools import product
 import pytest
 
 from flab2bp.sfy.geometry import world_port
+from flab2bp.sfy.layout.corridors import attachment_box_cm
 from flab2bp.sfy.layout.lattice import (
     GROUND_LEVEL,
     Lattice,
@@ -157,6 +159,31 @@ def test_the_wall_lines_and_the_ceiling_are_never_passable() -> None:
     for i, j in product(range(n + 1), repeat=2):
         assert not occupancy.free((i, j, n))
     assert occupancy.free((1, 1, n - 1))
+
+
+@pytest.mark.parametrize("mark", ["mk1", "mk2", "mk3"])
+def test_object_lines_allow_exact_attachment_wall_clearance(mark: str) -> None:
+    """A box may touch the wall; adding the belt margin would waste a line."""
+    lattice = _lattice(mark)
+    half = attachment_box_cm(_registry())
+    inset = math.ceil(half / lattice.grid_cm)
+    lines = lattice.object_lines
+    assert lines == range(inset, lattice.n - inset + 1)
+    occupancy = occupancy_for(lattice, (), (), (), (), _registry())
+    for line in (lattice.open_lines.start, lattice.open_lines.stop - 1):
+        assert line not in lines
+        assert occupancy.free((line, lattice.n // 2, GROUND_LEVEL))
+    for line in (lines.start, lines.stop - 1):
+        x = lattice.world((line, lattice.n // 2, GROUND_LEVEL))[0]
+        assert -lattice.designer.half_cm <= x - half
+        assert x + half <= lattice.designer.half_cm
+
+
+def test_a_node_only_lattice_needs_no_attachment_measurement() -> None:
+    lattice = Lattice(designer("mk1", _registry()), _lattice().grid_cm)
+    node = (lattice.open_lines.start, lattice.n // 2, GROUND_LEVEL)
+    assert lattice.node(lattice.world(node)) == node
+    assert lattice.object_lines == lattice.open_lines
 
 
 # --- what a placed object takes --------------------------------------------

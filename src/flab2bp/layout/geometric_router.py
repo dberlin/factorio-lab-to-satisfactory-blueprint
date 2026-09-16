@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import Final, Literal, TypedDict
 
 from ._geometric_kernel import search_intervals
+from .geometric_motion import MotionPolicy, MotionWitness
 from .geometric_world import GeometricWorld
 
 #: The only routing backend; reported in placement stats as ``route_backend``.
@@ -26,9 +27,10 @@ class GeometricMetrics(TypedDict):
 
     ``charged_work`` is scanned occupancy/history cells plus processed active
     intervals, including the bounded reverse probe (at most min(max_work/16,
-    1024) work). Forward search receives only the remaining allowance. Offers,
-    profile intersections, and selected-path certification are measured
-    separately. All native inner loops also enforce the deadline.
+    1024) work) for unconstrained queries. Constrained queries charge policy
+    validation, conversion and indexing to the same allowance and search only
+    forward. Offers, profile intersections, and selected-path certification are
+    measured separately. All native inner loops also enforce the deadline.
     ``certified_edges`` counts directed edge checks during certification, not
     the selected path's length. ``retained_native_bytes`` is an accounted
     storage lower bound: it excludes Python inputs, unused heap capacity, and
@@ -70,6 +72,7 @@ class GeometricQuery:
     present: array[float] | None = None
     charge_occupied_cells: bool = False
     cancelled: Callable[[], bool] | None = None
+    motion: MotionPolicy | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,17 +83,19 @@ class GeometricResult:
     ``reachable`` is the complete source component on forward exhaustion;
     ``co_reachable`` is the complete goal-reaching component on reverse
     exhaustion (``None`` means no reverse proof). Neither component is supplied
-    for an interrupted query.
+    for an interrupted or motion-exhausted query. Motion exhaustion proves only
+    that no accepting product-state path exists; it is not a sealed component.
     Path certification proves the admitted directed graph, not a factory's
     later physical transaction, source splitter, or final placement validator.
     """
 
-    kind: Literal["routed", "budget", "exhausted", "cancelled"]
+    kind: Literal["routed", "budget", "exhausted", "cancelled", "motion-exhausted"]
     path: tuple[int, ...] | None
     cost: float | None
     reachable: tuple[tuple[int, int, int, int], ...]
     co_reachable: tuple[tuple[int, int, int, int], ...] | None
     metrics: GeometricMetrics
+    motion: MotionWitness | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,7 +105,7 @@ class SearchOutcome:
     Both routers reached into :class:`GeometricResult` the same way -- pull
     ``metrics["charged_work"]``, compare ``kind`` against the same string
     literals -- so the kernel's status encoding was spelled out at every call
-    site. The three flags are mutually exclusive and exactly one is set when
+    site. The four flags are mutually exclusive and exactly one is set when
     ``path`` is ``None``.
 
     This says WHICH bound the kernel hit, not which the CALLER should report:
@@ -116,6 +121,8 @@ class SearchOutcome:
     exhausted_budget: bool
     cancelled: bool
     exhausted: bool
+    motion_exhausted: bool = False
+    motion: MotionWitness | None = None
 
 
 def summarize(result: GeometricResult) -> SearchOutcome:
@@ -126,13 +133,15 @@ def summarize(result: GeometricResult) -> SearchOutcome:
         exhausted_budget=result.kind == "budget",
         cancelled=result.kind == "cancelled",
         exhausted=result.kind == "exhausted",
+        motion_exhausted=result.kind == "motion-exhausted",
+        motion=result.motion,
     )
 
 
 def route(query: GeometricQuery) -> GeometricResult:
     """Search the query without changing the caller's occupancy or budget."""
     world = query.world
-    status, path, cost, reachable, metrics = search_intervals(
+    status, path, cost, reachable, metrics, motion = search_intervals(
         world.flags,
         world.history,
         query.pressure,
@@ -148,17 +157,20 @@ def route(query: GeometricQuery) -> GeometricResult:
         query.present,
         query.charge_occupied_cells,
         query.cancelled,
+        query.motion,
     )
-    kind: Literal["routed", "budget", "exhausted", "cancelled"]
+    kind: Literal["routed", "budget", "exhausted", "cancelled", "motion-exhausted"]
     if status == 0:
         kind = "routed"
     elif status == 1:
         kind = "budget"
     elif status == 3:
         kind = "cancelled"
+    elif status == 5:
+        kind = "motion-exhausted"
     else:
         kind = "exhausted"
     co_reachable = reachable if status == 4 else None
     if status == 4:
         reachable = ()
-    return GeometricResult(kind, path, cost, reachable, co_reachable, metrics)
+    return GeometricResult(kind, path, cost, reachable, co_reachable, metrics, motion)

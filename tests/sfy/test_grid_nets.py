@@ -442,6 +442,25 @@ def test_a_node_a_run_is_broken_at_is_no_longer_a_tap_or_beside_one() -> None:
     assert (5, 17 + TAP_CLEAR_NODES, GROUND_LEVEL) in taps
 
 
+@pytest.mark.parametrize("axis", (0, 1), ids=("x", "y"))
+@pytest.mark.parametrize("high", (False, True), ids=("low-wall", "high-wall"))
+def test_a_tap_is_only_offered_where_an_object_may_stand(axis: int, high: bool) -> None:
+    """Belt-only wall lines cannot host a splitter; the first object line can."""
+    lattice = _lattice()
+    outer = lattice.open_lines.stop - 1 if high else lattice.open_lines.start
+    inner = lattice.object_lines.stop - 1 if high else lattice.object_lines.start
+    assert outer not in lattice.object_lines
+
+    def along(line: int) -> tuple[Node, ...]:
+        if axis == 0:
+            return _line((line, 5, GROUND_LEVEL), (line, 25, GROUND_LEVEL))
+        return _line((5, line, GROUND_LEVEL), (25, line, GROUND_LEVEL))
+
+    assert tap_nodes((along(outer),), lattice) == ()
+    middle = (inner, 15, GROUND_LEVEL) if axis == 0 else (15, inner, GROUND_LEVEL)
+    assert middle in tap_nodes((along(inner),), lattice)
+
+
 def test_a_climb_ends_a_run_so_no_tap_stands_on_a_ramp() -> None:
     """An incline's via is a node of the path and a splitter cannot sit on it."""
     flat = _line((5, 2, GROUND_LEVEL), (5, 12, GROUND_LEVEL))

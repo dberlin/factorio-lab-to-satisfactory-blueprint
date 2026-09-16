@@ -618,13 +618,14 @@ and this list is the whole of it — every entry says what it costs.
    over-covered: a Constructor's 800 × 1000 box turned 45° bounds to
    1273 × 1273, about three extra lines in `X`. It is stricter, never laxer, and
    `_mark_box` says so.
-7. **A pre-existing belt is blocked by one box per spline segment, not by the
+7. **Belt geometry is bounded by one box per spline segment, not by the
    game's chain.** `belt.clearance` lays a chain of short boxes hugging the
    curve; `_belt_boxes` lays one axis-aligned box over the whole segment, sized
-   from the four Bézier control points, which contains the curve exactly and so
-   can never under-block. On a straight run — every run this lattice routes —
-   the two are the same box. On a turn the lattice also denies the corner the arc
-   never reaches: up to `r(1 − 1/√2)`, about 58 cm on a 200 cm quarter turn.
+   from the four Bézier control points, containing the curve with clearance
+   padding. This is a conservative routing proxy, including endpoint padding,
+   not an exact reconstruction of the game's chain. On a turn it also denies
+   the corner the arc never reaches: up to `r(1 − 1/√2)`, about 58 cm on a
+   200 cm quarter turn.
 
 ### The flat array and the predicate must agree
 
@@ -643,6 +644,59 @@ in the grid-routed strategy. They are written as such: a box's node range is
 computed once per axis and the resulting slab is written a column at a time, never
 one predicate call per node per box.
 
+### Object collision is not centreline passability
+
+`Occupancy.static_bounds` retains the physical obstacle bounds from flattening.
+The routing loop separately caches bounds for committed realised objects and
+removes/restores them with their net. Lift-column admission compares those
+bounds, not two already belt-inflated node masks. A virtual belt overlapping
+both a lift and a machine does not prove that the lift overlaps the machine:
+the regression's lift starts at Y=505 cm beside a Constructor ending at Y=500 cm.
+Their 5 cm gap is legal under the same box contract that previously rejected it.
+
+Centre-shaft, floor, roof and designer checks remain. A linked belt's endpoint
+segment may meet its lift; the rest of that belt is still collision-checked,
+including a later segment that returns through the shaft. Unknown foreign
+occupancy without registered physical bounds fails closed. Belt bounds retain
+the conservative Bézier-hull proxy above; this does not claim that the unread
+game clearance rule has become known.
+
+### Turn and connector legality belong in search
+
+Satisfactory supplies a finite motion policy to the shared geometric interval
+kernel. Its product state retains heading, slope-leg progress, the previous
+turn's geometric reach and the outgoing room still owed to that turn. Each
+state has its own cost envelope over the shared occupancy/history profiles.
+Transient progress translates whole intervals; mature straight states retain
+whole-run closure. This is the same router, not a cell-priority fallback. DSP
+queries without a policy keep their existing graph semantics.
+
+The policy reads turn options, merged-ramp reserve and lift geometry from the
+registry-backed geometry helpers. A lift's belt connection is flat; a ramp via
+is not a corner or a cut. Actual connector facing and off-grid stub length enter
+the initial and accepting states. A goal coordinate alone is not success.
+Attachment turns additionally require flat legs and an eligible object standing
+domain. Turn cost and geometric reach remain distinct: a shared minimum belt
+is paid once, not once at each adjacent attachment.
+
+Search preserves the selected primitive and turn actions, including a final
+action for a corner into a sink stub. The realiser validates and replays that
+witness rather than making a new greedy choice. Fixed authored paths use the
+same geometry predicates and a finite option resolver. Certified paths are not
+subsequently shortened by coordinate-only loop deletion or rewritten to repair
+lift landings.
+
+Motion-constrained queries run forward. Their exhaustion is distinct from a
+physical sealed pocket and does not manufacture wall blame. Policy preparation,
+state search and certification consume the original deadline and work ledger.
+Only states whose remaining geometric obligations are equivalent are merged;
+state growth and interval fragmentation can still exhaust the budget.
+
+This certificate does not replace full physical admission. Lift shafts and
+object collisions, maximum spline chunking and the final emitted-belt chord
+minimum remain checked afterward. A first candidate may fail those checks;
+only a fully admitted and validated placement is a successful factory.
+
 ## Grid-routed
 
 `flab2bp.sfy.layout.grid`'s `GridRouted` is the second strategy, and it is a
@@ -655,10 +709,10 @@ hologram grid, and where a belt goes is what the router returns.
 A fluid is refused first, before a limit is read or a lattice is built — the same
 sentence `ManifoldRows` refuses on, asked of FactorioLab's own dataset. Then the
 limits are read once into one `Measures`, the `Lattice` is built from the designer
-and the registry, and for each of `ARRANGEMENTS` (3, ours):
+and the registry, and for each deterministic arrangement under the deadline:
 
 1. `packer.pack` stands the machines, seeded by the arrangement number so that two
-   runs of one spec walk the same three arrangements, and priced by what the last
+   runs of one spec walk the same seed sequence, and priced by what the last
    arrangement's routing learned;
 2. `lattice.occupancy_for` flattens them;
 3. `grid_nets.nets_for` says what has to be belted;
@@ -671,29 +725,32 @@ and the registry, and for each of `ARRANGEMENTS` (3, ours):
 Where a net *is* stranded, its id and the router's blame become a `Feedback`: the
 previous evidence decayed by `packer.DECAY` (0.85) at the boundary, plus one
 `STRANDED_WEIGHT` per stranded net and one node of belt per `BLAME_WEIGHT` the
-router charged (`HOT_NODE_SCALE`). Both halves are evidence and neither is a
-constraint — no cheap surrogate predicts routability — so a floor the router
-failed on is made expensive rather than illegal.
+router charged (`HOT_NODE_SCALE`). Failed-net weights increase the span objective.
+Hot-node weights select at most eight distinct XY positions whose belt-inflated
+machine footprints are kept clear in the next arrangement. If those keep-outs
+make the packing model infeasible, it retries without them under the same absolute
+deadline: routing history is search guidance, not evidence that a factory cannot fit.
 
 ### The wall, and how it is split
 
 The deadline is `absolute_deadline` when a caller gives one (a race hands both
 strategies the same `time.monotonic()` frame) and `time.monotonic() +
-time_budget_s` otherwise. Each arrangement takes an equal share of what is *left*,
-so an arrangement that came in under its slice hands the rest on and the last one
-gets the whole remainder. Inside a slice the packer takes `PACK_SHARE` (a third,
-ours) and the router the rest: the packer holds an incumbent within its own
-`max_deterministic_time` and returns it when the clock stops, while the router
-spends every second it is given.
+time_budget_s` otherwise. The first `INITIAL_ARRANGEMENTS` (3, ours) reserve equal
+shares of what is *left*. An early finish hands unused time on. From the third
+arrangement onward the slice ends exactly at the original deadline, so additional
+arrangements may use the remaining wall without a new count cap. Inside a slice
+the packer takes `PACK_SHARE` (two thirds, ours) and the router the rest. The
+packer also has a deterministic-work limit.
+The recovery measurement found that a 1.67-second first pack returned an unroutable
+incumbent for plate-60/mk1, whereas a three-second pack returned an arrangement
+that routed in one round. The user-approved continuation preserves that initial
+schedule and the total deadline. It converts concrete-60/mk1 within the original
+15-second budget; stopping after three had refused it with time left.
 
-A *later* arrangement whose pack runs out of clock is not the run's answer: the
-build has already been packed and routed once, and telling a caller "packing
-exceeded the budget" would send them off to shrink machines that really did
-stand. Such a pack stops the loop and the refusal comes from what the routing
-found. A *first* arrangement that runs out has nothing behind it and says so, and
-a pack that *proved* the machines do not stand (`the packer found no arrangement`)
-is reported as itself however late it comes — the two wear one exception type and
-only the bound is a reason to fall back.
+Every packing failure keeps its own cause, whether it is the first arrangement
+or a later one. An earlier routing miss cannot disguise a later packing timeout
+as a ruled geometric refusal. A pack that proves the machines do not stand
+(`the packer found no arrangement`) remains distinct from a search bound.
 
 ### The lift class
 
@@ -726,43 +783,74 @@ cause's name (the discipline `strategy._row_cause` states).
 | `manifold.RowError` | by message | `strategy._row_cause`'s table |
 | `budget.BudgetExhausted` | — | by stage: packing, or routing |
 
-Two refusals the loop reaches by **running out of arrangements** rather than by
-catching anything, because `rrr.route_all` returns its failures rather than
-raising them. Where every stranded net's `Routed` is a `BUDGET` result, a bound
-ended it and nothing has been proved about the build, so the cause is `routing
-exceeded the budget`; otherwise the geometry refused and the cause is `a belt
-could not be routed`, naming each net that still has no tree.
+The continuation loop exits on its global deadline as `routing exceeded the
+budget`, retaining the last stranded-net details. These diagnostics do not prove
+game impossibility. Packing exceptions retain their stage-specific cause; an
+earlier geometric miss never turns a later timeout into an acceptable corpus
+pin. A placement finishing after the global deadline is not returned.
 
 ### What is ours
 
-`ARRANGEMENTS` (3), `PACK_SHARE` (a third), `STRANDED_WEIGHT` (1), `HOT_NODE_SCALE`
-(one node of belt per `BLAME_WEIGHT`) and `WORKERS` (1, because a strategy is pure
-and more than one CP-SAT worker makes the incumbent a race between threads). The
-description's own arithmetic is ours too: attachments are split into taps and
-corner turns by the *shape* `route_all` hands back — a tap arrives as a `Realised`
-of one attachment and no belts — and the corners are counted off the committed
-paths, a node whose step in differs from its step out at one level.
+`INITIAL_ARRANGEMENTS` (3 reserved initial shares), `PACK_SHARE` (two thirds), `STRANDED_WEIGHT` (1),
+`HOT_NODE_SCALE` (one node of belt per `BLAME_WEIGHT`) and `WORKERS` (1) are search
+policy, not game limits. Single-worker CP-SAT avoids thread races, but a wall-time
+limit still makes the returned incumbent sensitive to host load.
 
-It reports those two counts **side by side and never subtracts one from the
-other**. `realise` does not say which kind `choose_turn` picked at each corner, and
-the path count is a floor on what the realiser was offered — a stub out of a port
-standing off its own node can put a right angle where no three path nodes show one
-— so an arc count would be a subtraction that can go the wrong way. A `Realised`
-that carried the turn kinds would make it exact, and the M3 evidence table wants
-exactly that.
+Before CP-SAT, necessary packing bounds can prove a refusal without consuming
+the search budget. The first sums each machine's minimum complete-yaw rectangle
+area. Three conservative size scales add stronger bounds: an exact one-dimensional
+knapsack certifies each transformed side capacity, then transformed minimum-yaw
+areas are compared against that capacity squared. These use the model's existing
+rounded, half-grid-inflated hard rectangles, never apron area or routing blame.
+Failure to find a certificate says nothing about feasibility; it cannot turn
+an UNKNOWN solve into an impossibility claim.
 
-### What does not route yet
+The description counts the exact `Realised.turns` replayed by the realiser:
+arcs and attachment corners separately, plus authored lift transitions. Tap
+attachments have no turn entry, so subtracting the attachment-turn count from
+all attachments gives the tap count without guessing from path geometry.
 
-A corpus flow runs several machines on one recipe, so the item it belts in is one
-stream from the `−Y` wall to several machine ports (R-M3-5 and R-M3-7), and that
-needs a trunk with a tap on it. Two things below this strategy stop that today,
-both reproduced in the M3 Task 10 report:
+### Wall branches and realisation
 
-* the packer prices a wall-fed sink at its distance to the wall line, so such a
-  port lands exactly `port_apron_nodes` (four) nodes off the wall and the trunk to
-  it is four nodes where `tap_nodes` needs `2·clear + 1` (nine). The second sink
-  then has nowhere to start and the net strands `DYNAMIC_ACCESS`;
-* given room, the trunk *is* tapped and the branch leaving the tap turns after
-  three grid steps. An attachment turn costs `box + lead_in` = 301 cm and three
-  steps are 300, so the realiser refuses the corner by one centimetre — and the
-  router's cost is one per flat step, which gives it no reason to leave a fourth.
+A wall-sourced or wall-sunk item may use several independent boundary belts when
+the committed tree has no legal tap. Each connected component carries its own
+balanced share; a machine supplying the same item as an external input does not
+erase the external obligation. The description lists every physical wall
+crossing, not the inset routing node. These are the player's connections to make,
+not an inferred single trunk.
+
+Tap queries start or end one outward flat step beyond the attachment's actual
+side port, outside the committed trunk's shadow. That displacement is explicit
+connector-to-access stub credit, not a fictitious physical port or an
+uncertified path rewrite. The selected stub and native path are staked as
+separate adjoining segments. Unselected ports are not opened as transit cells,
+so they cannot become ramp vias through the trunk's shadow.
+
+A candidate tap must preserve legal witnesses for both remaining parent pieces.
+Cached fixed-path prefix/suffix relations test the proposed cuts without
+emitting objects or searching a graph per candidate. Selecting a tap commits
+the updated parent and child witnesses with ownership; rip-up and restore keep
+the proofs and physical claims together. This applies to splitters, mergers
+and required external-input branches.
+
+The grid packer and realiser use the same attachment-turn requirement:
+`reach + shortest_belt` (201 cm, three grid steps for the current registry),
+rather than the manifold corridor's conservative 301 cm. On a shared flat leg,
+two attachment reaches need only one minimum-length belt between them, not two.
+The attachment box is soft, but it must still remain inside the designer:
+`Lattice.object_lines` intersects belt-legal nodes with the direct object-box
+wall bound. Arcs need no attachment box. Attachment candidates also require
+horizontal belt tangents on both ports: an incline's spare run does not create
+a horizontal tangent. Those eligibility checks happen before turn selection,
+so a legal arc remains available when an attachment is not. Tap candidates use
+the same object bound and leave clearance on both sides of a ramp.
+The packer's port apron includes the endpoint at that many steps from the port;
+subtracting one step would let another machine block the first-free approach.
+
+Routing can still refuse or exhaust its bounds. Turn-aware reachability does
+not prove that every shaft is clear, every final spline chunk is long enough,
+or the current packing can be completed. Changing designer size need not
+improve a time-limited packing incumbent. These are measured outcomes, not
+proof that the factory is impossible. The M3 audit records the actual
+per-strategy matrix; budget exhaustion and invalid geometry are not ruled
+geometric refusals.

@@ -262,34 +262,55 @@ recipe, connection port and placement limit — extracted from an installed copy
 registry and a first authored blueprint: `uv run python scripts/sfy_checkpoint1.py` builds one
 into `out/sfy/` (not committed) and checks it; its docstring says how to load it in game.
 
-Milestone 2 makes it a build. The same `flab2bp` command takes a Satisfactory URL:
+The same `flab2bp` command takes a Satisfactory URL:
 
 ```bash
 flab2bp 'https://factoriolab.github.io/sfy/list?o=iron-plate*60&v=11' \
     --flow plates.csv --designer mk1 -o blueprints/
 ```
 
-It lays the flow out as *manifold rows* — one row of machines per recipe, stacked along `Y`,
-with a corridor of belt columns down each side — validates the placement against the rules
-extracted from the game, and writes `<name>.sbp` and `<name>.sbpcfg` into the directory `-o`
-names (created if missing; the report goes to stdout, since the blueprint is two binary files).
-Copy both into a save's `blueprints/<session>` folder and load them from inside a Blueprint
-Designer. `--designer` picks the designer to fit inside — `mk1`, `mk2` or `mk3`, sized from the
-game's own designer buildable — and defaults to `mk1`.
+It validates the placement against the rules extracted from the game and writes
+`<name>.sbp` and `<name>.sbpcfg` into the directory `-o` names (created if missing;
+the report goes to stdout, since the blueprint is two binary files). Copy both
+into a save's `blueprints/<session>` folder and load them from inside a Blueprint
+Designer. `--designer` picks `mk1`, `mk2` or `mk3`, sized from the game's own
+designer buildable, and defaults to `mk1`.
+
+`--strategy` accepts `manifold-rows`, `grid-routed`, or `best` (the default).
+The manifold lays recipe rows and belt corridors; the grid strategy packs
+machines and searches conveyor paths, including lifts and attachment turns.
+`best` runs both serially with equal shares of one layout deadline and selects
+a validator-clean result by blueprint count, occupied volume, belt length, then
+stable strategy order. The report names the winner, its measurements and any
+losing refusals. A refused grid search is not proof that the factory cannot fit.
 
 **FactorioLab's own solved flow is required**, unlike the DSP path, which re-derives a recipe
 selection when none is given. Pass `--flow` with the CSV the list view's "download as CSV"
 button writes, or `--fetch-flow` to have it captured from the URL; without one the build refuses
-rather than solving a selection the player did not choose. Exit codes are the DSP command's: `0`
-written, `1` the validator found errors and the blueprint was withheld (`--allow-invalid`
-overrides), `2` a bad URL, spec or missing flow, `3` no layout.
+rather than solving a selection the player did not choose. Exit codes are `0`
+written, `2` a bad URL, spec or missing flow, and `3` no validator-clean layout or
+no encodable blueprint. `--allow-invalid` remains DSP-only; it cannot override
+the Satisfactory strategy's validation contract.
 
-What M2 refuses, rather than guessing at: **fluids** (`fluids are M5` — nothing pipes yet, so a
-flow carrying one is refused before any geometry), a **run past the fastest belt the save can
-build** (`run exceeds the belt ceiling`), and anything that **does not fit the chosen designer**
-in a single level of rows (`rows exceed the designer depth`/`width`).
+Both strategies refuse **fluids** (`fluids are M5`) and a **run past the fastest
+belt the save can build** (`run exceeds the belt ceiling`). The manifold also
+refuses chains that do not fit its single level of rows. The grid reports
+packing and routing failures separately, including budget exhaustion.
 
-What fits is the sum of four things, measured rather than assumed, against the designer's own
+The web build API accepts the same strategy/designer choices and a pinned flow.
+Successful Satisfactory jobs expose downloadable `.sbp`/`.sbpcfg` artifacts in
+their result, not DSP viewer geometry. The Satisfactory viewer is M4 work.
+
+For the current in-game checkpoint, run
+`uv run python scripts/sfy_checkpoint3.py --out out/sfy --time-budget 15`.
+It writes grid-routed concrete and plate factory pairs plus a separately labelled
+lift-and-attachment transport witness, with installation and per-belt rates in
+`out/sfy/checkpoint3-README.md`. The witness is not a complete factory benchmark.
+Binary/physical validation does not replace the in-game paste test, and the
+[M3 corpus acceptance gate](docs/superpowers/specs/2026-09-13-satisfactory-target-design.md#15-m3-implementation-status--acceptance-remains-open)
+remains open.
+
+For the manifold, what fits is the sum of four things, measured rather than assumed, against the designer's own
 32 m (Mk.1), 40 m (Mk.2) or 48 m (Mk.3):
 
 - **each row's own band, 15.6–22.6 m** over the corpus — the machine's hard clearance boxes and

@@ -239,6 +239,54 @@ def test_a_straight_run_on_an_empty_lattice_is_one_interval() -> None:
     assert _interval_pops(occupancy, (4, 4, 2), (4, 28, 2)) < 64
 
 
+def test_search_returns_a_realisable_detour_instead_of_a_short_corner() -> None:
+    from fractions import Fraction
+    from itertools import count
+
+    from flab2bp.sfy.layout.motion import motion_profile
+    from flab2bp.sfy.layout.realise import Terminal, realise
+    from flab2bp.sfy.layout.strategy import _measure
+
+    occupancy = _empty()
+    lattice = occupancy.lattice
+    start, goal = (8, 8, GROUND_LEVEL), (9, 15, GROUND_LEVEL)
+    source = Terminal(start, lattice.world(start), (1.0, 0.0, 0.0), None, "wall")
+    sink = Terminal(goal, lattice.world(goal), (1.0, 0.0, 0.0), None, "wall")
+    measures = _measure(_registry(), lattice.designer)
+    transitions = _table(lattice, lifts=False)
+    profile = motion_profile(lattice, measures, _registry(), "Build_ConveyorLiftMk1_C", transitions)
+    routed = route_net(
+        occupancy,
+        starts=(start,),
+        goals=(goal,),
+        pressure=0.0,
+        budget=WorkBudget(left=None),
+        deadline=None,
+        transitions=transitions,
+        profile=profile,
+        sources=(source,),
+        sinks=(sink,),
+    )
+    assert routed.path is not None
+    assert routed.motion is not None
+    laid = realise(
+        routed.path,
+        source=source,
+        sink=sink,
+        lattice=lattice,
+        measures=measures,
+        registry=_registry(),
+        belt_class="Build_ConveyorBeltMk1_C",
+        lift_class="Build_ConveyorLiftMk1_C",
+        item_id="iron-ingot",
+        rate=Fraction(1),
+        ids=count(1),
+        motion=routed.motion,
+    )
+    assert laid.belts[0].start == source.world
+    assert laid.belts[-1].end == sink.world
+
+
 def _interval_pops(occupancy: Occupancy, start: Node, goal: Node) -> int:
     """The kernel's own interval count for the query ``route_net`` would make.
 

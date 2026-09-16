@@ -134,7 +134,14 @@ class Handler(BaseHTTPRequestHandler):
     def _wants_gzip(self) -> bool:
         return "gzip" in self.headers.get("Accept-Encoding", "").lower()
 
-    def _send(self, status: int, body: bytes, content_type: str) -> None:
+    def _send(
+        self,
+        status: int,
+        body: bytes,
+        content_type: str,
+        *,
+        download_name: str | None = None,
+    ) -> None:
         encoding: str | None = None
         # The bundle is 1.2MB of JavaScript and compresses to under a third of
         # that. Skipped for anything small (the header costs more than it
@@ -146,6 +153,8 @@ class Handler(BaseHTTPRequestHandler):
 
         self.send_response(status)
         self.send_header("Content-Type", content_type)
+        if download_name is not None:
+            self.send_header("Content-Disposition", f'attachment; filename="{download_name}"')
         if encoding is not None:
             self.send_header("Content-Encoding", encoding)
             self.send_header("Vary", "Accept-Encoding")
@@ -199,6 +208,26 @@ class Handler(BaseHTTPRequestHandler):
             self._json(
                 HTTPStatus.OK,
                 {"ok": True, "front_end_built": (self.dist / "index.html").is_file()},
+            )
+            return
+
+        if path.startswith("/api/build/") and "/artifacts/" in path:
+            job_id, _, filename = path.removeprefix("/api/build/").partition("/artifacts/")
+            job = self.builder.get(job_id)
+            artifact = None
+            if job is not None:
+                with job._lock:
+                    artifact = job.artifacts.get(filename)
+            # Only exact names retained by this job can be downloaded. No URL
+            # component is ever interpreted as a filesystem path.
+            if artifact is None:
+                self._json(HTTPStatus.NOT_FOUND, {"error": "no such artifact"})
+                return
+            self._send(
+                HTTPStatus.OK,
+                artifact,
+                "application/octet-stream",
+                download_name=filename,
             )
             return
 

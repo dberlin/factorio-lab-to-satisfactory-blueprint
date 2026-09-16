@@ -16,10 +16,13 @@ from __future__ import annotations
 
 import math
 import time
-from collections.abc import Iterator, Sequence
+from collections.abc import Collection, Iterator, Sequence
+from dataclasses import replace
 from fractions import Fraction
 from functools import cache
 from itertools import count
+
+import pytest
 
 from flab2bp.layout.budget import WorkBudget
 from flab2bp.sfy.labmap import LabMap, load_lab_map, machine_class
@@ -28,31 +31,51 @@ from flab2bp.sfy.layout.grid_nets import (
     TAP_CLEAR_NODES,
     GridNet,
     belt_class_for,
+    nets_for,
     terminal_for,
     tier_for,
 )
 from flab2bp.sfy.layout.lattice import GROUND_LEVEL, Lattice, Node, Occupancy, occupancy_for
 from flab2bp.sfy.layout.manifold import SPLITTER_CLASS
-from flab2bp.sfy.layout.model import BeltRun, MachineObj, Pose, SfyPlacement, Vector
-from flab2bp.sfy.layout.realise import Terminal
-from flab2bp.sfy.layout.router import BudgetCause, RouteFailureKind
+from flab2bp.sfy.layout.model import (
+    BeltRun,
+    LiftObj,
+    Link,
+    MachineObj,
+    Pose,
+    SfyPlacement,
+    Vector,
+    belt_ends,
+)
+from flab2bp.sfy.layout.motion import lift_heights
+from flab2bp.sfy.layout.realise import Realised, Terminal, realise
+from flab2bp.sfy.layout.router import BudgetCause, Routed, RouteFailureKind
 from flab2bp.sfy.layout.rrr import (
     RRR_MAX,
     RoutedTree,
     RoutingOutcome,
+    _attempt,
+    _blocked_column,
     _Branch,
+    _build,
+    _commit_branch,
     _flows,
     _in_the_doorway,
-    _lift_heights,
+    _physical,
+    _Played,
+    _restore,
     _Run,
+    _shut_shafts,
     route_all,
 )
+from flab2bp.sfy.layout.splines import straight
 from flab2bp.sfy.layout.strategy import _measure
 from flab2bp.sfy.layout.transitions import incline_run_nodes, sfy_transitions
-from flab2bp.sfy.layout.validate import validate
+from flab2bp.sfy.layout.validate import TOUCH_CM, validate
 from flab2bp.sfy.registry import Port, Registry, load_registry
 from flab2bp.sfy.spec import SfyBuildSpec, SfyMachineGroup, designer
 from flab2bp.spec import BeltTier
+from tests.sfy.conftest import flow_spec
 from tests.sfy.test_realise import BELT_CHECKS, LIFT_CHECKS
 
 #: The one clearance check the validator will actually judge.  Belt-to-belt
@@ -448,28 +471,16 @@ def _pinch() -> tuple[tuple[MachineObj, ...], tuple[BeltRun, ...], tuple[GridNet
     return ((maker, eater), belts, (net,))
 
 
-def test_a_realise_failure_is_charged_and_the_next_round_avoids_the_corner() -> None:
-    """A corner the realiser refuses is blamed by NODE, and the net goes round it.
-
-    The blame is deliberately local -- the corner and its two neighbours along
-    the path, which is what :class:`~flab2bp.sfy.layout.realise.RealiseError`
-    names -- because the loop prices congestion per node and a wide blame moves
-    belts that were never in the way.  Every charge reaches BOTH the congestion
-    history the kernel prices and the blame the packer reads, and the belt that
-    is finally laid stands on none of it.
-    """
+def test_turn_policy_routes_over_an_unbuildable_gap_without_corner_blame() -> None:
+    """Infeasible turns are excluded before emission, not learned by retrying."""
     machines, belts, nets = _pinch()
     occupancy = occupancy_for(_lattice(), machines, (), (), belts, _registry())
     outcome = _route(nets, occupancy)
 
-    charged = {node for node, weight in outcome.blame.items() if weight > 0.0}
-    assert charged, "a refused corner names the nodes that pinched it"
-    for node in charged:
-        assert occupancy.history[_lattice().index(node)] > 0.0
+    assert outcome.blame == {}
 
     assert outcome.stranded == ()
     laid = outcome.trees[0].paths[0]
-    assert not (set(laid) & charged), "the belt that was laid stands on none of it"
     assert max(_levels(laid)) > GROUND_LEVEL, "it went over the belt in the way"
     _judge(outcome, *machines)
 
@@ -634,6 +645,122 @@ def test_a_lift_is_only_built_where_its_whole_column_is_free() -> None:
                 assert not occupancy.free((low[0], low[1], level))
 
 
+def test_lifts_cross_a_constructor_wall_with_flat_owned_landings() -> None:
+    """The certified path searches flat lift connections, without landing rewrites."""
+    machines = tuple(
+        _machine(100 + index, CONSTRUCTOR, x, 0.0, 0.0, ROD)
+        for index, x in enumerate((-1200.0, -400.0, 400.0, 1200.0))
+    )
+    lattice = _lattice()
+    source = Terminal((16, 1, 2), lattice.world((16, 1, 2)), (0.0, 1.0, 0.0), None, "wall")
+    sink = Terminal((16, 31, 2), lattice.world((16, 31, 2)), (0.0, -1.0, 0.0), None, "wall")
+    net = _net(1, (source,), (sink,), (Fraction(1, 4),))
+    occupancy = _occupancy(*machines)
+    outcome = _route((net,), occupancy)
+    assert outcome.stranded == ()
+
+    lifts = tuple(lift for piece in outcome.realised for lift in piece.lifts)
+    assert {math.copysign(1.0, lift.height_cm) for lift in lifts} == {-1.0, 1.0}
+    for tree in outcome.trees:
+        for path in tree.paths:
+            for node in path:
+                assert not occupancy.free(node)
+    _judge(outcome, *machines)
+
+
+def test_tap_cut_preserves_parent_turn_room_and_restores_its_witnesses() -> None:
+    """A structurally straight tap may still consume a preceding turn's debt."""
+    lattice = _lattice()
+    source_node, corner, sink_node = (4, 8, 2), (8, 8, 2), (8, 20, 2)
+    path = (*_line(source_node, corner), *_line(corner, sink_node)[1:])
+    source = Terminal(source_node, lattice.world(source_node), (1.0, 0.0, 0.0), None, "wall")
+    sink = Terminal(sink_node, lattice.world(sink_node), (0.0, -1.0, 0.0), None, "wall")
+    share = Fraction(1, 8)
+    net = _net(1, (source,), (sink,), (share,))
+    run = _loop(_occupancy())
+    allowed = frozenset(path)
+    closed = tuple(
+        (x, y, z)
+        for x in range(lattice.n + 1)
+        for y in range(lattice.n + 1)
+        for z in range(lattice.n + 1)
+        if (x, y, z) not in allowed
+    )
+    routed = run.query((source,), (sink,), (), closed)
+    assert routed.path == path
+    branches: list[_Branch] = []
+    _commit_branch(run, net, branches, routed, source, sink, share, tap=None, merging=False)
+
+    sites = run.tap_sites(branches, net)
+    assert (9, 11, 2) not in sites  # The new port would leave only 200 cm after the turn.
+    assert (9, 12, 2) in sites
+    tap = run.tap_access(branches, net, ())[(10, 12, 2)]
+    assert tap.terminal is not None
+    assert tap.terminal.node == (10, 12, 2)
+    assert tap.terminal.world == lattice.world((9, 12, 2))
+    child_node = (20, 12, 2)
+    child_sink = Terminal(child_node, lattice.world(child_node), (-1.0, 0.0, 0.0), None, "wall")
+    child = run.query((tap.terminal,), (child_sink,), (), ())
+    assert child.path is not None
+    _commit_branch(
+        run, net, branches, child, tap.terminal, child_sink, share, tap=tap, merging=False
+    )
+    attempt = _build(run, net, branches, child)
+    assert attempt.tree is not None, (attempt.failure, attempt.nodes)
+    tree = attempt.tree
+    assert len(tree.proofs[0]) == 2
+    assert tree.proofs[1][0].path[0] == tap.terminal.node
+    assert tree.proofs[1][0].motion == child.motion
+    _judge(RoutingOutcome((tree,), (), attempt.realised, 1, run.work, run.blame))
+    best = _Played(
+        (tree,),
+        (),
+        attempt.realised,
+        tuple((net.id, *ends) for ends in attempt.columns),
+        tuple(run.physical.items()),
+        0.0,
+    )
+    run.release(net.id)
+    assert net.id not in run.proofs
+    _restore(run, best)
+    assert run.proofs[net.id] == tree.proofs
+    assert not run.occupancy.free((9, 12, 2))
+
+
+def test_restore_keeps_transverse_shadow_of_an_off_grid_tap_stub() -> None:
+    from flab2bp.sfy.layout.motion import PathProof
+
+    run = _loop(_occupancy())
+    lattice = run.lattice
+    centre = lattice.world((8, 12, GROUND_LEVEL))
+    source = Terminal(
+        (11, 12, GROUND_LEVEL),
+        (centre[0] + 125.0, centre[1], centre[2]),
+        (1.0, 0.0, 0.0),
+        (101, "Output0"),
+        "tap",
+    )
+    sink_node = (20, 12, GROUND_LEVEL)
+    sink = Terminal(sink_node, lattice.world(sink_node), (-1.0, 0.0, 0.0), None, "wall")
+    share = Fraction(1, 8)
+    net = _net(1, (source,), (sink,), (share,))
+    routed = run.query((source,), (sink,), (), ())
+    assert routed.path is not None and routed.motion is not None
+    proof = PathProof(routed.path, source, sink, routed.motion)
+    tree = RoutedTree(net, (routed.path,), (), (), ((proof,),))
+    side = (10, 12, GROUND_LEVEL)
+    run.stake(net.id, routed.path)
+    run.stake(net.id, (source.node, side))
+    before = run.occupancy.snapshot()
+    beside_stub = (10, 11, GROUND_LEVEL)
+    assert not run.occupancy.free(beside_stub)
+
+    _restore(run, _Played((tree,), (), (), (), (), 0.0))
+
+    assert not run.occupancy.free(beside_stub)
+    assert run.occupancy.snapshot() == before
+
+
 def test_nothing_the_loop_returns_is_a_path_with_a_diagonal_step() -> None:
     """A belt on this lattice turns on a node, so every step is one axis at a time."""
     machines, nets = _tapped()
@@ -657,7 +784,8 @@ def _loop(occupancy: Occupancy) -> _Run:
     So that the parts of the loop can be asked a question directly: which tap
     sides it would offer, in a world the test stood up node by node.
     """
-    lattice, registry, measures = _lattice(), _registry(), _measures()
+    lattice, registry = occupancy.lattice, _registry()
+    measures = _measure(registry, lattice.designer)
     return _Run(
         occupancy=occupancy,
         lattice=lattice,
@@ -670,12 +798,131 @@ def _loop(occupancy: Occupancy) -> _Run:
         lift_class=LIFT,
         transitions=sfy_transitions(
             lattice.n + 1,
-            _lift_heights(lattice, registry),
+            lift_heights(lattice, registry),
             incline_run_nodes(registry.limits, lattice.grid_cm),
         ),
-        clear=max(TAP_CLEAR_NODES, math.ceil(measures.radius / measures.grid)),
+        clear=TAP_CLEAR_NODES,
         stakes=iter(range(1_000, 2_000)),
     )
+
+
+def _column_candidate() -> Realised:
+    """The far shaft of the measured Constructor-row route: 5 cm beyond its wall."""
+    return Realised(
+        belts=(),
+        attachments=(),
+        lifts=(LiftObj(9000, LIFT, Pose(0, 600, 200, 0), 600),),
+        links=(),
+        lift_columns=(((16, 22, 2), (16, 22, 8)),),
+    )
+
+
+def _column_net(candidate: Realised) -> GridNet:
+    low, high = candidate.lift_columns[0]
+    lattice = _lattice()
+    source = Terminal(low, lattice.world(low), (1.0, 0.0, 0.0), None, "wall")
+    sink = Terminal(high, lattice.world(high), (-1.0, 0.0, 0.0), None, "wall")
+    return _net(1, (source,), (sink,), (Fraction(1, 4),))
+
+
+def _column_blocked(run: _Run, candidate: Realised) -> tuple[Node, ...]:
+    return _blocked_column(
+        run, _column_net(candidate), (candidate,), _physical((candidate,), run.registry)
+    )
+
+
+def test_lift_five_cm_from_constructor_does_not_collide_with_a_virtual_belt() -> None:
+    machine = _machine(100, CONSTRUCTOR, -400, 0, 0, ROD)
+    assert _column_blocked(_loop(_occupancy(machine)), _column_candidate()) == ()
+
+
+@pytest.mark.parametrize("overlap,blocked", ((0.0, False), (TOUCH_CM, False), (2 * TOUCH_CM, True)))
+def test_lift_physical_overlap_uses_touch_tolerance(overlap: float, blocked: bool) -> None:
+    occupancy = _occupancy()
+    # The lift's near face is y=505; the centre shaft remains free in all cases.
+    occupancy.block_box((-200.0, 300.0, 200.0), (200.0, 505.0 + overlap, 800.0))
+    candidate = _column_candidate()
+    assert _column_blocked(_loop(occupancy), candidate) == (
+        candidate.lift_columns[0] if blocked else ()
+    )
+
+
+@pytest.mark.parametrize("kind", ("belt", "lift"))
+@pytest.mark.parametrize("clear", (False, True), ids=("overlap", "physical-gap"))
+def test_lift_checks_foreign_physical_objects_after_rip_up_and_restore(
+    kind: str, clear: bool
+) -> None:
+    run = _loop(_occupancy())
+    candidate = _column_candidate()
+    assert _column_blocked(run, candidate) == ()
+    if kind == "belt":
+        y = 20 if clear else 21
+        path = _line((10, y, 2), (22, y, 2))
+    else:
+        x = 18 if clear else 17
+        path = (
+            *_line((25, 22, 2), (x, 22, 2)),
+            *_line((x, 22, 8), (25, 22, 8)),
+        )
+    source = Terminal(
+        path[0],
+        run.lattice.world(path[0]),
+        (1.0 if kind == "belt" else -1.0, 0.0, 0.0),
+        None,
+        "wall",
+    )
+    sink = Terminal(path[-1], run.lattice.world(path[-1]), (-1.0, 0.0, 0.0), None, "wall")
+    share = Fraction(1, 4)
+    net = _net(2, (source,), (sink,), (share,))
+    branch = _Branch(tuple(path), source, sink, share, None, False)
+    run.stake(net.id, path)
+    attempt = _build(run, net, (branch,), None)
+    assert attempt.tree is not None
+    expected = () if clear else candidate.lift_columns[0]
+    assert _column_blocked(run, candidate) == expected
+    best = _Played(
+        trees=(attempt.tree,),
+        stranded=(),
+        realised=attempt.realised,
+        columns=tuple((net.id, *ends) for ends in attempt.columns),
+        physical=tuple(run.physical.items()),
+        length_cm=0.0,
+    )
+    run.release(net.id)
+    assert _column_blocked(run, candidate) == ()
+    _restore(run, best)
+    assert _column_blocked(run, candidate) == expected
+
+
+def test_lift_rejects_unknown_foreign_occupancy_even_behind_known_shadow() -> None:
+    run = _loop(_occupancy())
+    candidate = _column_candidate()
+    # An actual belt 200 cm east leaves 26 cm clear, but its node shadow meets
+    # the lift's footprint. Hide an unregistered second claimant behind it.
+    path = _line((18, 20, 2), (18, 24, 2))
+    belt = BeltRun(9001, BELT, straight((200.0, 400.0, 200.0), (0.0, 1.0, 0.0), 400.0))
+    run.stake(2, path)
+    run.physical[2] = _physical((Realised((belt,), (), (), (), ()),), run.registry)
+    assert _column_blocked(run, candidate) == ()
+    run.occupancy.commit(9999, path)
+    assert _column_blocked(run, candidate) == candidate.lift_columns[0]
+
+
+def test_lift_contact_exempts_only_linked_endpoint_segment_not_returning_belt() -> None:
+    run = _loop(_occupancy())
+    candidate = _column_candidate()
+    lift = candidate.lifts[0]
+    belt = BeltRun(9001, BELT, straight((0.0, 600.0, 200.0), (1.0, 0.0, 0.0), 500.0))
+    entry, _ = belt_ends(run.registry, BELT)
+    lift_entry, _ = belt_ends(run.registry, LIFT)
+    candidate = replace(
+        candidate, belts=(belt,), links=(Link((lift.id, lift_entry), (belt.id, entry)),)
+    )
+    assert _column_blocked(run, candidate) == ()
+    # The first segment is still attached, but a later part returns through the shaft.
+    points = (*belt.points, *straight((500.0, 600.0, 200.0), (-1.0, 0.0, 0.0), 500.0)[1:])
+    returning = replace(candidate, belts=(replace(belt, points=points),))
+    assert _column_blocked(run, returning) == candidate.lift_columns[0]
 
 
 def _carrier(path: Sequence[Node]) -> _Branch:
@@ -683,6 +930,96 @@ def _carrier(path: Sequence[Node]) -> _Branch:
     return _Branch(
         path=tuple(path), source=None, sink=None, pinned=Fraction(0), tap=None, merging=False
     )
+
+
+@pytest.mark.parametrize("reverse", (False, True), ids=("source-level-via", "reversed-via"))
+def test_tapped_trees_preserve_whole_ramps_in_both_via_forms(reverse: bool) -> None:
+    """The nearest legal taps must leave a whole incline clear of their ports.
+
+    Build the tree, not a mirror of ``_pieces``: the actual splitters, links and
+    belt splines must validate, and the trunk must still climb one level over
+    two grid steps. Both via encodings accepted by the realiser are exercised.
+    """
+    lattice = _lattice()
+    foot = (16, 14, GROUND_LEVEL)
+    via = (16, 15, GROUND_LEVEL)
+    crest = (16, 16, GROUND_LEVEL + 1)
+    path = (
+        *_line((16, 2, GROUND_LEVEL), foot),
+        via,
+        *_line(crest, (16, 30, crest[2])),
+    )
+    if reverse:
+        # A reversed via at the start exercises the level-change-first decoder,
+        # rather than another flat-first ramp selected from the preceding run.
+        path = (crest, via, *reversed(_line((16, 2, GROUND_LEVEL), foot)))
+    heading = (0.0, -1.0 if reverse else 1.0, 0.0)
+
+    def terminal(node: Node, facing: Vector) -> Terminal:
+        return Terminal(node=node, world=lattice.world(node), facing=facing, port=None, kind="wall")
+
+    source = terminal(path[0], heading)
+    sink = terminal(path[-1], (0.0, -heading[1], 0.0))
+    share = Fraction(1, 8)
+    trunk = _Branch(path, source, sink, share, None, False)
+    net = _net(1, (source,), (sink,), (share,))
+    run = _loop(_occupancy())
+    # Structural candidates still preserve complete ramps in either authored form.
+    run.stake(net.id, path)
+    sites = run.tap_sites((trunk,), net)
+    near = [
+        max(
+            (tap for side, tap in sites.items() if side[0] == 17 and tap.node[1] < foot[1]),
+            key=lambda tap: tap.node[1],
+        ),
+    ]
+    if not reverse:
+        near.append(
+            min(
+                (tap for side, tap in sites.items() if side[0] == 17 and tap.node[1] > crest[1]),
+                key=lambda tap: tap.node[1],
+            )
+        )
+    branches = [trunk]
+    for tap in near:
+        end = (29, tap.side[1], tap.side[2])
+        branches.append(
+            _Branch(_line(tap.side, end), None, terminal(end, (-1.0, 0.0, 0.0)), share, tap, False)
+        )
+    net = _net(
+        1,
+        (source,),
+        tuple(branch.sink for branch in branches if branch.sink is not None),
+        (share,) * len(branches),
+    )
+
+    attempt = _build(run, net, branches, None)
+
+    assert attempt.tree is not None, (attempt.failure, attempt.nodes)
+    attachments = [obj for laid in attempt.realised for obj in laid.attachments]
+    assert len(attachments) == (1 if reverse else 2)
+    assert all(obj.class_name == SPLITTER_CLASS for obj in attachments)
+    belts = [belt for laid in attempt.realised for belt in laid.belts]
+    climbs = [
+        (a[0], b[0])
+        for belt in belts
+        for a, b in zip(belt.points, belt.points[1:], strict=False)
+        if abs(a[0][2] - b[0][2]) > 1e-9
+    ]
+    assert len(climbs) == 1
+    head, tail = climbs[0]
+    assert tail[2] - head[2] == pytest.approx((-1 if reverse else 1) * lattice.grid_cm)
+    assert math.dist(head[:2], tail[:2]) == pytest.approx(2 * lattice.grid_cm)
+    assert head == pytest.approx(lattice.world(crest if reverse else foot))
+    assert tail == pytest.approx(lattice.world(foot if reverse else crest))
+    for branch in branches:
+        assert branch.sink is not None
+        carried = [belt.items_per_second for belt in belts if belt.end == branch.sink.world]
+        assert carried == [share]
+    supplied = [belt.items_per_second for belt in belts if belt.start == source.world]
+    assert supplied == [len(branches) * share]
+    outcome = RoutingOutcome((attempt.tree,), (), attempt.realised, 1, 0, {})
+    _judge(outcome)
 
 
 def _flow_branch(*, merging: bool, pinned: Fraction) -> _Branch:
@@ -715,14 +1052,7 @@ def test_a_source_merging_into_a_merging_branch_carries_the_sum_below_it() -> No
 
 @cache
 def _wide() -> Lattice:
-    """A mk2 designer, which is where a tree of three belts has room to stand.
-
-    The taps a tree needs are interior nodes of a straight run with
-    ``ceil(radius / grid)`` straight nodes on either side, and the mk1 designer
-    is 3200 cm across: two machine rows and their port reaches leave a trunk
-    with no interior left.  The designer is a spec input, so this is a bigger
-    build rather than a looser rule.
-    """
+    """A mk2 designer with room for the three-belt tree and its actual tap cuts."""
     return Lattice.over(designer("mk2", _registry()), _registry())
 
 
@@ -970,3 +1300,192 @@ def test_a_wall_fed_net_taps_its_own_trunk_where_there_is_room() -> None:
     at_wall = [belt for belt in belts if belt.start[1] == -half]
     assert [belt.items_per_second for belt in at_wall] == [share * len(nets[0].sinks)]
     _judge(outcome, *machines)
+
+
+def test_independent_wall_exits_carry_only_their_connected_sources() -> None:
+    """Three short trunks need three exits, not one full-rate exit plus two extras."""
+    makers = tuple(
+        _machine(101 + index, SMELTER, x, 1000.0, 0.0, INGOT)
+        for index, x in enumerate((-900.0, 0.0, 900.0))
+    )
+    sources = tuple(_terminal(maker, "Output2") for maker in makers)
+    wall = _wall_line(_lattice(), inward=False)
+    share = Fraction(1, 8)
+    rate = len(sources) * share
+    net = GridNet(1, ITEM, sources, wall, rate, (rate,) * len(wall), (share,) * len(sources))
+
+    outcome = _route((net,), _occupancy(*makers))
+
+    assert outcome.stranded == ()
+    assert len(_entries(outcome.trees[0], _lattice())) == len(sources)
+    belts = [belt for laid in outcome.realised for belt in laid.belts]
+    exits = [belt for belt in belts if belt.end[1] == _lattice().designer.half_cm]
+    assert sum((belt.items_per_second for belt in exits), Fraction(0)) == rate
+    assert [belt.items_per_second for belt in exits] == [share] * len(sources)
+    for source in sources:
+        assert [belt.items_per_second for belt in belts if belt.start == source.world] == [share]
+    assert all(belt.class_name == BELT for belt in belts)
+    _judge(outcome, *makers)
+
+
+def test_a_machine_and_external_input_both_supply_the_same_sink() -> None:
+    """Reaching the sink from its local producer must not erase its imported share."""
+    maker = _machine(101, SMELTER, 0.0, -1100.0, 0.0, INGOT)
+    eater = _machine(102, CONSTRUCTOR, 0.0, 1100.0, 0.0, ROD)
+    source, sink = _terminal(maker, "Output2"), _terminal(eater, "Input0")
+    wall = _wall_line(_lattice(), inward=True)
+    made, imported = Fraction(1, 8), Fraction(1, 4)
+    rate = made + imported
+    net = GridNet(
+        1, ITEM, (source, *wall), (sink,), rate, (rate,), (made,) + (imported,) * len(wall)
+    )
+
+    outcome = _route((net,), _occupancy(maker, eater))
+
+    assert outcome.stranded == ()
+    belts = [belt for laid in outcome.realised for belt in laid.belts]
+    entries = [belt for belt in belts if belt.start[1] == -_lattice().designer.half_cm]
+    assert sum((belt.items_per_second for belt in entries), Fraction(0)) == imported
+    assert [belt.items_per_second for belt in belts if belt.start == source.world] == [made]
+    assert [belt.items_per_second for belt in belts if belt.end == sink.world] == [rate]
+    into_sink = next(belt for belt in belts if belt.end == sink.world)
+    assert into_sink.class_name == machine_class(_lab_map(), FAST.item_id)
+    _judge(outcome, maker, eater)
+
+
+def test_a_shadowed_tap_candidate_falls_back_to_a_valid_wall_entry() -> None:
+    """The concrete layout's fourth input can enter at the wall, not lap its trunk."""
+    spec = flow_spec("concrete-60")
+    group = spec.groups[0]
+    machines = tuple(
+        _machine(index + 101, group.machine_class, x, y, 0.0, group.recipe_class)
+        for index, (x, y) in enumerate(
+            ((-1000.0, -900.0), (-100.0, -900.0), (-100.0, 300.0), (800.0, -900.0))
+        )
+    )
+    nets = tuple(
+        net
+        for net in nets_for(spec, machines, _lattice(), _registry(), _lab_map())
+        if net.item_id == "limestone"
+    )
+
+    outcome = _route(nets, _occupancy(*machines), spec=spec)
+
+    assert outcome.stranded == ()
+    limestone = next(tree for tree in outcome.trees if tree.net.item_id == "limestone")
+    assert len(_entries(limestone, _lattice())) == len(machines)
+    imported = sum(
+        (
+            belt.items_per_second
+            for laid in outcome.realised
+            for belt in laid.belts
+            if belt.item_id == "limestone" and belt.start[1] == -_lattice().designer.half_cm
+        ),
+        Fraction(0),
+    )
+    assert imported == spec.external_inputs["limestone"]
+    _judge(outcome, *machines)
+
+
+def test_wall_flow_can_share_a_turn_certified_tap_without_short_belts() -> None:
+    """A legal tap may share an entry; imported flow and both deliveries remain exact."""
+    near = _machine(101, CONSTRUCTOR, 0.0, 900.0, 0.0, ROD)
+    far = _machine(102, CONSTRUCTOR, 1000.0, -900.0, 0.0, ROD)
+    sinks = (_terminal(near, "Input0"), _terminal(far, "Input0"))
+    wall = _wall_line(_lattice(), inward=True)
+    share = Fraction(1, 8)
+    net = GridNet(1, ITEM, wall, sinks, 2 * share, (share, share), (2 * share,) * len(wall))
+
+    outcome = _route((net,), _occupancy(near, far))
+
+    assert outcome.stranded == ()
+    belts = [belt for laid in outcome.realised for belt in laid.belts]
+    incoming = [belt for belt in belts if belt.start[1] == -_lattice().designer.half_cm]
+    assert sum((belt.items_per_second for belt in incoming), Fraction(0)) == 2 * share
+    for sink in sinks:
+        assert [belt.items_per_second for belt in belts if belt.end == sink.world] == [share]
+    _judge(outcome, near, far)
+
+
+def test_internal_taps_do_not_open_their_neighbors_as_ramp_vias(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tap paths must leave their shadow and retain the real connector stub.
+
+    A former all-sinks-reached assertion counted a fourth node-only path whose
+    100/200 cm corner cannot be realised; it did not establish a valid factory.
+    """
+
+    spec = flow_spec("iron-rod-60")
+    lattice = Lattice.over(designer("mk2", _registry()), _registry())
+    constructors = (
+        (-1200.0, -1200.0, 90.0),
+        (-1200.0, -300.0, 90.0),
+        (-600.0, 600.0, -90.0),
+        (-100.0, -600.0, 180.0),
+    )
+    machines = tuple(
+        _machine(101 + index, CONSTRUCTOR, x, y, yaw, ROD)
+        for index, (x, y, yaw) in enumerate(constructors)
+    ) + (
+        _machine(105, SMELTER, -1600.0, 800.0, 0.0, INGOT),
+        _machine(106, SMELTER, 0.0, -1600.0, 90.0, INGOT),
+    )
+    net = next(
+        net
+        for net in nets_for(spec, machines, lattice, _registry(), _lab_map())
+        if net.item_id == "iron-ingot"
+    )
+    query = _Run.query
+    tap_paths: list[tuple[Routed, Terminal, Terminal]] = []
+    clashes: list[Node] = []
+    reaches = {node for end in (*net.sources, *net.sinks) for node in end.reach}
+
+    def observe(
+        run: _Run,
+        starts: Collection[Terminal],
+        goals: Collection[Terminal],
+        opened: Collection[Node],
+        closed: Collection[Node],
+    ) -> Routed:
+        routed = query(run, starts, goals, opened, closed)
+        if routed.path:
+            source = next(terminal for terminal in starts if terminal.node == routed.path[0])
+            if source.kind == "tap":
+                sink = next(terminal for terminal in goals if terminal.node == routed.path[-1])
+                tap_paths.append((routed, source, sink))
+            clashes.extend(
+                node
+                for node in routed.path[1:-1]
+                if node not in reaches and run.lattice.index(node) in run.occupancy.owner
+            )
+        return routed
+
+    monkeypatch.setattr(_Run, "query", observe)
+    run = _loop(occupancy_for(lattice, machines, (), (), (), _registry()))
+    attempt = _attempt(run, net, _shut_shafts(run, net))
+
+    assert clashes == [], "a query may not traverse its trunk's occupied shadow"
+    assert attempt.failure != "shadow"
+    # Success control: actually build one returned tap path, not a vacuous
+    # shadow assertion over only failed queries.
+    tapped, source, sink = next(iter(tap_paths))
+    assert tapped.path is not None
+    assert tapped.motion is not None
+    built = realise(
+        tapped.path,
+        source=source,
+        sink=sink,
+        lattice=lattice,
+        measures=_measure(_registry(), lattice.designer),
+        registry=_registry(),
+        belt_class=BELT,
+        lift_class=LIFT,
+        item_id=ITEM,
+        rate=Fraction(1, 8),
+        ids=count(10_000),
+        motion=tapped.motion,
+    )
+    first = next(belt for belt in built.belts if belt.start == source.world)
+    assert first.start != lattice.world(tapped.path[0])
+    assert any(belt.end == sink.world for belt in built.belts)

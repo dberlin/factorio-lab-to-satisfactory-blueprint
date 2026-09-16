@@ -45,13 +45,12 @@ land on lattice lines is REFUSED (``cause`` ``"lattice"``) rather than rounded
 to one: a belt that leaves a port off its own normal is a belt
 ``ports.position`` turns away.
 
-**A tap is a place a run CAN be cut, not a place a splitter is standing.**
-:func:`tap_nodes` answers R-M3-7's question -- which nodes of a committed tree
-are interior to a straight run with ``clear`` straight nodes on either side --
-and the caller decides which one to use.  ``clear`` is the caller's because the
-space a corner really takes is the turn's, which
-:class:`~flab2bp.sfy.layout.corridors.Measures` states and this module never
-reads: :mod:`flab2bp.sfy.layout.rrr` passes ``ceil(measures.radius / grid)``.
+**A tap candidate is not yet a legal cut.** :func:`tap_nodes` identifies
+interior flat nodes in the attachment standing domain. Its structural clearance
+keeps through ports away from ramp vias. :mod:`flab2bp.sfy.layout.rrr` then
+intersects cached prefix/suffix motion relations at the actual attachment ports;
+both resulting parent pieces must retain legal turn/cut witnesses. No global
+turn radius or clearance count substitutes for that proof.
 """
 
 from __future__ import annotations
@@ -108,9 +107,9 @@ grid steps, so a piece cut off two nodes is 100 cm of belt and R-M3-4's floor is
 one centimetre over that.  Three nodes span 200 cm and clear it, which is why
 this is three and the rule's own number is a node count rather than a length.
 
-The floor rather than the answer, either way: a caller that knows what a turn
-costs where it stands passes its own, and :mod:`flab2bp.sfy.layout.rrr` passes
-``ceil(measures.radius / grid)``.
+This is structural clearance, not turn legality. The routing loop additionally
+proves both parent pieces against their registry-derived motion obligations at
+the actual through ports, rather than assuming one radius clears every turn.
 """
 
 
@@ -768,17 +767,28 @@ def tap_nodes(
     clear: int = TAP_CLEAR_NODES,
     breaks: Collection[Node] = (),
 ) -> tuple[Node, ...]:
-    """Where a committed tree may be cut open for a splitter -- R-M3-7.
+    """Structural candidates for a splitter cut, not final turn/cut admission.
 
-    A legal tap is an interior node of a straight run with at least ``clear``
-    straight nodes on either side of it AT THE SAME LEVEL.  A corner ends a run,
-    and so do a climb and a lift: an incline's via is a node of the path that no
-    attachment could stand on, and a splitter on a corner is a turn rather than
-    a tap.  ``breaks`` ends a run too, and is how a caller keeps later taps away
-    from the attachments earlier ones already stood, and away from the nodes
-    inside a machine's box that a terminal's reach opened.
+    A candidate is an interior node of a straight run with at least ``clear``
+    straight nodes on either side of it AT THE SAME LEVEL, and a node an OBJECT
+    may stand on -- :attr:`~flab2bp.sfy.layout.lattice.Lattice.object_lines`
+    rather than ``open_lines``, because what a tap really is is a splitter
+    standing there, and a splitter's box is wider than a belt's.  A corner ends
+    a run, and so do a climb and a lift: an incline's via is a node of the path
+    that no attachment could stand on, and a splitter on a corner is a turn
+    rather than a tap.  ``breaks`` ends a run too, and is how a caller keeps
+    later taps away from the attachments earlier ones already stood, and away
+    from the nodes inside a machine's box that a terminal's reach opened.
 
-    Nothing here searches: each path is walked once, as a path.
+    The loop keeps ``clear >= TAP_CLEAR_NODES`` (three): a forward ramp
+    ``A(k), V(k), B(k+1)`` ends a flat run at ``V``, with ``A`` one node
+    before it; the reversed form starts a flat run at ``V``, with ``A`` one
+    node after it. Three nodes of clearance keep the tap AND its adjacent
+    through-port nodes off all three ramp nodes. Thus
+    :func:`flab2bp.sfy.layout.rrr._pieces` preserves the whole ramp.
+
+    Nothing here searches: each path is walked once. Production then uses
+    fixed-path motion summaries to prove both remaining pieces of every cut.
     """
     seen: set[Node] = set()
     out: list[Node] = []
@@ -790,6 +800,8 @@ def tap_nodes(
             for node in run[clear : len(run) - clear]:
                 if node in seen or not lattice.holds(node):
                     continue
+                if node[0] not in lattice.object_lines or node[1] not in lattice.object_lines:
+                    continue
                 seen.add(node)
                 out.append(node)
     return tuple(out)
@@ -799,11 +811,10 @@ def _straight_runs(path: Sequence[Node], stop: Collection[Node]) -> Iterator[tup
     """The path's maximal straight, level pieces.
 
     A run continues while the step to the next node is one grid step in the same
-    direction at the same level.  Anything else ends it: a corner (which belongs
-    to the run either side of it, since a belt really does run up to the corner
-    and away from it), the flat half of an incline, a lift, and a node in
-    ``stop``, which belongs to neither run because something is already standing
-    on it.
+    direction at the same level. Anything else ends it: a corner (which belongs
+    to both runs), a level-change step, a lift, and a node in ``stop`` (which
+    belongs to neither). A ramp's flat half remains in a run: ``clear`` keeps
+    taps and their through ports away from that half as well as the level change.
     """
     run: list[Node] = []
     heading: tuple[int, int] | None = None

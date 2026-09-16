@@ -421,7 +421,7 @@ Poles stand on ground nodes free at every level the pole's soft box spans and ou
 - Consumes: everything from Tasks 2 to 9.
 - Produces: `class GridRouted:` with `name = "grid-routed"` and the `SfyLayoutStrategy.lay_out` signature.
 
-The loop: read `Measures` once (`strategy._measure`); refuse fluids (R4) the way the manifold does; build the lattice; for arrangement `a` in `1..ARRANGEMENTS (3)` under the budget: `pack` → `occupancy_for(machines)` → `nets_for` → `route_all` → if no net is stranded: `place_on_free_nodes` → `foundations` → `SfyPlacement` with a description naming the strategy, the arrangement, the rounds, the lifts and attachments authored and the turns chosen; else fold the stranded nets and the blame into `Feedback` (decay 0.85) and pack again; after the last arrangement refuse `a belt could not be routed` naming the nets, or the budget cause. Every refusal goes through `refuse` with a cause in `REFUSALS`; every placement returned validates clean under `validate(placement, spec, registry)` (a test asserts it on the corpus's clean cells).
+The loop: read `Measures` once (`strategy._measure`); refuse fluids (R4) the way the manifold does; build the lattice; for deterministic arrangements under the original absolute deadline: `pack` → `occupancy_for(machines)` → `nets_for` → `route_all` → if no net is stranded: `place_on_free_nodes` → `foundations` → `SfyPlacement` with a description naming the strategy, the arrangement, the rounds, the lifts and attachments authored and the turns chosen; else fold the stranded nets and the blame into `Feedback` (decay 0.85) and pack again. **Recovery amendment approved by the user:** preserve the first three arrangements' time shares, then permit further arrangements only within the unspent original deadline; no replacement count cap or extra time. Global deadline exhaustion remains a budget refusal even when an earlier arrangement had a geometric routing failure. Every refusal goes through `refuse` with a cause in `REFUSALS`; every placement returned validates clean under `validate(placement, spec, registry)` (a test asserts it on the corpus's clean cells).
 
 - [ ] **Step 1: Failing tests.** `test_iron_plate_60_lays_out_in_mk1_and_validates_clean`; `test_the_description_names_the_strategy_and_counts_lifts_and_attachments`; `test_a_fluid_spec_refuses_fluids_are_m4`; `test_grid_routed_satisfies_the_protocol`; `test_no_refusal_escapes_the_vocabulary` (monkeypatch each stage to raise its error type, assert the cause); `test_the_placement_round_trips_through_emit_and_decode`.
 - [ ] **Step 2: Implement**, run, commit `Lay a Satisfactory build out by packing and geometric routing`.
@@ -445,12 +445,163 @@ The loop: read `Measures` once (`strategy._measure`); refuse fluids (R4) the way
 
 **Files:**
 - Create: `scripts/sfy_checkpoint3.py`; Output: `out/sfy/checkpoint3-README.md`, `out/sfy/checkpoint3-*.sbp/.sbpcfg` (untracked)
-- Test: `tests/sfy/test_checkpoint3.py` (the script's self-checks: validator clean, round trip, at least one lift and one attachment turn in the chosen build)
+- Test: `tests/sfy/test_checkpoint3.py` (the written transport witness round-trips, has one connected lift and one attachment turn, and passes its explicit transport contract)
 
-- [ ] **Step 1:** The script builds, with `--strategy grid-routed`, the smallest corpus cell the manifold refuses and the grid clears (by the evidence table) into the smallest mark that holds it, plus `iron-plate-60` in mk1 for a like-for-like paste against checkpoint 2; the README states for each file what a paste test answers (does a lift authored from `LiftGeometry` connect at both ends; does an attachment turn carry the rate; does the build run at the flow's rate).
-- [ ] **Step 2:** Self-checks, commit `Write checkpoint 3: a grid-routed build with lifts and attachment turns`.
+- [ ] **Step 1:** Build the smallest measured converted corpus cell (`concrete-60/mk1`) with production `grid-routed`, plus `iron-plate-60/mk1` for the checkpoint 2 comparison. **Recovery amendment approved by the user:** these complete factories are naturally flat, so add a separately labelled lift-plus-attachment transport witness instead of forcing those features into the factory. It has an explicit input=output throughput contract and no production machines; it must not be claimed as a complete corpus factory or a routing benchmark. The README states what each paste test answers and every skipped check.
+- [ ] **Step 2:** Check the actual written pairs: binary and physical round trips, validator results, complete-factory boundary/cost checks, and the witness's authored lift/attachment connections. Commit `Write checkpoint 3: grid factories and a separate lift-attachment witness` after review.
 
 ---
+
+## Turn-aware routing amendment — design review, 2026-09-16
+
+The user approved moving turn legality into search and preserving it through
+tap insertion, and explicitly approved retaining selected turn witnesses. This
+is an architectural extension of the existing interval kernel, not a second
+router. Implementation is authorized; the original M3 corpus gate remains.
+
+### Problem and chosen approach
+
+The observed ingot path has a corner with 300 cm incoming and 100 cm outgoing
+run, while its cheapest eligible turn needs 201 cm on each side. Junction-space
+feedback can create legal taps but does not make subsequent paths turn-feasible.
+The native kernel currently keeps a single cheapest envelope per physical row;
+it can discard a costlier arrival whose direction or straight-run credit is
+needed by a later turn. Adding a heading field without changing that dominance
+and horizontal closure would therefore be incorrect.
+
+Use a query-local finite motion policy and search the product of that policy
+with the admitted physical graph. Keep the same affine-interval wavefront,
+occupancy profiles, movement tables and resource accounting. A missing policy
+selects exactly the existing unconstrained DSP semantics. Do not use a cell
+priority search, alternative backend, static universal turn clearance, or
+reject-and-retry filtering as the implementation of turn legality.
+
+### Shared geometry contract
+
+Satisfactory compiles one immutable profile from the existing registry-backed
+geometry helpers. Keep turn selection cost distinct from geometric reach:
+consecutive attachment turns share one minimum belt, not two. Include flat
+versus inclined eligibility, the attachment standing domain, exact merged-ramp
+straight reserve, connector direction/stub offsets and lift yaw/landing rules.
+No copied game constants or flat-only approximation.
+
+Search retains heading, slope-leg progress, previous turn reach and outstanding
+outgoing-run requirements. Closing a slope leg must discharge its obligations,
+including a same-heading slope change; a ramp via is not a turn site. Saturate
+progress only after all applicable turn and endpoint thresholds are satisfied.
+The shipped ramp residual is not always zero: sufficiently long merged ramp
+legs can support an arc, as the existing six/seven-ramp regressions demonstrate.
+
+Enumerate feasible arc/attachment alternatives and preserve selected turn
+provenance. Prefer lower-cost choices without discarding a higher-cost choice
+whose smaller reach is necessary later. The realiser validates and replays the
+selected witness instead of greedily choosing again. Routing's existing path
+price remains the primary objective; geometric requirements are legality
+constraints, not an invented congestion penalty.
+
+### Native search and certification
+
+Keep envelopes separate by motion state, sharing physical occupancy/history
+profiles. For unsaturated horizontal progress, propagate whole intervals
+through the finite transient states; once saturated, reuse whole-run min-plus
+closure. State-compatible dominance must govern origin selection, interval
+offers and the dominated-ray stopping rule. Do not discretise each centimetre
+or turn the interval queue into a per-cell priority queue.
+
+Endpoint offers carry their real heading, stub credit and cut kind. Reaching a
+goal coordinate is not enough: outstanding debt and endpoint compatibility
+must hold, including zero-edge/direct-link cases. Transposition must transform
+motion directions and witness orientation as well as coordinates.
+
+Constrained search runs forward in the same kernel initially; automatic
+coordinate-only weighted reversal is not sound for directional obligations.
+Any relaxed reverse reachability probe is only a superset negative proof, not
+an exact constrained component. Motion-state exhaustion must not be reported
+as a physical sealed pocket or used to blame occupied cells without evidence.
+
+Certification replays the exact movement/turn/endpoint witness in original
+coordinates under the same deadline and work accounting. Memory metrics include
+state envelopes and provenance. The native profile compiler and all search
+preparation also belong inside the original layout deadline.
+
+### Satisfactory tree integration
+
+Every machine, wall, splitter and merger query uses actual endpoint geometry.
+The one-step connector-to-tap-access displacement is credited explicitly rather
+than making the access node a fictitious physical port.
+
+Before offering a tap, prove both resulting parent pieces still admit legal
+turn/cut witnesses; a fixed clearance count alone is insufficient. Reuse
+per-branch prefix/suffix legality summaries rather than emitting objects or
+rerouting for every candidate. Commit the chosen tap and revised parent/child
+witnesses atomically with existing ownership; rip-up restores both geometry and
+proof state.
+
+Do not run coordinate-only loop deletion or lift-landing rewrites after
+certification. Legal flat landings must be searched directly, or a rewrite must
+produce a newly certified witness before ownership. Remove superseded repair
+paths rather than maintaining a second, contradictory legality mechanism.
+
+### Boundary of the guarantee
+
+This contract covers turn, slope, landing and endpoint/cut legality. It does not
+claim to encode every physical game check. Existing object/column validation,
+maximum-length spline chunking, final emitted-belt chord minimum, power,
+capacity, binary round trips and the documented partial-clearance checks remain
+mandatory. A fully routed but invalid placement is still not a success.
+
+### Verification and integration gate
+
+- Preserve native directed-move, ramp-via, transposition, reverse-pricing,
+  sparse-connector, cancellation, budget and original-order certification tests
+  for unconstrained DSP calls.
+- Compare constrained interval routing with a tiny exhaustive product-graph
+  oracle in tests only: competing headings at one coordinate, transient versus
+  saturated straight progress, turn cost/reach alternatives, shared-leg
+  boundaries, slope resets, ramp residuals, endpoint stubs and lift headings.
+- Demonstrate that the captured short-leg obstruction is excluded during search
+  while an available legal alternative is returned, not merely rejected later.
+- Exercise tap insertion and rip-up against parent/child witness validity,
+  including a cut that would consume a previously legal turn's required room.
+- Rebuild the native extension with the worktree's existing build recipe,
+  exercise actual complete production factories under the original 15 seconds,
+  and repeat the 108-cell corpus. Report any remaining packing/routing budget
+  failures honestly; no timeout pins or milestone-complete claim.
+- Retain all 49 byte-identical fixtures and physical emission round trips.
+  Keep the checkpoint and DSP interfaces functional; do not claim an
+  end-to-end improvement from isolated path tests alone.
+
+State growth and interval fragmentation are explicit performance risks. Their
+acceptability must be measured; neither a successful compile nor the design
+itself proves this will recover a corpus cell.
+
+### Approved implementation sequence and ownership
+
+1. Preserve a failing router-to-realiser short-corner regression before source
+   changes. Its initial failure is the realiser's corner check, not graph
+   exhaustion.
+2. Define the shared typed finite-policy boundary in
+   `layout/geometric_motion.py`: exact original-coordinate movement shapes,
+   finite-state edges, source-cell box guards, endpoint state rows and exact
+   selected primitive/state/action witnesses. Native search owns policy
+   validation, product envelopes, original-coordinate certification and metrics.
+3. In parallel, Satisfactory owns registry-derived profile compilation,
+   actual-terminal policy construction, fixed-path witness validation/replay,
+   and transactional parent/child tap witnesses. This slice owns its internal
+   geometry APIs; neither slice changes the shared boundary without integration
+   owner approval. No Satisfactory import enters the generic kernel.
+4. `GeometricQuery.motion` is optional. `GeometricResult.motion` and
+   `SearchOutcome.motion` preserve the selected `MotionWitness`; constrained
+   exhaustion is `motion-exhausted`, separate from a physical sealed component.
+   The Satisfactory adapter carries this witness and does not manufacture wall
+   blame for that status. Existing unconstrained callers retain their defaults.
+5. Integration owns a small independent exhaustive product-graph test oracle,
+   the native rebuild, red-to-green geometry regressions, actual production
+   smoke scenarios and the full existing gates. Parallel implementers do not
+   run builds, tests, formatters or linters against each other's partial edits.
+6. Update the existing milestone evidence and model documentation after the
+   exercised behavior is known. No extra search allowance, timeout pin, commit,
+   merge or attribution rewrite is authorized by this amendment.
 
 ## Self-review
 
