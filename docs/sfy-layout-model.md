@@ -1,19 +1,118 @@
 # The Satisfactory placement model
 
 `flab2bp.sfy.layout` is where a build stops being rates and becomes geometry.
-Three modules carry it:
+The current production planner is `flab2bp.sfy.sections`; the shared layout
+model, emitter, routers and validator also serve the retained legacy planners:
 
 | module | what it holds |
 | --- | --- |
 | `splines.py` | the spline shapes the game's own router builds, and how it measures them |
 | `model.py` | `SfyPlacement`: every object, its class, its id and where it stands |
 | `emit.py` | `emit` writes a placement into a `.sbp`, `decode` reads one back out |
-| `validate.py` | the neutral judge: is this placement one the build gun would accept? |
-| `manifold.py` | one row: a line of machines, its splitter chains and its merger chain |
-| `corridors.py` | which column a trunk takes, and what a corridor path is made of |
-| `strategy.py` | `ManifoldRows`: rows, corridors and a floor, or a named refusal |
+| `validate.py` | native-backed checks and explicitly project-owned authoring checks |
+| `../sections/` | production sections, mixed-material routing and vertical stack boundaries |
+| `manifold.py` | legacy row geometry, also reused by section construction |
+| `corridors.py` | legacy horizontal trunk corridors |
+| `strategy.py` | retired `ManifoldRows` reference planner |
 
 Distances are centimetres and the axes are Unreal's, left-handed, `+Z` up.
+
+`Pose` carries pitch, yaw and roll and preserves the stored actor quaternion,
+including vertical/gimbal-lock poses; it is not yaw-only. Equality compares the
+stored quaternion rather than non-unique Euler angles. A lift's *local*
+`mTopTransform` still uses its signed height and local top yaw.
+
+## Current production: repeatable sections and mixed materials
+
+`sections/compose.py` builds complete connected sections, packs independent
+sections together, and keeps a consumer above its producers. Dependency stages
+are not necessarily separate physical floors. Routes join section interfaces,
+preserving recipe counts, clocks and every material flow. Cyclic/recycled coupled
+dependencies are refused; this is not a general fluid-network solver.
+
+`sections/fluids.py` builds separate side manifolds for supported mixed recipes.
+Pipes carry m³/s in the model (reports use m³/min); solid belts carry items/s.
+Recipe-order port assignment retains fluid byproducts, including heavy-oil
+residue from plastic. Available ports, their facing, funded transport tiers,
+routing room and hydraulic constraints still bound support.
+
+Fluid rows reserve native hard footprints and actual transport connector spans,
+not an extra walking aisle between machines. Four refineries use 1000 cm pitch
+within Mk2. Pipe interfaces terminate at native junction ports; the final solid
+collector turns into the side logistics band instead of demanding space beyond
+the machine row. Composition reserves pipe-specific bends and mesh envelopes,
+not conveyor-lift approaches, for those fluid interfaces.
+
+`sections/pipe_routes.py` keeps pipe-actor joins on straight interiors, away
+from curved mesh envelopes. Curved wall approaches reserve the cross-section's
+diagonal extent; straight obstacle checks retain their transverse extent.
+Neither change relaxes the final collision validator.
+
+Routing prefers native four-way junctions for U-turns and bent elevation changes,
+and tries them when rounded-pipe search cannot find a route. Junctions rotate
+into the XY, XZ or YZ plane; unused ports are legal. Their actual connector
+offsets, body clearance and straight-pipe minimum length still apply. Short
+descents that cannot fit two junctions retain legal curved pipes. This search
+does not yet explore arbitrary-angle junction orientations, although the
+blueprint model and binary round-trip support them.
+
+`sections/stacking.py` adds actual base/roof slabs, beam outlines and corner
+posts, with aligned conveyor/pipe floor holes. Each external material has a
+bottom feed, a local branch and an upward continuation; outputs collect into
+their upward trunk. `StackLane` records local demand/export, trunk capacity and
+any required external input head. These authoring obligations are not saved
+transport properties and cannot be recovered just by decoding a `.sbp`.
+
+Repeat a module at its reported vertical pitch with the same XY/orientation.
+**Manually bridge corresponding endpoints with one lift for solids**, or a pipe
+for fluids. Endpoint separation may be any native-legal direct connection;
+the current generator uses a 400 cm seam. Slabs remain distinct; transport ends
+meet hole centres, not slab faces. No cross-blueprint references or automatic
+lift joins are promised. Size supply for all copies and keep accumulated flow
+within each trunk's capacity; connect power and drain every output, including
+byproducts.
+
+The upward pipe trunks contain powered Mk2 pumps and real junction actors,
+not decorative proxies. External liquid supply must reach the highest connected
+pipe endpoint before the next pump inlet. Interior spline humps and unused
+junction mouths do not add head; splitting a run or connecting a junction at a
+crest creates an elevated endpoint and changes that requirement. `pipe.head`
+checks pump design head per forward region; ratings do not add together. This is
+a project design envelope, not a runtime pressure/priming simulation or a
+guarantee about world supply.
+Automatic pumps are confined to the vertical stack lanes, not internal
+manifold turns. A lower input is a pressurized supply contract with the module
+below or an external pump; an unpowered or unprimed supply does not satisfy it.
+
+The offline Mk3 examples include Plastic 10/min and 20/min with one refinery
+and retained residue, and Reinforced Iron Plate 10/min with fourteen machines
+on three mixed-recipe floors. Reports/native evidence are in
+`/home/dannyb/satisfactory-tests/stackable-production/`. No in-game load, paste
+or throughput validation has been performed.
+
+Offline Mk2 builds also cover standard Plastic and Rubber at 20, 60 and 80/min:
+one, three and four refineries respectively, on one production floor within a
+40 × 40 m footprint and 40 m repeat pitch. Each retains its crude-oil supply,
+residue drainage and solid output. These match the reference refinery packing,
+not the output rates of the references' different recycled recipes. Captured
+flows, emitted blueprint pairs and measured visual comparisons are in
+`/home/dannyb/satisfactory-tests/refinery-density/`.
+
+### Physical actors and binary ownership
+
+`PipeRun` serializes a genuine pipeline spline; `PipeAttachmentObj` represents
+junctions and pumps, with pump power carried by ordinary `WireObj` connections.
+`BeamObj` authors local-+X length through `mLength`.
+`PassthroughObj` authors `mSnappedBuildingThickness` and nullable top/bottom
+**transport-component** references, not invented ports. Lifts and pipes carry
+exactly two nullable `mSnappedPassthroughs` actor references, reciprocated by
+the referenced hole. The emitter rebuilds those references after instantiation
+instead of inheriting fixture owners, and decoding preserves this geometry.
+
+Beam lengths and hole middle-mesh width/slab thickness are bounded. Constructed
+passthrough cap-mesh extents remain unextracted (`geom.dynamic` reports the gap);
+partial lift envelopes and project pipe mesh envelopes are not full game meshes.
+The schematic viewer and offline checks do not certify in-game placement.
 
 ## Two things the model states that the file does not
 
@@ -23,21 +122,21 @@ Distances are centimetres and the axes are Unreal's, left-handed, `+Z` up.
   `SfyPlacement` sorts `links` at construction; without that,
   `decode(emit(p)) == p` is false for every build with more than one belt, over a
   difference the file does not hold.
-* **A belt end may be flagged as a boundary end.** `BeltRun.boundary_start` and
-  `boundary_end` say that an end stands on the designer wall and is deliberately
-  unwired, because what it meets is outside the blueprint. `ports.connected_once`
-  wants *zero* links on a flagged end rather than one, and `flow.boundary` holds
-  it to the wall it claims. Both flags are outside equality, like the two rate
-  fields: no property in the file carries them, so `decode` hands a belt back
-  unflagged.
+* **Transport ends may be flagged as boundary ends.** `boundary_start` and
+  `boundary_end` identify deliberately unwired ends that meet transport outside
+  the blueprint. Current sections expose vertical lift/pipe endpoints through
+  `StackLane`; `flow.boundary` checks their repeated geometry, ownership and
+  rates. The older horizontal `BeltRun` wall flags remain for legacy fragments.
+  Flags and rated flows are outside equality: no saved property carries the
+  authoring contract, so `decode` does not invent it.
 
 ### A conveyor lift is an actor with a height
 
-`LiftObj` is the one object in the model that is not placed by a pose alone.
-`pose` is its **bottom**, because `AFGBuildableConveyorLift::SetupConnections`
-puts `mConnection0` at the actor transform exactly, facing the actor's own
-forward (`lift.connectors`, and the six numbers are `Buildable.lift` in
-`registry.json`). The other end is `mTopTransform`, a `SaveGame` `FTransform`
+`LiftObj` carries dynamic geometry in addition to its pose.
+`pose` is its input/actor end, because `AFGBuildableConveyorLift::SetupConnections`
+puts `mConnection0` at the actor transform exactly. Unsnapped, it faces the actor's
+own forward (`lift.connectors`, with geometry in `registry.json`).
+The other end is `mTopTransform`, a `SaveGame` `FTransform`
 declared at `Buildables/FGBuildableConveyorLift.h:266-267`, and the model carries
 its two moving parts:
 
@@ -59,14 +158,12 @@ whose actor stands at the top — where its feed arrives — with a negative hei
 `GetConveyorLiftFlowDirection` reads nothing but the sign of that Z, and it
 decides which way the *mesh* runs.
 
-`emit` writes the transform from the registry's geometry and nothing else from
-the template: `mSnappedPassthroughs` goes out empty, because a template's array
-names passthroughs this blueprint has not got and both flags are read as geometry
-by `SetupConnections` and by `lift.height_range`'s floor; and `mIsReversed` is
-not written at all, because the header marks it `DEPRECATED 2023-01-30` and
-`SetupConnections`, read whole, never touches it. `decode` reads the height and
-the yaw back, so a lift takes part in `decode(emit(p)) == p` like everything
-else.
+`emit` rebuilds `mTopTransform` from the model and writes exactly two nullable
+`mSnappedPassthroughs` entries, never an empty array or inherited fixture refs.
+A snapped end faces vertically and remains at the hole centre. The hole
+reciprocally names that lift connection. `mIsReversed` is not written: the
+header marks it `DEPRECATED 2023-01-30` and `SetupConnections` never touches it.
+`decode` preserves height, local top yaw and the two slots for round-trip equality.
 
 ### A machine's clock and its somersloops *are* in the file
 
@@ -103,11 +200,10 @@ takes a `rule`:
 
 * the id of a rule in `src/flab2bp/sfy/data/hologram_rules.json`, read out of the
   shipped game's machine code by `scripts/sfy_native_rules.py`; or
-* `PROJECT` — the bound is this project's own, and the check's docstring has to
-  say why we are stricter than the game.
+* `PROJECT` — an explicitly project-owned authoring bound, not a native refusal.
 
-`tests/sfy/test_validate.py::test_every_check_names_the_rule_it_enforces_or_says_it_is_ours`
-fails the build if a check drifts from that.
+The runtime `_may_refuse` guard enforces that distinction when emitting errors;
+documentation wording is not the contract.
 
 ### The rules of the discipline
 
@@ -127,7 +223,7 @@ fails the build if a check drifts from that.
    library and build version the `roundtrip` check writes a file with — which is
    format, not legality.
 
-### The twenty-one checks
+### Shared conveyor checks
 
 `effect` is the effect of the rule the check names, and is blank for a check of
 this project's own — a `project` check enforces no rule and so has no effect to
@@ -142,20 +238,35 @@ report. `needs spec` marks a check that cannot run without an `SfyBuildSpec`.
 | `belt.min_length` | `belt.min_length` | refuse | no | the **polyline** between stored points > `mMeshLength × 0.5001` (`limits.belt_min_length_cm`), strict |
 | `belt.incline` | `belt.incline` | refuse | no | per chord, <code>&#124;π/2 − acos(clamp(u.Z, −1, 1))&#124;</code> ≤ `mMaxIncline × 0.017453292`, with the game's `float` `π/2` and its `ZeroVector` for a chord of no length |
 | `belt.curvature` | `belt.curvature` | refuse | no | `step / acos(A·B)` ≥ `mBendRadius × 1.5 − 15` at every one of `RoundToInt(L × 0.02)` samples (see below) |
-| `ports.connected_once` | `project` | — | no | every belt end and every lift end wired exactly once, no connection carrying two belts, nothing wired to a `snap_only` or `unknown` connection |
-| `ports.direction` | `project` | — | no | a link runs output → input, and meets a belt or a lift by the end `flow` names. `belt.snap_directions` is the *evidence* and not the rule enforced: its effect is `snap`, so the refusal is ours (see below) |
-| `ports.position` | `project` | — | no | a belt's or a lift's ends sit within 1 cm of the ports they are wired to, and a belt leaves a port — a machine's, or a lift's top — within 0.01 rad of its facing |
-| `lift.height` | `project` | — | no | a lift's height is between `lift_min_cm` and `lift_max_cm`. `lift.height_range` **clamps** into that window rather than refusing, so the refusal is ours: a lift outside it is one the game would build at a different height. The floor is `mMinimumHeight`, not `mMinimumHeightWithVerticalConnection`, which the rule takes only for a lift snapped to a passthrough — and this project authors none. Where the game is *looser* than this check is stated with it: `UpdateTopTransform` rewrites `mMinimumHeight` to 2.5 or 3.5 steps (250 or 350 cm) for the length of the call when the connection the top snapped to has a vertical normal (`0xaa48ba`/`0xaa48c2`, restored at `0xaa4a6f`), so a 400 cm floor is stricter there |
+| `ports.connected_once` | `project` | — | no | transport ends wired once except declared external ends; no duplicate occupancy, `snap_only` or unknown connections |
+| `ports.direction` | `project` | — | no | compatible same-medium connections; directed conveyor/pump flow and bidirectional pipe junctions are distinguished |
+| `ports.position` | `project` | — | no | connected endpoints within 1 cm, with compatible endpoint normals/tangents (0.01 rad); hole-snapped ends face vertically |
+| `lift.height` | `project` | — | no | height stays in the sourced range, using the passthrough minimum for a snapped lift. Native `lift.height_range` clamps rather than refuses; unsnapped vertical connections can also get 250/350 cm native minima, so the ordinary 400 cm project floor remains stricter there |
 | `lift.top_yaw` | `project` | — | no | a lift's `top_yaw_deg` is a whole number of `top_yaw_step_deg` steps — 90 degrees, which is what `GetRotationStep` hands out once the first placement point is down (`0xa7c1a2`) and what `ApplyScrollRotationTo` rounds onto. `lift.top_yaw` **computes** the yaw and refuses nothing, so the refusal is ours: an off-lattice top is a lift no player could build |
-| `lift.step` | `project` | — | no | a lift's height is a whole number of `lift_step_cm`. `lift.step` **snaps** it — `floor(raw / mStepHeight + 0.5) * mStepHeight` at `0xaa4769`–`0xaa477c` — so again the refusal is ours: an off-step lift is moved by up to half a step and ends somewhere other than the port it was drawn to |
+| `lift.step` | `project` | — | no | ordinary lift height follows `lift_step_cm`; one-hole lifts include the native half-thickness remainder; two-hole bridges use exact hole centres through `TrySnapToActor`. Native snapping is not a refusal |
 | `lift.placement` | `lift.placement` | refuse | no | neither end of a lift ends on a connection that already carries something. `CheckValidPlacement` tests `mHasConnectedComponent` on each snapped connection (`0xa681fa`, `0xa68253`) and adds `UFGCDInvalidPlacement` |
-| `flow.capacity` | `project` | — | **yes** | a belt carries no more than its mark does, and every machine input is fed at the group's per-machine rate. The tier speed comes from the lab dataset through `spec.belt_tiers`, which is why a spec is needed |
-| `flow.balance` | `project` | — | **yes** | per item, rows produced + belted in ≥ rows consumed + sent out |
-| `flow.boundary` | `project` | — | no | every end flagged `boundary_start` stands on the `-Y` wall and every `boundary_end` on the `+Y`, within the same 1 cm `ports.position` allows, and the items at the two walls are the spec's `external_inputs` and its `outputs` plus `surplus_outputs`. A placement with no flagged end is a *fragment* and the check stands aside on it |
+| `flow.capacity` | `project` | — | **yes** | funded belt/pipe capacities and required machine supplies; pumps also have sourced flow limits |
+| `flow.balance` | `project` | — | **yes** | exact supplied/consumed/exported material flow, including fluid byproducts |
+| `flow.boundary` | `project` | — | no | current sections: aligned bottom/top lift or pipe ends, reciprocal slab holes, structural pitch and manual seam, continuous local branches and rated external totals; legacy fragments: flagged belts at `-Y`/`+Y` walls |
 | `spec.machines` | `project` | — | **yes** | classes, counts, recipes and clocks match the spec |
 | `slab.under_every_foot` | `project` | — | no | every machine's hard footprint is covered by foundation tops at its own `z` |
 | `power.wires` | `project` | — | no | every wire inside `wire_max_cm`, every connection inside `max_connections`, every machine on a pole |
 | `roundtrip` | `project` | — | no | `decode(emit(placement)) == placement`, with the templates `validate(..., library=...)` was given or the repo's own corpus |
+
+### Pipe and structural checks
+
+| id | source | what it checks |
+| --- | --- | --- |
+| `pipe.max_length` / `pipe.min_length` / `pipe.curvature` | corresponding native `refuse` rules | spline arc maximum, strict chord minimum and full-3D tangent curvature |
+| `pipe.fluid_requirements` | native fluid-identity refusal | incompatible descriptors in a connected authored network |
+| `pipe.capsule` | project | sampled mesh-envelope collision admission, not unextracted native pipe clearance |
+| `ports.passthrough` | project | reciprocal component/actor ownership, transport medium, hole centre/normal and slab thickness |
+| `geom.dynamic` | project | sourced beam dimensions and explicit partial coverage of constructed hole caps |
+| `pipe.head` | project | routed external inlet-head obligations, powered-pump design-head regions and disclosed unsourced factory-output head |
+
+Native `compute`, `snap` and `clamp` evidence informs geometry but is not relabelled
+as a native refusal. A clean project check does not imply the unread native
+clearance or runtime hydraulic behaviour has been verified.
 
 Two checks are in `skipped` on **every** run, each with an `INFO` finding that
 says what it could not cover: `geom.hard_clearance`, because
@@ -301,11 +412,15 @@ never a bound — the bounds are all in `registry.json`'s `limits`:
   reporting a clean pass. Every build `ManifoldRows` lays out has wires in it,
   so the check *runs* on all of them.
 
-## What a build looks like: rows, corridors and bridges
+## Legacy reference: rows, corridors and bridges
 
-`ManifoldRows` (`strategy.py`) is the shape every Satisfactory build this project
-authors takes. It is a shape a player would recognise, and every distance in it
-is read out of the registry or the rules.
+The remainder of this document preserves the retired manifold/grid designs and
+their historical measurements. Neither is a CLI/API production choice; their
+horizontal wall boundaries, fluid refusal and fit results do **not** describe
+current `sections` production. Shared helpers are still reused where applicable.
+
+`ManifoldRows` (`strategy.py`) arranged rows and horizontal corridors using
+registry-derived dimensions:
 
 **A row** (`manifold.py`) is one machine group: `count` machines of one class in
 a line along `X`, one splitter chain per input item feeding them and one merger
@@ -507,13 +622,15 @@ full-length (5599 cm, 112 boxes each) belts: **69.2 s → 0.13 s** where the run
 are parallel and apart, and **70.4 s → 3.3 s** for a 20 × 20 crossing grid at
 one height where all 400 pairs really clash.
 
-## The lattice
+## Legacy reference: the lattice
 
-A second layout strategy, `grid-routed`, packs machines on the build gun's own 1 m
-hologram grid and finds every belt with a geometric interval router rather than
-with the hand-written corridors above. `flab2bp.sfy.layout.lattice` is the world
-that router searches: `Lattice` says where a node is, `Occupancy` says whether a
-belt centreline may pass one, and `occupancy_for` flattens a placement onto both.
+The retired `grid-routed` planner packs machines on the build gun's own 1 m
+hologram grid and finds belts with a geometric interval router rather than
+the hand-written corridors above. Current sections reuse routing helpers,
+not this planner's whole-factory packing or horizontal boundary contract.
+`flab2bp.sfy.layout.lattice` is the world that router searches: `Lattice` says
+where a node is, `Occupancy` says whether a belt centreline may pass one, and
+`occupancy_for` flattens a placement onto both.
 
 ### Where a node is
 
@@ -697,12 +814,12 @@ object collisions, maximum spline chunking and the final emitted-belt chord
 minimum remain checked afterward. A first candidate may fail those checks;
 only a fully admitted and validated placement is a successful factory.
 
-## Grid-routed
+## Legacy reference: Grid-routed
 
-`flab2bp.sfy.layout.grid`'s `GridRouted` is the second strategy, and it is a
-**loop** rather than a pipeline. Nothing in it lays a row and nothing in it is a
-template: every machine stands wherever a CP-SAT no-overlap model likes it on the
-hologram grid, and where a belt goes is what the router returns.
+`flab2bp.sfy.layout.grid`'s `GridRouted` is retained as a reference, not an
+available production strategy. It is a **loop** rather than a pipeline:
+machines stand where a CP-SAT no-overlap model puts them on the hologram grid,
+and belts follow the router's results.
 
 ### The loop
 

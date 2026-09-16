@@ -47,6 +47,7 @@ test('decoded winner and losing attempt retain their own priming and entry-lane 
     }),
   });
   const decoded = (await pollBuild('facts')).result!;
+  if ('game' in decoded) throw new Error('Expected a DSP build result');
   const view = render(
     <BuildReportPanel result={decoded} selectedAttempt={null} onSelectAttempt={() => {}} />,
   );

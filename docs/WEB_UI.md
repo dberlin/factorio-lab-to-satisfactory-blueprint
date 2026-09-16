@@ -1,7 +1,8 @@
 # The web UI
 
-Paste a FactorioLab URL, set the options, press Build, copy the blueprint string, and see it
-rendered — all on one page, with the same solver the CLI runs.
+Paste a FactorioLab URL, set the options and press Build. Satisfactory builds
+appear in 3D with `.sbp`/`.sbpcfg` downloads; DSP builds retain their copyable
+blueprint strings. Both use the same game-specific pipelines as the CLI.
 
 ## Starting it
 
@@ -27,7 +28,42 @@ because there is nothing to put in it.
 If the front end is not built and `bun` is missing, the API still serves and the page says so
 in plain text rather than 404ing.
 
-## Strategy choices
+## Satisfactory builds and inspection
+
+Entering a Satisfactory URL selects `sections`, enables automatic FactorioLab
+flow capture unless a CSV is already supplied, and exposes the Blueprint Designer
+mark. A supplied export disables automatic capture and pins that exact flow.
+The completed build publishes its binary-derived scene automatically, without
+replacing a newer manually opened blueprint. After an import, **Show completed
+blueprint in 3D** restores the build result.
+
+The viewer uses the bundled registry, not DSP assets or generated object naming
+conventions. Open/drop `.sbp` files for the same inspection path. It renders
+machine clearance geometry, sampled belt/pipe curves, splitter/merger attachments,
+pipe junctions and pumps, lift spans/endpoints, foundations, beams, floor holes,
+storage and power connections. Use layer
+switches and machine ghost/solid/hidden modes, click an object or choose it in
+the inspector, and follow its saved connections. Q/E rotates, O toggles top-down;
+drag orbits and scroll zooms. Building counts and header construction materials
+are available in the expandable list.
+
+This is schematic visualization, not game meshes or a paste certification.
+Unknown objects stay visible as diagnostic markers. Unresolved connections,
+partial lift envelopes, unextracted floor-hole cap meshes and conservative
+shear bounds have explicit notices. Full actor quaternions are retained,
+including the pitched junctions, pumps and beams used by vertical trunks.
+
+Generated `.sbpcfg` descriptions include net bottom-input/top-output rates,
+machine clocks, recipes, estimated production power, boost consumables and
+startup instructions. Keep repeated modules at matching XY/orientation and
+the stated vertical pitch; manually bridge corresponding holes across the
+4 m seam. Inputs branch locally and continue upward. Size supply and drainage
+for every copy within the reported trunk capacities, power the pumps, and
+provide each liquid inlet's reported head above its bottom port. That obligation
+comes from the routed geometry; the blueprint cannot measure world pressure.
+Verified icon/color defaults are preserved; the filename supplies the game name.
+
+## DSP strategy choices
 
 The strategy choices are `best`, `freeform`, `sequence-pair`, `transport-routing`,
 and `hierarchical`. `best` automatically runs Freeform, SequencePair,
@@ -222,10 +258,20 @@ reported "no changes" and incomplete enough that `bun run build` died on
 ```
 POST /api/build          submit; 202 with an id, or 400 with a reason
 GET  /api/build/<id>     poll; state, progress, and the result when there is one
+GET  /api/build/<id>/artifacts/<name>  download a retained .sbp or .sbpcfg
+GET  /api/build/<id>/scene             decode the retained Satisfactory artifact
+POST /api/sfy/scene?name=<filename>    import raw .sbp bytes for visualization
 GET  /api/health         is the server up, and is the front end built
 GET  /api/fetch?url=...  the viewer's own blueprint-page proxy
 GET  /*                  the built front end, with an SPA fallback
 ```
+
+Scene uploads are bounded to 16 MiB compressed, 64 MiB actually decompressed,
+25,000 decoded objects and 500,000 sampled points. Invalid binaries return 422;
+resource-limit violations return 413. The decoder bounds serialized array
+counts as well as compressed bytes. No upload filename becomes a server path.
+Satisfactory builds use `strategy: "sections"` and `designer: "mk1" | "mk2" | "mk3"`;
+the options and portfolio details below describe the inherited DSP build path.
 
 The submit body takes `url`, `strategy` (`best`/`freeform`/`sequence-pair`/`transport-routing`/`hierarchical`), `candidates`
 (1–8), positive finite `budget_s`, `band`

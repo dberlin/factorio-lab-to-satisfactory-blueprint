@@ -33,10 +33,13 @@ a statement about the file rather than a statement about this dataclass.
 
 from __future__ import annotations
 
+import math
 from array import array
 from dataclasses import dataclass, field
 from fractions import Fraction
+from typing import Literal
 
+from flab2bp.sfy.docs import quaternion_to_rotator
 from flab2bp.sfy.geometry import quat_rotate, snap_zeros
 from flab2bp.sfy.layout.splines import SplinePoint, Vector, yaw_quaternion
 from flab2bp.sfy.objects import Transform
@@ -46,20 +49,26 @@ from flab2bp.sfy.spec import Designer
 __all__ = [
     "UNIT_SCALE",
     "AttachmentObj",
+    "BeamObj",
     "BeltRun",
     "FoundationObj",
     "LiftObj",
     "Link",
     "MachineObj",
+    "PassthroughObj",
+    "PipeAttachmentObj",
+    "PipeRun",
     "Placed",
     "PoleObj",
     "Pose",
     "SfyPlacement",
+    "StackLane",
     "SplinePoint",
     "Vector",
     "WireObj",
     "belt_ends",
     "lift_geometry",
+    "pipe_ends",
     "stored_float",
 ]
 
@@ -86,28 +95,65 @@ def stored_float(value: float) -> float:
 
 @dataclass(frozen=True, slots=True)
 class Pose:
-    """Where one object stands and which way it faces.
+    """An Unreal position and full ``FRotator`` orientation, in centimetres/degrees.
 
-    ``yaw_deg`` is a rotation about ``+Z``, which is the only rotation the build
-    gun applies to a hologram (``buildable.rotation_step``); for a grid object it
-    is one of 0, 90, 180 and -90.
-
-    All four numbers are held at 32-bit width.  ``x``, ``y`` and ``z`` because
-    that is what ``objects.write_toc`` writes an actor's translation at; the yaw
-    for the same reason one step removed -- it becomes an ``FQuat`` of four
-    ``f32``, and the angle that quaternion gives back is the ``f32`` yaw rather
-    than the ``f64`` one that built it.  Rounding here is what makes a fractional
-    yaw survive :func:`~flab2bp.sfy.layout.emit.decode`.
+    The original positional ``x, y, z, yaw_deg`` API is unchanged. Equality uses
+    the quaternion actually stored by the object table, rather than comparing
+    Euler angles (which are non-unique, especially at pitch +/-90 degrees).
     """
 
     x: float
     y: float
     z: float
-    yaw_deg: float
+    yaw_deg: float = field(compare=False)
+    pitch_deg: float = field(default=0.0, compare=False)
+    roll_deg: float = field(default=0.0, compare=False)
+    _rotation: tuple[float, float, float, float] = field(init=False, compare=False, repr=False)
+    _stored_rotation: tuple[float, ...] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        for name in ("x", "y", "z", "yaw_deg"):
-            object.__setattr__(self, name, stored_float(getattr(self, name)))
+        for name in ("x", "y", "z", "yaw_deg", "pitch_deg", "roll_deg"):
+            value = getattr(self, name)
+            if not math.isfinite(value):
+                raise ValueError(f"pose {name} must be finite")
+            object.__setattr__(self, name, stored_float(value))
+        pitch, yaw, roll = (
+            math.radians(angle) / 2.0 for angle in (self.pitch_deg, self.yaw_deg, self.roll_deg)
+        )
+        sp, cp = math.sin(pitch), math.cos(pitch)
+        sy, cy = math.sin(yaw), math.cos(yaw)
+        sr, cr = math.sin(roll), math.cos(roll)
+        rotation = (
+            cr * sp * sy - sr * cp * cy,
+            -cr * sp * cy - sr * cp * sy,
+            cr * cp * sy - sr * sp * cy,
+            cr * cp * cy + sr * sp * sy,
+        )
+        self._set_rotation(rotation)
+
+    def _set_rotation(self, rotation: tuple[float, float, float, float]) -> None:
+        # q and -q describe the same physical rotation.
+        sign = next((math.copysign(1.0, v) for v in reversed(rotation) if v), 1.0)
+        canonical = tuple(sign * value for value in rotation)
+        object.__setattr__(self, "_rotation", canonical)
+        object.__setattr__(self, "_stored_rotation", tuple(map(stored_float, canonical)))
+
+    @classmethod
+    def from_transform(cls, transform: Transform) -> Pose:
+        """Preserve the exact serialized quaternion, including gimbal-lock poses."""
+        rotation = transform.rotation
+        if not all(math.isfinite(value) for value in rotation) or not math.isclose(
+            sum(value * value for value in rotation), 1.0, abs_tol=1e-5
+        ):
+            raise ValueError(f"actor rotation is not a unit quaternion: {rotation}")
+        pitch, yaw, roll = quaternion_to_rotator(*rotation)
+        angles = tuple(
+            float(round(value)) if abs(value - round(value)) < 1e-4 else value
+            for value in (yaw, pitch, roll)
+        )
+        pose = cls(*transform.translation, *angles)
+        pose._set_rotation(rotation)
+        return pose
 
     @property
     def location(self) -> Vector:
@@ -115,7 +161,7 @@ class Pose:
 
     def transform(self) -> Transform:
         """The actor transform the object table writes for this pose."""
-        return Transform(yaw_quaternion(self.yaw_deg), self.location, UNIT_SCALE)
+        return Transform(self._rotation, self.location, UNIT_SCALE)
 
 
 @dataclass(frozen=True, slots=True)
@@ -272,6 +318,95 @@ class BeltRun:
 
 
 @dataclass(frozen=True, slots=True)
+class PipeRun:
+    """A bidirectional pipeline spline. Rates are cubic metres per second."""
+
+    id: int
+    class_name: str
+    points: tuple[SplinePoint, ...]
+    item_id: str = field(default="", compare=False)
+    cubic_metres_per_second: Fraction = field(default=Fraction(), compare=False)
+    boundary_start: bool = field(default=False, compare=False)
+    boundary_end: bool = field(default=False, compare=False)
+    snapped_passthroughs: tuple[int | None, int | None] = (None, None)
+
+    def __post_init__(self) -> None:
+        if len(self.points) < 2:
+            raise ValueError(f"pipe {self.id} needs at least two points to be a run")
+        if len(self.snapped_passthroughs) != 2:
+            raise ValueError("a pipe has exactly two passthrough slots")
+        origin = Pose(*self.points[0][0], 0.0).location
+        object.__setattr__(
+            self,
+            "points",
+            tuple(
+                (_as_stored(location, origin), arrive, leave)
+                for location, arrive, leave in self.points
+            ),
+        )
+
+    @property
+    def start(self) -> Vector:
+        return self.points[0][0]
+
+    @property
+    def end(self) -> Vector:
+        return self.points[-1][0]
+
+    @property
+    def pose(self) -> Pose:
+        return Pose(*self.start, 0.0)
+
+    def local_points(self) -> tuple[SplinePoint, ...]:
+        origin = self.pose.location
+        return tuple(
+            ((at[0] - origin[0], at[1] - origin[1], at[2] - origin[2]), arrive, leave)
+            for at, arrive, leave in self.points
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class PipeAttachmentObj:
+    """A native pipeline junction or pump; power is represented by WireObj."""
+
+    id: int
+    class_name: str
+    pose: Pose
+
+
+@dataclass(frozen=True, slots=True)
+class BeamObj:
+    """A beam extending ``length_cm`` along its actor's local +X axis."""
+
+    id: int
+    class_name: str
+    pose: Pose
+    length_cm: float
+
+    def __post_init__(self) -> None:
+        if not math.isfinite(self.length_cm) or self.length_cm <= 0:
+            raise ValueError("beam length must be finite and positive")
+        object.__setattr__(self, "length_cm", stored_float(self.length_cm))
+
+
+@dataclass(frozen=True, slots=True)
+class PassthroughObj:
+    """Foundation hole with transport COMPONENT references, not fictional ports."""
+
+    id: int
+    class_name: str
+    pose: Pose
+    thickness_cm: float
+    top_connection: tuple[int, str] | None = None
+    bottom_connection: tuple[int, str] | None = None
+
+    def __post_init__(self) -> None:
+        if not math.isfinite(self.thickness_cm) or self.thickness_cm <= 0:
+            raise ValueError("passthrough thickness must be finite and positive")
+        object.__setattr__(self, "thickness_cm", stored_float(self.thickness_cm))
+
+
+@dataclass(frozen=True, slots=True)
 class LiftObj:
     """One conveyor lift: a vertical run between two connections.
 
@@ -311,6 +446,13 @@ class LiftObj:
     pose: Pose
     height_cm: float
     top_yaw_deg: float = 0.0
+    snapped_passthroughs: tuple[int | None, int | None] = (None, None)
+    boundary_start: bool = field(default=False, compare=False)
+    boundary_end: bool = field(default=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if len(self.snapped_passthroughs) != 2:
+            raise ValueError("a lift has exactly two passthrough slots")
 
     def bottom_end(self, geometry: LiftGeometry) -> tuple[Vector, Vector]:
         """``(where the bottom connection sits, which way it faces)``, in world space.
@@ -321,7 +463,12 @@ class LiftObj:
         ``geometry.bottom_offset`` and ``geometry.bottom_facing``, both turned
         by the pose's yaw.
         """
-        return (self._at(geometry.bottom_offset), self._facing(geometry, 0.0))
+        facing = (
+            self._snapped_facing(0)
+            if self.snapped_passthroughs[0] is not None
+            else self._facing(geometry, 0.0)
+        )
+        return (self._at(geometry.bottom_offset), facing)
 
     def top_end(self, geometry: LiftGeometry) -> tuple[Vector, Vector]:
         """``(where the top connection sits, which way it faces)``, in world space.
@@ -333,11 +480,13 @@ class LiftObj:
         """
         return (
             self._at(geometry.top_offset(self.height_cm)),
-            self._facing(geometry, self.top_yaw_deg),
+            self._snapped_facing(1)
+            if self.snapped_passthroughs[1] is not None
+            else self._facing(geometry, self.top_yaw_deg),
         )
 
     def _at(self, offset: Vector) -> Vector:
-        turned = quat_rotate(yaw_quaternion(self.pose.yaw_deg), offset)
+        turned = quat_rotate(self.pose.transform().rotation, offset)
         origin = self.pose.location
         return (turned[0] + origin[0], turned[1] + origin[1], turned[2] + origin[2])
 
@@ -350,11 +499,18 @@ class LiftObj:
         relative transform.  The top's relative transform adds its own yaw to
         the actor's, which is the only difference between the two ends.
         """
-        quaternion = yaw_quaternion(self.pose.yaw_deg + extra_yaw_deg)
-        return snap_zeros(quat_rotate(quaternion, geometry.bottom_facing))
+        local = quat_rotate(yaw_quaternion(extra_yaw_deg), geometry.bottom_facing)
+        return snap_zeros(quat_rotate(self.pose.transform().rotation, local))
+
+    def _snapped_facing(self, index: int) -> Vector:
+        # SetupConnections 0x505bdf/0x505bf9: base Z >= top Z picks Up
+        # for component0; component1 negates it (0x505f4f..0x505f93).
+        sign = 1.0 if self.height_cm > 0.0 else -1.0
+        local = (0.0, 0.0, sign if index else -sign)
+        return snap_zeros(quat_rotate(self.pose.transform().rotation, local))
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, eq=False)
 class Link:
     """One connection: ``a``'s port wired to ``b``'s port.
 
@@ -374,6 +530,16 @@ class Link:
     a: tuple[int, str]
     b: tuple[int, str]
 
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Link):
+            return NotImplemented
+        return (self.a == other.a and self.b == other.b) or (
+            self.a == other.b and self.b == other.a
+        )
+
+    def __hash__(self) -> int:
+        return hash((min(self.a, self.b), max(self.a, self.b)))
+
 
 @dataclass(frozen=True, slots=True)
 class WireObj:
@@ -384,8 +550,34 @@ class WireObj:
     link: Link
 
 
-Placed = MachineObj | AttachmentObj | BeltRun | LiftObj | PoleObj | WireObj | FoundationObj
+Placed = (
+    MachineObj
+    | AttachmentObj
+    | BeltRun
+    | LiftObj
+    | PoleObj
+    | WireObj
+    | FoundationObj
+    | PipeRun
+    | PipeAttachmentObj
+    | BeamObj
+    | PassthroughObj
+)
 """Anything a placement holds: everything with an id and a class name."""
+
+
+@dataclass(frozen=True, slots=True)
+class StackLane:
+    """Paired boundary endpoints, local rates and repeat-limiting transport capacity."""
+
+    item_id: str
+    kind: Literal["belt", "pipe"]
+    bottom: tuple[int, str]
+    top: tuple[int, str]
+    input_per_second: Fraction
+    output_per_second: Fraction
+    capacity_per_second: Fraction
+    required_input_head_m: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -396,9 +588,9 @@ class SfyPlacement:
     a wire's own link lives on the :class:`WireObj`.
 
     ``description`` and ``short_desc`` are the text the ``.sbpcfg`` beside the
-    blueprint carries -- a machine's clock is recorded there, because the
-    blueprint itself has nowhere to put one -- so they are not part of what the
-    ``.sbp`` round trip compares.
+    blueprint carries, so they are not part of what the ``.sbp`` round trip
+    compares. Machine clocks are also serialized in the blueprint as potential
+    floats; :class:`MachineObj` compares their stored-width representation.
 
     ``links`` is held in a canonical order -- sorted, and built once in
     :meth:`__post_init__` -- rather than in the order the author wrote them.
@@ -421,6 +613,13 @@ class SfyPlacement:
     links: tuple[Link, ...] = ()
     description: str = field(default="", compare=False)
     short_desc: str = field(default="", compare=False)
+    pipes: tuple[PipeRun, ...] = ()
+    pipe_attachments: tuple[PipeAttachmentObj, ...] = ()
+    beams: tuple[BeamObj, ...] = ()
+    passthroughs: tuple[PassthroughObj, ...] = ()
+    stack_height_cm: float = field(default=0.0, compare=False)
+    stack_connection_gap_cm: float = field(default=0.0, compare=False)
+    stack_lanes: tuple[StackLane, ...] = field(default=(), compare=False)
     #: Lazily built by :meth:`by_id`, and outside equality, repr and ``__init__``
     #: because it is a cache of the tuples above rather than part of the build.
     _index: dict[int, Placed] | None = field(default=None, init=False, compare=False, repr=False)
@@ -439,6 +638,10 @@ class SfyPlacement:
             *self.belts,
             *self.lifts,
             *self.poles,
+            *self.pipes,
+            *self.pipe_attachments,
+            *self.beams,
+            *self.passthroughs,
             *self.wires,
         )
 
@@ -466,12 +669,12 @@ class SfyPlacement:
 def _link_order(link: Link) -> tuple[int, str, int, str]:
     """The key :class:`SfyPlacement` sorts ``links`` by.
 
-    Object id then port name, upstream side first: a total order over links,
-    which is all a canonical form needs.  It is written out rather than left to
-    ``sorted``'s default so that the ordering is a stated property of the model
-    and not an accident of how a tuple of tuples compares.
+    Component pairs are physically undirected references. Retain the authored
+    side order for routing, but order/equality must not depend on which pipe end
+    the decoder encounters first.
     """
-    return (link.a[0], link.a[1], link.b[0], link.b[1])
+    first, second = min(link.a, link.b), max(link.a, link.b)
+    return (first[0], first[1], second[0], second[1])
 
 
 def lift_geometry(registry: Registry, class_name: str) -> LiftGeometry:
@@ -516,6 +719,25 @@ def belt_ends(registry: Registry, class_name: str) -> tuple[str, str]:
     if flow is None:
         raise KeyError(f"the registry gives {class_name} no conveyor flow, so it has no belt ends")
     return (flow.entry, flow.exit)
+
+
+def pipe_ends(registry: Registry, class_name: str) -> tuple[str, str]:
+    """Spline start/end components, without assigning conveyor flow to a pipe.
+
+    AFGBuildablePipeBase::Splice documents end 1 of its first segment and end 0
+    of its second segment at the cut. Pipeline's named component pair implements
+    those native indices; both ends can carry fluid in either direction.
+    ``assets.json.conveyor_connections`` records the actual CDO member refs for
+    all four pipeline variants as PipelineConnection0/PipelineConnection1.
+    PipeBase::SetupConnections (0x54b040) places them at the first/last spline
+    points with -LeaveTangent/+ArriveTangent, respectively.
+    """
+    buildable = registry.buildables[class_name]
+    names = {port.name for port in buildable.ports if port.kind == "pipe"}
+    pair = ("PipelineConnection0", "PipelineConnection1")
+    if buildable.native_class != "FGBuildablePipeline" or not set(pair) <= names:
+        raise KeyError(f"{class_name} has no known native pipeline endpoint pair")
+    return pair
 
 
 def _as_stored(location: Vector, origin: Vector) -> Vector:

@@ -23,13 +23,23 @@ Quaternion = tuple[float, float, float, float]
 
 
 def quat_rotate(q: Quaternion, v: Vector) -> Vector:
-    """Rotate ``v`` by the unit quaternion ``q``, given as ``(x, y, z, w)``."""
+    """Rotate ``v`` by nonzero ``q = (x, y, z, w)``, without changing ``q``.
+
+    Stored f32 quaternions need not have exactly unit length. Dividing the
+    cross-product term by their squared norm is equivalent to normalizing the
+    rotation, without a square root or altering the serialized orientation.
+    """
     x, y, z, w = q
     vx, vy, vz = v
-    # v' = v + 2*w*(q_xyz x v) + 2*(q_xyz x (q_xyz x v))
+    # v' = v + 2/|q|² * (w*(q_xyz x v) + q_xyz x (q_xyz x v))
+    scale = 2.0 / (x * x + y * y + z * z + w * w)
     cx, cy, cz = (y * vz - z * vy, z * vx - x * vz, x * vy - y * vx)
     dx, dy, dz = (y * cz - z * cy, z * cx - x * cz, x * cy - y * cx)
-    return (vx + 2 * (w * cx + dx), vy + 2 * (w * cy + dy), vz + 2 * (w * cz + dz))
+    return (
+        vx + scale * (w * cx + dx),
+        vy + scale * (w * cy + dy),
+        vz + scale * (w * cz + dz),
+    )
 
 
 def world_port(transform: Transform, port: Port) -> Vector:

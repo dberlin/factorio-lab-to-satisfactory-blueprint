@@ -54,7 +54,7 @@ from flab2bp.lab.url import (
 )
 from flab2bp.sfy.labmap import LabMap, machine_class, recipe_class
 from flab2bp.sfy.registry import Registry
-from flab2bp.sfy.spec import SfyBuildSpec, SfyMachineGroup
+from flab2bp.sfy.spec import PipeTier, SfyBuildSpec, SfyMachineGroup
 from flab2bp.spec import BeltTier
 
 if TYPE_CHECKING:  # `flab2bp.lab.flow` imports the DSP catalog at module scope
@@ -274,12 +274,11 @@ def _machine_power_mw(
     return buildable.power_mw * factor * float(float(clock) ** exponent)
 
 
-def _fluids(data: Dataset, item_ids: Mapping[str, Fraction]) -> list[str]:
+def _fluids(data: Dataset, item_ids: Mapping[str, Fraction]) -> frozenset[str]:
     """Those of ``item_ids`` the lab dataset carries without a stack size.
 
-    No stack is how FactorioLab marks a fluid, and fluids are M5.  An id the
-    dataset does not carry at all is refused rather than waved through: it
-    would otherwise slip past this check and be belted as a solid.
+    An id the dataset does not carry at all is refused rather than waved
+    through: it would otherwise slip past classification and be belted as a solid.
     """
     out = []
     for item_id in item_ids:
@@ -291,7 +290,7 @@ def _fluids(data: Dataset, item_ids: Mapping[str, Fraction]) -> list[str]:
             )
         if item.stack is None:
             out.append(item_id)
-    return sorted(out)
+    return frozenset(out)
 
 
 def _belts(data: Dataset, request: LabRequest) -> tuple[str, Fraction, tuple[BeltTier, ...]]:
@@ -318,6 +317,29 @@ def _belts(data: Dataset, request: LabRequest) -> tuple[str, Fraction, tuple[Bel
             tiers.append(BeltTier(item_id=item.id, items_per_second=speed))
     tiers.sort(key=lambda t: t.items_per_second)
     return floor_id, floor_speed, tuple(tiers)
+
+
+def _pipes(data: Dataset, request: LabRequest) -> tuple[PipeTier, ...]:
+    """Allowed pipelines, floor first, at their dataset-rated cubic metres/s.
+
+    Like belts, the URL selects a floor and the dataset supplies the ceiling.
+    Unlike belts, ``pipe_tiers`` includes the floor itself.
+    """
+    floor_id = request.pipe_id or data.defaults.min_pipe
+    if floor_id is None:
+        return ()
+    floor_speed = data.pipe_speed(floor_id)
+    ceiling_id = data.defaults.max_pipe
+    ceiling_speed = data.pipe_speed(ceiling_id) if ceiling_id else floor_speed
+    tiers = [PipeTier(item_id=floor_id, cubic_metres_per_second=floor_speed)]
+    for item in data.items:
+        if item.pipe is None or item.id == floor_id:
+            continue
+        speed = data.pipe_speed(item.id)
+        if floor_speed < speed <= ceiling_speed:
+            tiers.append(PipeTier(item_id=item.id, cubic_metres_per_second=speed))
+    tiers.sort(key=lambda tier: tier.cubic_metres_per_second)
+    return tuple(tiers)
 
 
 def _is_extraction(data: Dataset, row: FlowRow) -> bool:
@@ -415,11 +437,10 @@ def spec_from_flow(
     *,
     label: str = "",
 ) -> SfyBuildSpec:
-    """The build FactorioLab's chosen flow describes, in exact items/second.
+    """The chosen build, in exact items/second or cubic metres/second for fluids.
 
-    Raises :class:`RatesRefusal` when the flow and the rate model disagree, when
-    the flow needs a fluid (M4), or when a row names something the game tables
-    cannot place.
+    Raises :class:`RatesRefusal` when the flow and the rate model disagree or
+    when a row names something the game tables cannot place.
     """
     groups = []
     for row in flow.rows:
@@ -433,6 +454,11 @@ def spec_from_flow(
         item_id: _per_second(rate, request.display_rate)
         for item_id, rate in flow.external_items(data).items()
     }
+
+    consumed: dict[str, Fraction] = {}
+    for group in groups:
+        for item, rate in group.row_inputs.items():
+            consumed[item] = consumed.get(item, Fraction()) + rate
 
     outputs: dict[str, Fraction] = {}
     for objective in request.objectives:
@@ -452,7 +478,17 @@ def spec_from_flow(
                 "the flow does not produce the objective",
                 f"no row for {objective.target_id!r}",
             )
-        outputs[objective.target_id] = _per_second(target.items, request.display_rate)
+        # CSV Items includes material consumed by downstream recipes; Surplus
+        # is separate. Only the unconsumed objective rate crosses the boundary.
+        exported = _per_second(target.items, request.display_rate) - consumed.get(
+            objective.target_id, Fraction()
+        )
+        if exported <= 0:
+            raise RatesRefusal(
+                "the flow does not export the objective",
+                f"{objective.target_id!r} has {exported}/s left after internal consumption",
+            )
+        outputs[objective.target_id] = exported
 
     surplus_outputs = {
         row.item_id: _per_second(row.surplus, request.display_rate)
@@ -468,8 +504,6 @@ def spec_from_flow(
         crossing |= group.inputs_per_machine
         crossing |= group.outputs_per_machine
     fluids = _fluids(data, crossing)
-    if fluids:
-        raise RatesRefusal("fluids are M5", f"this flow moves {', '.join(fluids)}")
 
     belt_item_id, belt_speed, upgrades = _belts(data, request)
     return SfyBuildSpec(
@@ -480,6 +514,8 @@ def spec_from_flow(
         belt_item_id=belt_item_id,
         belt_items_per_second=belt_speed,
         belt_upgrades=upgrades,
+        fluid_items=fluids,
+        pipe_tiers=_pipes(data, request),
         label=label,
     )
 

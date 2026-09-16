@@ -13,6 +13,13 @@ which members it uses, and — for a belt — where the spline that gets validat
 comes from. Line numbers are into `CommunityResources/Headers.zip`, under
 `Source/FactoryGame/Public/`.
 
+The stack/fluid follow-up was read from the installed DLL with SHA-256
+`65fc5a6bde6d44782da387976b144a41a6b94e4fa78ec6e1bc49c3dad2d47513`
+and PDB GUID `A2691F7C-B45E-7947-65C6-535DE373BA04`. These identify the examined
+binary, not a marketed game version. Full native reports are retained under
+`/home/dannyb/satisfactory-tests/stackable-production/`. Offline native evidence
+and project validation do not establish in-game load, paste or throughput validity.
+
 Most of what is here is a *validation*: code that turns a placement away, or
 moves it. A good half of the rules are the other kind — code that **works out** a
 value the game then writes, which this project has to reproduce rather than
@@ -23,11 +30,10 @@ enforce when it authors a blueprint. Those carry the effect `compute`:
 `lift.connectors` and `lift.top_yaw` — and the two overclocking rules
 `factory.potential` and `manufacturer.production_boost`.
 
-Not every function here is a hologram's. Four of the rules are read out of the
-**buildable** instead — a belt's clearance boxes, a lift's, where a lift's two
-connections end up, and what a power shard or a somersloop does to a machine —
-because that is where the game computes them; the file's name is about what it
-is for, which is deciding what this project may author.
+Not every function here is a hologram's. Buildable functions also compute
+clearance, runtime connection geometry, recipe inventories and production
+potential. Those computations are evidence for authoring, not automatically
+native placement refusals.
 
 ## How a placement is refused
 
@@ -225,7 +231,7 @@ mesh: `AFGBuildableConveyorBelt::GetDismantleRefundReturnsMultiplier`
 (`0x4edf70`) passes `mMeshLength` and its `mLength`, the lift's (`0x4edf90`)
 passes `mMeshHeight` and its height, and `AFGBuildable`'s (`0x2434e0`) returns 1
 for everything else. Both mesh properties are Docs.json class defaults (200 cm
-for all twelve marks in 1.2.0), so `registry.json` carries the number per
+for all twelve marks in the extracted data), so `registry.json` carries the number per
 buildable as `length_per_cost_cm` with the source `docs`.
 
 `AFGBuildable::GetDismantleRefundReturns` (`0x4a7720`) reads that multiplier
@@ -285,10 +291,18 @@ The snap is `lift.step`, `extracted`/`snap`:
 the sign agreement (`0xaa48db`) and both ends of the clamp (`0xaa4965`,
 `0xaa4979`, `0xaa497d`) read. So a height that is not a whole number of steps is
 one the game **moves**, not one it refuses: a validator that turns such a lift
-away is stating this project's own rule, with this snap as its reason. The one
-exception is a lift snapped to a passthrough, which carries that passthrough's
-thickness modulo 100 through the clamp (`0xaa4830`…`0xaa4867`, back in at
-`0xaa4981` / out at `0xaa49a3`) and so lands off the lattice by that remainder.
+away is stating this project's own rule, with this snap as its reason. With one
+end snapped to a passthrough, `int(thickness * 0.5 + step) % 100` survives the
+clamp (`0xaa481f`…`0xaa4867`, back in at `0xaa4981` / out at `0xaa49a3`).
+
+Two-hole bridges take a different path: `TrySnapToActor` checks the first
+passthrough at `0xa94dca`…`0xa94ddb`, subtracts its world origin from the second
+hole's origin, and writes the exact translation into `mTopTransform` at
+`0xa94f23`…`0xa94f85`. This path calls `SetRelativeTransform` at `0xa9512c`,
+stores the second snapped hole at `0xa95254`, and never calls
+`UpdateTopTransform`. The validator therefore checks both real centres and
+reciprocal ownership rather than applying the one-hole remainder to a
+two-hole bridge. The generated 400 cm inter-module gap is covered by that case.
 
 This rule was `partial`/`none` until Task 8e: the earlier reading looked at the
 three `comiss`/`ucomiss` uses of `mStepHeight` and concluded nothing quantised
@@ -336,6 +350,12 @@ two transforms' Z and picks `FVector::UpVector` (`0x505bad`) or
 `FVector::DownVector` (`0x505bfb`), and `mConnection1` gets that vector negated
 first (`0x505f4f` loads `-1.0`). All three globals are named by the DLL's import
 table, not guessed.
+
+The corresponding actor translation is still the hole **centre**, not a slab
+face displaced by half its thickness. Authoring therefore writes exactly two
+nullable `mSnappedPassthroughs` actor references and reciprocal hole-side
+transport-component references. It must not write an empty array or retain
+references to holes from a fixture.
 
 **Reversal does not swap which end items enter by.** `mIsReversed` is still a
 `SaveGame` bool, and the header marks it `DEPRECATED 2023-01-30 / Instead build
@@ -470,6 +490,36 @@ mentions: `MINIMUM_PIPE_CLEARANCE` and `MINIMUM_HOLOGRAM_LENGTH` (154–155), bo
 off `FHologramPathingGrid::PATH_GRID_CELL_SIZE`, which is 100
 (`Hologram/HologramHelpers.h:464`).
 
+### Runtime pipe endpoints and physical stack actors
+
+`AFGBuildablePipeline::SetupConnections` (`0x54b040`) uses the first spline
+point's **negative leave tangent** for its first outward normal and the last
+point's **positive arrive tangent** for its last. Snapped passthrough endpoints
+stay at the hole centre. Pipe geometry must not reuse conveyor direction or
+slab-face assumptions.
+
+Current sections emit pipeline splines, real junctions and powered Mk2 pumps,
+beam lengths and foundation passthrough thickness/references. Actor poses use
+full quaternions; the lift top's yaw-only local transform is not a restriction
+on pump, junction, beam or hole orientation. Beam and hole dynamic dimensions
+are checked as project authoring constraints. Hole middle-mesh envelopes are
+bounded, but constructed cap-mesh extents remain unextracted; pipe mesh-envelope
+collision and hydraulic design checks are not native clearance/pressure proofs.
+
+### Blueprint registration is not universal automatic joining
+
+The factory new-actor registration path has a **ConveyorBelt subclass** gate at
+`0xa76511..0xa76536`; the pipe path has a **PipeBase** gate at `0xa76781`.
+The conveyor gate is narrower than a claim that every lift-associated
+connection is impossible: it identifies that registration path's accepted
+source actors, not every possible snap/connection path.
+
+The production contract is consequently explicit: repeat the matching slab/beam
+outline at the stated pitch and manually bridge each matching pair of holes
+across the 400 cm seam. No automatic lift join or cross-blueprint reference is
+claimed. Bottom input trunks branch locally and continue upward; liquid supply
+must meet the reported head derived from the actual route before the next pump.
+
 ## Every hologram — `Hologram/FGBuildableHologram.h`, `Hologram/FGHologram.h`
 
 | Declaration | Line | Reads | Rule |
@@ -542,12 +592,25 @@ That function walks each inventory **once per slot**, not once per ingredient:
 | `mOutputInventory` | `mProduct[i].ItemClass` | `i < mProduct.Num()` |
 | `mOutputInventory` | `UFGItemDescriptor` | otherwise |
 
-each through `UFGInventoryComponent::SetAllowedItemOnIndex(i, class)`. The loop
-bound is the inventory's own `mInventoryStacks.Num()` (`[inventory+1C8h]`), so
-the slot count belongs to the machine and never changes, and
-`mArbitrarySlotSizes` is not touched at all. Two consequences worth stating: a
-spare slot is written with the wildcard rather than left as it was, and an oil
-refinery keeps the slot a solid recipe does not fill.
+each through `UFGInventoryComponent::SetAllowedItemOnIndex(i, class)`. This
+function's loop bound is the inventory's own `mInventoryStacks.Num()`
+(`[inventory+1C8h]`); this call does not resize it or touch `mArbitrarySlotSizes`.
+Spare slots receive the wildcard rather than a fixture's old filter.
+
+That is not the whole lifecycle. `AssignInputAccessIndices` (`0x51ec70`) and
+`AssignOutputAccessIndices` (`0x51f180`) reset pipe access indices to `-1`,
+then assign each fluid its index in the **whole recipe ingredient/product list**,
+not a fluid-only ordinal. Physical pipe ports are consumed in fluid recipe
+order; their `mInventoryAccessIndex` still addresses the shared recipe inventory.
+Unused pipe ports stay disabled. Thus a fluid second product uses index 1 even
+when it is the recipe's first fluid output.
+
+The emitter writes the selected recipe, rewrites both filters and authors those
+global pipe access indices. It preserves template inventory allocation rather
+than claiming the filter setter reallocated it. Native `BeginPlay`
+(`0x5213fc`) calls `CreateInventories` (`0x528210`), which rebuilds access indices,
+fluid slot sizes and filters. The earlier statement that the game never touches
+slot sizes was only true of the isolated filter call, not of loading a machine.
 
 ## What a power shard and a somersloop do — `factory.potential`, `manufacturer.production_boost`
 
@@ -666,9 +729,9 @@ when the rules behind them clamp and snap.
 `lift.step` governs `lift_step_cm` with the effect `snap`: `UpdateTopTransform`
 rounds a lift's height onto a multiple of it, and rounding is not refusing. So
 the registry carries the number, its source `binary` and its governance, and a
-placer reads all three — the height it authors has to be a multiple of 100 cm
-because the game would otherwise move the lift, which is a reason of ours built
-on a fact of theirs.
+placer reads all three. Free-ended authored lifts follow that grid; one-hole
+lifts include the half-thickness remainder. Two-hole bridges use the exact
+hole-origin separation through the distinct direct-snap path described above.
 
 ## What was extracted, and what was not
 
@@ -682,9 +745,9 @@ The two reasons a rule is only `partial`:
 - **the comparison is in a callee** — `buildable.clearance`
   (`AFGHologram::TestClearanceOverlap`), `buildable.grid_snap`
   (`FHologramHelpers::SnapToFloor`);
-- **a number is in `.data`** — `lift.clearance`, whose two functions were both
-  read whole and whose box half-extent is a mutable module global
-  `sfy-native` will not quote as a constant.
+- **an unresolved vector target** — `lift.clearance`: its half-extent has been
+  read from `.data` by symbol, but the vector used to place the box centre is
+  still not identified. The exact limitation is described above.
 
 There used to be a third — "the rule may not exist", claimed for `lift.step` —
 and it was a misreading rather than a reason: the quantisation is in the

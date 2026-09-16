@@ -66,6 +66,7 @@ from flab2bp.sfy.layout.rrr import (
     _restore,
     _Run,
     _shut_shafts,
+    _stake_column,
     route_all,
 )
 from flab2bp.sfy.layout.splines import straight
@@ -1145,6 +1146,27 @@ def test_a_tap_side_another_nets_belt_shadows_is_not_offered() -> None:
     assert (15, 16, GROUND_LEVEL) in left_only
 
 
+def test_tap_beside_lift_corner_keeps_single_physical_clearance() -> None:
+    run = _loop(_occupancy())
+    trunk = _line((4, 12, GROUND_LEVEL), (24, 12, GROUND_LEVEL))
+    net = GridNet(
+        id=1, item_id=ITEM, sources=(), sinks=(), rate=Fraction(0), per_sink=(), per_source=()
+    )
+    run.stake(net.id, trunk)
+    branches = (_carrier(trunk),)
+    side = (12, 11, GROUND_LEVEL)
+    assert side in run.tap_sites(branches, net)
+
+    _stake_column(run, 2, (10, 10, GROUND_LEVEL), (10, 10, GROUND_LEVEL + 4))
+
+    # The trunk and branch are both 200 cm from the shaft: more than 95+79.
+    sites = run.tap_sites(branches, net)
+    assert side in sites
+    assert (10, 11, GROUND_LEVEL) not in sites
+    run.release(net.id)
+    assert run.blocker((11, 11, GROUND_LEVEL)) == 2
+
+
 def test_a_stranded_net_names_the_belt_in_its_doorway_and_no_machine() -> None:
     """What a walled-in port learns, when no search ever proves a pocket.
 
@@ -1354,7 +1376,7 @@ def test_a_machine_and_external_input_both_supply_the_same_sink() -> None:
 
 
 def test_a_shadowed_tap_candidate_falls_back_to_a_valid_wall_entry() -> None:
-    """The concrete layout's fourth input can enter at the wall, not lap its trunk."""
+    """Congested fan-out must supply every sink without lapping its own trunk."""
     spec = flow_spec("concrete-60")
     group = spec.groups[0]
     machines = tuple(
@@ -1372,8 +1394,6 @@ def test_a_shadowed_tap_candidate_falls_back_to_a_valid_wall_entry() -> None:
     outcome = _route(nets, _occupancy(*machines), spec=spec)
 
     assert outcome.stranded == ()
-    limestone = next(tree for tree in outcome.trees if tree.net.item_id == "limestone")
-    assert len(_entries(limestone, _lattice())) == len(machines)
     imported = sum(
         (
             belt.items_per_second

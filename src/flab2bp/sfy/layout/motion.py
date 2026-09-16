@@ -26,11 +26,11 @@ from flab2bp.layout.geometric_motion import (
 )
 from flab2bp.sfy.layout.corridors import Measures, Turn
 from flab2bp.sfy.layout.lattice import GROUND_LEVEL, Lattice, Node
-from flab2bp.sfy.layout.manifold import MERGER_CLASS, SPLITTER_CLASS
+from flab2bp.sfy.layout.manifold import MERGER_CLASS, SPLITTER_CLASS, shortest_belt_cm
 from flab2bp.sfy.layout.model import lift_geometry
 from flab2bp.sfy.layout.transitions import FLAT_STEPS, incline_run_nodes, sfy_transitions
 from flab2bp.sfy.layout.turns import eligible, fits_turn, free_run, options
-from flab2bp.sfy.layout.validate import PORT_ANGLE_RAD, TOUCH_CM
+from flab2bp.sfy.layout.validate import BELT_CLEARANCE_HALF_WIDTH_CM, PORT_ANGLE_RAD, TOUCH_CM
 
 if TYPE_CHECKING:
     from flab2bp.sfy.layout.realise import Terminal
@@ -104,6 +104,8 @@ class MotionProfile:
     ramp_cap: int
     lift_yaws: tuple[tuple[bool, ...], ...]
     stub_credits: tuple[float, ...]
+    belt_min: float
+    lift_lead: float
 
     def free(self, state: _State) -> float:
         return state.progress if state.slope == 0 else self.ramp_free[round(state.progress)]
@@ -175,6 +177,10 @@ def motion_profile(
             stub = math.ceil((offset - TOUCH_CM) / lattice.grid_cm) * lattice.grid_cm - offset
             if stub > TOUCH_CM:
                 stub_credits.add(stub)
+    lift_half = registry.limits.lift_clearance_half_extent_cm
+    if lift_half is None:
+        raise ValueError("the registry states no lift shaft clearance")
+    belt_min = shortest_belt_cm(registry.limits)
     return MotionProfile(
         lattice,
         lattice.grid_cm,
@@ -186,6 +192,8 @@ def motion_profile(
         ramp_cap,
         tuple(yaws),
         tuple(sorted(stub_credits)),
+        belt_min,
+        max(belt_min, lift_half + BELT_CLEARANCE_HALF_WIDTH_CM),
     )
 
 
@@ -196,6 +204,8 @@ class _State:
     progress: float
     previous: int = -1
     mode: int = _RUN
+    # Origin of the current flat leg: no cut, terminal, or lift connector.
+    cut: int = _RUN
 
 
 @dataclass(frozen=True, slots=True)
@@ -237,7 +247,7 @@ def _end(terminal: Terminal, lattice: Lattice, *, source: bool) -> _End:
 
 def _initial(profile: MotionProfile, end: _End) -> _State:
     if end.stub > TOUCH_CM:
-        return profile.mature(_State(end.heading, 0, min(end.stub, profile.flat_cap)))
+        return profile.mature(_State(end.heading, 0, min(end.stub, profile.flat_cap), cut=_PORT))
     return _State(end.heading, 0, 0.0, mode=_PORT if end.port else _WALL)
 
 
@@ -246,8 +256,17 @@ def _advance(
 ) -> tuple[tuple[_State, int, int], ...]:
     dx, dy, dz, via = move
     if not dx and not dy:
+        # A lift cuts the belt. Turn debt alone cannot certify the intervening
+        # straight: a debt-free 100 cm leg is still shorter than a real belt,
+        # and a ramp ending beside the shaft needs its swept clearance too.
+        lead = profile.belt_min if state.cut == _PORT else profile.lift_lead
         if state.mode == _WALL or (
-            state.mode == _RUN and (state.slope or not profile.closed(state))
+            state.mode == _RUN
+            and (
+                state.slope
+                or not profile.closed(state)
+                or (state.previous < 0 and state.progress + _EPS < lead)
+            )
         ):
             return ()
         return ((_State(state.heading, 0, 0.0, mode=_LIFT), -1, -1),)
@@ -261,18 +280,29 @@ def _advance(
     if state.mode in (_PORT, _WALL):
         if heading != state.heading or (state.mode == _PORT and slope):
             return ()
-        return ((fresh, -1, -1),)
+        target = profile.mature(_State(heading, slope, progress, cut=_RUN if slope else _PORT))
+        return ((target, -1, -1),)
     if state.mode == _LIFT:
-        return ((fresh, -1, -1),) if not slope and profile.lift_yaws[state.heading][heading] else ()
+        return (
+            ((profile.mature(_State(heading, slope, progress, cut=_LIFT)), -1, -1),)
+            if not slope and profile.lift_yaws[state.heading][heading]
+            else ()
+        )
     if heading == state.heading and slope == state.slope:
         cap = float(profile.ramp_cap) if slope else profile.flat_cap
         advanced = profile.mature(
-            _State(heading, slope, min(cap, state.progress + progress), state.previous)
+            _State(
+                heading, slope, min(cap, state.progress + progress), state.previous, cut=state.cut
+            )
         )
         return ((advanced, -1, -1),)
     if not profile.closed(state):
         return ()
     if heading == state.heading:
+        # Do not begin an incline inside the lift's expanded shaft footprint.
+        # Ordinary slope changes retain their existing continuous-belt rules.
+        if state.cut == _LIFT and state.progress + _EPS < profile.lift_lead:
+            return ()
         return ((fresh, -1, -1),)  # Closing a slope leg discharges its debt, even without a turn.
     ax, ay = FLAT_STEPS[state.heading]
     bx, by = FLAT_STEPS[heading]
@@ -298,8 +328,12 @@ def _accept(profile: MotionProfile, state: _State, end: _End) -> int | None:
         )
         return -1 if valid else None
     if state.mode == _LIFT:
-        valid = (end.stub > TOUCH_CM or end.port) and profile.lift_yaws[state.heading][end.heading]
+        valid = (end.stub + _EPS >= profile.belt_min or (end.stub <= TOUCH_CM and end.port)) and (
+            profile.lift_yaws[state.heading][end.heading]
+        )
         return -1 if valid else None
+    if state.cut and state.slope == 0 and state.progress + end.stub + _EPS < profile.belt_min:
+        return None
     if end.stub <= TOUCH_CM:
         valid = (
             state.heading == end.heading
@@ -311,7 +345,7 @@ def _accept(profile: MotionProfile, state: _State, end: _End) -> int | None:
         enlarged = (
             state
             if state.slope
-            else _State(state.heading, 0, state.progress + end.stub, state.previous)
+            else _State(state.heading, 0, state.progress + end.stub, state.previous, cut=state.cut)
         )
         return -1 if profile.closed(enlarged) else None
     if not profile.closed(state):
@@ -368,7 +402,7 @@ def _topology(
         for mode in (_PORT, _WALL):
             _ = number(_State(heading, 0, 0.0, mode=mode))
         for stub in stubs:
-            _ = number(profile.mature(_State(heading, 0, min(stub, profile.flat_cap))))
+            _ = number(profile.mature(_State(heading, 0, min(stub, profile.flat_cap), cut=_PORT)))
     cursor = 0
     while cursor < len(states):
         _charge(budget, deadline)

@@ -60,7 +60,7 @@ from flab2bp.sfy.registry import (
     PORT_DIRECTION_SOURCES,
     Limits,
 )
-from flab2bp.sfy.rules import load_rules
+from flab2bp.sfy.rules import HologramRule, load_rules
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "src" / "flab2bp" / "sfy" / "data"
@@ -196,14 +196,12 @@ assert FLOW_NAME_SOURCE in FLOW_NAME_SOURCES
 # How much of a spline buildable one unit of its build recipe pays for, per
 # native class, and which Docs.json class default states it.
 #
-# The game divides by it in ``AFGBuildable::GetCostMultiplierForLength``: a
-# conveyor belt's ``GetDismantleRefundReturnsMultiplier`` passes mMeshLength and
-# a lift's passes mMeshHeight, and everything else inherits AFGBuildable's,
-# which returns 1. The ``belt.cost`` rule in ``data/hologram_rules.json`` quotes
-# all of it. ``mLengthPerCost``, which the name of the registry field echoes, is
-# the same idea on a different family -- ``AFGBuildableWire`` (2500) and
-# ``AFGBuildableBeam`` (400) -- and is *not* what a conveyor divides by;
-# neither carries the property at all.
+# The conveyor refund methods pass mMeshLength/mMeshHeight to
+# AFGBuildable::GetCostMultiplierForLength; belt.cost quotes that helper.
+# Beams instead state mLengthPerCost directly in Docs, normalized by the Docs
+# extractor with their own provenance. Pipes pass twice mMeshLength to the
+# same helper, as the native evidence below shows. Neither pipe nor beam cost
+# semantics are inferred from conveyor meshes.
 COST_SEGMENT_PROPERTY: dict[str, tuple[str, str]] = {
     # native class -> (the docs.json key, the game's own property name)
     "FGBuildableConveyorBelt": ("mesh_length_cm", "mMeshLength"),
@@ -212,6 +210,41 @@ COST_SEGMENT_PROPERTY: dict[str, tuple[str, str]] = {
 COST_SEGMENT_SOURCE = "docs"
 COST_SEGMENT_RULE = "belt.cost"
 assert COST_SEGMENT_SOURCE in COST_SEGMENT_SOURCES
+
+# AFGBuildablePipeBase::GetDismantleRefundReturnsMultiplier, all 25 bytes,
+# from the same shipped DLL/PDB as native.json. The addss doubles the Docs
+# mMeshLength before the tail call to the helper quoted by belt.cost.
+PIPE_COST_LENGTH_MULTIPLIER = 2.0
+PIPE_COST_EVIDENCE = {
+    "source": "binary-derived",
+    "dll_sha256": "65fc5a6bde6d44782da387976b144a41a6b94e4fa78ec6e1bc49c3dad2d47513",
+    "property": "mMeshLength",
+    "unit": "cm",
+    "formula": "mMeshLength * PIPE_COST_LENGTH_MULTIPLIER",
+    "multiplier": PIPE_COST_LENGTH_MULTIPLIER,
+    "header": "Buildables/FGBuildablePipeBase.h",
+    "constant": {
+        "symbol": "AFGBuildablePipeBase::PIPE_COST_LENGTH_MULTIPLIER",
+        "rva": "0x12bd54c",
+        "section": ".rdata",
+        "hex": "00000040",
+        "float": PIPE_COST_LENGTH_MULTIPLIER,
+    },
+    "function": {
+        "symbol": "AFGBuildablePipeBase::GetDismantleRefundReturnsMultiplier",
+        "rva": "0x534620",
+        "size": 25,
+        "size_source": "pdb-procedure-length",
+        "instructions": [
+            "0x534620: f30f108938060000 movss xmm1,dword ptr [rcx+638h] ; mMeshLength",
+            "0x534628: f30f108140060000 movss xmm0,dword ptr [rcx+640h] ; mLength",
+            "0x534630: f30f58c9 addss xmm1,xmm1",
+            "0x534634: e97725f7ff jmp 00000000004A6BB0h",
+        ],
+    },
+    "cost_helper_rule": COST_SEGMENT_RULE,
+    "cost_helper_rva": "0x4a6bb0",
+}
 
 # Where a conveyor lift's two ends sit once the game has placed them.
 #
@@ -491,7 +524,7 @@ def _belt_mesh_length(docs: dict[str, Any]) -> float:
     return float(distinct.pop())
 
 
-def _check_belt_min_length(rules: Mapping[str, Any]) -> str:
+def _check_belt_min_length(rules: Mapping[str, HologramRule]) -> str:
     """Hold :data:`BELT_MIN_LENGTH_FACTOR` to the rule's own evidence line.
 
     The factor is transcribed from the machine code into this script, the way
@@ -1029,9 +1062,7 @@ def _attach_flow(
     }
 
 
-def _attach_lift_geometry(
-    rules: dict[str, Any], buildables: dict[str, Any]
-) -> dict[str, Any]:
+def _attach_lift_geometry(rules: dict[str, Any], buildables: dict[str, Any]) -> dict[str, Any]:
     """Put the lift connector geometry on every lift mark, and return it.
 
     The values are :data:`LIFT_GEOMETRY`, which is the same for all six marks
@@ -1084,25 +1115,41 @@ def _attach_lift_geometry(
 
 
 def _attach_cost_segments(
-    rules: dict[str, Any], buildables: dict[str, Any]
+    rules: dict[str, Any], buildables: dict[str, Any], native: dict[str, Any]
 ) -> dict[str, Any]:
     """Put each spline buildable's cost segment on it, and return the provenance.
 
-    A conveyor is charged its build recipe once per segment of its own mesh:
-    ``AFGBuildableConveyorBelt::GetDismantleRefundReturnsMultiplier`` hands
-    ``mMeshLength`` to ``AFGBuildable::GetCostMultiplierForLength`` and the
-    lift's hands ``mMeshHeight``. Both properties are Docs.json class defaults,
-    so the number is read rather than measured, and the rule that divides by it
-    travels with it. Everything else keeps ``None``: ``AFGBuildable``'s own
-    multiplier returns 1, so its recipe is charged exactly once.
+    Conveyor segments come from their mesh dimensions; pipeline segments are
+    twice mMeshLength, as the native refund method states. Beam segments are
+    already normalized from mLengthPerCost by the Docs extractor and retain
+    their separate property provenance. An unsupported class is left alone,
+    never assumed to follow one of these classes' costing methods.
     """
     if COST_SEGMENT_RULE not in rules:
         raise SystemExit(
             f"hologram_rules.json has no {COST_SEGMENT_RULE} rule, so nothing states what "
             "the cost segment is divided by; re-run scripts/sfy_native_rules.py"
         )
+    if native["provenance"].get("dll_sha256") != PIPE_COST_EVIDENCE["dll_sha256"]:
+        raise SystemExit(
+            "pipeline cost evidence belongs to a different DLL; re-extract "
+            "AFGBuildablePipeBase::GetDismantleRefundReturnsMultiplier"
+        )
     applied: dict[str, float] = {}
+    pipelines: dict[str, float] = {}
     for class_name, entry in sorted(buildables.items()):
+        if entry["native_class"] == "FGBuildablePipeline":
+            mesh_length = entry.get("mesh_length_cm")
+            if mesh_length is None or float(mesh_length) <= 0.0:
+                raise SystemExit(
+                    f"{class_name} is costed by length but Docs.json states no "
+                    "positive mMeshLength; re-run flab2bp.sfy.docs"
+                )
+            segment = float(mesh_length) * PIPE_COST_LENGTH_MULTIPLIER
+            entry["length_per_cost_cm"] = segment
+            entry["length_per_cost_source"] = "binary-derived"
+            pipelines[class_name] = segment
+            continue
         pair = COST_SEGMENT_PROPERTY.get(entry["native_class"])
         if pair is None:
             continue
@@ -1128,6 +1175,7 @@ def _attach_cost_segments(
             native: prop for native, (_key, prop) in sorted(COST_SEGMENT_PROPERTY.items())
         },
         "applied_to": applied,
+        "pipeline": {**PIPE_COST_EVIDENCE, "applied_to": pipelines},
     }
 
 
@@ -1184,9 +1232,7 @@ def _check_directions(ports: dict[str, list[dict[str, Any]]]) -> dict[str, int]:
                 wrong.append(f"{where}: direction_source {source!r} is not a game source")
                 continue
             if (port["direction"] == "unknown") != (source == "unknown"):
-                wrong.append(
-                    f"{where}: direction {port['direction']!r} with source {source!r}"
-                )
+                wrong.append(f"{where}: direction {port['direction']!r} with source {source!r}")
                 continue
             counts[source] += 1
     if wrong:
@@ -1236,9 +1282,7 @@ def _inputs_sha256() -> dict[str, str]:
     inputs writes the same bytes, which is what lets the drift test compare the
     whole file rather than all of it but one key.
     """
-    return {
-        name: hashlib.sha256((DATA / name).read_bytes()).hexdigest() for name in MERGE_INPUTS
-    }
+    return {name: hashlib.sha256((DATA / name).read_bytes()).hexdigest() for name in MERGE_INPUTS}
 
 
 def main(out: Path | None = None) -> int:
@@ -1251,9 +1295,9 @@ def main(out: Path | None = None) -> int:
     assets = json.loads((DATA / "assets.json").read_text(encoding="utf-8"))
     native = json.loads((DATA / "native.json").read_text(encoding="utf-8"))
     directions = json.loads((DATA / "native_directions.json").read_text(encoding="utf-8"))
-    rules_provenance = json.loads(
-        (DATA / "hologram_rules.json").read_text(encoding="utf-8")
-    )["provenance"]
+    rules_provenance = json.loads((DATA / "hologram_rules.json").read_text(encoding="utf-8"))[
+        "provenance"
+    ]
     inputs = _inputs_sha256()
 
     extracted_counts = _check_directions(assets["ports"])
@@ -1266,7 +1310,7 @@ def main(out: Path | None = None) -> int:
         directions, assets.get("conveyor_connections", {}), docs["buildables"]
     )
     rules = load_rules()
-    cost_segments = _attach_cost_segments(rules, docs["buildables"])
+    cost_segments = _attach_cost_segments(rules, docs["buildables"], native)
     lift_geometry = _attach_lift_geometry(rules, docs["buildables"])
     mesh_bounds = _attach_mesh_bounds(assets.get("mesh_bounds", {}), docs["buildables"])
     connection_links = _fill_native_connection_links(docs["buildables"], native)
@@ -1303,6 +1347,7 @@ def main(out: Path | None = None) -> int:
         "recipes": docs["recipes"],
         "descriptors": docs["descriptors"],
         "build_recipes": docs["build_recipes"],
+        "fluid_items": docs["fluid_items"],
         "item_paths": item_paths,
         "recipe_paths": recipe_paths,
         "limits": limits,

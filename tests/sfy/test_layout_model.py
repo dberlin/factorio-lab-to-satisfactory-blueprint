@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
+from flab2bp.sfy.geometry import quat_rotate
 from flab2bp.sfy.labmap import load_lab_map
 from flab2bp.sfy.layout.emit import decode, emit
 from flab2bp.sfy.layout.model import (
@@ -131,7 +132,13 @@ def test_a_machines_pose_comes_back_out_of_the_file_it_went_into(yaw: float) -> 
     )
     back = decode(built, load_registry())
     assert back.machines[0].pose == placement.machines[0].pose
-    assert back.machines[0].pose.transform() == placement.machines[0].pose.transform()
+    expected = placement.machines[0].pose.transform()
+    actual = back.machines[0].pose.transform()
+    assert actual.translation == expected.translation
+    for axis in ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)):
+        assert quat_rotate(actual.rotation, axis) == pytest.approx(
+            quat_rotate(expected.rotation, axis), abs=2e-7
+        )
     assert back == placement
 
 

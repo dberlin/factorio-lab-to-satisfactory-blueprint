@@ -1,7 +1,7 @@
 [project]
 name = "flab2bp"
 version = "0.1.0"
-description = "Convert FactorioLab URLs for Dyson Sphere Program into dense, pasteable DSP blueprints"
+description = "Build connected Satisfactory production blueprints from FactorioLab flows"
 readme = "README.md"
 authors = [
     { name = "Daniel Berlin", email = "dberlin@dberlin.org" }

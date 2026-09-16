@@ -1,37 +1,56 @@
 import { useId, useState } from 'react';
+import { importSatisfactory } from '../api/satisfactory';
 import { findBlueprintString } from '../format';
 import { useBlueprint } from '../state/BlueprintProvider';
 
 export function InputPanel() {
-  const { beginPublication, publishArtifact, failPublication, error, document } = useBlueprint();
+  const {
+    beginPublication,
+    publishArtifact,
+    publishSatisfactory,
+    failPublication,
+    error,
+    document,
+  } = useBlueprint();
   const [text, setText] = useState('');
   const [url, setUrl] = useState('');
   const [busy, setBusy] = useState(false);
   const textId = useId();
   const urlId = useId();
+  const fileId = useId();
 
-  const onDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    const file = e.dataTransfer.files[0];
-    if (!file) return;
+  const readFile = async (file: File) => {
     const generation = beginPublication();
     if (file.size === 0) {
       failPublication(`"${file.name}" is empty.`, generation);
       return;
     }
-    file
-      .text()
-      .then((t) => {
-        if (publishArtifact(t.trim(), generation)) {
-          setText(t.trim());
-        }
-      })
-      .catch((e: unknown) => {
+    try {
+      if (file.name.toLowerCase().endsWith('.sbp')) {
+        publishSatisfactory(await importSatisfactory(file), generation);
+      } else if (file.name.toLowerCase().endsWith('.sbpcfg')) {
         failPublication(
-          `Could not read "${file.name}": ${e instanceof Error ? e.message : String(e)}`,
+          'Select the .sbp file; .sbpcfg contains metadata, not building geometry.',
           generation,
         );
-      });
+      } else {
+        const loaded = (await file.text()).trim();
+        if (publishArtifact(loaded, generation)) setText(loaded);
+      }
+    } catch (cause) {
+      failPublication(
+        `Could not read "${file.name}": ${cause instanceof Error ? cause.message : String(cause)}`,
+        generation,
+      );
+    }
+  };
+
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    const files = Array.from(e.dataTransfer.files);
+    const file =
+      files.find((candidate) => candidate.name.toLowerCase().endsWith('.sbp')) ?? files[0];
+    if (file) void readFile(file);
   };
 
   const fetchUrl = async () => {
@@ -68,6 +87,20 @@ export function InputPanel() {
       onDragOver={(e) => e.preventDefault()}
       onDrop={onDrop}
     >
+      <label htmlFor={fileId}>Open blueprint file (.sbp or DSP .txt)</label>
+      <input
+        id={fileId}
+        type="file"
+        accept=".sbp,.txt"
+        onChange={(event) => {
+          const file = event.currentTarget.files?.[0];
+          event.currentTarget.value = '';
+          if (file) void readFile(file);
+        }}
+      />
+      <p className="note">
+        Drop a Satisfactory .sbp here to inspect its 3D layout. Binary decoding uses the local API.
+      </p>
       <label htmlFor={textId}>Blueprint string</label>
       <textarea
         id={textId}

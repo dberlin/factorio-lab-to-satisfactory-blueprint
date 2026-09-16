@@ -13,15 +13,15 @@ they go through the pipeline unmodified.
 
 The script then holds every file it wrote to what it meant to write -- the
 blueprint re-reads identical, the config round-trips, the placement comes back
-out of the file, the validator is clean on the placement that came back, every
-open belt end is on the wall it claims, and the cost the header advertises is
+out of the file, the validator is clean on that placement, every open transport
+endpoint matches its declared boundary, and the cost the header advertises is
 made of items the registry knows -- and any one of those failing is a non-zero
 exit, the way ``scripts/sfy_checkpoint1.py`` gates itself.
 
 Finally it prints the paste instructions and writes them to
-``out/sfy/checkpoint2-README.md`` beside the pairs: which designer, which wall
-each input belt enters by and where along it, where the output leaves, the rate
-to expect, the power draw, and what to look at. Nothing under ``out/`` is
+``out/sfy/checkpoint2-README.md`` beside the pairs: which designer, where each
+bottom input and top output connects, the full rate to expect, the manual stack
+bridge gap, the power draw, and what to look at. Nothing under ``out/`` is
 committed.
 
 To run the test, on the Windows machine:
@@ -30,8 +30,8 @@ To run the test, on the Windows machine:
      %LOCALAPPDATA%\\FactoryGame\\Saved\\SaveGames\\blueprints\\<session name>\\
   2. Walk into a Blueprint Designer of the mark the instructions name, open it,
      and load the blueprint.
-  3. Paste it somewhere powered, belt the named inputs in at the ``-Y`` wall,
-     and belt the output away at the ``+Y`` wall.
+  3. Paste it somewhere powered and connect the named bottom inputs and top
+     outputs at the positions listed in the instructions.
   4. Watch the output belt for a few minutes and report the rate.
 
 Then report back per pair: (a) does it load, (b) does anything refuse to build,
@@ -53,6 +53,7 @@ from flab2bp.sfy.layout.emit import decode
 from flab2bp.sfy.layout.model import BeltRun, SfyPlacement
 from flab2bp.sfy.layout.validate import Report, validate
 from flab2bp.sfy.registry import Registry
+from flab2bp.sfy.sections.model import endpoint
 from flab2bp.sfy.spec import SfyBuildSpec, foundation_cm
 from flab2bp.sfy.strategy_names import SfyStrategyName
 
@@ -64,8 +65,8 @@ README_NAME = "checkpoint2-README.md"
 #: The two checks that name a ``partial`` hologram rule and therefore live in
 #: ``Report.skipped`` permanently: ``buildable.clearance`` is partial, so
 #: neither the box-against-box decision nor a belt's capsule against one can be
-#: judged here.  A report that skips anything ELSE is a build nobody finished
-#: looking at, so the gate holds the skipped set to exactly these.
+#: judged fully here. Dynamic holes and pipes add their explicit partial-geometry
+#: checks only when those actors are present; all other skipped checks are fatal.
 PARTIAL_RULE_CHECKS = ("belt.capsule", "geom.hard_clearance")
 
 #: How far an open belt end may sit from the wall it claims, the same
@@ -91,15 +92,9 @@ class Case:
     question: str
 
 
-#: ``iron-plate*60`` in three settings, each written into the SMALLEST Blueprint
-#: Designer that holds it.  Since Task 8d that is the Mk.1 for all three: their
-#: two groups pair machine for machine, so the build is one row of smelters
-#: facing one row of constructors with three straight belts between them.
-#: ``reinforced-iron-plate*10`` refuses every mark on depth even with Task 8c's
-#: row splitting in -- see :data:`REFUSED_CASES` -- so the somersloop flow
-#: stands in as a second pair the paste test can judge just as sharply: one
-#: sloop per Constructor doubles what each machine makes, so the same 60 plates
-#: a minute come out of fewer machines.
+#: Three FactorioLab plate flows exercise ordinary, somersloop and overclocked
+#: machines. The first designer that builds is measured, not assumed from the
+#: historical manifold arrangement.
 CASES = (
     Case(
         name="checkpoint2-iron-plate-60",
@@ -127,16 +122,14 @@ CASES = (
     ),
 )
 
-#: The flow the brief named as the second pair, and every designer mark it was
-#: tried in.  It is here rather than in :data:`CASES` because it produces no
-#: file: the refusal itself is the finding, and it goes in the instructions.
+#: Unsupported fluids remain an explicit refusal in every designer.
 REFUSED_CASES = (
     Case(
-        name="reinforced-iron-plate-10",
-        flow="reinforced-iron-plate-10.csv",
-        url="https://factoriolab.github.io/sfy/list?o=reinforced-iron-plate*10&v=11",
+        name="plastic-10",
+        flow="plastic-10.csv",
+        url="https://factoriolab.github.io/sfy/list?o=plastic*10&v=11",
         designer="mk1 mk2 mk3",
-        question="does a five-row chain fit any designer",
+        question="are unsupported fluids explicitly refused",
     ),
 )
 
@@ -169,7 +162,7 @@ def build_case(
     out_dir: Path,
     *,
     time_budget_s: float,
-    strategy: SfyStrategyName = "manifold-rows",
+    strategy: SfyStrategyName = "sections",
 ) -> Written:
     """Build one case in the smallest of its marks that holds it, and write it.
 
@@ -229,10 +222,15 @@ def _check(case: Case, build: pipeline.SfyBuild, sbp: Path, cfg: Path) -> Report
             f"{case.name}: the placement out of {sbp.name} is not clean -- "
             f"{first.check}: {first.message}"
         )
-    if tuple(sorted(report.skipped)) != PARTIAL_RULE_CHECKS:
+    expected_skips = set(PARTIAL_RULE_CHECKS)
+    if placement.passthroughs:
+        expected_skips.add("geom.dynamic")
+    if placement.pipes:
+        expected_skips.add("pipe.capsule")
+    if set(report.skipped) != expected_skips:
         raise CheckFailed(
-            f"{case.name}: the validator skipped {sorted(report.skipped)} and the only "
-            f"checks that may ever be skipped are {list(PARTIAL_RULE_CHECKS)}"
+            f"{case.name}: the validator skipped {sorted(report.skipped)}; "
+            f"this actor set permits only {sorted(expected_skips)}"
         )
 
     _check_boundaries(case, build.placement)
@@ -243,15 +241,10 @@ def _check(case: Case, build: pipeline.SfyBuild, sbp: Path, cfg: Path) -> Report
 def _redressed(placement: SfyPlacement, built: SfyPlacement) -> SfyPlacement:
     """``placement`` wearing the contract the FILE has no property for.
 
-    A belt in a blueprint carries whatever items happen to be sitting on it, not
-    a promise about what it will carry, and nothing in the file marks an end as
-    deliberately open.  So the item, the rate and the two boundary flags are
-    taken back off the build's own belts -- matched by id, which is what the
-    actor's name in the file carries -- before the validator is asked whether the
-    geometry that came out of the file is clean.  The geometry itself is
-    untouched: ``decode(emit(placement)) == placement`` was checked a line
-    earlier, and this restores only the fields that comparison deliberately
-    leaves out.
+    The file stores transport geometry, not promised material rates or deliberately
+    open boundary flags. Restore those contracts by actor id, plus the stack lane
+    rates and repeat pitch, before validating the decoded physical placement.
+    Geometry and passthrough references remain exactly as decoded.
     """
     contracts = {run.id: run for run in built.belts}
     belts = []
@@ -268,18 +261,62 @@ def _redressed(placement: SfyPlacement, built: SfyPlacement) -> SfyPlacement:
                 boundary_end=source.boundary_end,
             )
         )
-    return replace(placement, belts=tuple(belts), description=built.description)
+    lift_contracts = {run.id: run for run in built.lifts}
+    lifts = tuple(
+        replace(
+            run,
+            boundary_start=lift_contracts[run.id].boundary_start,
+            boundary_end=lift_contracts[run.id].boundary_end,
+        )
+        for run in placement.lifts
+    )
+    pipe_contracts = {run.id: run for run in built.pipes}
+    pipes = tuple(
+        replace(
+            run,
+            item_id=pipe_contracts[run.id].item_id,
+            cubic_metres_per_second=pipe_contracts[run.id].cubic_metres_per_second,
+            boundary_start=pipe_contracts[run.id].boundary_start,
+            boundary_end=pipe_contracts[run.id].boundary_end,
+        )
+        for run in placement.pipes
+    )
+    return replace(
+        placement,
+        belts=tuple(belts),
+        lifts=lifts,
+        pipes=pipes,
+        description=built.description,
+        stack_height_cm=built.stack_height_cm,
+        stack_connection_gap_cm=built.stack_connection_gap_cm,
+        stack_lanes=built.stack_lanes,
+    )
 
 
 def _check_boundaries(case: Case, placement: SfyPlacement) -> None:
-    """Every end flagged as a boundary stands on the wall it claims.
-
-    The build's external inputs arrive at the ``-Y`` wall and its outputs leave
-    at the ``+Y`` one, and a flagged end that is not there is a belt that goes
-    nowhere in silence.  The validator judges this too; it is repeated here
-    because the instructions below tell a player where to meet each belt, and a
-    figure nobody checked is not an instruction.
-    """
+    """The connection coordinates in the paste instructions match the real ends."""
+    if placement.stack_lanes:
+        registry = pipeline.registry()
+        for lane in placement.stack_lanes:
+            bottom, bottom_normal = endpoint(placement, *lane.bottom, registry)
+            top, top_normal = endpoint(placement, *lane.top, registry)
+            if (
+                any(abs(bottom[axis] - top[axis]) > WALL_SLACK_CM for axis in (0, 1))
+                or top[2] <= bottom[2]
+                or abs(
+                    bottom[2]
+                    + placement.stack_height_cm
+                    - top[2]
+                    - placement.stack_connection_gap_cm
+                )
+                > WALL_SLACK_CM
+                or bottom_normal[2] > -0.999
+                or top_normal[2] < 0.999
+            ):
+                raise CheckFailed(
+                    f"{case.name}: {lane.item_id!r} lane has misaligned bottom/top access"
+                )
+        return
     half = placement.designer.half_cm
     for run in placement.belts:
         for where, wall, flagged in (
@@ -329,7 +366,7 @@ def refusal(case: Case, *, time_budget_s: float) -> dict[str, str]:
             pipeline.build(
                 case.url,
                 designer=mark,
-                strategy="manifold-rows",
+                strategy="sections",
                 flow=FLOWS / case.flow,
                 time_budget_s=time_budget_s,
             )
@@ -405,9 +442,9 @@ def instructions(written: list[Written], refusals: dict[str, dict[str, str]]) ->
         "FactorioLab flow export committed under `tests/fixtures/sfy_flows/`, through",
         "`flab2bp.sfy.pipeline.build` with nothing changed on the way.  Each one passed",
         "the script's own gates: the file re-reads as what was assembled, the placement",
-        "comes back out of it, the validator is clean on what came back, every open belt",
-        "end is on the wall it claims, and the header's cost is made of items the game",
-        "knows.",
+        "comes back out of it, the validator is clean on what came back, every open",
+        "transport end matches its declared boundary, and the header's cost is made",
+        "of items the game knows.",
         "",
         "## How to paste one",
         "",
@@ -415,9 +452,9 @@ def instructions(written: list[Written], refusals: dict[str, dict[str, str]]) ->
         "   `%LOCALAPPDATA%\\FactoryGame\\Saved\\SaveGames\\blueprints\\<session name>\\`.",
         "2. Walk into a Blueprint Designer of the mark the pair names and open it.",
         "3. Load the blueprint from the list, then paste it on a powered, flat site.",
-        "4. Belt the inputs in at the `-Y` wall and the output away at the `+Y` wall,",
-        "   at the positions given below.  `-Y` is the wall behind you when you stand",
-        "   at the designer's entrance; `-X` is the left-hand corner of that wall.",
+        "4. Connect the bottom inputs and top outputs at the positions given below.",
+        "   For repeated modules keep matching XY outlines and orientation, and bridge",
+        "   corresponding holes manually across the listed gap.",
         "5. Give it a few minutes to fill, then read the rate off the last merger.",
         "",
     ]
@@ -451,7 +488,6 @@ def instructions(written: list[Written], refusals: dict[str, dict[str, str]]) ->
 def _pair_section(entry: Written, registry: Registry) -> list[str]:
     case, build = entry.case, entry.build
     placement, spec = build.placement, build.spec
-    entries, exits = _open_ends(placement)
     wired = _wired_machines(placement)
     out = [
         f"## {case.name}",
@@ -478,11 +514,26 @@ def _pair_section(entry: Written, registry: Registry) -> list[str]:
         f"- Power shards needed: {spec.power_shards}; somersloops needed: "
         f"{sum(g.somersloops * g.count for g in spec.groups)}",
         "",
-        "Belts in, at the `-Y` wall (x measured east from the `-X` corner):",
     ]
-    out += _belt_lines(entries, placement, registry)
-    out += ["", "Belts out, at the `+Y` wall:"]
-    out += _belt_lines(exits, placement, registry)
+    if placement.stack_lanes:
+        out += ["Material inputs, at the bottom:"]
+        out += _lane_lines(placement, registry, incoming=True)
+        out += ["", "Material outputs, at the top (including surplus):"]
+        out += _lane_lines(placement, registry, incoming=False)
+        out += [
+            "",
+            f"Stack pitch: {placement.stack_height_cm:g} cm. Match XY outlines and orientation; "
+            f"manually bridge corresponding holes across the "
+            f"{placement.stack_connection_gap_cm:g} cm gap.",
+            "Inputs branch into this module and continue upward. Rates below are local net "
+            "demand/export; supply all repeated modules and respect each trunk's capacity.",
+        ]
+    else:
+        entries, exits = _open_ends(placement)
+        out += ["Belts in, at the `-Y` wall (x measured east from the `-X` corner):"]
+        out += _belt_lines(entries, placement, registry)
+        out += ["", "Belts out, at the `+Y` wall:"]
+        out += _belt_lines(exits, placement, registry)
     out += [
         "",
         "Expected output: "
@@ -493,7 +544,7 @@ def _pair_section(entry: Written, registry: Registry) -> list[str]:
         "What to look for:",
         "- every belt runs, and transport does not remain backed up",
         "- every machine's panel shows the clock listed above",
-        "- all output belts on the `+Y` wall together carry the expected output rate",
+        "- all material outputs together carry the expected output rate; drain surplus outputs",
         "",
     ]
     if any(group.clock != 1 or group.last_clock != 1 for group in spec.groups):
@@ -533,6 +584,29 @@ def _pair_section(entry: Written, registry: Registry) -> list[str]:
             "",
         ]
     return out
+
+
+def _lane_lines(placement: SfyPlacement, registry: Registry, *, incoming: bool) -> list[str]:
+    lines = []
+    for lane in sorted(placement.stack_lanes, key=lambda lane: lane.item_id):
+        rate = lane.input_per_second if incoming else lane.output_per_second
+        if not rate:
+            continue
+        node = lane.bottom if incoming else lane.top
+        point, _normal = endpoint(placement, *node, registry)
+        unit = "m³/min" if lane.kind == "pipe" else "items/min"
+        lines.append(
+            f"- **{lane.item_id}** at x = {point[0]:g}, y = {point[1]:g}, z = {point[2]:g} cm, "
+            f"on {placement.by_id(node[0]).class_name} `{node[1]}`, "
+            f"carrying {rate * SECONDS_PER_MINUTE} {lane.item_id}/min "
+            f"({'m³' if lane.kind == 'pipe' else 'items'}); "
+            f"trunk capacity {lane.capacity_per_second * SECONDS_PER_MINUTE} {unit}"
+        )
+        if incoming and lane.required_input_head_m:
+            lines.append(
+                f"  Supply at least {lane.required_input_head_m:g} m of head above this inlet."
+            )
+    return lines or ["- (none)"]
 
 
 def _belt_lines(

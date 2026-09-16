@@ -29,7 +29,6 @@ from flab2bp.sfy.layout.splines import spline_length
 from flab2bp.sfy.layout.strategy import ManifoldRows
 from flab2bp.sfy.registry import Registry
 from flab2bp.sfy.spec import FOUNDATION_CLASS, designer
-from flab2bp.sfy.strategy_names import SFY_PRODUCTION_STRATEGIES, SFY_STRATEGY_CHOICES
 from tests.sfy.conftest import flow_spec, sfy_registry
 
 #: The mark every build here is laid out in.  ``iron-plate-60`` is the corpus's
@@ -51,7 +50,6 @@ _MANIFOLD: SfyLayoutStrategy = ManifoldRows()
 def test_manifold_rows_satisfies_the_strategy_protocol() -> None:
     assert isinstance(_MANIFOLD, SfyLayoutStrategy)
     assert _MANIFOLD.name == "manifold-rows"
-    assert _MANIFOLD.name in SFY_PRODUCTION_STRATEGIES
 
 
 # --- the vocabulary of refusal ----------------------------------------------
@@ -92,17 +90,6 @@ def test_the_grid_strategys_causes_are_named_before_the_grid_strategy_exists() -
         "fluids are M5",
     ):
         assert REFUSALS.count(shared) == 1
-
-
-# --- the names --------------------------------------------------------------
-
-
-def test_strategy_choices_include_race_and_production_strategies() -> None:
-    """The race is selectable but does not compete against itself."""
-    assert SFY_STRATEGY_CHOICES == ("best", "manifold-rows", "grid-routed")
-    assert SFY_PRODUCTION_STRATEGIES == ("manifold-rows", "grid-routed")
-    assert set(SFY_PRODUCTION_STRATEGIES) < set(SFY_STRATEGY_CHOICES)
-    assert "best" not in SFY_PRODUCTION_STRATEGIES
 
 
 # --- the floor --------------------------------------------------------------
@@ -235,14 +222,6 @@ def test_race_key_orders_by_blueprints_then_volume_then_belt_then_strategy() -> 
     assert race_key(base, 0) < race_key(_measure(blueprints=2, volume_cm3=1.0, belt_cm=1.0), 0)
     assert race_key(base, 0) < race_key(_measure(volume_cm3=100.5, belt_cm=1.0), 0)
     assert race_key(base, 0) < race_key(_measure(belt_cm=10.5), 0)
-
-    # The tie-break is the production race order, so a dead heat goes to the
-    # strategy named first rather than to whichever finished first.
-    assert SFY_PRODUCTION_STRATEGIES.index("manifold-rows") == 0
-    winner = min(
-        (race_key(base, index), name) for index, name in enumerate(SFY_PRODUCTION_STRATEGIES)
-    )
-    assert winner[1] == "manifold-rows"
 
 
 def test_lifts_and_attachments_are_reported_but_do_not_decide_the_race() -> None:

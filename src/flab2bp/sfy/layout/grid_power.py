@@ -51,7 +51,15 @@ from collections.abc import Iterator, Sequence
 
 from flab2bp.sfy.geometry import world_port
 from flab2bp.sfy.layout.lattice import GROUND_LEVEL, Lattice, Node, Occupancy, belt_levels
-from flab2bp.sfy.layout.model import Link, MachineObj, PoleObj, Pose, Vector, WireObj
+from flab2bp.sfy.layout.model import (
+    Link,
+    MachineObj,
+    PipeAttachmentObj,
+    PoleObj,
+    Pose,
+    Vector,
+    WireObj,
+)
 from flab2bp.sfy.layout.power import (
     POLE_CLASS,
     WIRE_CLASS,
@@ -91,7 +99,7 @@ _CENTRE: tuple[float, float] = (0.0, 0.0)
 
 
 def place_on_free_nodes(
-    machines: Sequence[MachineObj],
+    machines: Sequence[MachineObj | PipeAttachmentObj],
     occupancy: Occupancy,
     registry: Registry,
     *,
@@ -311,11 +319,11 @@ def _best_node(
     lattice: Lattice,
     nodes: Sequence[Node],
     taken: set[Node],
-    unpowered: Sequence[tuple[MachineObj, Vector]],
+    unpowered: Sequence[tuple[MachineObj | PipeAttachmentObj, Vector]],
     stand_z: float,
     port: Port,
     limit: float,
-) -> tuple[Node, list[tuple[MachineObj, Vector]]] | None:
+) -> tuple[Node, list[tuple[MachineObj | PipeAttachmentObj, Vector]]] | None:
     """The free node whose pole reaches the most of ``unpowered``, or ``None``.
 
     ``nodes`` already carries the tie-break order, so the FIRST node with the
@@ -324,7 +332,7 @@ def _best_node(
     case, since a power line reaches 10000 cm and no two points in the largest
     designer are 6800 apart.
     """
-    best: tuple[Node, list[tuple[MachineObj, Vector]]] | None = None
+    best: tuple[Node, list[tuple[MachineObj | PipeAttachmentObj, Vector]]] | None = None
     for node in nodes:
         if node in taken:
             continue
@@ -342,8 +350,8 @@ def _best_node(
 def _machine_budget(
     links_each: int,
     spent: int,
-    reach: Sequence[tuple[MachineObj, Vector]],
-    unpowered: Sequence[tuple[MachineObj, Vector]],
+    reach: Sequence[tuple[MachineObj | PipeAttachmentObj, Vector]],
+    unpowered: Sequence[tuple[MachineObj | PipeAttachmentObj, Vector]],
     pole_class: str,
     port: Port,
 ) -> int:
@@ -409,7 +417,9 @@ def _line(
     )
 
 
-def _hold_every_machine(machines: Sequence[MachineObj], wires: Sequence[WireObj]) -> None:
+def _hold_every_machine(
+    machines: Sequence[MachineObj | PipeAttachmentObj], wires: Sequence[WireObj]
+) -> None:
     """Refuse a machine this module left on no wire, before the validator sees it."""
     wired = {side[0] for one in wires for side in (one.link.a, one.link.b)}
     missing = [machine for machine in machines if machine.id not in wired]

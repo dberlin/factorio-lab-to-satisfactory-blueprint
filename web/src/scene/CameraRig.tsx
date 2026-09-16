@@ -3,7 +3,6 @@ import { useThree } from '@react-three/fiber';
 import type { ComponentRef } from 'react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { OrthographicCamera } from 'three';
-import type { SceneModel } from '../model/layout';
 
 /** The game's blueprint view looks down at roughly 35 degrees. */
 const TILT = 35 * (Math.PI / 180);
@@ -84,7 +83,11 @@ function isElementLike(target: EventTarget | null): target is EventTarget & KeyT
   return el !== null && typeof el?.tagName === 'string' && typeof el.getAttribute === 'function';
 }
 
-export function CameraRig({ model }: { model: SceneModel }) {
+export function CameraRig({
+  model,
+}: {
+  model: { center: [number, number, number]; radius: number };
+}) {
   // `get` reads the live r3f store imperatively. We deliberately avoid
   // holding onto `camera` from a reactive `useThree` selector: this effect
   // mutates the camera in place (position/zoom/near/far), and the React

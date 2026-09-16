@@ -50,7 +50,7 @@ from flab2bp.sfy.layout.model import (
 )
 from flab2bp.sfy.layout.splines import straight, yaw_quaternion
 from flab2bp.sfy.objects import ACTOR, ObjectData, ObjectHeader, Transform
-from flab2bp.sfy.properties import Array, Float, Property, Quat, Struct, Tag, Vector
+from flab2bp.sfy.properties import Array, Float, Object, Property, Quat, Struct, Tag, Vector
 from flab2bp.sfy.query import connected, find, object_index
 from flab2bp.sfy.registry import Port, Registry, load_registry
 from flab2bp.sfy.spec import designer
@@ -613,7 +613,8 @@ def test_a_lift_of_ours_claims_no_passthrough_and_no_deprecated_reversal() -> No
     built = _emit(_lift_placement())
     lift = next(d for h, d in built.objects if h.class_name == LIFT and h.kind == ACTOR)
     passthroughs = find(lift.properties, SNAPPED_PASSTHROUGHS)
-    assert isinstance(passthroughs, Array) and passthroughs.items == ()
+    assert isinstance(passthroughs, Array) and len(passthroughs.items) == 2
+    assert all(isinstance(slot, Object) and slot.ref.is_null for slot in passthroughs.items)
     assert find(lift.properties, IS_REVERSED) is None
 
 

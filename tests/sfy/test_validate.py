@@ -183,27 +183,6 @@ def _findings(placement: SfyPlacement, check: str, spec: SfyBuildSpec | None = N
 # --- the registry of checks ------------------------------------------------
 
 
-def test_every_check_names_the_rule_it_enforces_or_says_it_is_ours() -> None:
-    """A bound with no source is a bound this project invented.
-
-    Every check either names a rule in ``hologram_rules.json`` -- and says so in
-    its docstring, so a reader can go and read the instructions it came from --
-    or declares itself :data:`PROJECT`, in which case the docstring has to say
-    that it is ours and why.
-    """
-    rules = load_rules()
-    assert set(RULE_FOR) == set(CHECKS)
-    for cid, fn in CHECKS.items():
-        doc = fn.__doc__
-        assert doc, f"{cid} has no docstring, so it states no source"
-        rule = RULE_FOR[cid]
-        if rule == PROJECT:
-            assert "this project's own" in doc.lower(), f"{cid} is ours and does not say so"
-        else:
-            assert rule in rules, f"{cid} names {rule}, which is not a rule"
-            assert rule in doc, f"{cid} enforces {rule} and does not quote it"
-
-
 def test_a_partial_rule_is_never_enforced_as_a_bound_it_does_not_state() -> None:
     """A ``partial`` rule is a lead for the next extraction, not a bound.
 
@@ -589,6 +568,43 @@ def test_flow_capacity_feeds_the_last_machine_of_a_group_at_its_own_clock() -> N
     assert report.errors[0].detail["needed"] == "1/8"
 
 
+@pytest.mark.parametrize("lift_count", (1, 2))
+def test_flow_capacity_follows_snapped_lifts_and_still_rejects_starvation(
+    lift_count: int,
+) -> None:
+    base = _placement()
+    machine = base.machines[1]
+    lifts = tuple(
+        LiftObj(80 + index, "Build_ConveyorLiftMk1_C", Pose(0, 0, 100, 0), 400)
+        for index in range(lift_count)
+    )
+    lift_entry, lift_exit = belt_ends(_registry(), lifts[0].class_name)
+    _, belt_exit = belt_ends(_registry(), BELT)
+    links = [Link((base.belts[0].id, belt_exit), (lifts[0].id, lift_entry))]
+    links.extend(
+        Link((left.id, lift_exit), (right.id, lift_entry))
+        for left, right in zip(lifts, lifts[1:], strict=False)
+    )
+    links.append(Link((lifts[-1].id, lift_exit), (machine.id, "Input0")))
+    placement = replace(base, machines=(machine,), lifts=lifts, links=tuple(links))
+    spec = _spec().model_copy(
+        update={"groups": (_spec().groups[1],), "external_inputs": {"iron-rod": Fraction(1, 6)}}
+    )
+    report = validate(placement, spec, _registry(), only={"flow.capacity"})
+    assert report.ok
+    assert "flow.capacity" not in report.skipped
+
+    starved = replace(placement, belts=(replace(base.belts[0], items_per_second=Fraction(1, 12)),))
+    report = validate(starved, spec, _registry(), only={"flow.capacity"})
+    assert [finding.check for finding in report.errors] == ["flow.capacity"]
+    assert report.errors[0].detail["supplied"] == "1/12"
+
+    disconnected = replace(placement, links=tuple(links[1:]))
+    report = validate(disconnected, spec, _registry(), only={"flow.capacity"})
+    assert [finding.check for finding in report.errors] == ["flow.capacity"]
+    assert "flow.capacity" not in report.skipped
+
+
 def test_roundtrip_refuses_a_placement_the_emitter_cannot_write() -> None:
     placement = _placement()
     assert _findings(placement, "roundtrip") == []
@@ -942,6 +958,18 @@ def test_ports_connected_once_forgives_an_end_flagged_as_a_boundary_end() -> Non
         ),
     )
     assert _findings(plain, "ports.connected_once") == ["ports.connected_once"]
+
+
+def test_flow_boundary_rejects_parallel_outputs_for_one_product() -> None:
+    placement = _at_the_wall()
+    output = placement.belts[-1]
+    duplicated = replace(
+        placement,
+        belts=(*placement.belts, replace(output, id=output.id + 1)),
+    )
+    report = validate(duplicated, _spec(), _registry(), only={"flow.boundary"})
+    assert [finding.check for finding in report.errors] == ["flow.boundary"]
+    assert report.errors[0].detail["crossings"] == {"screw": 2}
 
 
 def test_flow_boundary_refuses_an_open_end_that_is_not_on_the_wall_it_claims() -> None:

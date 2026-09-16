@@ -452,6 +452,8 @@ class _Run:
     physical: dict[int, tuple[_Physical, ...]] = field(default_factory=dict)
     profile: MotionProfile | None = None
     proofs: dict[int, tuple[tuple[PathProof, ...], ...]] = field(default_factory=dict)
+    #: Fixed interface approaches cannot be consumed by another net's shaft.
+    interfaces: dict[Node, set[int]] = field(default_factory=dict)
 
     # -- the search ---------------------------------------------------------
 
@@ -531,19 +533,26 @@ class _Run:
 
     # -- what is standing ---------------------------------------------------
 
-    def stake(self, net_id: int, path: Sequence[Node]) -> None:
-        """Commit ``path`` for ``net_id``, in the occupancy and in ``held``.
+    def stake(
+        self,
+        net_id: int,
+        path: Sequence[Node],
+        *,
+        claim_blocked: bool = False,
+        centreline: bool = True,
+    ) -> None:
+        """Commit occupancy ownership, recording physical path centres separately.
 
-        The two are written together, always here, because an occupancy and a
-        node-to-net map that disagreed would be a router that quietly routes
-        through a committed belt.
+        Expanded shaft reservations are occupancy claims, not extra path centres:
+        ``foreign`` applies its own clearance around the centres in ``held``.
         """
         stake = next(self.stakes)
-        self.occupancy.commit(stake, path)
+        self.occupancy.commit(stake, path, claim_blocked=claim_blocked)
         self.staked.setdefault(net_id, []).append(stake)
         self.owners[stake] = net_id
-        for node in path:
-            self.held[node] = net_id
+        if centreline:
+            for node in path:
+                self.held[node] = net_id
 
     def release(self, net_id: int) -> None:
         self.proofs.pop(net_id, None)
@@ -764,6 +773,11 @@ def route_all(
         clear=TAP_CLEAR_NODES,
         stakes=_stake_ids(nets),
     )
+    for net in nets:
+        for terminal in (*net.sources, *net.sinks):
+            if terminal.kind == "port":
+                for node in (terminal.node, *terminal.reach):
+                    run.interfaces.setdefault(node, set()).add(net.id)
     order = tuple(sorted(nets, key=lambda net: (-net.rate, net.id)))
     best: _Played | None = None
     rounds = 0
@@ -959,6 +973,16 @@ def _route_one(run: _Run, net: GridNet) -> _Try:
         node for terminal in (*net.sources, *net.sinks) for node in (terminal.node, *terminal.reach)
     }
     closed: set[Node] = set(_shut_shafts(run, net))
+    # Reach opens an interface's own body, not another net's committed geometry.
+    # Nor may a route cross the straight connector stub it will emit at its end.
+    closed.update(node for node in own if run.blocker(node) not in (None, net.id))
+    closed.update(
+        node
+        for terminal in (*net.sources, *net.sinks)
+        for node in terminal.reach
+        if sum((node[axis] - terminal.node[axis]) * terminal.facing[axis] for axis in (0, 1))
+        < -1e-9
+    )
     lift_tries = 0
     realise_tries = 0
     allow_taps = True
@@ -1354,7 +1378,7 @@ def _build(run: _Run, net: GridNet, branches: Sequence[_Branch], routed: Routed 
             routed=routed,
         )
     for low, high in columns:
-        run.stake(net.id, _column(low, high))
+        _stake_column(run, net.id, low, high)
     run.physical[net.id] = physical
     run.proofs[net.id] = tuple(branch.proofs for branch in branches)
     return _Try(
@@ -1766,6 +1790,8 @@ def _blocked_column(
             ):
                 return (low, high)
             for node in _box_nodes(run.lattice, *bounds):
+                if any(owner != net.id for owner in run.interfaces.get(node, ())):
+                    return (low, high)
                 index = run.lattice.index(node)
                 for stake in run.occupancy._claims.get(index, ()):
                     if stake not in own_stakes and run.owners.get(stake) not in run.physical:
@@ -1813,6 +1839,40 @@ def _boundaries(branches: Sequence[_Branch]) -> tuple[tuple[int, Node], ...]:
 def _column(low: Node, high: Node) -> tuple[Node, ...]:
     """Every node of a lift's shaft, both ends included."""
     return tuple((low[0], low[1], level) for level in range(low[2], high[2] + 1))
+
+
+def _stake_column(run: _Run, net_id: int, low: Node, high: Node) -> None:
+    """Reserve the lift's physical shaft expanded once for a passing belt.
+
+    A vertical path has no transverse shadow in Occupancy. Claiming only its
+    centre would admit a belt one grid step beside a 95 cm half-width shaft.
+    Separate vertical claims preserve the normal rip-up ownership machinery
+    without inventing horizontal path segments or expanding the footprint twice.
+    """
+    lattice = run.lattice
+    lift_half = run.registry.limits.lift_clearance_half_extent_cm
+    if lift_half is None:
+        raise ValueError("the registry states no lift shaft clearance")
+    world = lattice.world(low)
+    lines = [
+        _meeting(
+            world[axis] - lift_half,
+            world[axis] + lift_half,
+            BELT_CLEARANCE_HALF_WIDTH_CM,
+            -lattice.designer.half_cm,
+            lattice.grid_cm,
+            lattice.n,
+        )
+        for axis in (0, 1)
+    ]
+    for x in lines[0]:
+        for y in lines[1]:
+            run.stake(
+                net_id,
+                tuple((x, y, z) for z in range(low[2], high[2] + 1)),
+                claim_blocked=True,
+                centreline=(x, y) == low[:2],
+            )
 
 
 def _box_nodes(lattice: Lattice, low: Vector, high: Vector) -> list[Node]:
@@ -1913,5 +1973,5 @@ def _restore(run: _Run, best: _Played) -> None:
                         )
                         run.stake(tree.net.id, (terminal.node, side))
     for net_id, low, high in best.columns:
-        run.stake(net_id, _column(low, high))
+        _stake_column(run, net_id, low, high)
     run.physical.update(best.physical)

@@ -170,11 +170,13 @@ FLOW_NAME_SOURCES = ("asset",)
 LIFT_GEOMETRY_SOURCES = ("header", "native", "docs")
 
 # Where a buildable's cost segment came from. The game's own Docs.json states
-# it as a class default -- ``mMeshLength`` on a conveyor belt, ``mMeshHeight``
-# on a lift -- and ``provenance["cost_segment"]`` names the property per native
-# class beside the ``belt.cost`` rule whose machine code reads it. There is no
-# second entry: this number is never measured off a blueprint's cost list.
-COST_SEGMENT_SOURCES = ("docs",)
+# ``mMeshLength`` on a conveyor belt, ``mMeshHeight`` on a lift and
+# ``mLengthPerCost`` on a beam. ``provenance["cost_segment"]`` and
+# ``provenance["docs"]["physical_fields"]`` retain the properties and evidence.
+# Pipelines use twice mMeshLength: the native refund function doubles its cost
+# segment before calling GetCostMultiplierForLength, so this is binary-derived.
+# These numbers are never measured off a blueprint's cost list.
+COST_SEGMENT_SOURCES = ("docs", "binary-derived")
 
 _HEADER_DEFAULTED = (
     "belt_max_spline_cm",
@@ -430,18 +432,25 @@ class Buildable:
     # six lift marks and on nothing else. ``None`` on every other class;
     # :func:`load_registry` refuses a lift class that has none.
     lift: LiftGeometry | None = None
-    # How much of a spline buildable one unit of its build recipe pays for, and
-    # where that number was read -- see :data:`COST_SEGMENT_SOURCES`. ``None``
-    # for everything the game charges its recipe exactly once, which is
-    # everything that is not costed by length. The ``belt.cost`` rule in
-    # ``data/hologram_rules.json`` is the machine code that divides by it.
+    # How much of a length-costed buildable one unit of its build recipe pays
+    # for, and where that number was read -- see COST_SEGMENT_SOURCES.
+    # None means no supported cost segment was extracted, not necessarily that
+    # the game's implementation charges the recipe only once.
     length_per_cost_cm: float | None = None
     length_per_cost_source: str | None = None
+    # Docs class defaults, with native property names and units retained in
+    # provenance["docs"]["physical_fields"]. Pump design head is the specified
+    # operating head; maximum head is a distinct pressure ceiling.
+    pump_design_head_m: float | None = None
+    pump_max_head_m: float | None = None
+    pipe_flow_limit_m3s: float | None = None
+    beam_max_length_cm: float | None = None
+    beam_size_cm: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class Recipe:
-    """A production recipe. Amounts are whole items (fluids are in centilitres)."""
+    """A production recipe. Amounts are whole items (fluids are in litres)."""
 
     class_name: str
     display_name: str
@@ -548,6 +557,8 @@ class Registry:
     recipe_paths: dict[str, str]
     limits: Limits
     limits_sources: dict[str, str]  # Limits field -> one of LIMIT_SOURCES
+    # Descriptor class names whose Docs mForm is RF_LIQUID or RF_GAS.
+    fluid_items: frozenset[str] = frozenset()
 
     @classmethod
     def from_docs_only(cls, data: Mapping[str, Any]) -> Registry:
@@ -568,6 +579,7 @@ class Registry:
             recipe_paths={},
             limits=Limits(),
             limits_sources=dict.fromkeys(_HEADER_DEFAULTED, "header"),
+            fluid_items=frozenset(_require(data, "fluid_items")),
         )
 
 
@@ -816,6 +828,11 @@ def _buildables(raw: Mapping[str, Mapping[str, Any]]) -> dict[str, Buildable]:
                 ports=ports,
                 flow=_flow(entry.get("flow"), ports),
                 lift=_lift(class_name, str(entry["native_class"]), entry.get("lift")),
+                pump_design_head_m=_opt_float(entry.get("pump_design_head_m")),
+                pump_max_head_m=_opt_float(entry.get("pump_max_head_m")),
+                pipe_flow_limit_m3s=_opt_float(entry.get("pipe_flow_limit_m3s")),
+                beam_max_length_cm=_opt_float(entry.get("beam_max_length_cm")),
+                beam_size_cm=_opt_float(entry.get("beam_size_cm")),
             )
         except (KeyError, IndexError, TypeError, ValueError) as exc:
             raise RegistryError(f"buildable {class_name!r} is malformed: {exc}") from exc
@@ -985,4 +1002,5 @@ def load_registry(path: Path | None = None) -> Registry:
         recipe_paths=_paths(_require(data, "recipe_paths"), "recipe_paths"),
         limits=limits,
         limits_sources=sources,
+        fluid_items=frozenset(_require(data, "fluid_items")),
     )

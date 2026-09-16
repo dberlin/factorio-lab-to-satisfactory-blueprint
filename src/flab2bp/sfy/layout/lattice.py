@@ -83,21 +83,30 @@ import math
 from array import array
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
+from itertools import chain
 
 from flab2bp.layout.geometric_world import GridIndex
 from flab2bp.sfy.geometry import box_bounds
 from flab2bp.sfy.layout.model import (
     AttachmentObj,
+    BeamObj,
     BeltRun,
+    FoundationObj,
     LiftObj,
     MachineObj,
+    PassthroughObj,
+    PipeAttachmentObj,
+    PipeRun,
     Vector,
 )
 from flab2bp.sfy.layout.validate import (
     BELT_CLEARANCE_HALF_HEIGHT_CM,
     BELT_CLEARANCE_HALF_WIDTH_CM,
     TOUCH_CM,
+    beam_box,
     lift_box,
+    passthrough_box,
+    pipe_chain,
 )
 from flab2bp.sfy.registry import Registry
 from flab2bp.sfy.spec import Designer
@@ -369,18 +378,22 @@ class Occupancy:
         _mark_box(self, low, high)
         self.base = bytes(self.flags)
 
-    def commit(self, net: int, path: Sequence[Node]) -> None:
+    def commit(self, net: int, path: Sequence[Node], *, claim_blocked: bool = False) -> None:
         """Hold ``path`` and its shadow for ``net`` -- R-M3-2's committed run.
 
         A node the world already denies is passed over rather than claimed: it
         is not this net's to give back, and a repair search that read ``owner``
         there would rip this net up to free a node a machine is standing in
         (R-M3-2 (d)).
+
+        Physical shafts also claim blocked interface reservations: those nodes
+        can be opened by a later query, but not through a foreign lift. The
+        original base flag still controls what rip-up restores.
         """
         if net in self._paths:
             raise ValueError(f"net {net} is already committed; rip it up before committing again")
         for index in self._shadow(path):
-            if self.base[index] == 0:
+            if self.base[index] == 0 and not claim_blocked:
                 continue
             self.flags[index] = 0
             claims = self._claims.setdefault(index, [])
@@ -457,16 +470,21 @@ def occupancy_for(
     lifts: Sequence[LiftObj],
     belts: Sequence[BeltRun],
     registry: Registry,
+    *,
+    foundations: Sequence[FoundationObj] = (),
+    pipes: Sequence[PipeRun] = (),
+    pipe_attachments: Sequence[PipeAttachmentObj] = (),
+    beams: Sequence[BeamObj] = (),
+    passthroughs: Sequence[PassthroughObj] = (),
 ) -> Occupancy:
     """Flatten a placement onto ``lattice``: what a belt may pass, and where not.
 
     The world in the order it is laid down: the designer itself (R-M3-1 and
-    R-M3-3), then every hard clearance box a machine or an attachment carries,
+    R-M3-3), then every hard clearance box a machine, attachment or floor carries,
     then every lift's column box, then every belt already in the placement.
-    An attachment is taken through exactly the same filter as a machine even
-    though no attachment class ships a hard box today -- ``CT_Soft`` is the
-    game's own marking for a box that may be shared, so it is the marking and
-    not the kind of object that decides.
+    Machine and attachment soft clearances may be shared. Foundations instead
+    reserve their slab volume even when the registry calls it soft: the composer
+    supplies these as floors without passthroughs, not as empty routing space.
     """
     size = lattice.size()
     occupancy = Occupancy(
@@ -477,14 +495,15 @@ def occupancy_for(
         history=array("d", bytes(8 * size)),
         static_bounds=[],
     )
-    standing: tuple[MachineObj | AttachmentObj, ...] = (*machines, *attachments)
-    for obj in standing:
+    for obj in chain[MachineObj | AttachmentObj | PipeAttachmentObj | FoundationObj](
+        machines, attachments, pipe_attachments, foundations
+    ):
         buildable = registry.buildables.get(obj.class_name)
         if buildable is None:
             continue
         transform = obj.pose.transform()
         for box in buildable.clearance:
-            if box.soft:
+            if box.soft and not isinstance(obj, FoundationObj):
                 continue
             low, high = box_bounds(box, transform)
             _mark_box(occupancy, low, high)
@@ -501,6 +520,18 @@ def occupancy_for(
     for run in belts:
         for low, high in _belt_boxes(run):
             _mark_box(occupancy, low, high)
+    dynamic_boxes = chain(
+        (box for run in pipes for box in pipe_chain(run, registry)),
+        (beam_box(beam, registry) for beam in beams),
+        (passthrough_box(hole, registry) for hole in passthroughs),
+    )
+    for dynamic_box in dynamic_boxes:
+        centre, reach = dynamic_box.centre, dynamic_box.reach
+        _mark_box(
+            occupancy,
+            (centre[0] - reach[0], centre[1] - reach[1], centre[2] - reach[2]),
+            (centre[0] + reach[0], centre[1] + reach[1], centre[2] + reach[2]),
+        )
     occupancy.base = bytes(occupancy.flags)
     return occupancy
 

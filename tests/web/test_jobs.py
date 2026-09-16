@@ -1387,29 +1387,21 @@ class TestFlowReachesTheSolver:
 def satisfactory_build() -> sfy_pipeline.SfyBuild:
     flow = Path(__file__).resolve().parents[1] / "fixtures" / "sfy_flows" / "iron-plate-60.csv"
     url = flow.read_text(encoding="utf-8").splitlines()[0].strip().strip('"')
-    return sfy_pipeline.build(url, flow=flow, designer="mk3", strategy="manifold-rows")
+    return sfy_pipeline.build(url, flow=flow, designer="mk3", strategy="sections")
 
 
-def test_a_satisfactory_winner_with_a_loser_still_has_downloads(
+def test_a_satisfactory_build_has_both_downloads(
     satisfactory_build: sfy_pipeline.SfyBuild,
 ) -> None:
-    loser = LayoutAttemptFailure(
-        satisfactory_build.spec.label,
-        "grid-routed",
-        "a belt could not be routed",
-    )
-    winner = dataclasses.replace(satisfactory_build, refused=(loser,))
-    builder = Builder(solve=lambda _o, _p, _s, _t: winner)
+    builder = Builder(solve=lambda _o, _p, _s, _t: satisfactory_build)
     try:
-        job = builder.submit(Options(url="https://factoriolab.github.io/sfy/list"))
+        job = builder.submit(
+            Options(url="https://factoriolab.github.io/sfy/list", strategy="sections")
+        )
         snap = _settled(builder, job.id)
         assert snap["state"] == "done" and snap["refusal"] is None
         result = _object(snap["result"])
-        refused = result["refused"]
-        assert isinstance(refused, list) and len(refused) == 1
-        assert _object(refused[0])["strategy"] == "grid-routed"
-        assert _object(refused[0])["reason"] == "a belt could not be routed"
-        assert result["strategy"] == "manifold-rows"
+        assert result["strategy"] == "sections"
         assert set(job.artifacts) == {"iron-plate-mk3.sbp", "iron-plate-mk3.sbpcfg"}
     finally:
         builder.shutdown()
@@ -1420,7 +1412,7 @@ def test_an_unencodable_satisfactory_winner_is_refused_without_downloads(
 ) -> None:
     failure = LayoutAttemptFailure(
         satisfactory_build.spec.label,
-        "manifold-rows",
+        "sections",
         "blueprint encoding failed: template",
     )
     failed = dataclasses.replace(
@@ -1431,7 +1423,9 @@ def test_an_unencodable_satisfactory_winner_is_refused_without_downloads(
     )
     builder = Builder(solve=lambda _o, _p, _s, _t: failed)
     try:
-        job = builder.submit(Options(url="https://factoriolab.github.io/sfy/list"))
+        job = builder.submit(
+            Options(url="https://factoriolab.github.io/sfy/list", strategy="sections")
+        )
         snap = _settled(builder, job.id)
         assert snap["state"] == "refused" and snap["error"] is None
         assert _object(snap["result"])["artifacts"] == []

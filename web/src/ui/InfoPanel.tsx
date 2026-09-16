@@ -1,12 +1,14 @@
 import { Fragment } from 'react';
 import { describeInferred, describeParameters } from '../model/params';
 import { useBlueprint } from '../state/BlueprintProvider';
+import { SatisfactoryInfo } from './SatisfactoryPanels';
 
 const round = (n: number) => Math.round(n * 100) / 100;
 
 export function InfoPanel() {
-  const { blueprint, catalog, selectedIndex, sceneModel } = useBlueprint();
-  if (!blueprint || selectedIndex === null) return null;
+  const { blueprint, catalog, selectedIndex, sceneModel, satisfactoryScene } = useBlueprint();
+  if (satisfactoryScene) return <SatisfactoryInfo scene={satisfactoryScene} />;
+  if (!blueprint || !catalog || selectedIndex === null) return null;
 
   const b = blueprint.buildings[selectedIndex];
   if (!b) return null;

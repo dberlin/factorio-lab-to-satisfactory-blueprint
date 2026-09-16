@@ -356,19 +356,25 @@ class TestSatisfactoryWebOptions:
 
     SFY_URL = "https://factoriolab.github.io/sfy/list?o=iron-plate*60&v=11"
 
-    @pytest.mark.parametrize("strategy", ["best", "manifold-rows", "grid-routed"])
+    def test_omitted_strategy_uses_the_urls_game(self) -> None:
+        assert parse_options({"url": self.SFY_URL}).strategy == "sections"
+        assert parse_options({"url": URL}).strategy == "best"
+
+    @pytest.mark.parametrize("strategy", ["sections"])
     def test_satisfactory_strategy_choices_are_accepted(self, strategy: str) -> None:
         options = parse_options({"url": self.SFY_URL, "strategy": strategy, "budget_s": 10})
         assert options.strategy == strategy
         assert options.solver_ceiling_s == 10
         assert options.projected_total_s == 10
 
-    @pytest.mark.parametrize("strategy", [s for s in pipeline.STRATEGY_CHOICES if s != "best"])
+    @pytest.mark.parametrize(
+        "strategy", [*pipeline.STRATEGY_CHOICES, "manifold-rows", "grid-routed"]
+    )
     def test_dsp_strategies_are_refused_for_satisfactory(self, strategy: str) -> None:
         with pytest.raises(InvalidOptions, match="strategy"):
             parse_options({"url": self.SFY_URL, "strategy": strategy})
 
-    @pytest.mark.parametrize("strategy", ["manifold-rows", "grid-routed"])
+    @pytest.mark.parametrize("strategy", ["sections"])
     def test_satisfactory_strategies_are_refused_for_dsp(self, strategy: str) -> None:
         with pytest.raises(InvalidOptions, match="strategy"):
             parse_options({"url": URL, "strategy": strategy})

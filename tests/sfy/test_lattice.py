@@ -33,6 +33,7 @@ from flab2bp.sfy.layout.lattice import (
 from flab2bp.sfy.layout.model import (
     AttachmentObj,
     BeltRun,
+    FoundationObj,
     LiftObj,
     MachineObj,
     Pose,
@@ -139,6 +140,16 @@ def test_levels_zero_and_one_are_never_passable() -> None:
         assert not occupancy.free((i, j, 0))
         assert not occupancy.free((i, j, 1))
     assert occupancy.free((1, 1, GROUND_LEVEL))
+
+
+def test_an_upper_floor_blocks_routes_without_closing_space_above_and_below() -> None:
+    lattice = _lattice()
+    slab = FoundationObj(91, "Build_Foundation_8x1_01_C", Pose(0, 0, 1050, 0))
+    occupancy = occupancy_for(lattice, (), (), (), (), _registry(), foundations=(slab,))
+    for z, expected in ((900, True), (1000, False), (1100, False), (1200, True)):
+        node = lattice.node((0, 0, z))
+        assert node is not None
+        assert occupancy.free(node) is expected
 
 
 def test_the_wall_lines_and_the_ceiling_are_never_passable() -> None:
@@ -411,6 +422,26 @@ def test_a_ripped_net_leaves_a_shadow_another_net_still_needs() -> None:
     assert all(occupancy.owner[lattice.index(node)] == 2 for node in between)
     occupancy.rip_up(2)
     assert all(occupancy.free(node) for node in between)
+
+
+def test_physical_claims_survive_interface_reservations_without_freeing_them_on_rip_up() -> None:
+    lattice = _lattice()
+    occupancy = _empty()
+    reserved = (10, 10, 5)
+    index = lattice.index(reserved)
+    occupancy.flags[index] = 0
+    occupancy.base = bytes(occupancy.flags)
+
+    occupancy.commit(7, (reserved,), claim_blocked=True)
+    occupancy.commit(8, (reserved,), claim_blocked=True)
+    assert occupancy.owner[index] == 7
+    assert not occupancy.free(reserved)
+    occupancy.rip_up(7)
+    assert occupancy.owner[index] == 8
+    assert not occupancy.free(reserved)
+    occupancy.rip_up(8)
+    assert index not in occupancy.owner
+    assert not occupancy.free(reserved)
 
 
 # --- the invariant ---------------------------------------------------------

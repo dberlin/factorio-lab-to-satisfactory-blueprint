@@ -15,6 +15,7 @@ import {
   BuildRequestError,
   DEFAULT_OPTIONS,
   type Job,
+  isSatisfactoryUrl,
   MachineRank,
   PowerTower,
   ProliferatorTier,
@@ -23,12 +24,20 @@ import {
   runBuild,
   WARN_TOTAL_SECONDS,
 } from '../api/build';
+import { fetchSatisfactoryScene } from '../api/satisfactory';
 import { useBlueprint } from '../state/BlueprintProvider';
 import { BuildReportPanel, ProjectionFailures, RefusalReport } from './BuildReport';
 import { TracePanel } from './TracePanel';
 
 export function BuildPanel() {
-  const { document, beginPublication, publishArtifact, markStale } = useBlueprint();
+  const {
+    document,
+    beginPublication,
+    publishArtifact,
+    publishSatisfactory,
+    failPublication,
+    markStale,
+  } = useBlueprint();
   const [options, setOptions] = useState<BuildOptions>(DEFAULT_OPTIONS);
   const [job, setJob] = useState<Job | null>(null);
   const [buildGeneration, setBuildGeneration] = useState(0);
@@ -48,6 +57,10 @@ export function BuildPanel() {
   const machineRankId = useId();
   const powerTowerId = useId();
   const flowId = useId();
+  const designerId = useId();
+  const satisfactory = isSatisfactoryUrl(options.url);
+  const sfyResult = job?.result && 'game' in job.result ? job.result : null;
+  const dspResult = job?.result && !('game' in job.result) ? job.result : null;
 
   // A build outlives the panel if the page changes under it; aborting on
   // unmount stops the poll loop rather than leaving it talking to nobody.
@@ -81,12 +94,29 @@ export function BuildPanel() {
     try {
       const settled = await runBuild({ ...options, ...overrides }, setJob, controller.signal);
       if (controller.signal.aborted) return;
+      if (settled.result && 'game' in settled.result && settled.result.artifacts.length > 0) {
+        try {
+          const scene = await fetchSatisfactoryScene(settled.id, controller.signal);
+          if (!controller.signal.aborted)
+            publishSatisfactory(scene, generation, { kind: 'build', jobId: settled.id });
+        } catch (cause) {
+          if (!controller.signal.aborted) {
+            markStale(generation);
+            failPublication(
+              `Could not display Satisfactory blueprint: ${cause instanceof Error ? cause.message : String(cause)}`,
+              generation,
+            );
+          }
+        }
+        return;
+      }
       // Render the chosen attempt the moment it exists. The point of having the
       // viewer in the same page is not having to copy the string somewhere to
       // look at it.
-      const chosen = settled.result?.attempts.find(
-        (attempt) => attempt.chosen && attempt.blueprint,
-      );
+      const chosen =
+        settled.result && !('game' in settled.result)
+          ? settled.result.attempts.find((attempt) => attempt.chosen && attempt.blueprint)
+          : undefined;
       if (chosen?.blueprint)
         publishArtifact(chosen.blueprint, generation, { kind: 'build', jobId: settled.id });
       // A refusal, an error, or a build whose string was withheld leaves the
@@ -116,12 +146,12 @@ export function BuildPanel() {
   };
 
   const selectedAttempt =
-    job?.result?.attempts.find(
+    dspResult?.attempts.find(
       (attempt) =>
         attempt.blueprint !== null &&
         `${attempt.candidate}/${attempt.strategy}` === selectedAttemptKey,
     ) ??
-    job?.result?.attempts.find((attempt) => attempt.chosen && attempt.blueprint !== null) ??
+    dspResult?.attempts.find((attempt) => attempt.chosen && attempt.blueprint !== null) ??
     null;
   const blueprint = selectedAttempt?.blueprint ?? null;
   const showingSelectedArtifact =
@@ -138,6 +168,21 @@ export function BuildPanel() {
     publishArtifact(attempt.blueprint, beginPublication(), { kind: 'build', jobId: job.id });
   };
   const projected = projectSolve(options);
+  const showSatisfactory = async () => {
+    if (!job) return;
+    const generation = beginPublication();
+    try {
+      publishSatisfactory(await fetchSatisfactoryScene(job.id), generation, {
+        kind: 'build',
+        jobId: job.id,
+      });
+    } catch (cause) {
+      failPublication(
+        `Could not display Satisfactory blueprint: ${cause instanceof Error ? cause.message : String(cause)}`,
+        generation,
+      );
+    }
+  };
 
   /**
    * The clipboard is a permission, not a guarantee: an insecure origin, a
@@ -179,13 +224,37 @@ export function BuildPanel() {
           id={urlId}
           value={options.url}
           spellCheck={false}
-          placeholder="https://factoriolab.github.io/dsp/flow?o=…"
-          onChange={(e) => set('url', e.target.value)}
+          placeholder="https://factoriolab.github.io/sfy/flow?o=…"
+          onChange={(e) => {
+            const url = e.target.value;
+            const sfy = isSatisfactoryUrl(url);
+            setOptions((previous) => ({
+              ...previous,
+              url,
+              strategy: sfy
+                ? 'sections'
+                : previous.strategy === 'sections'
+                  ? 'best'
+                  : previous.strategy,
+              candidate_policies: sfy
+                ? DEFAULT_OPTIONS.candidate_policies
+                : previous.candidate_policies,
+              trace: sfy ? false : previous.trace,
+              fetch_flow:
+                sfy && !isSatisfactoryUrl(previous.url) && !previous.flow.trim()
+                  ? true
+                  : previous.fetch_flow,
+            }));
+          }}
         />
         <button
           type="button"
           onClick={() => void start()}
-          disabled={!options.url.trim() || options.candidate_policies.length === 0 || busy}
+          disabled={
+            !options.url.trim() ||
+            (!satisfactory && options.candidate_policies.length === 0) ||
+            busy
+          }
         >
           {busy ? 'Building…' : 'Build'}
         </button>
@@ -206,116 +275,144 @@ export function BuildPanel() {
             if (strategy.success) set('strategy', strategy.data);
           }}
         >
-          <option value="best">
-            best (freeform + sequence-pair + transport-routing + hierarchical, smallest valid wins)
-          </option>
-          <option value="freeform">freeform</option>
-          <option value="sequence-pair">sequence-pair</option>
-          <option value="transport-routing">transport-routing</option>
-          <option value="hierarchical">
-            hierarchical (block decomposition; also competes in best)
-          </option>
+          {satisfactory ? (
+            <option value="sections">sections (connected production)</option>
+          ) : (
+            <>
+              <option value="best">
+                best (freeform + sequence-pair + transport-routing + hierarchical, smallest valid
+                wins)
+              </option>
+              <option value="freeform">freeform</option>
+              <option value="sequence-pair">sequence-pair</option>
+              <option value="transport-routing">transport-routing</option>
+              <option value="hierarchical">
+                hierarchical (block decomposition; also competes in best)
+              </option>
+            </>
+          )}
         </select>
 
-        <label htmlFor={bandId}>Latitude band</label>
-        <select
-          id={bandId}
-          value={options.band}
-          onChange={(event) => {
-            const band = BandSelection.safeParse(event.target.value);
-            if (band.success) set('band', band.data);
-          }}
-        >
-          <option value="portable">Portable (smallest + up to two wider)</option>
-          {BAND_OPTIONS.map(({ value, label }) => (
-            <option key={value} value={value}>
-              {label}
-            </option>
-          ))}
-        </select>
+        {satisfactory ? (
+          <>
+            <label htmlFor={designerId}>Blueprint Designer</label>
+            <select
+              id={designerId}
+              value={options.designer ?? 'mk1'}
+              onChange={(event) => {
+                const mark = event.target.value;
+                if (mark === 'mk1' || mark === 'mk2' || mark === 'mk3') set('designer', mark);
+              }}
+            >
+              <option value="mk1">Mk.1</option>
+              <option value="mk2">Mk.2</option>
+              <option value="mk3">Mk.3</option>
+            </select>
+          </>
+        ) : (
+          <>
+            <label htmlFor={bandId}>Latitude band</label>
+            <select
+              id={bandId}
+              value={options.band}
+              onChange={(event) => {
+                const band = BandSelection.safeParse(event.target.value);
+                if (band.success) set('band', band.data);
+              }}
+            >
+              <option value="portable">Portable (smallest + up to two wider)</option>
+              {BAND_OPTIONS.map(({ value, label }) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
 
-        <label htmlFor={proliferatorTierId}>Proliferator tier</label>
-        <select
-          id={proliferatorTierId}
-          value={options.proliferator_tier}
-          onChange={(event) => {
-            const tier = ProliferatorTier.safeParse(event.target.value);
-            if (tier.success) set('proliferator_tier', tier.data);
-          }}
-        >
-          <option value="auto">URL selection (Mk.III if unspecified)</option>
-          <option value="none">None</option>
-          <option value="1">Mk.I</option>
-          <option value="2">Mk.II</option>
-          <option value="3">Mk.III</option>
-        </select>
+            <label htmlFor={proliferatorTierId}>Proliferator tier</label>
+            <select
+              id={proliferatorTierId}
+              value={options.proliferator_tier}
+              onChange={(event) => {
+                const tier = ProliferatorTier.safeParse(event.target.value);
+                if (tier.success) set('proliferator_tier', tier.data);
+              }}
+            >
+              <option value="auto">URL selection (Mk.III if unspecified)</option>
+              <option value="none">None</option>
+              <option value="1">Mk.I</option>
+              <option value="2">Mk.II</option>
+              <option value="3">Mk.III</option>
+            </select>
 
-        <label htmlFor={machineRankId}>Machine ranking</label>
-        <select
-          id={machineRankId}
-          value={options.machine_rank}
-          onChange={(event) => {
-            const rank = MachineRank.safeParse(event.target.value);
-            if (rank.success) set('machine_rank', rank.data);
-          }}
-        >
-          <option value="exact">Exact (the URL&rsquo;s machine)</option>
-          <option value="up-to">Up to (fewest machines at or below it)</option>
-        </select>
+            <label htmlFor={machineRankId}>Machine ranking</label>
+            <select
+              id={machineRankId}
+              value={options.machine_rank}
+              onChange={(event) => {
+                const rank = MachineRank.safeParse(event.target.value);
+                if (rank.success) set('machine_rank', rank.data);
+              }}
+            >
+              <option value="exact">Exact (the URL&rsquo;s machine)</option>
+              <option value="up-to">Up to (fewest machines at or below it)</option>
+            </select>
 
-        <label htmlFor={powerTowerId}>Power tower</label>
-        <select
-          id={powerTowerId}
-          value={options.power_tower}
-          onChange={(event) => {
-            const tower = PowerTower.safeParse(event.target.value);
-            if (tower.success) set('power_tower', tower.data);
-          }}
-        >
-          <option value="auto">URL selection (Tesla Tower if unspecified)</option>
-          <option value="tesla">Tesla Tower</option>
-          <option value="substation">Satellite Substation</option>
-          <option value="wireless">Wireless Power Tower</option>
-        </select>
+            <label htmlFor={powerTowerId}>Power tower</label>
+            <select
+              id={powerTowerId}
+              value={options.power_tower}
+              onChange={(event) => {
+                const tower = PowerTower.safeParse(event.target.value);
+                if (tower.success) set('power_tower', tower.data);
+              }}
+            >
+              <option value="auto">URL selection (Tesla Tower if unspecified)</option>
+              <option value="tesla">Tesla Tower</option>
+              <option value="substation">Satellite Substation</option>
+              <option value="wireless">Wireless Power Tower</option>
+            </select>
 
-        <label className="checkbox">
-          <input
-            type="checkbox"
-            checked={options.trace}
-            onChange={(event) => set('trace', event.target.checked)}
-          />
-          Trace search (live)
-        </label>
-
-        <fieldset className="candidate-policies checkbox">
-          <legend>Candidate policies</legend>
-          {DEFAULT_OPTIONS.candidate_policies.map((policy) => (
-            <label className="checkbox" key={policy}>
+            <label className="checkbox">
               <input
                 type="checkbox"
-                checked={options.candidate_policies.includes(policy)}
-                onChange={(event) => {
-                  const checked = event.target.checked;
-                  setOptions((previous) => ({
-                    ...previous,
-                    candidate_policies: checked
-                      ? DEFAULT_OPTIONS.candidate_policies.filter(
-                          (candidate) =>
-                            candidate === policy || previous.candidate_policies.includes(candidate),
-                        )
-                      : previous.candidate_policies.filter((candidate) => candidate !== policy),
-                  }));
-                }}
+                checked={options.trace}
+                onChange={(event) => set('trace', event.target.checked)}
               />
-              {policy}
+              Trace search (live)
             </label>
-          ))}
-          {options.candidate_policies.length === 0 && (
-            <span className="error" aria-live="polite">
-              Select at least one candidate policy.
-            </span>
-          )}
-        </fieldset>
+
+            <fieldset className="candidate-policies checkbox">
+              <legend>Candidate policies</legend>
+              {DEFAULT_OPTIONS.candidate_policies.map((policy) => (
+                <label className="checkbox" key={policy}>
+                  <input
+                    type="checkbox"
+                    checked={options.candidate_policies.includes(policy)}
+                    onChange={(event) => {
+                      const checked = event.target.checked;
+                      setOptions((previous) => ({
+                        ...previous,
+                        candidate_policies: checked
+                          ? DEFAULT_OPTIONS.candidate_policies.filter(
+                              (candidate) =>
+                                candidate === policy ||
+                                previous.candidate_policies.includes(candidate),
+                            )
+                          : previous.candidate_policies.filter((candidate) => candidate !== policy),
+                      }));
+                    }}
+                  />
+                  {policy}
+                </label>
+              ))}
+              {options.candidate_policies.length === 0 && (
+                <span className="error" aria-live="polite">
+                  Select at least one candidate policy.
+                </span>
+              )}
+            </fieldset>
+          </>
+        )}
 
         {/* No `max`: a budget is how long YOU want it to search, and the
             server takes any positive finite number. A total that will take a
@@ -347,7 +444,9 @@ export function BuildPanel() {
           that and refuses otherwise, so a stale paste is an error and never a
           quiet mis-pin. */}
       <div className="row flow">
-        <label htmlFor={flowId}>Flow export (optional)</label>
+        <label htmlFor={flowId}>
+          Flow export ({satisfactory ? 'required unless fetched' : 'optional'})
+        </label>
         <label className="checkbox">
           <input
             type="checkbox"
@@ -451,7 +550,41 @@ export function BuildPanel() {
 
       {job?.refusal && <RefusalReport refusal={job.refusal} />}
 
-      {job?.result && (
+      {sfyResult && (
+        <section className="build-report">
+          <h3>{sfyResult.title}</h3>
+          <p>
+            {sfyResult.strategy} · {sfyResult.designer} · {sfyResult.machines} machines
+          </p>
+          <p>
+            Volume {sfyResult.measure.volume_cm3} cm³; belts {sfyResult.measure.belt_cm} cm
+          </p>
+          {sfyResult.artifacts.length > 0 &&
+            (document?.kind === 'satisfactory' &&
+            document.source.kind === 'build' &&
+            document.source.jobId === job?.id ? (
+              <output>Showing completed Satisfactory blueprint in 3D.</output>
+            ) : (
+              <button type="button" onClick={() => void showSatisfactory()}>
+                Show completed blueprint in 3D
+              </button>
+            ))}
+          {sfyResult.artifacts.map((artifact) => (
+            <p key={artifact.name}>
+              <a href={artifact.url} download={artifact.name}>
+                Download {artifact.name}
+              </a>
+            </p>
+          ))}
+          <pre>{sfyResult.description}</pre>
+          {sfyResult.report.findings.map((finding) => (
+            <p key={`${finding.check}:${finding.severity}:${finding.message}`}>
+              {finding.severity}: {finding.check}: {finding.message}
+            </p>
+          ))}
+        </section>
+      )}
+      {job && dspResult && (
         <>
           {blueprint && showingSelectedArtifact ? (
             <div className="row result-head">
@@ -459,7 +592,7 @@ export function BuildPanel() {
                   names the PRODUCT — `space-warper 10/min (max prolif)` — not
                   the candidate that happened to win. */}
               <strong className="bp-title" data-testid="blueprint-title">
-                {selectedAttempt?.detail.title ?? job.result.title}
+                {selectedAttempt?.detail.title ?? dspResult.title}
               </strong>
               {/* The string itself is 10kB of base64 and there is nothing to
                   read in it. It stays in the DOM for tests and for anyone who
@@ -494,7 +627,7 @@ export function BuildPanel() {
             </p>
           )}
           <BuildReportPanel
-            result={job.result}
+            result={dspResult}
             elapsedS={job.elapsed_s}
             selectedAttempt={selectedAttempt}
             onSelectAttempt={selectAttempt}

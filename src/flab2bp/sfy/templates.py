@@ -25,7 +25,6 @@ other format, so a tag built wrongly fails loudly at write time.
 
 from __future__ import annotations
 
-import math
 from array import array
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
@@ -39,6 +38,8 @@ from flab2bp.sfy.objects import ACTOR, ObjectData, ObjectHeader, Transform
 from flab2bp.sfy.properties import (
     TAG_NATIVE_SERIALIZE,
     Array,
+    Float,
+    Int,
     Object,
     Property,
     PropertyList,
@@ -160,6 +161,7 @@ class TemplateLibrary:
                 if any(ref.path not in index for ref in refs):
                     continue  # an actor whose components are not all in the file
                 templates[h.class_name] = Template(h, d, tuple(index[r.path] for r in refs))
+        _add_modern_pump(templates)
         return cls(templates)
 
     def instantiate(
@@ -217,6 +219,79 @@ class TemplateLibrary:
                 )
             )
         return tuple(out)
+
+
+def _add_modern_pump(templates: dict[str, Template]) -> None:
+    """Construct a modern Mk2 pump from typed, current component envelopes.
+
+    FGBuildablePipelinePump inherits PipelineAttachment (the junction's factory
+    base). Its saved pump-only flow limits default in the current class and are
+    not copied from a running pump. The shipped pump asset supplies head/power,
+    port transforms and input/output direction. No classic property or opaque
+    payload is transplanted.
+    """
+    class_name = "Build_PipelinePumpMk2_C"
+    if class_name in templates:
+        return
+    donor = templates.get("Build_PipelineJunction_Cross_C")
+    if donor is None:
+        return
+    power = next(
+        (
+            component
+            for template in templates.values()
+            for component in template.components
+            if component[0].class_name == "FGPowerConnectionComponent"
+        ),
+        None,
+    )
+    if power is None:
+        return
+    components = {header.name: (header, data) for header, data in donor.components}
+    if not {"Connection0", "Connection1", "powerInfo"} <= components.keys():
+        raise TemplateError(
+            "modern junction lacks the typed component envelopes needed by Mk2 pump"
+        )
+    path = f"{ACTOR_PATH_PREFIX}{class_name}_0"
+    class_path = (
+        "/Game/FactoryGame/Buildable/Factory/PipePumpMk2/"
+        "Build_PipelinePumpMK2.Build_PipelinePumpMk2_C"
+    )
+    header = replace(donor.header, class_path=class_path, path=path)
+    props = tuple(
+        prop
+        for prop in _instance_properties(donor.data.properties, donor.header.path, path)
+        if prop.tag.name in {"mCustomizationData", "mColorSlot"}
+    )
+    data = replace(donor.data, properties=props, trailer=trailer_for_new(class_name, ACTOR))
+    for name, ref in (
+        ("mPowerInfo", ObjectRef(LEVEL, f"{path}.powerInfo")),
+        ("mInventoryPotential", ObjectRef.NULL),
+        (
+            BUILT_WITH_RECIPE,
+            ObjectRef(
+                "",
+                "/Game/FactoryGame/Recipes/Buildings/Recipe_PipelinePumpMK2.Recipe_PipelinePumpMK2_C",
+            ),
+        ),
+    ):
+        data = _set_property(data, name, Object(ref), Tag(name, "ObjectProperty", 0).as_modern())
+    out = []
+    for name, (component_header, component_data) in (
+        ("Connection0", components["Connection0"]),
+        ("powerInfo", components["powerInfo"]),
+        ("Connection1", components["Connection1"]),
+        ("PowerInput", power),
+    ):
+        component_header = replace(component_header, path=f"{path}.{name}", parent=path)
+        component_data = replace(
+            component_data,
+            properties=(),
+            trailer=trailer_for_new(component_header.class_name, component_header.kind),
+        )
+        out.append((component_header, component_data))
+    data = replace(data, components=tuple(ObjectRef(LEVEL, h.path) for h, _ in out))
+    templates[class_name] = Template(header, data, tuple(out))
 
 
 def connect(
@@ -335,11 +410,9 @@ def apply_recipe(
 ) -> tuple[tuple[ObjectHeader, ObjectData], ...]:
     """Run ``recipe_class_path`` on an instantiated manufacturer.
 
-    A machine's recipe is stated in three places, not one: ``mCurrentRecipe`` on
-    the actor, and the ``mAllowedItemDescriptors`` filter on each of its input
-    and output inventory components. Copying a template and setting only the
-    first leaves a constructor that says it makes iron plates while its
-    inventories still only accept what the template made.
+    A recipe sets the actor's ``mCurrentRecipe``, both inventory filters, and
+    each factory pipe's global inventory access index. Changing only the actor
+    leaves filters and fluid destinations describing the template's old recipe.
 
     What the filters have to hold is what the game writes into them.
     ``AFGBuildableManufacturer::SetRecipe`` (``0x548d10``) calls
@@ -354,10 +427,15 @@ def apply_recipe(
     So the input filter is the recipe's ingredients in recipe order and the
     output filter is its products in recipe order, each padded to the machine's
     own slot count with the wildcard. How many slots there are belongs to the
-    machine, not to the recipe -- an oil refinery keeps a slot a solid recipe
-    does not fill -- so the slots and their parallel ``mArbitrarySlotSizes`` are
-    left exactly as the template has them, and the game does not touch those
-    either.
+    machine, not to the recipe. Slot count and ``mArbitrarySlotSizes`` remain
+    template-shaped in the file. At startup, BeginPlay (0x5213fc) calls
+    CreateInventories (0x528210), which rebuilds access indices, arbitrary fluid
+    slot sizes and filters from the selected recipe before production.
+
+    AssignInputAccessIndices (0x51ec70) and AssignOutputAccessIndices (0x51f180)
+    reset pipe indices to -1, then use each fluid's index in the WHOLE ingredient
+    or product list (input 0x51eef0..ef02, output 0x51f420..436). Unused pipe
+    ports stay disabled. Item form comes from the registry's shipped Docs data.
     """
     if not objects:
         raise TemplateError("apply_recipe needs the actor and its components")
@@ -379,10 +457,33 @@ def apply_recipe(
             item for item, _ in recipe.products
         ],
     }
+    pipe_indices: dict[str, int] = {}
+    buildable = registry.buildables[actor_header.class_name]
+    for direction, amounts in (("input", recipe.ingredients), ("output", recipe.products)):
+        indices = [index for index, (item, _) in enumerate(amounts) if item in registry.fluid_items]
+        ports = [
+            port for port in buildable.ports if port.kind == "pipe" and port.direction == direction
+        ]
+        if len(indices) > len(ports):
+            raise TemplateError(
+                f"{actor_header.class_name} has too few {direction} pipe connections "
+                f"for {recipe.class_name}"
+            )
+        for ordinal, port in enumerate(ports):
+            pipe_indices[port.name] = indices[ordinal] if ordinal < len(indices) else -1
     out = [(actor_header, actor_data)]
     for header, data in objects[1:]:
         items = wanted.get(header.path)
-        out.append((header, data if items is None else _set_filter(header, data, items, registry)))
+        if items is not None:
+            data = _set_filter(header, data, items, registry)
+        if header.name in pipe_indices:
+            # Native manufacturer push/pull uses the WHOLE recipe inventory
+            # index, not an index into just its fluid ingredients/products.
+            name = "mInventoryAccessIndex"
+            data = _set_property(
+                data, name, Int(pipe_indices[header.name]), Tag(name, "IntProperty", 0).as_modern()
+            )
+        out.append((header, data))
     return tuple(out)
 
 
@@ -538,10 +639,8 @@ def _segments(header: ObjectHeader, d: ObjectData, registry: Registry) -> int:
     less meaning "not costed by length" -- so a *round*, not a ceiling: 300 cm
     of Mk1 belt costs two iron plates and 299 cm costs one.
 
-    The length is the sum of the chords between stored spline points, where the
-    game divides ``mLength``, which a belt takes from its spline component's
-    ``GetSplineLength``. The two agree on the straight runs this module authors
-    and diverge on a curve, where the arc is longer than its chords.
+    Spline lengths use the engine's Hermite arc-length quadrature, not chords.
+    Variable beams carry their centimetre length in ``mLength``.
 
     The divide is taken at ``float`` width because ``0x4a6bb9`` is a ``divss``:
     see :func:`_f32`.
@@ -550,19 +649,25 @@ def _segments(header: ObjectHeader, d: ObjectData, registry: Registry) -> int:
     segment = None if buildable is None else buildable.length_per_cost_cm
     if segment is None or segment <= 1e-4:
         return 1
-    value = find(d.properties, SPLINE_DATA)
-    if not isinstance(value, Array) or len(value.items) < 2:
-        return 1
-    length = 0.0
-    previous: tuple[float, float, float] | None = None
-    for item in value.items:
-        location = find(item.fields, "Location") if isinstance(item, Struct) else None
-        if not isinstance(location, Vector):
+    length_value = find(d.properties, "mLength")
+    if buildable is not None and buildable.native_class == "FGBuildableBeam":
+        if not isinstance(length_value, Float):
+            raise TemplateError(f"{header.name} has no beam length")
+        # AFGBuildableBeam::GetDismantleRefundReturnsMultiplier 0x687110:
+        # subtract 10cm, divide at float width, then FMath's ceil conversion.
+        scaled = _f32(_f32(length_value.v - 10.0) / _f32(segment))
+        return max(1, -(round(_f32(-0.5 - _f32(scaled + scaled))) >> 1))
+    else:
+        # Local import: splines reuses this module's native straight builder.
+        from flab2bp.sfy.layout.splines import spline_length
+        from flab2bp.sfy.query import spline_points
+
+        points = spline_points(d)
+        if len(points) < 2:
             return 1
-        current = (location.x, location.y, location.z)
-        if previous is not None:
-            length += math.dist(previous, current)
-        previous = current
+        length = spline_length(
+            tuple(((p.x, p.y, p.z), (a.x, a.y, a.z), (b.x, b.y, b.z)) for p, a, b in points)
+        )
     return max(1, _round_to_int(_f32(_f32(length) / _f32(segment))))
 
 
@@ -591,6 +696,11 @@ def _instance_properties(props: PropertyList, old_path: str, new_path: str) -> P
         value = _map_value(p.value, old_path, new_path)
         if p.tag.name == SPLINE_DATA and isinstance(value, Array):
             value = replace(value, items=())
+        elif p.tag.name == "mPipeNetworkID":
+            # FGPipeConnectionComponent::PostSerializedFromBlueprint sets INDEX_NONE.
+            value = Int(-1)
+        elif p.tag.name == "mSnappedPassthroughs":
+            value = Array("ObjectProperty", None, (Object(ObjectRef.NULL), Object(ObjectRef.NULL)))
         out.append(Property(p.tag, value))
     return tuple(out)
 

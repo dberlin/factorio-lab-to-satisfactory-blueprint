@@ -690,14 +690,20 @@ test.each(['50x800', '160x1000'])(
   },
 );
 
-test('the strategy choices are exactly the request strategy set', () => {
+test('changing URL games selects the appropriate planner and Satisfactory controls', () => {
   mount();
-  const strategy = screen.getByLabelText('Strategy');
-  expect(strategy).toHaveTextContent('best');
-  expect(strategy).toHaveTextContent('freeform');
-  expect(strategy).toHaveTextContent('sequence-pair');
-  expect(strategy).toHaveTextContent('transport-routing');
-  expect(strategy).toHaveTextContent('hierarchical');
+  fireEvent.change(screen.getByLabelText('FactorioLab URL'), {
+    target: { value: 'https://factoriolab.github.io/sfy/list?o=iron-plate*60&v=11' },
+  });
+  expect(screen.getByLabelText('Strategy')).toHaveValue('sections');
+  expect(screen.queryByRole('option', { name: /^best/ })).toBeNull();
+  expect(screen.getByLabelText('Blueprint Designer')).toHaveValue('mk1');
+  expect(screen.queryByLabelText('Latitude band')).toBeNull();
+  fireEvent.change(screen.getByLabelText('FactorioLab URL'), {
+    target: { value: 'https://factoriolab.github.io/dsp/list?o=iron-ingot*60&v=11' },
+  });
+  expect(screen.getByLabelText('Strategy')).toHaveValue('best');
+  expect(screen.queryByLabelText('Blueprint Designer')).toBeNull();
 });
 
 test('proliferator tier exposes auto and every spray tier', () => {

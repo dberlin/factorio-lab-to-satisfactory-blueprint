@@ -54,7 +54,6 @@ from flab2bp.rates.adjust import ProliferatorTier
 from flab2bp.rates.machine_choice import MachineRank
 from flab2bp.sfy import pipeline as sfy_pipeline
 from flab2bp.sfy.strategy_names import (
-    SFY_PRODUCTION_STRATEGIES,
     SFY_STRATEGY_CHOICES,
     SfyStrategyName,
 )
@@ -81,7 +80,7 @@ class Options:
     """One build request, already validated."""
 
     url: str
-    #: Public and CLI callers share the same production strategy set.
+    #: Direct construction retains DSP's default; parse_options resolves the URL's game.
     strategy: WebStrategyName = "best"
     band: BandSelection = "portable"
     candidate_policies: tuple[CandidatePolicy, ...] = DEFAULT_CANDIDATE_POLICIES
@@ -137,7 +136,7 @@ class Options:
     def attempt_count(self) -> int:
         """Layout attempts this job runs: one per candidate per strategy."""
         if self.game is Game.SFY:
-            return len(SFY_PRODUCTION_STRATEGIES) if self.strategy == "best" else 1
+            return 1
         per_spec = pipeline.PRODUCTION_STRATEGY_COUNT if self.strategy == "best" else 1
         return self.effective_candidate_count * per_spec
 
@@ -294,7 +293,7 @@ def parse_options(raw: JsonValue) -> Options:
         raise InvalidOptions("'url' is required")
 
     game = _game_named_by(url.strip())
-    strategy = raw.get("strategy", "best")
+    strategy = raw.get("strategy", "sections" if game is Game.SFY else "best")
     choices = SFY_STRATEGY_CHOICES if game is Game.SFY else pipeline.STRATEGY_CHOICES
     if not isinstance(strategy, str) or strategy not in choices:
         raise InvalidOptions("'strategy' must be one of " + ", ".join(choices))

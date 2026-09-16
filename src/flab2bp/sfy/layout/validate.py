@@ -49,23 +49,29 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from fractions import Fraction
 from functools import cache, cached_property
+from itertools import chain
 from pathlib import Path
 
 from flab2bp.sfy.archive import Reader
-from flab2bp.sfy.geometry import placed_box, port_forward, world_port
+from flab2bp.sfy.geometry import placed_box, port_forward, quat_rotate, world_port
 from flab2bp.sfy.header import BlueprintHeader, read_header
 from flab2bp.sfy.labmap import LabMap, load_lab_map
 from flab2bp.sfy.layout.emit import EmitError, decode, emit
 from flab2bp.sfy.layout.model import (
+    BeamObj,
     BeltRun,
     LiftObj,
     MachineObj,
+    PassthroughObj,
+    PipeAttachmentObj,
+    PipeRun,
     Placed,
     SfyPlacement,
     Vector,
     WireObj,
     belt_ends,
     lift_geometry,
+    pipe_ends,
 )
 from flab2bp.sfy.layout.splines import hermite, spline_length, tangent_at_distance
 from flab2bp.sfy.objects import Transform
@@ -85,8 +91,12 @@ __all__ = [
     "Severity",
     "WorldBox",
     "lift_box",
+    "beam_box",
+    "passthrough_box",
+    "pipe_chain",
     "lift_half_width",
     "validate",
+    "required_input_head_m",
 ]
 
 PROJECT = "project"
@@ -511,6 +521,77 @@ def _belt_chain(run: BeltRun) -> tuple[WorldBox, ...]:
     return tuple(chain)
 
 
+def beam_box(beam: BeamObj, registry: Registry) -> WorldBox:
+    """Project envelope of the native +X beam, using mLength and mSize, not scale."""
+    size = registry.buildables[beam.class_name].beam_size_cm
+    if size is None:
+        raise ValueError(f"{beam.class_name} has no sourced beam cross-section")
+    box = ClearanceBox(
+        (0.0, -size / 2, -size / 2),
+        (beam.length_cm, size / 2, size / 2),
+        True,
+        (0.0, 0.0, 0.0),
+    )
+    return _place_box(box, beam.pose.transform(), beam.id, f"beam {beam.id}")
+
+
+def passthrough_box(hole: PassthroughObj, registry: Registry) -> WorldBox:
+    """Dynamic middle envelope; cap coverage is disclosed by geom.dynamic."""
+    buildable = registry.buildables[hole.class_name]
+    bounds = buildable.mesh_bounds_cm
+    if bounds is None:
+        raise ValueError(f"{hole.class_name} has no sourced passthrough mesh bounds")
+    low, high = bounds
+    # Pipe middle mesh runs along +X and ConstructMeshes turns it along Up;
+    # the lift middle mesh is already a horizontal ring in XY.
+    axes = (0, 1) if "Lift" in hole.class_name else (1, 2)
+    half = tuple(max(abs(low[k]), abs(high[k])) for k in axes)
+    box = ClearanceBox(
+        (-half[0], -half[1], -hole.thickness_cm / 2),
+        (half[0], half[1], hole.thickness_cm / 2),
+        True,
+        (0.0, 0.0, 0.0),
+    )
+    return _place_box(box, hole.pose.transform(), hole.id, f"passthrough {hole.id}")
+
+
+def pipe_chain(run: PipeRun, registry: Registry) -> tuple[WorldBox, ...]:
+    """Sample the pipe's mesh envelope, not the conveyor clearance.
+
+    This project's conservative oriented boxes use the cooked mMesh Y/Z
+    bounds. They are not claimed to reproduce the unextracted native pipe
+    clearance routine; pipe.capsule records that distinction.
+    """
+    bounds = registry.buildables[run.class_name].mesh_bounds_cm
+    if bounds is None:
+        raise ValueError(f"{run.class_name} has no sourced pipe mesh bounds")
+    low, high = bounds
+    half_y = max(abs(low[1]), abs(high[1]))
+    half_z = max(abs(low[2]), abs(high[2]))
+    count = max(1, math.ceil(spline_length(run.points) / CAPSULE_SEGMENT_CM))
+    points = _sample_spline(run.points, count)
+    boxes: list[WorldBox] = []
+    for index, (start, end) in enumerate(zip(points, points[1:], strict=False)):
+        length = math.dist(start, end)
+        if length == 0:
+            continue
+        axis = _unit((end[0] - start[0], end[1] - start[1], end[2] - start[2]))
+        side = _cross((0.0, 0.0, 1.0), axis)
+        if _dot(side, side) <= ZERO_NORMAL:
+            side = _cross((0.0, 1.0, 0.0), axis)
+        side = _unit(side)
+        boxes.append(
+            WorldBox(
+                run.id,
+                f"pipe {run.id} mesh segment {index}",
+                ((start[0] + end[0]) / 2, (start[1] + end[1]) / 2, (start[2] + end[2]) / 2),
+                (axis, side, _unit(_cross(axis, side))),
+                (length / 2, half_y, half_z),
+            )
+        )
+    return tuple(boxes)
+
+
 def lift_box(lift: LiftObj, registry: Registry) -> WorldBox:
     """The ONE box ``lift.clearance`` lays along a conveyor lift.
 
@@ -659,10 +740,16 @@ class Context:
         """
         out: list[WorldBox] = []
         for obj in self.placement.objects:
-            if isinstance(obj, BeltRun | LiftObj | WireObj):
+            if isinstance(obj, BeltRun | LiftObj | PipeRun | WireObj):
                 continue
             buildable = self.registry.buildables.get(obj.class_name)
             if buildable is None:
+                continue
+            if isinstance(obj, BeamObj):
+                out.append(beam_box(obj, self.registry))
+                continue
+            if isinstance(obj, PassthroughObj):
+                out.append(passthrough_box(obj, self.registry))
                 continue
             transform = obj.pose.transform()
             for i, box in enumerate(buildable.clearance):
@@ -673,6 +760,10 @@ class Context:
     @cached_property
     def belt_chains(self) -> dict[int, tuple[WorldBox, ...]]:
         return {run.id: _belt_chain(run) for run in self.placement.belts}
+
+    @cached_property
+    def pipe_chains(self) -> dict[int, tuple[WorldBox, ...]]:
+        return {run.id: pipe_chain(run, self.registry) for run in self.placement.pipes}
 
     @cached_property
     def conveyor_boxes(self) -> dict[int, tuple[WorldBox, ...]]:
@@ -709,7 +800,7 @@ class Context:
         for link in self.placement.links:
             for side, other in ((link.a, link.b), (link.b, link.a)):
                 run = self.placed.get(other[0])
-                if not isinstance(run, BeltRun | LiftObj):
+                if not isinstance(run, BeltRun | LiftObj | PipeRun):
                     continue
                 where = self.world_port(*side)
                 if where is None:
@@ -740,6 +831,21 @@ class Context:
             joined.setdefault(link.b[0], set()).add(link.a[0])
         return {oid: frozenset(ids) for oid, ids in joined.items()}
 
+    @cached_property
+    def hydraulic_graph(self) -> dict[tuple[int, str], set[tuple[int, str]]]:
+        return _fluid_graph(self, forward=True)
+
+    @cached_property
+    def pump_inlets(self) -> frozenset[tuple[int, str]]:
+        return frozenset(
+            (obj.id, port.name)
+            for obj in self.placement.pipe_attachments
+            if (buildable := self.registry.buildables[obj.class_name]).native_class
+            == "FGBuildablePipelinePump"
+            for port in buildable.ports
+            if port.kind == "pipe" and port.direction == "input"
+        )
+
     def port(self, oid: int, name: str) -> Port | None:
         obj = self.placed.get(oid)
         if obj is None or isinstance(obj, WireObj):
@@ -764,6 +870,15 @@ class Context:
         obj = self.placed.get(oid)
         if obj is None:
             return None
+        if isinstance(obj, PipeRun):
+            if self.port(oid, name) is None:
+                return None
+            start, _ = pipe_ends(self.registry, obj.class_name)
+            snapped = obj.snapped_passthroughs[0 if name == start else 1]
+            hole = self.placed.get(snapped) if snapped is not None else None
+            if isinstance(hole, PassthroughObj):
+                return hole.pose.location
+            return obj.start if name == start else obj.end
         if isinstance(obj, BeltRun):
             entry, _ = belt_ends(self.registry, obj.class_name)
             return obj.start if name == entry else obj.end
@@ -796,6 +911,13 @@ class Context:
         connections are moved at runtime and whose top carries a yaw of its own.
         """
         obj = self.placed.get(oid)
+        if isinstance(obj, PipeRun):
+            start, end = pipe_ends(self.registry, obj.class_name)
+            if name not in (start, end):
+                return None
+            tangent = obj.points[0][2] if name == start else obj.points[-1][1]
+            normal = (0.0, 0.0, 0.0) if _dot(tangent, tangent) < ZERO_NORMAL else _unit(tangent)
+            return (-normal[0], -normal[1], -normal[2]) if name == start else normal
         if isinstance(obj, LiftObj):
             return self.lift_end(obj, name)[1]
         if obj is None or isinstance(obj, BeltRun | WireObj):
@@ -866,12 +988,12 @@ def _bounds(ctx: Context) -> Iterable[Finding]:
             or point[2] > height + TOUCH_CM
         )
 
-    chains = ctx.conveyor_boxes
+    chains = {**ctx.conveyor_boxes, **ctx.pipe_chains}
     for obj in ctx.placement.objects:
         if isinstance(obj, WireObj):
             continue
         points: list[Vector] = []
-        if isinstance(obj, BeltRun):
+        if isinstance(obj, BeltRun | PipeRun):
             points += [location for location, _, _ in obj.points]
         elif isinstance(obj, LiftObj):
             ends = belt_ends(ctx.registry, obj.class_name)
@@ -1324,6 +1446,284 @@ def _curvature(ctx: Context) -> Iterable[Finding]:
             )
 
 
+@check("pipe.max_length", rule="pipe.max_length")
+def _pipe_max_length(ctx: Context) -> Iterable[Finding]:
+    """Enforce pipe.max_length's strict arc-length comparison."""
+    limit = ctx.registry.limits.pipe_max_spline_cm
+    for run in ctx.placement.pipes:
+        length = spline_length(run.points)
+        if length > limit:
+            yield ctx.finding(
+                "pipe.max_length",
+                f"pipe {run.id} is {length:.2f} cm, past the {limit:.2f} cm native limit",
+                run.id,
+                length_cm=length,
+                limit_cm=limit,
+            )
+
+
+@check("pipe.min_length", rule="pipe.min_length")
+def _pipe_min_length(ctx: Context) -> Iterable[Finding]:
+    """pipe.min_length requires chord sum strictly greater than mMeshLength / 2."""
+    for run in ctx.placement.pipes:
+        mesh = ctx.registry.buildables[run.class_name].mesh_length_cm
+        if mesh is None:
+            yield ctx.skip("pipe.min_length", f"pipe {run.id}'s mesh length is unknown")
+            continue
+        length = sum(
+            math.dist(a[0], b[0]) for a, b in zip(run.points, run.points[1:], strict=False)
+        )
+        if length <= mesh / 2:
+            yield ctx.finding(
+                "pipe.min_length",
+                f"pipe {run.id}'s chord length {length:.2f} cm is not above {mesh / 2:.2f} cm",
+                run.id,
+                length_cm=length,
+                floor_cm=mesh / 2,
+            )
+
+
+@check("pipe.curvature", rule="pipe.curvature")
+def _pipe_curvature(ctx: Context) -> Iterable[Finding]:
+    """pipe.curvature samples full 3D tangents at mMinBendRadius / 2 spacing.
+
+    RVA 0xae9380 uses RoundToInt(length * 2 / radius), and refuses a
+    sampled radius below mMinBendRadius * 1.05. There is no pipe incline rule.
+    """
+    bend = ctx.registry.limits.pipe_min_bend_radius_cm
+    for run in ctx.placement.pipes:
+        length = spline_length(run.points)
+        count = _round_to_int(length * 2 / bend)
+        if count <= 0:
+            continue
+        step = length / count
+        for index in range(count):
+            a = tangent_at_distance(run.points, index * step, samples=CURVATURE_SAMPLES)
+            b = tangent_at_distance(run.points, (index + 1) * step, samples=CURVATURE_SAMPLES)
+            a = (0.0, 0.0, 0.0) if _dot(a, a) < ZERO_NORMAL else _unit(a)
+            b = (0.0, 0.0, 0.0) if _dot(b, b) < ZERO_NORMAL else _unit(b)
+            angle = math.acos(min(1.0, max(-1.0, _dot(a, b))))
+            radius = math.inf if angle == 0 else step / angle
+            if radius < bend * 1.05:
+                yield ctx.finding(
+                    "pipe.curvature",
+                    f"pipe {run.id}'s 3D bend radius {radius:.2f} cm is below {bend * 1.05:.2f} cm",
+                    run.id,
+                    radius_cm=radius,
+                    distance_cm=(index + 0.5) * step,
+                )
+                break
+
+
+def _fluid_graph(
+    ctx: Context, *, forward: bool = False
+) -> dict[tuple[int, str], set[tuple[int, str]]]:
+    """Connection-component graph; machines never join their input/output fluids."""
+    graph: dict[tuple[int, str], set[tuple[int, str]]] = {}
+
+    def join(a: tuple[int, str], b: tuple[int, str], reverse: bool = True) -> None:
+        graph.setdefault(a, set()).add(b)
+        graph.setdefault(b, set())
+        if reverse:
+            graph[b].add(a)
+
+    for link in ctx.placement.links:
+        a, b = ctx.port(*link.a), ctx.port(*link.b)
+        if a and b and a.kind == b.kind == "pipe":
+            join(link.a, link.b)
+    for run in ctx.placement.pipes:
+        entry, exit_ = pipe_ends(ctx.registry, run.class_name)
+        join((run.id, entry), (run.id, exit_))
+    for obj in ctx.placement.pipe_attachments:
+        ports = [p for p in ctx.registry.buildables[obj.class_name].ports if p.kind == "pipe"]
+        for a in ports:
+            for b in ports:
+                if a == b:
+                    continue
+                if forward and (a.direction == "output" or b.direction == "input"):
+                    continue
+                join((obj.id, a.name), (obj.id, b.name), reverse=not forward)
+    return graph
+
+
+def _component(
+    start: tuple[int, str],
+    graph: Mapping[tuple[int, str], set[tuple[int, str]]],
+    *,
+    stop: frozenset[tuple[int, str]] = frozenset(),
+) -> set[tuple[int, str]]:
+    visited: set[tuple[int, str]] = set()
+    pending = [start]
+    while pending:
+        node = pending.pop()
+        if node in visited:
+            continue
+        visited.add(node)
+        if node not in stop:
+            pending.extend(graph.get(node, ()))
+    return visited
+
+
+@check("pipe.fluid_requirements", rule="pipe.fluid_requirements")
+def _pipe_fluids(ctx: Context) -> Iterable[Finding]:
+    """pipe.fluid_requirements forbids distinct descriptors in one connected network.
+
+    Authored item labels stand for committed descriptors. This is not a claim
+    to simulate GetFluidDescriptor or to copy runtime network IDs.
+    """
+    graph = _fluid_graph(ctx)
+    visited: set[tuple[int, str]] = set()
+    for node in graph:
+        if node in visited:
+            continue
+        component = _component(node, graph)
+        visited.update(component)
+        runs = {oid: run for oid, _ in component if isinstance(run := ctx.placed.get(oid), PipeRun)}
+        items = {run.item_id for run in runs.values() if run.item_id}
+        if len(items) > 1:
+            yield ctx.finding(
+                "pipe.fluid_requirements",
+                f"connected pipe network mixes distinct fluids {sorted(items)}",
+                *sorted(runs),
+                items=sorted(items),
+            )
+
+
+@check("pipe.capsule")
+def _pipe_capsule(ctx: Context) -> Iterable[Finding]:
+    """Project mesh-envelope collision check, not unextracted pipe clearance."""
+    if not ctx.placement.pipes:
+        return
+    yield ctx.skip(
+        "pipe.capsule",
+        "Pipe collision uses sampled cooked-mesh envelopes; the "
+        "native pipe clearance sweep and overlap tolerance are not extracted.",
+    )
+    chains = {**ctx.conveyor_boxes, **ctx.pipe_chains}
+    pipes = {run.id for run in ctx.placement.pipes}
+    keys = list(chains)
+    for index, oid in enumerate(keys):
+        for other in keys[index + 1 :]:
+            if oid not in pipes and other not in pipes:
+                continue
+            near = ctx.connection_points.get(frozenset((oid, other)), ())
+            clash = _worst(chains[oid], chains[other], near)
+            if clash is not None:
+                yield ctx.finding(
+                    "pipe.capsule",
+                    f"transport {oid} and {other} intersect by {clash[0]:.2f} cm",
+                    oid,
+                    other,
+                    depth_cm=clash[0],
+                )
+    for run in ctx.placement.pipes:
+        excluded = ctx.wired_port_boxes.get(run.id, ())
+        for index, box in enumerate(ctx.boxes):
+            if box.soft or index in excluded or _owns_hole_crossing(ctx, run.id, box.owner):
+                continue
+            clash = _worst(ctx.pipe_chains[run.id], (box,))
+            if clash is not None:
+                yield ctx.finding(
+                    "pipe.capsule",
+                    f"pipe {run.id} intersects {box.label} by {clash[0]:.2f} cm",
+                    run.id,
+                    box.owner,
+                    depth_cm=clash[0],
+                )
+
+
+def _fluid_capacity(ctx: Context) -> Iterable[Finding]:
+    """Exact m3/s capacities and every machine's feed AND byproduct drainage."""
+    spec = ctx.spec
+    if spec is None:
+        return
+    labmap = load_lab_map()
+    tiers = {
+        labmap.machines[t.item_id]: t.cubic_metres_per_second
+        for t in spec.pipe_tiers
+        if t.item_id in labmap.machines
+    }
+    funded_families = {
+        (ctx.registry.buildables[class_name].native_class, capacity)
+        for class_name, capacity in tiers.items()
+    }
+    for run in ctx.placement.pipes:
+        buildable = ctx.registry.buildables[run.class_name]
+        native = buildable.pipe_flow_limit_m3s
+        capacity = tiers.get(run.class_name)
+        # Indicator visibility does not change a pipeline's sourced native
+        # transport class or rated capacity. Do not mistake a cosmetic actor
+        # variant for an unfunded tier (nor fund a faster tier by name).
+        if (
+            capacity is None
+            and native is not None
+            and (buildable.native_class, Fraction(str(native))) in funded_families
+        ):
+            capacity = Fraction(str(native))
+        if capacity is None:
+            yield ctx.finding(
+                "flow.capacity", f"pipe {run.id}'s mark is not funded by the spec", run.id
+            )
+        else:
+            if native is not None:
+                capacity = min(capacity, Fraction(str(native)))
+            if run.cubic_metres_per_second > capacity or run.cubic_metres_per_second < 0:
+                yield ctx.finding(
+                    "flow.capacity",
+                    f"pipe {run.id} carries "
+                    f"{run.cubic_metres_per_second} m3/s, capacity {capacity}",
+                    run.id,
+                    capacity=str(capacity),
+                )
+        if run.item_id not in spec.fluid_items:
+            yield ctx.finding(
+                "flow.capacity",
+                f"pipe {run.id} carries non-fluid or unknown item {run.item_id!r}",
+                run.id,
+                item=run.item_id,
+            )
+    if ctx.placement.stack_lanes:
+        yield from _fluid_network_capacity(ctx)
+    neighbours: dict[tuple[int, str], list[tuple[int, str]]] = {}
+    for link in ctx.placement.links:
+        neighbours.setdefault(link.a, []).append(link.b)
+        neighbours.setdefault(link.b, []).append(link.a)
+    for machine in ctx.placement.machines:
+        group = ctx.group_for(machine)
+        if group is None:
+            continue
+        ports = ctx.registry.buildables[machine.class_name].ports
+        for direction, rates, verb in (
+            ("input", group.inputs_per_machine, "feed"),
+            ("output", group.outputs_per_machine, "drain"),
+        ):
+            attached: dict[str, Fraction] = {}
+            for port in ports:
+                if port.kind != "pipe" or port.direction != direction:
+                    continue
+                for oid, _ in neighbours.get((machine.id, port.name), ()):
+                    pipe = ctx.placed.get(oid)
+                    if isinstance(pipe, PipeRun):
+                        attached[pipe.item_id] = (
+                            attached.get(pipe.item_id, Fraction()) + pipe.cubic_metres_per_second
+                        )
+            for item, rate in rates.items():
+                if item not in spec.fluid_items:
+                    continue
+                needed = rate * machine.clock / group.clock
+                found = attached.get(item, Fraction())
+                if found < needed:
+                    yield ctx.finding(
+                        "flow.capacity",
+                        f"machine {machine.id} requires {needed} "
+                        f"m3/s {item!r} {verb}; connected pipes provide {found}",
+                        machine.id,
+                        item=item,
+                        needed=str(needed),
+                        supplied=str(found),
+                    )
+
+
 def _round_to_int(value: float) -> int:
     """``FMath::RoundToInt`` as ``ValidateCurvature`` performs it on SSE.
 
@@ -1380,16 +1780,11 @@ def _connected_once(ctx: Context) -> Iterable[Finding]:
     hands out no direction at all, which is what a conveyor pole is, so a link
     there is one this project cannot say the meaning of.
 
-    A lift's two ends are held to the same rule and have no boundary exemption:
-    this project lays no lift onto the designer wall, and a lift with a loose
-    end carries nothing at all.
-
-    The one loose end this project does author is a BOUNDARY end: a belt whose
-    ``boundary_start`` or ``boundary_end`` is set claims to stop on the designer
-    wall, where what it meets is outside the blueprint.  Such an end must be
-    wired ZERO times, and :func:`_boundary` holds it to the wall it claims --
-    the flag is the author saying which ends are meant to be open, not a way of
-    forgiving a belt that goes nowhere.
+    Belts, lifts and pipes all obey this occupancy contract. Only an explicitly
+    flagged boundary end must be wired ZERO times. ``flow.boundary`` proves
+    that each such end belongs to a structural stack lane (or the historical
+    horizontal walls for legacy conveyor fragments), rather than forgiving an
+    accidentally disconnected internal run.
     """
     counts: Counter[tuple[int, str]] = Counter()
     for link in ctx.placement.links:
@@ -1420,22 +1815,11 @@ def _connected_once(ctx: Context) -> Iterable[Finding]:
                 side[0],
                 links=count,
             )
-    for lift in ctx.placement.lifts:
-        for end in belt_ends(ctx.registry, lift.class_name):
-            found = counts[(lift.id, end)]
-            if found == 1:
-                continue
-            yield ctx.finding(
-                "ports.connected_once",
-                f"lift {lift.id}'s {end} end is wired {found} times, not once: a lift has "
-                "two connections and carries nothing with either of them loose",
-                lift.id,
-                end=end,
-                links=found,
-            )
-    for run in ctx.placement.belts:
-        entry, exit_end = belt_ends(ctx.registry, run.class_name)
-        for end, open_by_design in ((entry, run.boundary_start), (exit_end, run.boundary_end)):
+    for run in chain[BeltRun | LiftObj | PipeRun](
+        ctx.placement.belts, ctx.placement.lifts, ctx.placement.pipes
+    ):
+        ends = (pipe_ends if isinstance(run, PipeRun) else belt_ends)(ctx.registry, run.class_name)
+        for end, open_by_design in zip(ends, (run.boundary_start, run.boundary_end), strict=True):
             wanted = 0 if open_by_design else 1
             found = counts[(run.id, end)]
             if found == wanted:
@@ -1448,7 +1832,7 @@ def _connected_once(ctx: Context) -> Iterable[Finding]:
             )
             yield ctx.finding(
                 "ports.connected_once",
-                f"belt {run.id}'s {end} end is wired {found} times, not {wanted}: {why}",
+                f"transport {run.id}'s {end} end is wired {found} times, not {wanted}: {why}",
                 run.id,
                 end=end,
                 links=found,
@@ -1489,6 +1873,28 @@ def _direction(ctx: Context) -> Iterable[Finding]:
         upstream, downstream = ctx.port(*link.a), ctx.port(*link.b)
         if upstream is None or downstream is None:
             continue  # ports.connected_once reports a port that is not there
+        if upstream.kind != downstream.kind or upstream.kind not in ("belt", "pipe"):
+            yield ctx.finding(
+                "ports.direction",
+                f"cannot join {upstream.kind} to {downstream.kind}: incompatible transport media",
+                link.a[0],
+                link.b[0],
+            )
+            continue
+        if upstream.kind == "pipe":
+            # Pipe links are unordered on disk. Only fixed same-direction ends conflict;
+            # an ANY junction is bidirectional, not a fictitious conveyor splitter.
+            if upstream.direction == downstream.direction and upstream.direction in (
+                "input",
+                "output",
+            ):
+                yield ctx.finding(
+                    "ports.direction",
+                    f"two pipe {upstream.direction} ports cannot exchange fluid",
+                    link.a[0],
+                    link.b[0],
+                )
+            continue
         if upstream.direction not in ("output", "any"):
             yield ctx.finding(
                 "ports.direction",
@@ -1552,7 +1958,7 @@ def _position(ctx: Context) -> Iterable[Finding]:
     for link in ctx.placement.links:
         for side, other in ((link.a, link.b), (link.b, link.a)):
             run = ctx.placed.get(side[0])
-            if not isinstance(run, BeltRun | LiftObj):
+            if not isinstance(run, BeltRun | LiftObj | PipeRun):
                 continue
             here = ctx.world_port(*side)
             there = ctx.world_port(*other)
@@ -1560,7 +1966,13 @@ def _position(ctx: Context) -> Iterable[Finding]:
                 continue
             gap = math.dist(here, there)
             if gap > PORT_CM:
-                kind = "lift" if isinstance(run, LiftObj) else "belt"
+                kind = (
+                    "pipe"
+                    if isinstance(run, PipeRun)
+                    else "lift"
+                    if isinstance(run, LiftObj)
+                    else "belt"
+                )
                 yield ctx.finding(
                     "ports.position",
                     f"{kind} {run.id}'s {side[1]} end is {gap:.2f} cm from object "
@@ -1569,6 +1981,19 @@ def _position(ctx: Context) -> Iterable[Finding]:
                     other[0],
                     gap_cm=round(gap, 3),
                 )
+        first, second = ctx.port(*link.a), ctx.port(*link.b)
+        if first is not None and second is not None and first.kind == second.kind == "pipe":
+            a, b = ctx.port_facing(*link.a), ctx.port_facing(*link.b)
+            if a is not None and b is not None:
+                angle = math.acos(min(1.0, max(-1.0, -_dot(a, b))))
+                if angle > PORT_ANGLE_RAD:
+                    yield ctx.finding(
+                        "ports.position",
+                        f"pipe connection normals do not oppose ({angle:.3f} rad)",
+                        link.a[0],
+                        link.b[0],
+                        angle_rad=round(angle, 5),
+                    )
         upstream = ctx.placed.get(link.a[0])
         run = ctx.placed.get(link.b[0])
         if isinstance(upstream, BeltRun) or not isinstance(run, BeltRun):
@@ -1607,39 +2032,38 @@ def _lift_height(ctx: Context) -> Iterable[Finding]:
     lift we author outside the window is one the game would silently build at a
     different height -- ending nowhere near the port it was drawn to.
 
-    The floor is ``mMinimumHeight``.  ``lift_min_vertical_cm``
-    (``mMinimumHeightWithVerticalConnection``) is NOT used: the rule's own
-    comparison takes that floor only when ``mSnappedPassthroughs[0]`` is set
-    (the select at ``0xaa4946``..``0xaa495d``, gated on that array and nothing
-    else), which is a lift built through a foundation passthrough, and this
-    project authors no passthroughs -- ``emit`` writes that array empty.  A
-    placer that starts snapping lifts to passthroughs has to bring the other
-    floor with it.
+    Native UpdateTopTransform derives the snapped minimum from half the hole
+    thickness plus one or two steps (0xaa481f..0xaa4867), not the registry's
+    initial vertical minimum. We conservatively require the larger branch;
+    actor-only data does not identify the inherited sign field selecting it.
+    ConfigureActor swaps slots in reverse construction (0xa6950a/0xa695ec),
+    so either serialized end can carry the snap. The post-clamp remainder is
+    added to the maximum too. ``ports.passthrough`` checks actual ownership.
 
-    **Where this check is stricter than the game, and knows it.**
-    ``mMinimumHeight`` is not always the ``BeginPlay`` value either: when the
-    connection the top snapped to has a vertical normal, ``UpdateTopTransform``
-    overwrites it for the length of the call with 2.5 or 3.5 times
-    ``mStepHeight`` -- 250 or 350 cm rather than 400 -- and puts the saved value
-    back at ``0xaa4a6f``.  It reads the snapped connection (``0xaa4871``), asks
-    it for ``GetConnectorNormal`` (``0xaa4885``), tests the normal's
-    ``|Z| > 0.5`` (``0xaa4896``/``0xaa489d``/``0xaa48a1``) and picks 2.5
-    (``0xaa48b2``) or 3.5 (``0xaa48a8``) on its sign before multiplying by the
-    step (``0xaa48ba``) and storing it (``0xaa48c2``).  So for a lift whose top
-    meets a vertical connection the game would accept a shorter lift than this
-    check does.  Refusing one is safe in the direction that matters -- it turns
-    away a build the game would have taken, never the reverse -- and this
-    project authors no such lift today; a placer that starts doing so should
-    read that floor rather than loosen this one.
-
-    The bound is on the SIZE of the drop: the sign of ``height_cm`` says which
-    way items travel, and both branches of the clamp are the same window.
+    Without a hole, the ordinary ``lift_min_cm`` remains conservative for
+    direct snaps to vertical connectors: their 2.5/3.5-step minimum override
+    at 0xaa4871..0xaa48c2 is not reconstructed from actor-only placement data.
+    The limit applies to the magnitude of either upward or downward travel.
     """
     limits = ctx.registry.limits
     low, high = limits.lift_min_cm, limits.lift_max_cm
     if low is None or high is None:
         return
+    ordinary_limits = (low, high)
     for lift in ctx.placement.lifts:
+        holes = [
+            hole
+            for oid in lift.snapped_passthroughs
+            if oid is not None and isinstance(hole := ctx.placed.get(oid), PassthroughObj)
+        ]
+        low, high = ordinary_limits
+        if holes:
+            step = limits.lift_step_cm
+            if step is None:
+                yield ctx.finding("lift.height", "snapped lift height step is unknown", lift.id)
+                continue
+            low = max(hole.thickness_cm / 2 + 2 * step for hole in holes)
+            high += min(int(hole.thickness_cm * 0.5 + step) % 100 for hole in holes)
         rise = abs(lift.height_cm)
         if low - TOUCH_CM <= rise <= high + TOUCH_CM:
             continue
@@ -1667,17 +2091,33 @@ def _lift_step(ctx: Context) -> Iterable[Finding]:
     the step is one the game MOVES, by up to half a step, and the lift ends
     somewhere other than the port it was drawn to.  We refuse to author one.
 
-    The one lift the game itself leaves off the lattice is one snapped to a
-    passthrough, which carries that passthrough's thickness modulo 100 through
-    the clamp (``0xaa4830``..``0xaa4867``, added back at ``0xaa4981``).  This
-    project authors no passthroughs, so no lift of ours is entitled to it.
+    A hologram snapped at slot zero carries the native half-thickness remainder:
+    ``int(thickness * 0.5 + step) % 100`` (0xaa481f..0xaa4843).
+    ConfigureActor swaps actor slots in reverse mode (0xa6950a/0xa695ec), so
+    either actual snapped end can supply this remainder. With both ends snapped,
+    TrySnapToActor instead writes the exact hole-origin difference directly to
+    mTopTransform (0xa94dca..0xa94f91); that path never calls UpdateTopTransform.
+    Such a bridge is constrained by its two actual hole centres, not the step.
     """
     step = ctx.registry.limits.lift_step_cm
     if not step:
         return
     for lift in ctx.placement.lifts:
         rise = abs(lift.height_cm)
-        off = min(rise % step, step - rise % step)
+        holes = [ctx.placed.get(oid) for oid in lift.snapped_passthroughs if oid is not None]
+        if len(holes) == 2 and all(isinstance(hole, PassthroughObj) for hole in holes):
+            # The separate passthrough check enforces exact centres and reciprocal
+            # ownership; do not impose free-end snapping on a two-hole bridge.
+            continue
+        remainders = {
+            int(hole.thickness_cm * 0.5 + step) % 100
+            for hole in holes
+            if isinstance(hole, PassthroughObj)
+        } or {0}
+        off = min(
+            min((rise - remainder) % step, step - (rise - remainder) % step)
+            for remainder in remainders
+        )
         if off <= TOUCH_CM:
             continue
         yield ctx.finding(
@@ -1825,6 +2265,7 @@ def _capacity(ctx: Context) -> Iterable[Finding]:
     if spec is None:
         return
     speeds = _tier_speeds(spec, load_lab_map())
+    yield from _fluid_capacity(ctx)
     for run in ctx.placement.belts:
         speed = speeds.get(run.class_name)
         if speed is None:
@@ -1844,14 +2285,20 @@ def _capacity(ctx: Context) -> Iterable[Finding]:
                 capacity=str(speed),
             )
     outside: list[str] = []
+    carried_items = {run.item_id for run in ctx.placement.belts}
+    incoming: dict[int, list[int]] = {}
+    for link in ctx.placement.links:
+        incoming.setdefault(link.b[0], []).append(link.a[0])
     for machine in ctx.placement.machines:
         group = ctx.group_for(machine)
         if group is None:
             continue
         for item, rate in group.inputs_per_machine.items():
+            if item in spec.fluid_items:
+                continue
             wanted = rate * machine.clock / group.clock
-            supplied = _supplied(ctx, machine, item)
-            if supplied == 0 and item in spec.external_inputs:
+            supplied = _supplied(ctx, machine, item, incoming)
+            if supplied == 0 and item in spec.external_inputs and item not in carried_items:
                 outside.append(f"{machine.class_name} {machine.id} on {item!r}")
                 continue
             if supplied < wanted:
@@ -1884,15 +2331,24 @@ def _tier_speeds(spec: SfyBuildSpec, labmap: LabMap) -> dict[str, Fraction]:
     return speeds
 
 
-def _supplied(ctx: Context, machine: MachineObj, item: str) -> Fraction:
-    """Items per second of ``item`` arriving on belts wired into ``machine``."""
+def _supplied(
+    ctx: Context, machine: MachineObj, item: str, incoming: Mapping[int, list[int]]
+) -> Fraction:
+    """Rate on the nearest feeder belts, through any snapped one-to-one lifts."""
     total = Fraction(0)
-    for link in ctx.placement.links:
-        if link.b[0] != machine.id:
+    pending = list(incoming.get(machine.id, ()))
+    visited: set[int] = set()
+    while pending:
+        object_id = pending.pop()
+        if object_id in visited:
             continue
-        run = ctx.placed.get(link.a[0])
-        if isinstance(run, BeltRun) and run.item_id == item:
-            total += run.items_per_second
+        visited.add(object_id)
+        source = ctx.placed.get(object_id)
+        if isinstance(source, BeltRun):
+            if source.item_id == item:
+                total += source.items_per_second
+        elif isinstance(source, LiftObj):
+            pending.extend(incoming.get(object_id, ()))
     return total
 
 
@@ -1933,6 +2389,648 @@ def _balance(ctx: Context) -> Iterable[Finding]:
             )
 
 
+def _fluid_network_capacity(ctx: Context) -> Iterable[Finding]:
+    """Prove aggregate fluid demand/export across rated pipe and pump bottlenecks."""
+    spec = ctx.spec
+    if spec is None:
+        return
+    graph = _fluid_graph(ctx, forward=True)
+    for item in sorted(spec.fluid_items):
+        sources: list[tuple[tuple[int, str], Fraction]] = []
+        sinks: list[tuple[tuple[int, str], Fraction]] = []
+        for machine in ctx.placement.machines:
+            group = ctx.group_for(machine)
+            if group is None:
+                continue
+            ports = ctx.registry.buildables[machine.class_name].ports
+            for incoming, rates, target in (
+                (True, group.inputs_per_machine, sinks),
+                (False, group.outputs_per_machine, sources),
+            ):
+                if item not in rates:
+                    continue
+                # Recipe port assignment is already verified by adjacent labelled runs.
+                for port in ports:
+                    if port.kind != "pipe" or port.direction != ("input" if incoming else "output"):
+                        continue
+                    node = (machine.id, port.name)
+                    if any(
+                        isinstance(pipe := ctx.placed.get(ref[0]), PipeRun) and pipe.item_id == item
+                        for ref in graph.get(node, ())
+                    ):
+                        target.append((node, rates[item] * machine.clock / group.clock))
+        for lane in ctx.placement.stack_lanes:
+            if lane.kind == "pipe" and lane.item_id == item:
+                if lane.input_per_second:
+                    sources.append((lane.bottom, lane.input_per_second))
+                if lane.output_per_second:
+                    sinks.append((lane.top, lane.output_per_second))
+        demand = sum((rate for _, rate in sinks), Fraction())
+        if demand == 0:
+            continue
+        residual: dict[tuple[int, str], dict[tuple[int, str], Fraction]] = {}
+
+        def add(
+            a: tuple[int, str],
+            b: tuple[int, str],
+            capacity: Fraction,
+            residual: dict[tuple[int, str], dict[tuple[int, str], Fraction]] = residual,
+        ) -> None:
+            row = residual.setdefault(a, {})
+            row[b] = row.get(b, Fraction()) + capacity
+            residual.setdefault(b, {}).setdefault(a, Fraction())
+
+        for a, neighbours in graph.items():
+            obj = ctx.placed[a[0]]
+            if isinstance(obj, PipeRun) and obj.item_id != item:
+                continue
+            for b in neighbours:
+                other = ctx.placed[b[0]]
+                if isinstance(other, PipeRun) and other.item_id != item:
+                    continue
+                capacity = demand
+                if a[0] == b[0]:
+                    buildable = ctx.registry.buildables[obj.class_name]
+                    if isinstance(obj, PipeRun):
+                        capacity = obj.cubic_metres_per_second
+                    if buildable.pipe_flow_limit_m3s is not None:
+                        capacity = min(capacity, Fraction(str(buildable.pipe_flow_limit_m3s)))
+                add(a, b, max(Fraction(), capacity))
+        source, sink = (-1, "supply"), (-1, "demand")
+        for node, rate in sources:
+            add(source, node, rate)
+        for node, rate in sinks:
+            add(node, sink, rate)
+        delivered = Fraction()
+        while delivered < demand:
+            previous: dict[tuple[int, str], tuple[int, str]] = {}
+            pending = [source]
+            for node in pending:
+                for neighbour, capacity in residual.get(node, {}).items():
+                    if capacity <= 0 or neighbour == source or neighbour in previous:
+                        continue
+                    previous[neighbour] = node
+                    pending.append(neighbour)
+                if sink in previous:
+                    break
+            if sink not in previous:
+                break
+            amount, node = demand - delivered, sink
+            while node != source:
+                parent = previous[node]
+                amount = min(amount, residual[parent][node])
+                node = parent
+            node = sink
+            while node != source:
+                parent = previous[node]
+                residual[parent][node] -= amount
+                residual[node][parent] += amount
+                node = parent
+            delivered += amount
+        if delivered < demand:
+            yield ctx.finding(
+                "flow.capacity",
+                f"{item!r} connected fluid network can deliver/drain "
+                f"only {delivered} of {demand} m3/s across its rated bottlenecks",
+                item=item,
+                needed=str(demand),
+                supplied=str(delivered),
+            )
+
+
+def _transport_graph(ctx: Context, kind: str) -> dict[tuple[int, str], set[tuple[int, str]]]:
+    if kind == "pipe":
+        return _fluid_graph(ctx, forward=True)
+    graph: dict[tuple[int, str], set[tuple[int, str]]] = {}
+    for link in ctx.placement.links:
+        a, b = ctx.port(*link.a), ctx.port(*link.b)
+        if a and b and a.kind == b.kind == "belt":
+            graph.setdefault(link.a, set()).add(link.b)
+    for run in chain[BeltRun | LiftObj](ctx.placement.belts, ctx.placement.lifts):
+        entry, exit_ = belt_ends(ctx.registry, run.class_name)
+        graph.setdefault((run.id, entry), set()).add((run.id, exit_))
+    for attachment in ctx.placement.attachments:
+        ports = ctx.registry.buildables[attachment.class_name].ports
+        for inlet in ports:
+            if inlet.kind == "belt" and inlet.direction == "input":
+                graph.setdefault((attachment.id, inlet.name), set()).update(
+                    (attachment.id, p.name)
+                    for p in ports
+                    if p.kind == "belt" and p.direction == "output"
+                )
+    return graph
+
+
+def _lane_capacity(
+    ctx: Context,
+    graph: Mapping[tuple[int, str], set[tuple[int, str]]],
+    start: tuple[int, str],
+    end: tuple[int, str],
+    item: str,
+    claimed: Fraction,
+) -> Fraction:
+    """Widest single continuation, constrained by every physical transport actor."""
+    best = {start: claimed}
+    pending = [start]
+    while pending:
+        node = pending.pop()
+        obj = ctx.placed.get(node[0])
+        available = best[node]
+        if isinstance(obj, PipeRun):
+            available = (
+                min(available, obj.cubic_metres_per_second) if obj.item_id == item else Fraction()
+            )
+        elif isinstance(obj, BeltRun):
+            available = min(available, obj.items_per_second) if obj.item_id == item else Fraction()
+        if obj is not None:
+            buildable = ctx.registry.buildables[obj.class_name]
+            if isinstance(obj, BeltRun | LiftObj):
+                # Docs mSpeed is twice items/minute, not an items/minute capacity.
+                if buildable.belt_speed_per_min is None:
+                    available = Fraction()
+                else:
+                    available = min(available, Fraction(str(buildable.belt_speed_per_min)) / 120)
+            elif buildable.pipe_flow_limit_m3s is not None:
+                available = min(available, Fraction(str(buildable.pipe_flow_limit_m3s)))
+        for other in graph.get(node, ()):
+            if available > best.get(other, Fraction()):
+                best[other] = available
+                pending.append(other)
+    return best.get(end, Fraction())
+
+
+def _stack_boundary(ctx: Context) -> Iterable[Finding]:
+    """Project structural repeat contract, including user-approved manual seams."""
+    placement = ctx.placement
+    gap, pitch = placement.stack_connection_gap_cm, placement.stack_height_cm
+    if not math.isfinite(gap) or gap < 0 or not math.isfinite(pitch) or pitch <= gap:
+        yield ctx.finding(
+            "flow.boundary", "stack pitch and common manual connection gap are invalid"
+        )
+        return
+    if not placement.stack_lanes:
+        yield ctx.finding("flow.boundary", "structural placement declares no material stack lanes")
+        return
+    if not placement.beams or not placement.foundations:
+        yield ctx.finding(
+            "flow.boundary", "structural stack lanes need actual beams and foundation slabs"
+        )
+    for box in ctx.boxes:
+        if max(corner[2] for corner in box.corners()) > pitch + PORT_CM:
+            yield ctx.finding(
+                "flow.boundary",
+                f"{box.label} extends above the structural repeat pitch",
+                box.owner,
+                pitch_cm=pitch,
+            )
+    declared: Counter[tuple[int, str]] = Counter()
+    totals_in: dict[str, Fraction] = {}
+    totals_out: dict[str, Fraction] = {}
+    graphs = {kind: _transport_graph(ctx, kind) for kind in ("belt", "pipe")}
+    spec = ctx.spec
+    for lane in placement.stack_lanes:
+        declared.update((lane.bottom, lane.top))
+        bottom, top = ctx.world_port(*lane.bottom), ctx.world_port(*lane.top)
+        ports = (ctx.port(*lane.bottom), ctx.port(*lane.top))
+        if bottom is None or top is None or any(p is None or p.kind != lane.kind for p in ports):
+            yield ctx.finding(
+                "flow.boundary",
+                f"{lane.item_id!r} lane has missing or wrong-medium ends",
+                lane.bottom[0],
+                lane.top[0],
+            )
+            continue
+        if (
+            math.dist(bottom[:2], top[:2]) > PORT_CM
+            or abs(bottom[2] + pitch - top[2] - gap) > PORT_CM
+        ):
+            yield ctx.finding(
+                "flow.boundary",
+                f"{lane.item_id!r} lane cannot repeat vertically: "
+                "next bottom must equal current top plus the common gap at identical XY",
+                lane.bottom[0],
+                lane.top[0],
+                bottom=bottom,
+                top=top,
+                gap_cm=gap,
+                pitch_cm=pitch,
+            )
+        if top[2] <= bottom[2]:
+            yield ctx.finding(
+                "flow.boundary",
+                f"{lane.item_id!r} lane top is not above its bottom",
+                lane.bottom[0],
+                lane.top[0],
+            )
+        for node, expected in ((lane.bottom, (0.0, 0.0, -1.0)), (lane.top, (0.0, 0.0, 1.0))):
+            normal = ctx.port_facing(*node)
+            if normal is None or _dot(normal, expected) < math.cos(PORT_ANGLE_RAD):
+                yield ctx.finding(
+                    "flow.boundary",
+                    f"{lane.item_id!r} boundary end must face vertically outward",
+                    node[0],
+                    port=node[1],
+                )
+            obj = ctx.placed[node[0]]
+            if not isinstance(obj, LiftObj | PipeRun):
+                yield ctx.finding(
+                    "flow.boundary",
+                    "vertical stack boundary is not a lift or pipe endpoint",
+                    node[0],
+                )
+                continue
+            ends = (pipe_ends if isinstance(obj, PipeRun) else belt_ends)(
+                ctx.registry, obj.class_name
+            )
+            hole_id = obj.snapped_passthroughs[ends.index(node[1])] if node[1] in ends else None
+            if hole_id is None or not _owns_hole_crossing(ctx, obj.id, hole_id):
+                yield ctx.finding(
+                    "flow.boundary",
+                    f"{lane.item_id!r} boundary lacks its actual "
+                    "reciprocal, slab-aligned passthrough",
+                    node[0],
+                )
+        if lane.kind == "belt" and gap:
+            limits = ctx.registry.limits
+            if (
+                limits.lift_min_cm is None
+                or limits.lift_max_cm is None
+                or not limits.lift_min_cm <= gap <= limits.lift_max_cm
+                or limits.lift_step_cm is None
+                or abs(gap / limits.lift_step_cm - round(gap / limits.lift_step_cm)) > TOUCH_CM
+            ):
+                yield ctx.finding(
+                    "flow.boundary",
+                    "manual belt seam gap cannot be joined by a legal lift",
+                    lane.bottom[0],
+                    gap_cm=gap,
+                )
+        if lane.kind == "pipe" and gap:
+            obj = ctx.placed[lane.bottom[0]]
+            mesh = ctx.registry.buildables[obj.class_name].mesh_length_cm
+            if mesh is None or not mesh / 2 < gap <= ctx.registry.limits.pipe_max_spline_cm:
+                yield ctx.finding(
+                    "flow.boundary",
+                    "manual pipe seam gap is outside native length bounds",
+                    lane.bottom[0],
+                    gap_cm=gap,
+                )
+        if lane.input_per_second < 0 or lane.output_per_second < 0 or lane.capacity_per_second <= 0:
+            yield ctx.finding("flow.boundary", f"{lane.item_id!r} lane has invalid rates")
+        if max(lane.input_per_second, lane.output_per_second) > lane.capacity_per_second:
+            yield ctx.finding(
+                "flow.boundary", f"{lane.item_id!r} local demand/export exceeds lane capacity"
+            )
+        graph = graphs[lane.kind]
+        reachable = _component(lane.bottom, graph)
+        if lane.top not in reachable:
+            yield ctx.finding(
+                "flow.boundary",
+                f"{lane.item_id!r} lane lacks a complete bottom-to-top path",
+                lane.bottom[0],
+                lane.top[0],
+            )
+        capacity = _lane_capacity(
+            ctx, graph, lane.bottom, lane.top, lane.item_id, lane.capacity_per_second
+        )
+        if capacity < lane.capacity_per_second:
+            yield ctx.finding(
+                "flow.boundary",
+                f"{lane.item_id!r} continuation carries only {capacity}, "
+                f"below its declared {lane.capacity_per_second} material units/s capacity",
+                lane.bottom[0],
+                lane.top[0],
+                capacity=str(capacity),
+            )
+        for incoming, local_rate in (
+            (True, lane.input_per_second),
+            (False, lane.output_per_second),
+        ):
+            if local_rate <= 0 or spec is None:
+                continue
+            served = False
+            for machine in placement.machines:
+                group = ctx.group_for(machine)
+                if group is None:
+                    continue
+                rates = group.inputs_per_machine if incoming else group.outputs_per_machine
+                if lane.item_id not in rates:
+                    continue
+                for port in ctx.registry.buildables[machine.class_name].ports:
+                    if port.kind != lane.kind or port.direction != (
+                        "input" if incoming else "output"
+                    ):
+                        continue
+                    node = (machine.id, port.name)
+                    if node in reachable if incoming else lane.top in _component(node, graph):
+                        served = True
+            if not served:
+                yield ctx.finding(
+                    "flow.boundary",
+                    f"{lane.item_id!r} lane has no internal "
+                    f"{'feed branch' if incoming else 'output collector'} to a recipe machine",
+                )
+        totals_in[lane.item_id] = totals_in.get(lane.item_id, Fraction()) + lane.input_per_second
+        totals_out[lane.item_id] = totals_out.get(lane.item_id, Fraction()) + lane.output_per_second
+    flagged: set[tuple[int, str]] = set()
+    for transport in chain[BeltRun | LiftObj | PipeRun](
+        placement.belts, placement.lifts, placement.pipes
+    ):
+        ends = (pipe_ends if isinstance(transport, PipeRun) else belt_ends)(
+            ctx.registry, transport.class_name
+        )
+        for name, boundary in zip(
+            ends, (transport.boundary_start, transport.boundary_end), strict=True
+        ):
+            if boundary:
+                flagged.add((transport.id, name))
+    if set(declared) != flagged or any(count != 1 for count in declared.values()):
+        yield ctx.finding(
+            "flow.boundary",
+            "intentional open transport ends must equal the unique declared stack lane ends",
+            undeclared=sorted(flagged - set(declared)),
+            not_open=sorted(set(declared) - flagged),
+        )
+    if spec is None:
+        yield ctx.skip("flow.boundary", "structural lane rates cannot be compared without a spec")
+        return
+    expected_out = dict(spec.outputs)
+    for item, rate in spec.surplus_outputs.items():
+        expected_out[item] = expected_out.get(item, Fraction()) + rate
+    for got, wanted, direction in (
+        (totals_in, spec.external_inputs, "input"),
+        (totals_out, expected_out, "output"),
+    ):
+        got = {item: rate for item, rate in got.items() if rate}
+        if got != wanted:
+            yield ctx.finding(
+                "flow.boundary",
+                f"stack lane local {direction} rates differ from the spec",
+                placed={k: str(v) for k, v in got.items()},
+                expected={k: str(v) for k, v in wanted.items()},
+            )
+
+
+def _hole_errors(ctx: Context, hole: PassthroughObj) -> list[str]:
+    errors: list[str] = []
+    if not math.isfinite(hole.thickness_cm) or hole.thickness_cm <= 0:
+        errors.append("thickness is not finite and positive")
+    up = quat_rotate(hole.pose.transform().rotation, (0.0, 0.0, 1.0))
+    owners = [
+        box
+        for box in ctx.boxes
+        if box.owner in {f.id for f in ctx.placement.foundations} and box.holds(hole.pose.location)
+    ]
+    if not any(
+        abs(_dot(up, box.axes[2])) >= math.cos(PORT_ANGLE_RAD)
+        and abs(hole.thickness_cm - 2 * box.half[2]) <= PORT_CM
+        and abs(
+            _dot(
+                (
+                    hole.pose.x - box.centre[0],
+                    hole.pose.y - box.centre[1],
+                    hole.pose.z - box.centre[2],
+                ),
+                up,
+            )
+        )
+        <= PORT_CM
+        for box in owners
+    ):
+        errors.append("hole plane/thickness does not match a containing foundation slab")
+    refs = (hole.top_connection, hole.bottom_connection)
+    if all(ref is None for ref in refs):
+        errors.append("hole owns no transport endpoint")
+    if refs[0] is not None and refs[0] == refs[1]:
+        errors.append("top and bottom both claim the same endpoint")
+    for ref, sign in zip(refs, (-1.0, 1.0), strict=True):
+        if ref is None:
+            continue
+        obj = ctx.placed.get(ref[0])
+        if not isinstance(obj, PipeRun | LiftObj):
+            errors.append(f"{ref!r} is not a pipe or lift end")
+            continue
+        if isinstance(obj, PipeRun) != ("Pipe" in hole.class_name):
+            errors.append(f"{ref!r} has the wrong transport medium")
+        ends = (pipe_ends if isinstance(obj, PipeRun) else belt_ends)(ctx.registry, obj.class_name)
+        if ref[1] not in ends:
+            errors.append(f"{ref!r} is not an actual transport endpoint")
+            continue
+        index = ends.index(ref[1])
+        if obj.snapped_passthroughs[index] != hole.id:
+            errors.append(f"{ref!r} does not reciprocally name this hole")
+        raw = (
+            (obj.start if index == 0 else obj.end)
+            if isinstance(obj, PipeRun)
+            else ctx.lift_end(obj, ref[1])[0]
+        )
+        if math.dist(raw, hole.pose.location) > PORT_CM:
+            errors.append(f"{ref!r} spline/lift endpoint is displaced from the hole actor origin")
+        normal = ctx.port_facing(*ref)
+        if normal is None or _dot(normal, (sign * up[0], sign * up[1], sign * up[2])) < math.cos(
+            PORT_ANGLE_RAD
+        ):
+            errors.append(f"{ref!r} does not face into its geometric side of the hole")
+    return errors
+
+
+def _owns_hole_crossing(ctx: Context, transport: int, owner: int) -> bool:
+    """Only an actual, reciprocal, geometrically valid hole can excuse crossing."""
+    for hole in ctx.placement.passthroughs:
+        refs = (hole.top_connection, hole.bottom_connection)
+        if not any(ref is not None and ref[0] == transport for ref in refs) or _hole_errors(
+            ctx, hole
+        ):
+            continue
+        if owner == hole.id or any(
+            box.owner == owner and box.holds(hole.pose.location) for box in ctx.boxes
+        ):
+            return True
+    return False
+
+
+@check("ports.passthrough")
+def _passthroughs(ctx: Context) -> Iterable[Finding]:
+    """Project reciprocal ownership, medium, centre, normal and slab-thickness contract."""
+    claims: Counter[tuple[int, str]] = Counter()
+    for hole in ctx.placement.passthroughs:
+        for ref in (hole.top_connection, hole.bottom_connection):
+            if ref is not None:
+                claims[ref] += 1
+        for problem in _hole_errors(ctx, hole):
+            yield ctx.finding("ports.passthrough", f"hole {hole.id}: {problem}", hole.id)
+    for obj in chain[LiftObj | PipeRun](ctx.placement.lifts, ctx.placement.pipes):
+        ends = (pipe_ends if isinstance(obj, PipeRun) else belt_ends)(ctx.registry, obj.class_name)
+        for name, hole_id in zip(ends, obj.snapped_passthroughs, strict=True):
+            if hole_id is None:
+                continue
+            named_hole = ctx.placed.get(hole_id)
+            node = (obj.id, name)
+            if not isinstance(named_hole, PassthroughObj) or node not in (
+                named_hole.top_connection,
+                named_hole.bottom_connection,
+            ):
+                yield ctx.finding(
+                    "ports.passthrough",
+                    f"transport {obj.id}'s {name} names a hole "
+                    "that does not own that exact endpoint",
+                    obj.id,
+                    hole_id,
+                )
+            if claims[node] != 1:
+                yield ctx.finding(
+                    "ports.passthrough",
+                    f"endpoint {node!r} must belong to exactly one hole side",
+                    obj.id,
+                )
+
+
+@check("geom.dynamic")
+def _dynamic_geometry(ctx: Context) -> Iterable[Finding]:
+    """Project dynamic dimensions; native beam mMaxLength is a construction bound."""
+    for beam in ctx.placement.beams:
+        maximum = ctx.registry.buildables[beam.class_name].beam_max_length_cm
+        if (
+            maximum is None
+            or not math.isfinite(beam.length_cm)
+            or not 0 < beam.length_cm <= maximum
+        ):
+            yield ctx.finding(
+                "geom.dynamic",
+                f"beam {beam.id} length is outside its sourced construction bounds",
+                beam.id,
+                length_cm=beam.length_cm,
+                max_cm=maximum,
+            )
+    if ctx.placement.passthroughs:
+        yield ctx.skip(
+            "geom.dynamic",
+            "Passthrough middle-mesh width and dynamic slab thickness "
+            "are bounded; native constructed cap mesh extents are not yet extracted.",
+        )
+
+
+def required_input_head_m(
+    placement: SfyPlacement,
+    bottom: tuple[int, str],
+    registry: Registry,
+) -> float:
+    """Required external priming head for a completed routed fluid input.
+
+    This is metres above ``bottom``, derived from reachable connection centres
+    before the next pump inlet. Interior spline humps do not add head; splitting
+    a run at a crest does, because that creates a pipe endpoint there. This is
+    an external supply obligation, not measured world pressure. Missing source
+    geometry returns infinity, which cannot certify a lane.
+    """
+    return _required_head(Context(placement, None, registry, {}), bottom)
+
+
+def _required_head(ctx: Context, node: tuple[int, str]) -> float:
+    start = ctx.world_port(*node)
+    if start is None:
+        return math.inf
+    region = _component(node, ctx.hydraulic_graph, stop=ctx.pump_inlets)
+    peak = start[2]
+    for ref in region:
+        # Junctions connect all native mouths internally; an unused mouth is
+        # not a pipe endpoint and must not invent a climb above the route.
+        if isinstance(ctx.placed.get(ref[0]), PipeAttachmentObj) and not any(
+            neighbour[0] != ref[0] for neighbour in ctx.hydraulic_graph.get(ref, ())
+        ):
+            continue
+        where = ctx.world_port(*ref)
+        if where is not None:
+            peak = max(peak, where[2])
+    return max(0.0, (peak - start[2]) / 100)
+
+
+@check("pipe.head")
+def _pipe_head(ctx: Context) -> Iterable[Finding]:
+    """Project hydraulic design envelope; not a simulation of runtime pressure.
+
+    Pumps reset head, never add their ratings together. Each output-connected
+    region ends at the next pump's inlet. External head is a stated player
+    supply obligation, not assumed infinite pressure or a measured world fact.
+    """
+    if not ctx.placement.pipes:
+        return
+    graph = ctx.hydraulic_graph
+    pumps = {
+        obj.id: obj
+        for obj in ctx.placement.pipe_attachments
+        if ctx.registry.buildables[obj.class_name].native_class == "FGBuildablePipelinePump"
+    }
+    for oid, pump in pumps.items():
+        buildable = ctx.registry.buildables[pump.class_name]
+        outputs = [p for p in buildable.ports if p.kind == "pipe" and p.direction == "output"]
+        for port in outputs:
+            required = _required_head(ctx, (oid, port.name))
+            head = buildable.pump_design_head_m
+            if head is None or required > head + PORT_CM / 100:
+                yield ctx.finding(
+                    "pipe.head",
+                    f"pump {oid}'s forward-connected climb needs "
+                    f"{required:.2f} m of head; sourced design head is {head}",
+                    oid,
+                    required_head_m=required,
+                    design_head_m=head,
+                )
+            capacity = buildable.pipe_flow_limit_m3s
+            immediate = [
+                pipe
+                for ref in graph.get((oid, port.name), ())
+                if isinstance(pipe := ctx.placed.get(ref[0]), PipeRun)
+            ]
+            carried = max((pipe.cubic_metres_per_second for pipe in immediate), default=Fraction())
+            if capacity is None or carried > Fraction(str(capacity)):
+                yield ctx.finding(
+                    "flow.capacity",
+                    f"pump {oid} cannot carry its connected "
+                    f"{carried} m3/s at sourced limit {capacity}",
+                    oid,
+                )
+    for machine in ctx.placement.machines:
+        for port in ctx.registry.buildables[machine.class_name].ports:
+            if port.kind != "pipe" or port.direction != "output":
+                continue
+            node = (machine.id, port.name)
+            if node not in graph:
+                continue
+            required = _required_head(ctx, node)
+            if required > PORT_CM / 100:
+                yield ctx.skip(
+                    "pipe.head",
+                    f"machine {machine.id}'s output-to-first-pump/consumer "
+                    f"route needs {required:.2f} m initial head. This class's inherent "
+                    "output head has not been sourced, so priming this internal "
+                    "byproduct route is not certified.",
+                )
+    for lane in ctx.placement.stack_lanes:
+        if lane.kind != "pipe" or lane.input_per_second <= 0:
+            continue
+        required = _required_head(ctx, lane.bottom)
+        declared = lane.required_input_head_m
+        if not math.isfinite(declared) or declared < 0 or declared + PORT_CM / 100 < required:
+            yield ctx.finding(
+                "pipe.head",
+                f"{lane.item_id!r} external input requires at least "
+                f"{required:.2f} m priming head, not the declared {declared:.2f} m",
+                lane.bottom[0],
+                required_head_m=required,
+                declared_head_m=declared,
+            )
+        yield Finding(
+            "pipe.head",
+            Severity.INFO,
+            f"External supply obligation: {lane.item_id!r} "
+            f"must arrive with at least {declared:.2f} m head above its boundary port; "
+            "the blueprint cannot measure or guarantee world supply.",
+            (lane.bottom[0],),
+            {"required_input_head_m": declared},
+        )
+
+
 @check("flow.boundary")
 def _boundary(ctx: Context) -> Iterable[Finding]:
     """A belt end left open on purpose stands on the designer wall it claims.
@@ -1956,6 +3054,15 @@ def _boundary(ctx: Context) -> Iterable[Finding]:
     with no wires.  Without a spec the item halves cannot be compared either,
     and the check says that too rather than passing in silence.
     """
+    if ctx.placement.stack_lanes or ctx.placement.stack_height_cm:
+        yield from _stack_boundary(ctx)
+        return
+    if ctx.placement.pipes:
+        yield ctx.finding(
+            "flow.boundary",
+            "fluid production needs explicit structural stack lanes; horizontal "
+            "legacy fragment boundaries do not establish fluid entry or drainage",
+        )
     flagged = [run for run in ctx.placement.belts if run.boundary_start or run.boundary_end]
     if not flagged:
         yield ctx.skip("flow.boundary", _NO_BOUNDARY)
@@ -1999,6 +3106,14 @@ def _boundary(ctx: Context) -> Iterable[Finding]:
                 f"the build {what} on {sorted(got)} and the spec says {sorted(wanted)}",
                 placed=sorted(got),
                 spec=sorted(wanted),
+            )
+        repeated = {item: count for item, count in got.items() if count > 1}
+        if repeated:
+            yield ctx.finding(
+                "flow.boundary",
+                f"each item needs one boundary belt, but the build {what} "
+                f"through multiple belts for {sorted(repeated)}",
+                crossings=repeated,
             )
 
 
@@ -2064,6 +3179,12 @@ def _wires(ctx: Context) -> Iterable[Finding]:
     that says nothing about it is a check claiming coverage it has not got.
     """
     if not ctx.placement.wires:
+        for obj in ctx.placement.pipe_attachments:
+            buildable = ctx.registry.buildables.get(obj.class_name)
+            if buildable and any(p.kind == "power" for p in buildable.ports):
+                yield ctx.finding(
+                    "power.wires", f"pump {obj.id} has no powered pole connection", obj.id
+                )
         yield ctx.skip("power.wires", _NO_WIRES)
         return
     counts: Counter[tuple[int, str]] = Counter()
@@ -2122,7 +3243,9 @@ def _wires(ctx: Context) -> Iterable[Finding]:
                 max_connections=port.max_connections,
             )
     poles = {pole.id for pole in ctx.placement.poles}
-    for machine in ctx.placement.machines:
+    for machine in chain[MachineObj | PipeAttachmentObj](
+        ctx.placement.machines, ctx.placement.pipe_attachments
+    ):
         buildable = ctx.registry.buildables.get(machine.class_name)
         if buildable is None or not any(p.kind == "power" for p in buildable.ports):
             continue
@@ -2227,6 +3350,10 @@ def _first_difference(want: SfyPlacement, got: SfyPlacement) -> str:
         "poles",
         "wires",
         "foundations",
+        "pipes",
+        "pipe_attachments",
+        "beams",
+        "passthroughs",
     ):
         mine, theirs = getattr(want, name), getattr(got, name)
         if mine != theirs:

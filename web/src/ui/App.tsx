@@ -36,9 +36,6 @@ export function App() {
     };
   }, []);
 
-  if (error) return <main role="alert">{error}</main>;
-  if (!catalog) return <main>Loading game data…</main>;
-
   return (
     <BlueprintProvider catalog={catalog}>
       <div className="layout">
@@ -48,6 +45,12 @@ export function App() {
             have -- so they share a scrolling column beside the canvas rather
             than stacking on top of it and squeezing the 3D view. */}
         <div className="sidebar">
+          {error && (
+            <p role="alert" className="note warn">
+              DSP viewer assets unavailable: {error}. Satisfactory builds and visualization remain
+              available.
+            </p>
+          )}
           <BuildPanel />
           <InputPanel />
         </div>

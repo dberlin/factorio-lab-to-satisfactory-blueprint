@@ -22,7 +22,7 @@ import json
 import math
 import os
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -65,6 +65,29 @@ _ONE = (1.0, 1.0, 1.0)
 # ``FQuat::Rotator``'s own threshold: past it the pitch is at a pole and the yaw
 # and roll stop being separable.
 _SINGULARITY_THRESHOLD = 0.4999995
+
+# Class-scoped because similarly named properties on unrelated actors need not
+# mean the same thing. Values retain the native units stated in these headers.
+_PHYSICAL_FIELDS: dict[str, dict[str, tuple[str, str]]] = {
+    "FGBuildablePipelinePump": {
+        "pump_design_head_m": ("mDesignPressure", "m"),
+        "pump_max_head_m": ("mMaxPressure", "m"),
+        "pipe_flow_limit_m3s": ("mDefaultFlowLimit", "m3/s"),
+    },
+    "FGBuildablePipeline": {
+        "pipe_flow_limit_m3s": ("mFlowLimit", "m3/s"),
+    },
+    "FGBuildableBeam": {
+        "beam_max_length_cm": ("mMaxLength", "cm"),
+        "beam_size_cm": ("mSize", "cm"),
+        "length_per_cost_cm": ("mLengthPerCost", "cm"),
+    },
+}
+_PHYSICAL_HEADERS = {
+    "FGBuildablePipelinePump": "Buildables/FGBuildablePipelinePump.h",
+    "FGBuildablePipeline": "Buildables/FGBuildablePipeline.h",
+    "FGBuildableBeam": "FGBuildableBeam.h",
+}
 
 
 class DocsParseError(ValueError):
@@ -206,9 +229,9 @@ def _split_top_level(text: str) -> list[str]:
 def parse_item_amounts(text: str) -> tuple[tuple[str, int], ...]:
     """Read an ``mIngredients``/``mProduct`` export into ``(item class, amount)`` pairs.
 
-    Amounts are the raw game numbers: whole items for solids, centilitres for
-    fluids. Every ``ItemClass=`` in the text must parse, or the whole export is
-    rejected -- a recipe missing an ingredient is worse than no recipe.
+    Amounts are the raw game numbers: whole items for solids, litres for
+    fluids (1000 litres per Lab cubic metre). Every ``ItemClass=`` must parse,
+    or the whole export is rejected -- losing an ingredient is worse than no recipe.
     """
     pairs = tuple((match[1], int(match[2])) for match in _ITEM_AMOUNT_RE.finditer(text))
     if len(pairs) != text.count("ItemClass="):
@@ -285,11 +308,22 @@ def _clearance(entry: Mapping[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def _physical_fields(entry: Mapping[str, Any], native_class: str) -> dict[str, Any]:
+    values: dict[str, Any] = {
+        field: None for fields in _PHYSICAL_FIELDS.values() for field in fields
+    }
+    for field, (prop, _unit) in _PHYSICAL_FIELDS.get(native_class, {}).items():
+        values[field] = _number(entry, prop)
+    values["length_per_cost_source"] = "docs" if values["length_per_cost_cm"] is not None else None
+    return values
+
+
 def _buildable(entry: Mapping[str, Any], native_class: str) -> dict[str, Any]:
     return {
         "display_name": entry["mDisplayName"],
         "native_class": native_class,
         "clearance": _clearance(entry),
+        **_physical_fields(entry, native_class),
         # Buildings with no mPowerConsumption draw nothing, not "unknown".
         "power_mw": _number(entry, "mPowerConsumption", default=0.0),
         "manufacturing_speed": _number(entry, "mManufacturingSpeed"),
@@ -391,6 +425,18 @@ def extract(
     (``Desc_X_C`` <-> ``Build_X_C``); a buildable's build recipe is the recipe
     whose single product is that descriptor.
     """
+    # Fluid forms span descriptor subclasses, including biomass and resources.
+    # Preserve reusable sequences; materialize one-shot iterables for both passes.
+    docs = {
+        native: classes if isinstance(classes, Sequence) else tuple(classes)
+        for native, classes in docs.items()
+    }
+    fluid_items = sorted(
+        entry["ClassName"]
+        for classes in docs.values()
+        for entry in classes
+        if entry.get("mForm") in {"RF_LIQUID", "RF_GAS"}
+    )
     buildables: dict[str, dict[str, Any]] = {}
     for native_class, classes in docs.items():
         if not native_class.startswith("FGBuildable"):
@@ -428,11 +474,37 @@ def extract(
             "docs_sha256": docs_sha256,
             "extracted": extracted or datetime.now(UTC).date().isoformat(),
             "build_version_hint": build_version_hint,
+            "physical_fields": {
+                native: {
+                    field: {
+                        "source": "docs",
+                        "property": prop,
+                        "unit": unit,
+                        "header": _PHYSICAL_HEADERS[native],
+                    }
+                    for field, (prop, unit) in fields.items()
+                }
+                for native, fields in _PHYSICAL_FIELDS.items()
+            },
+            "recipe_fluid_amounts": {
+                "unit": "litre",
+                "litres_per_cubic_metre": 1000,
+                "header": "FGFluidIntegrantInterface.h",
+                "evidence": "GetContentInLiters multiplies Content by 1000; "
+                "AddContentInLiters multiplies its argument by 0.001.",
+            },
+            "fluid_items": {
+                "source": "docs",
+                "property": "mForm",
+                "forms": ["RF_LIQUID", "RF_GAS"],
+                "header": "Resources/FGItemDescriptor.h",
+            },
         },
         "buildables": buildables,
         "recipes": recipes,
         "descriptors": descriptors,
         "build_recipes": build_recipes,
+        "fluid_items": fluid_items,
         # The power shard and somersloop item descriptors, which are what a
         # filled potential slot is worth. They are item descriptors rather than
         # buildables, so they are their own section.

@@ -198,3 +198,145 @@ def test_load_registry_without_a_file_raises(tmp_path):
     # registry.json itself arrives in Task 10; the reader already exists.
     with pytest.raises(RegistryError, match="no registry"):
         load_registry(tmp_path / "registry.json")
+
+
+def test_hydraulic_units_survive_docs_extraction_and_registry_loading():
+    payload = docs.extract(
+        {
+            "FGBuildablePipelinePump": [
+                {
+                    "ClassName": "Build_Pump_C",
+                    "mDisplayName": "Pump",
+                    "mDesignPressure": "20.000000",
+                    "mMaxPressure": "22.000000",
+                    "mDefaultFlowLimit": "10.000000",
+                    "mUserFlowLimit": "-1.000000",
+                    "mPowerConsumption": "4.000000",
+                }
+            ],
+            "FGBuildablePipeline": [
+                {
+                    "ClassName": "Build_Pipe_C",
+                    "mDisplayName": "Pipe",
+                    "mFlowLimit": "5.000000",
+                }
+            ],
+        }
+    )
+    registry = Registry.from_docs_only(payload)
+    pump = registry.buildables["Build_Pump_C"]
+    assert (pump.pump_design_head_m, pump.pump_max_head_m) == (20.0, 22.0)
+    assert pump.pipe_flow_limit_m3s == 10.0
+    assert pump.power_mw == 4.0
+    pipe = registry.buildables["Build_Pipe_C"]
+    assert pipe.pipe_flow_limit_m3s == 5.0
+    assert pipe.pump_design_head_m is None
+    assert pipe.pump_max_head_m is None
+
+
+def test_beam_bounds_and_cost_are_centimetres_not_metres():
+    registry = Registry.from_docs_only(
+        docs.extract(
+            {
+                "FGBuildableBeam": [
+                    {
+                        "ClassName": "Build_Beam_C",
+                        "mDisplayName": "Beam",
+                        "mMaxLength": "4000.000000",
+                        "mSize": "100.000000",
+                        "mLengthPerCost": "400.000000",
+                    }
+                ]
+            }
+        )
+    )
+    beam = registry.buildables["Build_Beam_C"]
+    assert beam.beam_max_length_cm == 4000.0
+    assert beam.beam_size_cm == 100.0
+    assert beam.length_per_cost_cm == 400.0
+    assert beam.length_per_cost_source == "docs"
+
+
+def test_missing_hydraulic_and_beam_fields_are_unknown_not_zero():
+    registry = Registry.from_docs_only(
+        docs.extract(
+            {
+                native: [{"ClassName": name, "mDisplayName": name}]
+                for native, name in (
+                    ("FGBuildablePipelinePump", "Build_Pump_C"),
+                    ("FGBuildableBeam", "Build_Beam_C"),
+                    ("FGBuildableManufacturer", "Build_Machine_C"),
+                )
+            }
+        )
+    )
+    for buildable in registry.buildables.values():
+        assert buildable.pump_design_head_m is None
+        assert buildable.pump_max_head_m is None
+        assert buildable.pipe_flow_limit_m3s is None
+        assert buildable.beam_max_length_cm is None
+        assert buildable.beam_size_cm is None
+        assert buildable.length_per_cost_cm is None
+        assert buildable.length_per_cost_source is None
+
+
+def test_fluid_recipe_quantities_remain_integer_litres():
+    water = "((ItemClass=\"BlueprintGeneratedClass'/Game/Water.Desc_Water_C'\",Amount=1000))"
+    assert docs.parse_item_amounts(water) == (("Desc_Water_C", 1000),)
+
+
+def test_physical_properties_on_unrelated_native_classes_are_not_reinterpreted():
+    registry = Registry.from_docs_only(
+        docs.extract(
+            {
+                "FGBuildableManufacturer": [
+                    {
+                        "ClassName": "Build_Machine_C",
+                        "mDisplayName": "Machine",
+                        "mMaxPressure": "99.0",
+                        "mMaxLength": "9999.0",
+                        "mSize": "50.0",
+                        "mLengthPerCost": "200.0",
+                    }
+                ]
+            }
+        )
+    )
+    machine = registry.buildables["Build_Machine_C"]
+    assert machine.pump_max_head_m is None
+    assert machine.beam_max_length_cm is None
+    assert machine.beam_size_cm is None
+    assert machine.length_per_cost_cm is None
+
+
+def test_invalid_hydraulic_default_names_the_source_property():
+    with pytest.raises(docs.DocsParseError, match=r"Build_Pump_C\.mDesignPressure"):
+        docs.extract(
+            {
+                "FGBuildablePipelinePump": [
+                    {
+                        "ClassName": "Build_Pump_C",
+                        "mDisplayName": "Pump",
+                        "mDesignPressure": "unknown",
+                    }
+                ]
+            }
+        )
+
+
+def test_fluid_identity_comes_from_resource_form_not_descriptor_name():
+    registry = Registry.from_docs_only(
+        docs.extract(
+            {
+                "FGItemDescriptor": [
+                    {"ClassName": "Desc_LiquidNamedSolid_C", "mForm": "RF_SOLID"},
+                    {"ClassName": "Desc_PipeItem_C", "mForm": "RF_LIQUID"},
+                    {"ClassName": "Desc_Unknown_C"},
+                ],
+                "FGResourceDescriptor": [
+                    {"ClassName": "Desc_Gas_C", "mForm": "RF_GAS"},
+                ],
+            }
+        )
+    )
+    assert registry.fluid_items == frozenset({"Desc_PipeItem_C", "Desc_Gas_C"})

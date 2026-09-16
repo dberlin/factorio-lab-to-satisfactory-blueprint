@@ -1,4 +1,5 @@
 import { createContext, type ReactNode, useCallback, useContext, useRef, useState } from 'react';
+import type { SatisfactoryScene, SatisfactoryViewOptions } from '../api/satisfactory';
 import type { TraceFrame } from '../api/trace';
 import { type Blueprint, parseBlueprint } from '../format';
 import type { Catalog } from '../model/catalog';
@@ -33,6 +34,12 @@ export type ArtifactSource = { kind: 'import' } | { kind: 'build'; jobId: string
 
 export type DisplayedDocument =
   | {
+      kind: 'satisfactory';
+      generation: number;
+      scene: SatisfactoryScene;
+      source: ArtifactSource;
+    }
+  | {
       kind: 'artifact';
       generation: number;
       blueprint: Blueprint;
@@ -59,7 +66,10 @@ export interface BlueprintState {
   document: DisplayedDocument | null;
   blueprint: Blueprint | null;
   sceneModel: SceneModel | null;
-  catalog: Catalog;
+  satisfactoryScene: SatisfactoryScene | null;
+  satisfactoryView: SatisfactoryViewOptions;
+  setSatisfactoryView(view: SatisfactoryViewOptions): void;
+  catalog: Catalog | null;
   error: string | null;
   selectedIndex: number | null;
   /** True when what is rendered is NOT the outcome of the last build — a build
@@ -78,6 +88,11 @@ export interface BlueprintState {
   setView(view: ViewOptions): void;
   beginPublication(): number;
   publishArtifact(text: string, generation: number, source?: ArtifactSource): boolean;
+  publishSatisfactory(
+    scene: SatisfactoryScene,
+    generation: number,
+    source?: ArtifactSource,
+  ): boolean;
   failPublication(message: string, generation: number): void;
   publishTrace(frame: TraceFrame, jobId: string, generation: number): boolean;
   selectTrace(frame: TraceFrame, jobId: string): number;
@@ -92,7 +107,7 @@ export function BlueprintProvider({
   catalog,
   children,
 }: {
-  catalog: Catalog;
+  catalog: Catalog | null;
   children: ReactNode;
 }) {
   const [display, setDisplay] = useState<DisplayState>({
@@ -113,6 +128,15 @@ export function BlueprintProvider({
     sorterTies: true,
     endpointIcons: true,
     machines: 'ghosted',
+  });
+  const [satisfactoryView, setSatisfactoryView] = useState<SatisfactoryViewOptions>({
+    machines: 'ghosted',
+    belts: true,
+    lifts: true,
+    foundations: true,
+    power: true,
+    ports: false,
+    labels: true,
   });
 
   const beginPublication = useCallback(() => {
@@ -141,6 +165,21 @@ export function BlueprintProvider({
           stale: false,
         });
       }
+      return true;
+    },
+    [],
+  );
+
+  const publishSatisfactory = useCallback(
+    (scene: SatisfactoryScene, generation: number, source: ArtifactSource = { kind: 'import' }) => {
+      if (generation !== authority.current.generation) return false;
+      authority.current.automaticTrace = false;
+      setDisplay({
+        document: { kind: 'satisfactory', generation, scene, source },
+        error: null,
+        selectedIndex: null,
+        stale: false,
+      });
       return true;
     },
     [],
@@ -186,14 +225,18 @@ export function BlueprintProvider({
   }, []);
 
   const { document, error, selectedIndex, stale } = display;
-  const blueprint = document?.blueprint ?? null;
+  const blueprint = document && document.kind !== 'satisfactory' ? document.blueprint : null;
+  const satisfactoryScene = document?.kind === 'satisfactory' ? document.scene : null;
   // Derived, not another publication authority. The React Compiler memoizes it.
-  const sceneModel = blueprint ? buildSceneModel(blueprint, catalog) : null;
+  const sceneModel = blueprint && catalog ? buildSceneModel(blueprint, catalog) : null;
 
   const value: BlueprintState = {
     document,
     blueprint,
     sceneModel,
+    satisfactoryScene,
+    satisfactoryView,
+    setSatisfactoryView,
     catalog,
     error,
     selectedIndex,
@@ -205,6 +248,7 @@ export function BlueprintProvider({
     setView,
     beginPublication,
     publishArtifact,
+    publishSatisfactory,
     failPublication,
     publishTrace,
     selectTrace,

@@ -44,9 +44,8 @@ from flab2bp.sfy.layout.rrr import RoutingOutcome
 from flab2bp.sfy.layout.validate import validate
 from flab2bp.sfy.registry import Registry
 from flab2bp.sfy.spec import SfyBuildSpec, SfyMachineGroup, designer
-from flab2bp.sfy.strategy_names import SFY_PRODUCTION_STRATEGIES
 from flab2bp.spec import BeltTier
-from tests.sfy.conftest import flow_spec, sfy_registry
+from tests.sfy.conftest import sfy_registry
 
 #: The designer every build in this file is laid out in.  The smallest one: a
 #: grid-routed build stands its machines where the packer likes rather than in
@@ -160,15 +159,6 @@ def test_a_chain_lays_out_in_mk1_and_validates_clean(laid_out: SfyPlacement) -> 
     assert min(machine.id for machine in laid_out.machines) == 1
 
 
-def test_iron_plate_60_lays_out_in_mk1_and_validates_clean() -> None:
-    """The pinned multi-machine flow is routed completely, not a smaller fragment."""
-    spec = flow_spec("iron-plate-60")
-    placement = _lay_out(spec, time_budget_s=BUDGET_S)
-    report = validate(placement, spec, _registry())
-    assert [finding.message for finding in report.errors] == []
-    assert report.ok
-
-
 def test_a_valid_fourth_arrangement_uses_the_unspent_deadline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -253,7 +243,6 @@ def test_grid_routed_satisfies_the_protocol() -> None:
     strategy: SfyLayoutStrategy = GridRouted()
     assert isinstance(strategy, SfyLayoutStrategy)
     assert strategy.name == "grid-routed"
-    assert strategy.name in SFY_PRODUCTION_STRATEGIES
 
 
 # --- the refusals -----------------------------------------------------------

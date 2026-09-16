@@ -9,7 +9,9 @@ nothing about a rate or a machine count is written down in this file.
 
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import replace
+from fractions import Fraction
 from pathlib import Path
 
 import pytest
@@ -17,18 +19,16 @@ import pytest
 from flab2bp import cli
 from flab2bp.layout.base import LayoutAttemptFailure
 from flab2bp.sfy import pipeline as sfy_pipeline
+from flab2bp.sfy.codec import read_pair
+from flab2bp.sfy.layout.emit import decode
+from flab2bp.sfy.layout.model import pipe_ends
 from flab2bp.sfy.layout.validate import Finding, Report, Severity
+from flab2bp.sfy.sections.model import endpoint
 from flab2bp.sfy.strategy_names import SFY_STRATEGY_CHOICES
 from flab2bp.strategy_names import STRATEGY_CHOICES
 
 FLOWS = Path(__file__).resolve().parent / "fixtures" / "sfy_flows"
 FLOW = FLOWS / "iron-plate-60.csv"
-#: A chain whose two rows do NOT pair machine for machine (its smelters and
-#: constructors are not 1:1), so it is laid as two rows with a trunk between
-#: them and wants more band than a Mk.1 has.  ``iron-plate*60`` stopped being
-#: that example when Task 8d paired its rows into one; the corpus pins
-#: ``iron-rod*60`` as ``rows exceed the designer depth`` in mk1 and mk2.
-FLOW_TWO_ROWS = FLOWS / "iron-rod-60.csv"
 
 DSP_URL = "https://factoriolab.github.io/dsp/list?o=iron-ingot*60&v=11"
 
@@ -83,7 +83,7 @@ def test_a_pinned_satisfactory_build_writes_both_files_and_reports_to_stdout(
             "--designer",
             "mk3",
             "--strategy",
-            "manifold-rows",
+            "sections",
             "-o",
             str(tmp_path / "out"),
         ]
@@ -94,39 +94,7 @@ def test_a_pinned_satisfactory_build_writes_both_files_and_reports_to_stdout(
     written = sorted(p.name for p in (tmp_path / "out").iterdir())
     assert written == ["iron-plate-mk3.sbp", "iron-plate-mk3.sbpcfg"]
 
-    head = captured.out.splitlines()[0]
-    assert head.startswith("manifold-rows: ")
-    for part in ("machines in ", " groups, ", " belts, ", " poles, ", " wires; "):
-        assert part in head
-    assert "power " in head and "MW (report figure)" in head
-    assert "shards " in head
-    assert "entries [iron-ore at x=" in head
-    assert "exits [iron-plate at x=" in head
-    assert "recipe selection pinned to the supplied flow" in captured.out
-    assert "check(s) could not run:" in captured.out
     assert "VALIDATION ERRORS" not in captured.out
-
-
-def test_a_build_that_does_not_fit_the_designer_exits_three_with_the_reason(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """Two rows want more band than a Mk.1 has; the reason goes to stderr."""
-    code = cli.main(
-        [
-            sfy_url(FLOW_TWO_ROWS),
-            "--flow",
-            str(FLOW_TWO_ROWS),
-            "--designer",
-            "mk1",
-            "--strategy",
-            "manifold-rows",
-            "-o",
-            str(tmp_path),
-        ]
-    )
-    assert code == 3
-    assert "rows exceed the designer depth" in capsys.readouterr().err
-    assert list(tmp_path.iterdir()) == []
 
 
 def test_dsp_only_flags_are_ignored_on_the_satisfactory_path_with_one_line(
@@ -143,7 +111,7 @@ def test_dsp_only_flags_are_ignored_on_the_satisfactory_path_with_one_line(
             "-o",
             str(tmp_path),
             "--strategy",
-            "manifold-rows",
+            "sections",
             "--band",
             "5x40",
         ]
@@ -175,15 +143,57 @@ def test_a_named_build_is_written_under_that_name(tmp_path: Path) -> None:
     ]
 
 
-def test_a_flow_that_moves_a_fluid_exits_two_rather_than_three(
+def test_a_fluid_flow_writes_a_factory_with_an_accessible_residue_drain(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A bad spec is exit 2 even though ``SpecInfeasible`` is a ``NoValidLayout``."""
     flow = FLOWS / "plastic-10.csv"
-    url = flow.read_text(encoding="utf-8").splitlines()[0].strip().strip('"')
-    code = cli.main([url, "--flow", str(flow), "--designer", "mk3", "-o", str(tmp_path)])
-    assert code == 2
-    assert "fluids are M5" in capsys.readouterr().err
+    code = cli.main([sfy_url(flow), "--flow", str(flow), "--designer", "mk3", "-o", str(tmp_path)])
+    captured = capsys.readouterr()
+    assert code == 0, captured.err
+    blueprint, _record = read_pair(tmp_path / "plastic-mk3.sbp", tmp_path / "plastic-mk3.sbpcfg")
+    registry = sfy_pipeline.registry()
+    placement = decode(blueprint, registry)
+    assert len(placement.machines) == 1
+    refinery = placement.machines[0]
+    assert refinery.recipe_class == "Recipe_Plastic_C"
+    assert refinery.clock == Fraction(1, 2)  # 10 plastic/min and 5 residue m³/min.
+    ports = registry.buildables[refinery.class_name].ports
+    residue = next(
+        port.name for port in ports if port.kind == "pipe" and port.direction == "output"
+    )
+    supply = next(port.name for port in ports if port.kind == "pipe" and port.direction == "input")
+
+    graph: dict[tuple[int, str], set[tuple[int, str]]] = defaultdict(set)
+    linked = {end for link in placement.links for end in (link.a, link.b)}
+    for link in placement.links:
+        graph[link.a].add(link.b)
+        graph[link.b].add(link.a)
+    for actor in (*placement.pipes, *placement.pipe_attachments):
+        nodes = [
+            (actor.id, port.name)
+            for port in registry.buildables[actor.class_name].ports
+            if port.kind == "pipe"
+        ]
+        for node in nodes:
+            graph[node].update(other for other in nodes if other != node)
+    pending, reachable = [(refinery.id, residue)], set()
+    while pending:
+        node = pending.pop()
+        if node not in reachable:
+            reachable.add(node)
+            pending.extend(graph[node] - reachable)
+    assert (refinery.id, supply) not in reachable
+    drains = []
+    for pipe in placement.pipes:
+        for index, port in enumerate(pipe_ends(registry, pipe.class_name)):
+            node = (pipe.id, port)
+            if node not in reachable or node in linked:
+                continue
+            _point, normal = endpoint(placement, *node, registry)
+            if normal[2] > 0.999:
+                assert pipe.snapped_passthroughs[index] is not None
+                drains.append(node)
+    assert len(drains) == 1
 
 
 def test_a_url_naming_neither_game_falls_through_to_the_dsp_arm_and_exits_two(
@@ -200,18 +210,16 @@ def test_a_url_naming_neither_game_falls_through_to_the_dsp_arm_and_exits_two(
 
 # --- the arms a real build does not reach ------------------------------------
 #
-# A clean `iron-plate-60` in a Mk.3 is the only end-to-end build this project
-# can make today, and it passes the validator and encodes.  The three arms below
-# -- validation errors withheld, validation errors waived, a placement that
-# cannot be WRITTEN -- are reached by doctoring that one real build, so every
-# field the report and the exit code read is a real one.
+# The three arms below -- validation errors withheld, validation errors waived,
+# a placement that cannot be WRITTEN -- are reached by doctoring a real clean
+# build, so every field the report and the exit code read is a real one.
 
 
 @pytest.fixture(scope="module")
 def clean_build() -> sfy_pipeline.SfyBuild:
     return sfy_pipeline.build(
         sfy_url(),
-        strategy="manifold-rows",
+        strategy="sections",
         designer="mk3",
         flow=FLOW,
     )
@@ -243,7 +251,7 @@ def test_invalid_candidates_remain_refused_with_the_dsp_override(
             "--flow",
             str(FLOW),
             "--strategy",
-            "manifold-rows",
+            "sections",
             "--designer",
             "mk3",
             "-o",
@@ -267,14 +275,14 @@ def test_a_placement_that_cannot_be_written_exits_three_and_reports_the_refusal(
     """An encoding refusal withholds both files and retains its diagnostics."""
     failure = LayoutAttemptFailure(
         candidate="iron-plate*60",
-        strategy="manifold-rows",
+        strategy="sections",
         reason="blueprint encoding failed: the registry has no asset path for Recipe_Nope_C",
     )
     _serve(monkeypatch, replace(clean_build, blueprint=None, record=None, refused=(failure,)))
     assert cli.main([sfy_url(), "--flow", str(FLOW), "--designer", "mk3", "-o", str(tmp_path)]) == 3
 
     captured = capsys.readouterr()
-    assert "manifold-rows/iron-plate*60: blueprint encoding failed" in captured.out
+    assert "blueprint encoding failed" in captured.out
     assert "this build produced no blueprint" in captured.err
     assert list(tmp_path.iterdir()) == []
 
@@ -284,7 +292,7 @@ def test_writing_a_build_with_no_blueprint_refuses_rather_than_writing_half_a_pa
 ) -> None:
     """`write` is the other side of the same arm, and says why."""
     failure = LayoutAttemptFailure(
-        candidate="iron-plate*60", strategy="manifold-rows", reason="blueprint encoding failed: x"
+        candidate="iron-plate*60", strategy="sections", reason="blueprint encoding failed: x"
     )
     build = replace(clean_build, blueprint=None, record=None, refused=(failure,))
     with pytest.raises(ValueError, match="nothing to write"):
@@ -336,7 +344,7 @@ def test_the_cli_accepts_sfy_strategy_choices_for_an_sfy_url(
     assert "--flow" in error and "--fetch-flow" in error
 
 
-@pytest.mark.parametrize("strategy", [s for s in STRATEGY_CHOICES if s != "best"])
+@pytest.mark.parametrize("strategy", STRATEGY_CHOICES)
 def test_dsp_strategies_are_not_silently_ignored_for_sfy(
     strategy: str,
     capsys: pytest.CaptureFixture[str],
@@ -345,31 +353,10 @@ def test_dsp_strategies_are_not_silently_ignored_for_sfy(
     assert "--strategy" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("strategy", ["manifold-rows", "grid-routed"])
+@pytest.mark.parametrize("strategy", ["sections"])
 def test_sfy_strategies_are_refused_for_dsp(
     strategy: str,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     assert cli.main([DSP_URL, "--strategy", strategy]) == 2
     assert "--strategy" in capsys.readouterr().err
-
-
-def test_cli_writes_the_winner_and_reports_the_loser_and_measure(
-    clean_build: sfy_pipeline.SfyBuild,
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    loser = LayoutAttemptFailure(
-        clean_build.spec.label,
-        "grid-routed",
-        "a belt could not be routed",
-    )
-    _serve(monkeypatch, replace(clean_build, refused=(loser,)))
-    assert cli.main([sfy_url(), "--flow", str(FLOW), "-o", str(tmp_path)]) == 0
-    assert (tmp_path / "iron-plate-mk3.sbp").is_file()
-    assert (tmp_path / "iron-plate-mk3.sbpcfg").is_file()
-    report = capsys.readouterr().out
-    assert "grid-routed" in report and loser.reason in report
-    assert f"volume {clean_build.measure.volume_cm3:g} cm³" in report
-    assert f"belt {clean_build.measure.belt_cm:g} cm" in report

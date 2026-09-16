@@ -41,6 +41,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from flab2bp.web.jobs import Builder, InvalidOptions, Solve, parse_options, run_build
 from flab2bp.web.payload import Json, JsonValue
+from flab2bp.web.sfy_scene import MAX_SBP_BYTES, SceneError, SceneTooLarge, scene_from_sbp
 
 #: Refuse a body larger than this. A FactorioLab URL is long, but not this long.
 MAX_BODY_BYTES = 256 * 1024
@@ -181,10 +182,74 @@ class Handler(BaseHTTPRequestHandler):
         except ValidationError as exc:
             raise InvalidOptions(f"body is not valid JSON: {exc}") from exc
 
+    def _sfy_scene(self, data: bytes, title: str) -> None:
+        try:
+            scene = scene_from_sbp(data, title=title)
+        except SceneTooLarge as exc:
+            self._text(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, str(exc))
+            return
+        except SceneError as exc:
+            self._text(HTTPStatus.UNPROCESSABLE_ENTITY, str(exc))
+            return
+        self._send(
+            HTTPStatus.OK,
+            json.dumps(scene, allow_nan=False).encode(),
+            "application/json; charset=utf-8",
+        )
+
+    def _import_sfy_scene(self, query: str) -> None:
+        # Reject ambiguous framing before allocating or reading any body. Close
+        # rejected uploads so their unread bytes cannot become a second request.
+        lengths = self.headers.get_all("Content-Length") or []
+        if self.headers.get("Transfer-Encoding"):
+            self.close_connection = True
+            self._text(HTTPStatus.BAD_REQUEST, "Chunked blueprint uploads are not supported")
+            return
+        if not lengths:
+            self.close_connection = True
+            self._text(HTTPStatus.LENGTH_REQUIRED, "Blueprint upload requires Content-Length")
+            return
+        if len(lengths) != 1 or not lengths[0].isascii() or not lengths[0].isdigit():
+            self.close_connection = True
+            self._text(HTTPStatus.BAD_REQUEST, "Invalid blueprint Content-Length")
+            return
+        # Length is bounded lexically first, so an arbitrarily long integer
+        # header cannot reach int()'s conversion limit.
+        digits = lengths[0].lstrip("0") or "0"
+        if len(digits) > len(str(MAX_SBP_BYTES)) or int(digits) > MAX_SBP_BYTES:
+            self.close_connection = True
+            self._text(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "Blueprint upload exceeds 16 MiB")
+            return
+        if self.headers.get("Content-Encoding", "identity").lower() != "identity":
+            self.close_connection = True
+            self._text(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, "Upload the raw .sbp bytes")
+            return
+        length = int(digits)
+        timeout = self.connection.gettimeout()
+        self.connection.settimeout(20.0)
+        try:
+            data = self.rfile.read(length)
+        except TimeoutError, OSError:
+            self.close_connection = True
+            self._text(HTTPStatus.REQUEST_TIMEOUT, "Blueprint upload did not finish")
+            return
+        finally:
+            self.connection.settimeout(timeout)
+        if len(data) != length:
+            self.close_connection = True
+            self._text(HTTPStatus.BAD_REQUEST, "Truncated blueprint upload")
+            return
+        title = parse_qs(query).get("name", ["Satisfactory blueprint"])[0]
+        self._sfy_scene(data, title)
+
     # ---- routes ---------------------------------------------------------
 
     def do_POST(self) -> None:  # noqa: N802 -- BaseHTTPRequestHandler's spelling
-        if urlparse(self.path).path != "/api/build":
+        parsed = urlparse(self.path)
+        if parsed.path == "/api/sfy/scene":
+            self._import_sfy_scene(parsed.query)
+            return
+        if parsed.path != "/api/build":
             self._text(HTTPStatus.NOT_FOUND, "no such endpoint")
             return
         try:
@@ -229,6 +294,25 @@ class Handler(BaseHTTPRequestHandler):
                 "application/octet-stream",
                 download_name=filename,
             )
+            return
+
+        if path.startswith("/api/build/") and path.endswith("/scene"):
+            job_id = path.removeprefix("/api/build/").removesuffix("/scene")
+            job = self.builder.get(job_id)
+            if job is None:
+                self._text(HTTPStatus.NOT_FOUND, "No such build job")
+                return
+            with job._lock:
+                artifacts = [
+                    (name, data)
+                    for name, data in job.artifacts.items()
+                    if name.lower().endswith(".sbp")
+                ]
+            if len(artifacts) != 1:
+                self._text(HTTPStatus.CONFLICT, "Build has no unique retained .sbp artifact")
+                return
+            name, data = artifacts[0]
+            self._sfy_scene(data, name)
             return
 
         if path.startswith("/api/build/") and path.endswith("/trace"):

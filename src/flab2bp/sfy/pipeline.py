@@ -7,11 +7,9 @@ that out, judge it, and write it into a blueprint.  :func:`write` puts the two
 halves the game wants -- ``<name>.sbp`` and ``<name>.sbpcfg`` -- side by side in
 a directory.
 
-``best`` races production strategies serially under one monotonic deadline,
-with at most an equal share per arm. Only validator-clean placements compete;
-their ordering is blueprint count, occupied volume, belt length, then the
-stable strategy order. Explicit strategies run alone with the whole budget.
-Refusing opponents remain attached to a successful winner.
+The connected-section planner runs under one monotonic deadline. Its returned
+placement must pass physical validation before measurement and emission.
+Reference layout implementations are not production alternatives or fallbacks.
 
 FactorioLab's flow is not optional here
 ---------------------------------------
@@ -46,6 +44,7 @@ import math
 import re
 import time
 from dataclasses import dataclass, replace
+from fractions import Fraction
 from functools import cache
 from pathlib import Path
 from typing import Final, cast
@@ -63,7 +62,7 @@ from flab2bp.sfy.codec import Blueprint, write_sbp_file, write_sbpcfg
 from flab2bp.sfy.header import BlueprintHeader, BlueprintRecord, read_header
 from flab2bp.sfy.labmap import LabMap, load_lab_map
 from flab2bp.sfy.layout.emit import emit
-from flab2bp.sfy.layout.measure import Measure, measure, race_key
+from flab2bp.sfy.layout.measure import Measure, measure
 from flab2bp.sfy.layout.model import SfyPlacement
 from flab2bp.sfy.layout.protocol import SfyLayoutStrategy
 from flab2bp.sfy.layout.validate import Report, validate
@@ -72,7 +71,6 @@ from flab2bp.sfy.registry import Registry, load_registry
 from flab2bp.sfy.spec import DESIGNER_CLASSES, Designer, SfyBuildSpec
 from flab2bp.sfy.spec import designer as designer_for_mark
 from flab2bp.sfy.strategy_names import (
-    SFY_PRODUCTION_STRATEGIES,
     SFY_STRATEGY_CHOICES,
     SfyStrategyName,
 )
@@ -113,22 +111,16 @@ DESIGNER_MARKS: Final = tuple(sorted(DESIGNER_CLASSES))
 DEFAULT_DESIGNER_MARK: Final = "mk1"
 
 #: Loaded on first use, never while importing a corpus, CLI or audit vocabulary.
-#: Dict insertion order is not race order: SFY_PRODUCTION_STRATEGIES is.
 STRATEGIES: dict[str, SfyLayoutStrategy] = {}
 
 
 def _strategy(name: str) -> SfyLayoutStrategy:
     if name not in STRATEGIES:
-        if name == "manifold-rows":
-            from flab2bp.sfy.layout.strategy import ManifoldRows
-
-            STRATEGIES[name] = ManifoldRows()
-        elif name == "grid-routed":
-            from flab2bp.sfy.layout.grid import GridRouted
-
-            STRATEGIES[name] = GridRouted()
-        else:
+        if name != "sections":
             raise ValueError(f"unknown Satisfactory strategy {name!r}")
+        from flab2bp.sfy.sections.compose import SectionLayout
+
+        STRATEGIES[name] = SectionLayout()
     return STRATEGIES[name]
 
 
@@ -194,8 +186,7 @@ class SfyBuild:
     was laid out and judged, and then could not be WRITTEN -- a class the corpus
     has no template of, a link to a port an object does not have.  That is a
     refusal rather than a crash, so the reason is in ``refused`` and there is
-    no file to hand over. A successful winner can ALSO have ``refused`` entries:
-    those are losing strategies, not a failure of this build.
+    no file to hand over.
     """
 
     spec: SfyBuildSpec
@@ -217,7 +208,7 @@ class SfyBuild:
 def build(
     url: str,
     *,
-    strategy: SfyStrategyName = "best",
+    strategy: SfyStrategyName = "sections",
     designer: str = DEFAULT_DESIGNER_MARK,
     time_budget_s: float = 15.0,
     flow: Path | None = None,
@@ -234,8 +225,7 @@ def build(
 ) -> SfyBuild:
     """Turn a FactorioLab Satisfactory URL into a pasteable blueprint.
 
-    :param strategy: ``best`` races both production strategies; a named
-        strategy runs alone. The budget is shared, never multiplied.
+    :param strategy: ``sections``, the connected production-section planner.
     :param designer: which Blueprint Designer mark to build inside, one of
         :data:`DESIGNER_MARKS`.  Its floor and height come from the registry.
     :param flow: a FactorioLab CSV export; :param flow_text: the same export as
@@ -246,8 +236,8 @@ def build(
         or two were.
     :raises SpecInfeasible: the flow and the rate model cannot both be right, or
         the build needs something M2 does not carry (a fluid).
-    :raises NoValidLayout: no strategy returned a validator-clean placement
-        in its share. ``attempt_failures`` preserves each strategy's cause.
+    :raises NoValidLayout: the planner refused, exceeded its deadline, or returned
+        a placement that failed validation. Diagnostics preserve the cause.
     """
     if strategy not in SFY_STRATEGY_CHOICES:
         raise ValueError("Satisfactory strategy must be one of " + ", ".join(SFY_STRATEGY_CHOICES))
@@ -277,75 +267,55 @@ def build(
         raise SpecInfeasible(exc.cause, item=_label(request)) from exc
 
     mark = designer_for_mark(designer, registry())
-    # Load shared data before starting the one layout clock. Each arm gets at
-    # most an equal share, capped by what remains of the total deadline. An
-    # overrunning in-process arm cannot make the next arm start a fresh budget.
+    # Load shared data before starting the single layout deadline.
     game_registry, mapping, library = registry(), lab_map(), template_library()
-    names = SFY_PRODUCTION_STRATEGIES if strategy == "best" else (strategy,)
-    share = time_budget_s / len(names)
+    planner = _strategy(strategy)
     deadline = time.monotonic() + time_budget_s
-    failures: list[LayoutAttemptFailure] = []
-    winner: tuple[SfyPlacement, Report, Measure, str] | None = None
-    best_key: tuple[int, float, float, int] | None = None
-    for strategy_name in names:
-        now = time.monotonic()
-        arm_deadline = min(deadline, now + share)
-        try:
-            if now >= arm_deadline:
-                raise NoValidLayout("layout exceeded the budget")
-            candidate = _strategy(strategy_name).lay_out(
-                spec,
-                mark,
-                time_budget_s=arm_deadline - now,
-                absolute_deadline=arm_deadline,
-                registry=game_registry,
-                lab_map=mapping,
+    try:
+        placement = planner.lay_out(
+            spec,
+            mark,
+            time_budget_s=time_budget_s,
+            absolute_deadline=deadline,
+            registry=game_registry,
+            lab_map=mapping,
+        )
+        if expired(deadline, time.monotonic):
+            raise NoValidLayout("layout exceeded the budget")
+        report = validate(placement, spec, game_registry, library=library)
+        if not report.ok:
+            raise NoValidLayout(
+                "validation failed: "
+                + "; ".join(f"{finding.check}: {finding.message}" for finding in report.errors)
             )
-            if expired(arm_deadline, time.monotonic):
-                raise NoValidLayout("layout exceeded the budget")
-            candidate_report = validate(candidate, spec, game_registry, library=library)
-            if not candidate_report.ok:
-                raise NoValidLayout(
-                    "validation failed: "
-                    + "; ".join(
-                        f"{finding.check}: {finding.message}" for finding in candidate_report.errors
-                    )
-                )
-            candidate_measure = measure(candidate, game_registry)
-            if expired(arm_deadline, time.monotonic):
-                raise NoValidLayout("layout exceeded the budget")
-        except NoValidLayout as exc:
-            failures.append(
-                LayoutAttemptFailure(
-                    candidate=spec.label or "this build",
-                    strategy=strategy_name,
-                    reason=exc.reason,
-                    projection_failures=exc.projection_failures,
-                    stats=cast(PlacementStats, dict(exc.stats)),
-                    children=exc.attempt_failures
-                    or tuple(
-                        LayoutAttemptFailure(spec.label or "this build", strategy_name, detail)
-                        for detail in exc.attempt_reasons
-                    ),
-                )
-            )
-            continue
-        key = race_key(candidate_measure, SFY_PRODUCTION_STRATEGIES.index(strategy_name))
-        if best_key is None or key < best_key:
-            best_key = key
-            winner = candidate, candidate_report, candidate_measure, strategy_name
-
-    if winner is None:
-        reasons = tuple(str(failure) for failure in failures)
+        measured = measure(placement, game_registry)
+        if expired(deadline, time.monotonic):
+            raise NoValidLayout("layout exceeded the budget")
+    except NoValidLayout as exc:
+        failure = LayoutAttemptFailure(
+            candidate=spec.label or "this build",
+            strategy=strategy,
+            reason=exc.reason,
+            projection_failures=exc.projection_failures,
+            stats=cast(PlacementStats, dict(exc.stats)),
+            children=exc.attempt_failures
+            or tuple(
+                LayoutAttemptFailure(spec.label or "this build", strategy, detail)
+                for detail in exc.attempt_reasons
+            ),
+        )
         raise NoValidLayout(
-            failures[0].reason if len(failures) == 1 else "; ".join(reasons),
+            exc.reason,
             spec_label=spec.label,
             budget_s=time_budget_s,
-            attempt_reasons=reasons,
-            attempt_failures=tuple(failures),
-        )
-    placement, report, measured, winning_strategy = winner
+            attempt_reasons=(str(failure),),
+            attempt_failures=(failure,),
+        ) from exc
     placement = replace(placement, short_desc=name or _slug(spec, mark))
+    placement = replace(
+        placement,
+        description=_description(spec, placement, data, game_registry),
+    )
 
     header = newest_fixture_header()
     try:
@@ -365,16 +335,15 @@ def build(
             spec=spec,
             placement=placement,
             report=report,
-            strategy=winning_strategy,
+            strategy=strategy,
             designer=mark,
             measure=measured,
             blueprint=None,
             record=None,
             refused=(
-                *failures,
                 LayoutAttemptFailure(
                     candidate=spec.label or "this build",
-                    strategy=winning_strategy,
+                    strategy=strategy,
                     reason=f"blueprint encoding failed: {exc}",
                 ),
             ),
@@ -384,12 +353,11 @@ def build(
         spec=spec,
         placement=placement,
         report=report,
-        strategy=winning_strategy,
+        strategy=strategy,
         designer=mark,
         measure=measured,
         blueprint=blueprint,
         record=BlueprintRecord.new(placement.description),
-        refused=tuple(failures),
     )
 
 
@@ -485,6 +453,87 @@ def _flow(
         "'download as CSV' button writes, or --fetch-flow to have it captured "
         "from this URL"
     )
+
+
+def _description(
+    spec: SfyBuildSpec,
+    placement: SfyPlacement,
+    data: Dataset,
+    game_registry: Registry,
+) -> str:
+    """The in-game field sheet: net boundary rates and the settings that produce them."""
+    exports = dict(spec.outputs)
+    for item, rate in spec.surplus_outputs.items():
+        exports[item] = exports.get(item, Fraction(0)) + rate
+    rows = [
+        placement.short_desc,
+        f"Blueprint Designer Mk.{placement.designer.mark[2:]}; "
+        f"{spec.machine_count} production machines.",
+    ]
+    boundary_labels = (
+        ("Outputs (top)", "Inputs (bottom)")
+        if placement.stack_lanes
+        else ("Outputs (+Y)", "Inputs (-Y)")
+    )
+    for label, rates in zip(boundary_labels, (exports, spec.external_inputs), strict=True):
+        summary = "; ".join(
+            f"{data.item(item).name}: {rate * 60} "
+            f"{'m³/min' if item in spec.fluid_items else 'items/min'}"
+            for item, rate in sorted(rates.items())
+        )
+        rows.append(f"{label}: {summary or 'none'}.")
+    if placement.stack_lanes:
+        rows.extend(
+            (
+                "",
+                f"Vertical stack pitch: {placement.stack_height_cm / 100:g} m.",
+                "Keep matching XY outlines and orientation. Connect corresponding floor/ceiling "
+                f"holes manually across the {placement.stack_connection_gap_cm / 100:g} m gap; "
+                "automatic lift joining is not promised.",
+                "Inputs branch into this module and continue upward. Boundary rates are local "
+                "net demand/export; size upstream supply for all stacked modules.",
+            )
+        )
+        for lane in placement.stack_lanes:
+            unit = "m³/min" if lane.kind == "pipe" else "items/min"
+            rows.append(
+                f"- {data.item(lane.item_id).name} trunk capacity: "
+                f"{lane.capacity_per_second * 60} {unit}."
+            )
+            if lane.required_input_head_m > 0:
+                rows.append(
+                    f"  Required external input head: at least "
+                    f"{lane.required_input_head_m:g} m above the bottom inlet; "
+                    "external pressure is not measured by this blueprint."
+                )
+    rows.extend(("", "Machines and recipes:"))
+    for group in spec.groups:
+        machine = game_registry.buildables[group.machine_class].display_name
+        recipe = game_registry.recipes[group.recipe_class].display_name
+        if group.clock == group.last_clock:
+            clocks = f"{group.count} at {group.clock * 100}%"
+        elif group.count == 1:
+            clocks = f"1 at {group.last_clock * 100}%"
+        else:
+            clocks = f"{group.count - 1} at {group.clock * 100}%; 1 at {group.last_clock * 100}%"
+        rows.append(f"- {machine} / {recipe}: {clocks}.")
+    auxiliary_power = sum(
+        game_registry.buildables[obj.class_name].power_mw for obj in placement.pipe_attachments
+    )
+    rows.extend(
+        (
+            "",
+            f"Estimated active production power: {spec.power_mw:.2f} MW.",
+            f"Auxiliary pump power: {auxiliary_power:.2f} MW.",
+            f"Consumables: {spec.power_shards} Power Shards; "
+            f"{sum(group.count * group.somersloops for group in spec.groups)} Somersloops.",
+            "Connect external power and every listed input. Keep outputs clear; "
+            "allow manifolds to fill before measuring throughput.",
+            "Fluid rates are m³/min; solid rates are items/min; fractions are exact.",
+            "Generated by flab2bp. Not verified in-game.",
+        )
+    )
+    return "\n".join(rows)
 
 
 def _label(request: LabRequest) -> str:

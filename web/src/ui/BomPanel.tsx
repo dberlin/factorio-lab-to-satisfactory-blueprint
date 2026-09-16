@@ -1,9 +1,11 @@
 import { computeBom } from '../model/bom';
 import { useBlueprint } from '../state/BlueprintProvider';
+import { SatisfactoryBom } from './SatisfactoryPanels';
 
 export function BomPanel() {
-  const { blueprint, catalog } = useBlueprint();
-  if (!blueprint) return null;
+  const { blueprint, catalog, satisfactoryScene } = useBlueprint();
+  if (satisfactoryScene) return <SatisfactoryBom scene={satisfactoryScene} />;
+  if (!blueprint || !catalog) return null;
 
   // Derived during render; the React Compiler memoizes it.
   const bom = computeBom(blueprint, catalog);

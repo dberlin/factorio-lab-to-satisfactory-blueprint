@@ -12,10 +12,21 @@ import { CountLabels } from './CountLabels';
 import { IconInstances } from './IconInstances';
 import { SorterModels } from './SorterModels';
 import { TraceOverlay } from './TraceOverlay';
+import { SatisfactoryCanvas } from './SatisfactoryCanvas';
 
 export function BlueprintCanvas() {
-  const { sceneModel, selectedIndex, select, catalog, traceFrame, traceShow, view } =
-    useBlueprint();
+  const {
+    blueprint,
+    sceneModel,
+    selectedIndex,
+    select,
+    catalog,
+    traceFrame,
+    traceShow,
+    view,
+    satisfactoryScene,
+    satisfactoryView,
+  } = useBlueprint();
   const [atlas, setAtlas] = useState<Atlas | null>(null);
   const [atlasTexture, setAtlasTexture] = useState<Texture | null>(null);
   useEffect(() => {
@@ -60,11 +71,28 @@ export function BlueprintCanvas() {
       controller.abort();
     };
   }, []);
-  if (!sceneModel) return <div className="canvas-empty">Load a blueprint to see it.</div>;
+  if (satisfactoryScene)
+    return (
+      <SatisfactoryCanvas
+        scene={satisfactoryScene}
+        selectedIndex={selectedIndex}
+        onSelect={select}
+        view={satisfactoryView}
+      />
+    );
+  if (!sceneModel)
+    return (
+      <div className="canvas-empty">
+        {blueprint
+          ? 'DSP geometry requires the DSP viewer assets.'
+          : 'Build from a FactorioLab URL or open a blueprint to see it.'}
+      </div>
+    );
 
-  const overlays = atlas
-    ? buildOverlays(sceneModel, catalog, atlas, { endpointIcons: view.endpointIcons })
-    : null;
+  const overlays =
+    atlas && catalog
+      ? buildOverlays(sceneModel, catalog, atlas, { endpointIcons: view.endpointIcons })
+      : null;
 
   return (
     <Canvas

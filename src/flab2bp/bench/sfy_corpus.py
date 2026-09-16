@@ -82,7 +82,17 @@ from typing import Final, Literal
 from flab2bp.bench.tier import Tier
 from flab2bp.sfy.layout.refusals import REFUSALS
 from flab2bp.sfy.pipeline import DESIGNER_MARKS
-from flab2bp.sfy.strategy_names import SFY_STRATEGY_CHOICES, SfyStrategyName
+from flab2bp.sfy.strategy_names import SfyStrategyName
+
+# Historical evidence is not a production strategy registry. Keep its measured
+# pins intact; sections has no measured pin until an audit records one.
+type CorpusStrategyName = SfyStrategyName | Literal["best", "manifold-rows", "grid-routed"]
+_CORPUS_STRATEGIES: Final[tuple[CorpusStrategyName, ...]] = (
+    "sections",
+    "best",
+    "manifold-rows",
+    "grid-routed",
+)
 
 __all__ = [
     "CLEAN",
@@ -192,7 +202,7 @@ class SfyCorpusEntry:
     tier: Tier
     #: ``((strategy, mark), CLEAN or a ruled cause)``. Frozen and hashable;
     #: absent strategies are explicitly unmeasured, never copied from a rival.
-    expects: tuple[tuple[tuple[SfyStrategyName, str], str], ...] = ()
+    expects: tuple[tuple[tuple[CorpusStrategyName, str], str], ...] = ()
     designers: tuple[str, ...] = DESIGNER_MARKS
     note: str = ""
 
@@ -207,7 +217,7 @@ class SfyCorpusEntry:
         if len(pinned) != len(self.expects):
             raise ValueError(f"{self.url_id} pins the same strategy and mark twice in `expects`")
         for strategy in {strategy for strategy, _ in pinned}:
-            if strategy not in SFY_STRATEGY_CHOICES:
+            if strategy not in _CORPUS_STRATEGIES:
                 raise ValueError(f"{self.url_id} pins unknown strategy {strategy!r}")
             marks = {mark for name, mark in pinned if name == strategy}
             if marks != set(self.designers):
@@ -237,7 +247,7 @@ class SfyCorpusEntry:
         """The committed export this entry is built from."""
         return FLOWS_DIR / self.flow_file
 
-    def expectation(self, strategy: SfyStrategyName, mark: str) -> str:
+    def expectation(self, strategy: CorpusStrategyName, mark: str) -> str:
         """The measured outcome; ``best`` joins distinct attempt causes with ``; ``.
 
         Raises ``KeyError`` for an unmeasured strategy.
@@ -249,11 +259,11 @@ class SfyCorpusEntry:
         """The biggest mark this entry is run in -- its best chance of fitting."""
         return [m for m in DESIGNER_MARKS if m in self.designers][-1]
 
-    def expected(self, strategy: SfyStrategyName) -> Literal["clean", "refuse"]:
+    def expected(self, strategy: CorpusStrategyName) -> Literal["clean", "refuse"]:
         """The largest mark's measured outcome for this requested strategy."""
         return "clean" if self.expectation(strategy, self.largest) == CLEAN else "refuse"
 
-    def expected_cause(self, strategy: SfyStrategyName) -> str | None:
+    def expected_cause(self, strategy: CorpusStrategyName) -> str | None:
         """The largest mark's refusal cause, or ``None`` if it builds."""
         outcome = self.expectation(strategy, self.largest)
         return None if outcome == CLEAN else outcome
@@ -266,8 +276,8 @@ _BRIDGE: Final = "corridor needs a bridge that does not fit"
 
 
 def _pins(
-    mk1: str, mk2: str, mk3: str, *, strategy: SfyStrategyName = "manifold-rows"
-) -> tuple[tuple[tuple[SfyStrategyName, str], str], ...]:
+    mk1: str, mk2: str, mk3: str, *, strategy: CorpusStrategyName = "manifold-rows"
+) -> tuple[tuple[tuple[CorpusStrategyName, str], str], ...]:
     """Measured outcomes in mark order; existing measurements are manifold-only."""
     return (((strategy, "mk1"), mk1), ((strategy, "mk2"), mk2), ((strategy, "mk3"), mk3))
 

@@ -685,7 +685,9 @@ def test_every_conveyor_carries_the_cost_segment_the_game_states():
     """
     reg = load_registry()
     costed = {
-        name: b.length_per_cost_cm for name, b in reg.buildables.items() if b.length_per_cost_cm
+        name: b.length_per_cost_cm
+        for name, b in reg.buildables.items()
+        if name.startswith(("Build_ConveyorBelt", "Build_ConveyorLift"))
     }
     assert len(costed) == 12
     assert set(costed) == {
@@ -701,7 +703,7 @@ def test_every_conveyor_carries_the_cost_segment_the_game_states():
     assert belt.length_per_cost_cm == belt.mesh_length_cm
     lift = reg.buildables["Build_ConveyorLiftMk1_C"]
     assert lift.length_per_cost_cm == lift.mesh_height_cm
-    # Everything else is charged its recipe once, so it carries no segment.
+    # No length-based costing has been extracted for an ordinary machine.
     assert reg.buildables["Build_ConstructorMk1_C"].length_per_cost_cm is None
     assert reg.buildables["Build_ConstructorMk1_C"].length_per_cost_source is None
 
@@ -1097,3 +1099,44 @@ def test_boxes_the_game_ignores_when_snapping_are_marked():
     assert all(
         not box.exclude_for_snapping for box in reg.buildables["Build_Barrier_Low_01_C"].clearance
     )
+
+
+def test_shipped_pump_head_is_distinct_from_design_head_and_pipe_capacity():
+    buildables = load_registry().buildables
+    mk1 = buildables["Build_PipelinePump_C"]
+    mk2 = buildables["Build_PipelinePumpMk2_C"]
+    assert (mk1.pump_design_head_m, mk1.pump_max_head_m) == (20.0, 22.0)
+    assert (mk2.pump_design_head_m, mk2.pump_max_head_m) == (50.0, 55.0)
+    assert (mk1.pipe_flow_limit_m3s, mk2.pipe_flow_limit_m3s) == (10.0, 10.0)
+    assert (mk1.power_mw, mk2.power_mw) == (4.0, 8.0)
+    assert buildables["Build_Pipeline_C"].pipe_flow_limit_m3s == 5.0
+    assert buildables["Build_PipelineMK2_C"].pipe_flow_limit_m3s == 10.0
+
+
+def test_shipped_beam_bounds_and_cost_do_not_use_the_default_length_as_a_limit():
+    beam = load_registry().buildables["Build_Beam_Painted_C"]
+    assert beam.beam_max_length_cm == 4000.0
+    assert beam.beam_size_cm == 100.0
+    assert beam.length_per_cost_cm == 400.0
+    assert beam.length_per_cost_source == "docs"
+
+
+def test_pipeline_cost_segment_includes_native_multiplier_not_just_mesh_pitch():
+    registry = load_registry()
+    for name in (
+        "Build_Pipeline_C",
+        "Build_PipelineMK2_C",
+        "Build_Pipeline_NoIndicator_C",
+        "Build_PipelineMK2_NoIndicator_C",
+    ):
+        pipe = registry.buildables[name]
+        assert pipe.length_per_cost_cm == 400.0
+        assert pipe.mesh_length_cm == 200.0
+        assert pipe.length_per_cost_source == "binary-derived"
+
+
+def test_fluid_identity_is_available_without_the_original_docs():
+    registry = load_registry()
+    assert {"Desc_Water_C", "Desc_NitrogenGas_C", "Desc_LiquidBiofuel_C"} <= registry.fluid_items
+    assert "Desc_PackagedWater_C" not in registry.fluid_items
+    assert "Desc_IronPlate_C" not in registry.fluid_items

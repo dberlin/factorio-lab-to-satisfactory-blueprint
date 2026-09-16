@@ -12,6 +12,7 @@ from flab2bp.sfy.registry import load_registry
 from flab2bp.sfy.spec import (
     FOUNDATION_CLASS,
     Designer,
+    PipeTier,
     SfyBuildSpec,
     SfyMachineGroup,
     designer,
@@ -158,6 +159,25 @@ def test_belt_upgrades_must_be_strictly_faster_than_the_floor_and_ordered() -> N
             belt_item_id="conveyor-belt-mk2",
             belt_items_per_second=Fraction(2),
             belt_upgrades=(BeltTier(item_id="conveyor-belt-mk1", items_per_second=Fraction(1)),),
+        )
+
+
+@pytest.mark.parametrize("capacity", [Fraction(0), Fraction(-1)])
+def test_a_pipe_with_nonpositive_capacity_is_refused(capacity: Fraction) -> None:
+    with pytest.raises(ValidationError):
+        PipeTier(item_id="pipeline-mk1", cubic_metres_per_second=capacity)
+
+
+def test_pipe_tiers_must_be_strictly_increasing_in_capacity() -> None:
+    with pytest.raises(ValidationError):
+        SfyBuildSpec(
+            groups=(),
+            belt_item_id="conveyor-belt-mk1",
+            belt_items_per_second=Fraction(1),
+            pipe_tiers=(
+                PipeTier(item_id="pipeline-mk2", cubic_metres_per_second=Fraction(10)),
+                PipeTier(item_id="pipeline-mk1", cubic_metres_per_second=Fraction(5)),
+            ),
         )
 
 

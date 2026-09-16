@@ -45,11 +45,13 @@ from flab2bp.sfy.geometry import Vector, box_bounds
 from flab2bp.sfy.layout.model import (
     AttachmentObj,
     MachineObj,
+    PipeAttachmentObj,
     Pose,
     SfyPlacement,
     lift_geometry,
 )
 from flab2bp.sfy.layout.splines import spline_length
+from flab2bp.sfy.layout.validate import beam_box, passthrough_box, pipe_chain
 from flab2bp.sfy.registry import Registry
 
 __all__ = ["Measure", "measure", "race_key"]
@@ -76,6 +78,11 @@ class Measure:
     lifts: int
     #: Conveyor attachments -- splitters and mergers -- in the build.  The same.
     attachments: int
+    #: Arc length of pipelines, reported in centimetres.
+    pipe_cm: float = 0.0
+    pipe_attachments: int = 0
+    beams: int = 0
+    passthroughs: int = 0
 
 
 def measure(placement: SfyPlacement, registry: Registry) -> Measure:
@@ -90,6 +97,10 @@ def measure(placement: SfyPlacement, registry: Registry) -> Measure:
         belt_cm=sum(spline_length(run.points) for run in placement.belts),
         lifts=len(placement.lifts),
         attachments=len(placement.attachments),
+        pipe_cm=sum(spline_length(run.points) for run in placement.pipes),
+        pipe_attachments=len(placement.pipe_attachments),
+        beams=len(placement.beams),
+        passthroughs=len(placement.passthroughs),
     )
 
 
@@ -114,7 +125,11 @@ def _corners(placement: SfyPlacement, registry: Registry) -> list[Vector]:
     a zero somebody could race against.
     """
     corners: list[Vector] = []
-    standing: list[AttachmentObj | MachineObj] = [*placement.machines, *placement.attachments]
+    standing: list[AttachmentObj | MachineObj | PipeAttachmentObj] = [
+        *placement.machines,
+        *placement.attachments,
+        *placement.pipe_attachments,
+    ]
     for obj in standing:
         corners += _extent(registry, obj.class_name, obj.pose)
     for lift in placement.lifts:
@@ -122,6 +137,13 @@ def _corners(placement: SfyPlacement, registry: Registry) -> list[Vector]:
         corners.append(lift.top_end(lift_geometry(registry, lift.class_name))[0])
     for run in placement.belts:
         corners += [point[0] for point in run.points]
+    for pipe in placement.pipes:
+        for box in pipe_chain(pipe, registry):
+            corners.extend(box.corners())
+    for beam in placement.beams:
+        corners.extend(beam_box(beam, registry).corners())
+    for hole in placement.passthroughs:
+        corners.extend(passthrough_box(hole, registry).corners())
     if not corners:
         raise ValueError("this placement holds no machine, attachment, lift or belt to measure")
     return corners

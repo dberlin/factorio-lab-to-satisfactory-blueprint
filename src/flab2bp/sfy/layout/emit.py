@@ -69,6 +69,7 @@ import math
 from collections.abc import Callable, Iterator
 from dataclasses import replace
 from fractions import Fraction
+from itertools import chain
 
 from flab2bp.sfy.archive import ObjectRef
 from flab2bp.sfy.codec import Blueprint
@@ -77,18 +78,24 @@ from flab2bp.sfy.header import SaveObjectVersionData
 from flab2bp.sfy.labmap import LabMap
 from flab2bp.sfy.layout.model import (
     AttachmentObj,
+    BeamObj,
     BeltRun,
     FoundationObj,
     LiftObj,
     Link,
     MachineObj,
+    PassthroughObj,
+    PipeAttachmentObj,
+    PipeRun,
     PoleObj,
     Pose,
     SfyPlacement,
     SplinePoint,
     Vector,
     WireObj,
+    belt_ends,
     lift_geometry,
+    pipe_ends,
     stored_float,
 )
 from flab2bp.sfy.layout.splines import Quaternion, yaw_quaternion
@@ -111,6 +118,7 @@ from flab2bp.sfy.spec import DESIGNER_CLASSES, Designer, designer
 from flab2bp.sfy.templates import (
     LEVEL,
     TemplateLibrary,
+    _set_property,
     apply_recipe,
     assemble,
     connect,
@@ -200,6 +208,15 @@ _POLE_NATIVE = frozenset({"FGBuildablePowerPole"})
 _FOUNDATION_NATIVE = frozenset({"FGBuildableFoundationLightweight"})
 _WIRE_NATIVE = frozenset({"FGBuildableWire"})
 _BELT_NATIVE = frozenset({"FGBuildableConveyorBelt"})
+_PIPE_NATIVE = frozenset({"FGBuildablePipeline"})
+_PIPE_ATTACHMENT_NATIVE = frozenset({"FGBuildablePipelineJunction", "FGBuildablePipelinePump"})
+_BEAM_NATIVE = frozenset({"FGBuildableBeam"})
+_PASSTHROUGH_NATIVE = frozenset({"FGBuildablePassthrough"})
+
+BEAM_LENGTH = "mLength"
+PASSTHROUGH_THICKNESS = "mSnappedBuildingThickness"
+TOP_CONNECTION = "mTopSnappedConnection"
+BOTTOM_CONNECTION = "mBottomSnappedConnection"
 """Which kind of placed object a class is, by the native class ``registry.json``
 read out of the game's own Docs.json -- not by the spelling of its name."""
 
@@ -325,6 +342,26 @@ def emit(
     for pole in placement.poles:
         place(pole.id, pole.class_name, pole.pose)
 
+    for pipe in placement.pipes:
+        start, _ = place(pipe.id, pipe.class_name, pipe.pose)
+        header, data = objects[start]
+        objects[start] = (header, set_spline(data, _spline_values(pipe.local_points())))
+
+    for pipe_attachment in placement.pipe_attachments:
+        place(pipe_attachment.id, pipe_attachment.class_name, pipe_attachment.pose)
+
+    for beam in placement.beams:
+        start, _ = place(beam.id, beam.class_name, beam.pose)
+        header, data = objects[start]
+        objects[start] = (header, _float_property(data, BEAM_LENGTH, beam.length_cm))
+
+    for hole in placement.passthroughs:
+        start, _ = place(hole.id, hole.class_name, hole.pose)
+        header, data = objects[start]
+        objects[start] = (header, _float_property(data, PASSTHROUGH_THICKNESS, hole.thickness_cm))
+
+    _passthrough_references(placement, registry, objects, spans)
+
     for link in placement.links:
         left = _component(objects, spans, link.a)
         right = _component(objects, spans, link.b)
@@ -395,8 +432,12 @@ def decode(bp: Blueprint, registry: Registry) -> SfyPlacement:
     lifts: list[LiftObj] = []
     poles: list[PoleObj] = []
     foundations: list[FoundationObj] = []
+    pipes: list[PipeRun] = []
+    pipe_attachments: list[PipeAttachmentObj] = []
+    beams: list[BeamObj] = []
+    passthroughs: list[PassthroughObj] = []
     spans: list[tuple[int, str, tuple[ObjectRef, ObjectRef]]] = []
-    ids: dict[str, int] = {}
+    ids = {header.path: _object_id(header) for header, _ in bp.objects if header.kind == ACTOR}
 
     for header, data in bp.objects:
         if header.kind != ACTOR:
@@ -421,13 +462,46 @@ def decode(bp: Blueprint, registry: Registry) -> SfyPlacement:
             belts.append(BeltRun(obj_id, header.class_name, _world_points(header, data)))
         elif native in _LIFT_NATIVE:
             height, top_yaw = _lift_top(registry, header, data)
-            lifts.append(LiftObj(obj_id, header.class_name, pose, height, top_yaw))
+            lifts.append(
+                LiftObj(
+                    obj_id,
+                    header.class_name,
+                    pose,
+                    height,
+                    top_yaw,
+                    _snapped_ids(data, ids),
+                )
+            )
         elif native in _ATTACHMENT_NATIVE:
             attachments.append(AttachmentObj(obj_id, header.class_name, pose))
         elif native in _POLE_NATIVE:
             poles.append(PoleObj(obj_id, header.class_name, pose))
         elif native in _FOUNDATION_NATIVE:
             foundations.append(FoundationObj(obj_id, header.class_name, pose))
+        elif native in _PIPE_NATIVE:
+            pipes.append(
+                PipeRun(
+                    obj_id,
+                    header.class_name,
+                    _world_points(header, data),
+                    snapped_passthroughs=_snapped_ids(data, ids),
+                )
+            )
+        elif native in _PIPE_ATTACHMENT_NATIVE:
+            pipe_attachments.append(PipeAttachmentObj(obj_id, header.class_name, pose))
+        elif native in _BEAM_NATIVE:
+            beams.append(BeamObj(obj_id, header.class_name, pose, _float_value(data, BEAM_LENGTH)))
+        elif native in _PASSTHROUGH_NATIVE:
+            passthroughs.append(
+                PassthroughObj(
+                    obj_id,
+                    header.class_name,
+                    pose,
+                    _float_value(data, PASSTHROUGH_THICKNESS),
+                    _optional_side(data, TOP_CONNECTION, ids),
+                    _optional_side(data, BOTTOM_CONNECTION, ids),
+                )
+            )
         elif native in _WIRE_NATIVE:
             if not isinstance(data.trailer, PowerLineTrailer):
                 raise EmitError(
@@ -453,8 +527,110 @@ def decode(bp: Blueprint, registry: Registry) -> SfyPlacement:
             for obj_id, class_name, refs in spans
         ),
         foundations=tuple(foundations),
+        pipes=tuple(pipes),
+        pipe_attachments=tuple(pipe_attachments),
+        beams=tuple(beams),
+        passthroughs=tuple(passthroughs),
         links=_links(bp, registry, ids),
     )
+
+
+def _float_property(data: ObjectData, name: str, value: float) -> ObjectData:
+    return _set_property(
+        data, name, Float(stored_float(value)), Tag(name, "FloatProperty", 0).as_modern()
+    )
+
+
+def _float_value(data: ObjectData, name: str) -> float:
+    value = find(data.properties, name)
+    if not isinstance(value, Float):
+        raise EmitError(f"actor has no floating-point {name}")
+    return value.v
+
+
+def _snapped_ids(data: ObjectData, ids: dict[str, int]) -> tuple[int | None, int | None]:
+    value = find(data.properties, SNAPPED_PASSTHROUGHS)
+    if value is None or isinstance(value, Array) and not value.items:
+        return (None, None)
+    if not isinstance(value, Array) or len(value.items) != 2:
+        raise EmitError("a transport must have exactly two snapped passthrough slots")
+    result: list[int | None] = []
+    for item in value.items:
+        if not isinstance(item, Object):
+            raise EmitError("a snapped passthrough slot is not an object reference")
+        if item.ref.is_null:
+            result.append(None)
+        elif item.ref.path in ids:
+            result.append(ids[item.ref.path])
+        else:
+            raise EmitError(f"snapped passthrough {item.ref.path} is outside this blueprint")
+    return (result[0], result[1])
+
+
+def _optional_side(data: ObjectData, name: str, ids: dict[str, int]) -> tuple[int, str] | None:
+    value = find(data.properties, name)
+    if value is None:
+        return None
+    if not isinstance(value, Object):
+        raise EmitError(f"{name} is not an object reference")
+    return None if value.ref.is_null else _wire_side(value.ref, ids)
+
+
+def _passthrough_references(
+    placement: SfyPlacement,
+    registry: Registry,
+    objects: list[tuple[ObjectHeader, ObjectData]],
+    spans: dict[int, tuple[int, int]],
+) -> None:
+    """Write the reciprocal actor/component relationship in native two-slot order."""
+    holes = {hole.id: hole for hole in placement.passthroughs}
+    attached: dict[tuple[int, str], int] = {}
+    for hole in placement.passthroughs:
+        start, _ = spans[hole.id]
+        header, data = objects[start]
+        for name, side in (
+            (TOP_CONNECTION, hole.top_connection),
+            (BOTTOM_CONNECTION, hole.bottom_connection),
+        ):
+            ref = ObjectRef.NULL
+            if side is not None:
+                if side in attached:
+                    raise EmitError(f"transport end {side} is attached to two hole faces")
+                attached[side] = hole.id
+                component = _component(objects, spans, side)
+                ref = ObjectRef(LEVEL, objects[component][0].path)
+            data = _set_property(
+                data, name, Object(ref), Tag(name, "ObjectProperty", 0).as_modern()
+            )
+        objects[start] = (header, data)
+    for transport in chain[LiftObj | PipeRun](placement.lifts, placement.pipes):
+        ends = (
+            pipe_ends(registry, transport.class_name)
+            if isinstance(transport, PipeRun)
+            else belt_ends(registry, transport.class_name)
+        )
+        refs = []
+        for port, hole_id in zip(ends, transport.snapped_passthroughs, strict=True):
+            if attached.pop((transport.id, port), None) != hole_id:
+                raise EmitError(
+                    f"transport {transport.id}.{port} and hole {hole_id} are not reciprocal"
+                )
+            if hole_id is not None and hole_id not in holes:
+                raise EmitError(f"transport {transport.id} names absent hole {hole_id}")
+            refs.append(
+                Object(
+                    ObjectRef.NULL
+                    if hole_id is None
+                    else ObjectRef(LEVEL, objects[spans[hole_id][0]][0].path)
+                )
+            )
+        start, _ = spans[transport.id]
+        header, data = objects[start]
+        value = Array("ObjectProperty", None, tuple(refs))
+        tag = Tag(SNAPPED_PASSTHROUGHS, "ArrayProperty", 0, inner_type="ObjectProperty").as_modern()
+        objects[start] = (header, _set_property(data, SNAPPED_PASSTHROUGHS, value, tag))
+    if attached:
+        raise EmitError(f"holes name non-transport components: {tuple(attached)}")
 
 
 def _wire_side(ref: ObjectRef, ids: dict[str, int]) -> tuple[int, str]:
@@ -518,14 +694,9 @@ def _set_top_transform(data: ObjectData, lift: LiftObj, registry: Registry) -> O
     struct serialises its non-default members only, which is why 276 of the
     corpus's 757 lifts carry a translation alone.
 
-    ``mSnappedPassthroughs`` goes out EMPTY.  A template's array names the
-    passthroughs the fixture's own lift was built through, which this blueprint
-    has not got, and the two flags are read as geometry -- ``SetupConnections``
-    faces both ends up or down instead of forward when one is set
-    (``lift.connectors``), and ``lift.height_range``'s floor becomes
-    ``mMinimumHeightWithVerticalConnection`` -- so inheriting one would be a
-    claim about where this lift's ends are.  This project authors no
-    passthroughs.
+    ``mSnappedPassthroughs`` is rebuilt separately once all actors exist. The
+    native two slots reference hole actors and the holes reciprocally reference
+    transport components; inherited fixture references never survive.
 
     ``mIsReversed`` is not written at all.  The header marks it ``DEPRECATED
     2023-01-30`` with "Instead build lifts where mConnector0 is always input"
@@ -555,8 +726,8 @@ def _set_top_transform(data: ObjectData, lift: LiftObj, registry: Registry) -> O
         value = p.value
         if p.tag.name == TOP_TRANSFORM:
             value = replace(struct, fields=tuple(fields))
-        elif p.tag.name == SNAPPED_PASSTHROUGHS and isinstance(value, Array):
-            value = replace(value, items=())
+        elif p.tag.name == SNAPPED_PASSTHROUGHS:
+            continue
         properties.append(Property(p.tag, value))
     return replace(data, properties=tuple(properties))
 
@@ -896,8 +1067,10 @@ def _pose(header: ObjectHeader) -> Pose:
     transform = header.transform
     if transform is None:
         raise EmitError(f"{header.name} is an actor with no transform")
-    x, y, z = transform.translation
-    return Pose(x, y, z, _yaw_degrees(header, transform))
+    try:
+        return Pose.from_transform(transform)
+    except ValueError as exc:
+        raise EmitError(f"{header.name}: {exc}") from exc
 
 
 def _yaw_degrees(header: ObjectHeader, transform: Transform) -> float:

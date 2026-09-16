@@ -227,14 +227,22 @@ class SfyMachineGroup(_Frozen):
         return (self.count - 1) * self.power_mw_per_machine + self.last_power_mw
 
 
+class PipeTier(_Frozen):
+    """A pipeline's rated capacity, in exact cubic metres per second."""
+
+    item_id: str
+    cubic_metres_per_second: Fraction = Field(gt=0)
+
+
 class SfyBuildSpec(_Frozen):
     """One complete, self-consistent Satisfactory build.
 
     Invariants enforced at construction, mirroring :class:`flab2bp.spec.BuildSpec`:
 
     * every rate is an exact positive ``Fraction`` -- no float reaches geometry;
-    * every item a group consumes is produced by another group or belted in;
-    * belt upgrades are strictly faster than the floor and listed slowest first.
+    * every item a group consumes is produced by another group or brought in;
+    * belt upgrades are strictly faster than the floor and listed slowest first;
+    * pipe tiers are listed in strictly increasing rated capacity.
 
     The dangling-demand check runs only when the spec claims to be complete,
     i.e. it declares external inputs or outputs.  A spec with neither is a
@@ -254,6 +262,10 @@ class SfyBuildSpec(_Frozen):
     belt_items_per_second: Fraction = Field(gt=0)
     #: Faster belts the build may use, slowest first, up to ``maxBelt``.
     belt_upgrades: tuple[BeltTier, ...] = ()
+    #: Flow items without a dataset stack size; their rates are cubic metres/s.
+    fluid_items: frozenset[str] = frozenset()
+    #: Allowed pipelines, chosen/default floor first, through ``maxPipe``.
+    pipe_tiers: tuple[PipeTier, ...] = ()
     label: str = ""
 
     @model_validator(mode="after")
@@ -285,6 +297,13 @@ class SfyBuildSpec(_Frozen):
                     "and listed slowest first"
                 )
             previous = tier.items_per_second
+        previous = Fraction()
+        for pipe in self.pipe_tiers:
+            if pipe.cubic_metres_per_second <= previous:
+                raise ValueError(
+                    f"{self.label or 'spec'}: pipe tiers must have strictly increasing capacity"
+                )
+            previous = pipe.cubic_metres_per_second
         return self
 
     @property
@@ -404,6 +423,7 @@ __all__ = (
     "FOUNDATION_CLASS",
     "Designer",
     "DirectPair",
+    "PipeTier",
     "SfyBuildSpec",
     "SfyMachineGroup",
     "designer",

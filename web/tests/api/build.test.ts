@@ -14,6 +14,53 @@ import { aJob, anAttempt, aResult, restoreFetch, serving } from '../support/buil
 
 afterEach(restoreFetch);
 
+test('Satisfactory responses retain binary downloads without requiring DSP viewer fields', async () => {
+  serving({
+    status: 200,
+    body: {
+      ...aJob(),
+      result: {
+        game: 'sfy',
+        blueprint: null,
+        valid: true,
+        strategy: 'sections',
+        designer: 'mk3',
+        candidate: 'plates',
+        machines: 3,
+        title: 'plates',
+        description: 'connected sections',
+        flow_pinned: true,
+        outputs: {},
+        external_inputs: {},
+        measure: { blueprints: 1, volume_cm3: 1200, belt_cm: 300, lifts: 1, attachments: 2 },
+        refused: [],
+        report: { ok: true, checks_run: ['flow'], skipped: [], findings: [] },
+        artifacts: [
+          {
+            name: 'plates.sbp',
+            url: '/api/build/x/artifacts/plates.sbp',
+            content_type: 'application/octet-stream',
+            size_bytes: 40,
+          },
+          {
+            name: 'plates.sbpcfg',
+            url: '/api/build/x/artifacts/plates.sbpcfg',
+            content_type: 'application/octet-stream',
+            size_bytes: 20,
+          },
+        ],
+      },
+    },
+  });
+  const job = await pollBuild('x');
+  if (!job.result || !('game' in job.result)) throw new Error('expected Satisfactory result');
+  expect(job.result.artifacts.map((artifact) => artifact.url)).toEqual([
+    '/api/build/x/artifacts/plates.sbp',
+    '/api/build/x/artifacts/plates.sbpcfg',
+  ]);
+  expect(job.result.blueprint).toBeNull();
+});
+
 test('machine rank accepts only exact and up-to without changing the default', () => {
   expect(DEFAULT_OPTIONS.machine_rank).toBe('exact');
   expect(BuildOptions.parse({ ...DEFAULT_OPTIONS, machine_rank: 'up-to' }).machine_rank).toBe(
@@ -188,8 +235,8 @@ test('submit and poll retain the parsed piler count', async () => {
   const submitted = await submitBuild(DEFAULT_OPTIONS);
   const polled = await pollBuild(submitted.id);
 
-  expect(submitted.result?.pilers).toBe(4);
-  expect(polled.result?.pilers).toBe(4);
+  expect(submitted.result && !('game' in submitted.result) && submitted.result.pilers).toBe(4);
+  expect(polled.result && !('game' in polled.result) && polled.result.pilers).toBe(4);
 });
 
 test('parsed responses retain a stacked belt tier on the result and attempt', async () => {
@@ -212,8 +259,9 @@ test('parsed responses retain a stacked belt tier on the result and attempt', as
 
   const parsed = await pollBuild('x');
 
-  expect(parsed.result?.belt_tiers.stack).toBe(2);
-  expect(parsed.result?.attempts[0]?.detail.belt_tiers.stack).toBe(2);
+  if (!parsed.result || 'game' in parsed.result) throw new Error('expected DSP result');
+  expect(parsed.result.belt_tiers.stack).toBe(2);
+  expect(parsed.result.attempts[0]?.detail.belt_tiers.stack).toBe(2);
 });
 
 test('an attempt without its own detail is rejected rather than half-described', async () => {

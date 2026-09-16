@@ -499,9 +499,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "--strategy",
         choices=tuple(dict.fromkeys((*STRATEGY_CHOICES, *SFY_STRATEGY_CHOICES))),
-        default="best",
-        help="layout backend for the URL's game; Satisfactory best races "
-        "manifold-rows and grid-routed in one budget. DSP best runs freeform, "
+        default=None,
+        help="layout backend for the URL's game; Satisfactory defaults to sections. "
+        "DSP defaults to best, which runs freeform, "
         "sequence-pair, transport-routing and hierarchical and keeps the smallest valid result. "
         "transport-routing constructs interfaces with bounded native SAT routing. "
         "hierarchical decomposes the spec into blocks, solves them apart and "
@@ -661,6 +661,8 @@ def main(argv: list[str] | None = None) -> int:
     # point is about a DSP flag, and `--trace-jsonl` even opens a file before
     # the build starts. The URL is the only thing that says which build this is.
     game = _game_of(args.url)
+    if args.strategy is None:
+        args.strategy = "sections" if game is Game.SFY else "best"
     if game is Game.SFY:
         return _sfy_main(args)
     if args.strategy not in STRATEGY_CHOICES:

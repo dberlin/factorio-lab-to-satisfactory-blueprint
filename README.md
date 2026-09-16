@@ -1,10 +1,35 @@
-# flab2bp
+# FactorioLab to Satisfactory Blueprint
 
-Turn a [FactorioLab](https://factoriolab.github.io/dsp) URL for Dyson Sphere Program into a
-dense, pasteable DSP blueprint. The browser interface is the recommended way to use `flab2bp`:
-it runs the same solver as the CLI and renders the generated blueprint in 3D.
+An independent Satisfactory-focused fork of `flab2bp`. Turn a
+[FactorioLab Satisfactory](https://factoriolab.github.io/sfy) URL and its exported
+flow into a connected production blueprint (`.sbp` and `.sbpcfg`). The `sections`
+planner builds rated production sections, composes them by material flow within
+the selected Blueprint Designer, and validates the complete placement before
+emission. It preserves FactorioLab's machine counts, clocks and rates, including
+supported mixed solid/fluid recipes and their byproducts.
 
-## Recommended: web interface
+Standard plastic and rubber layouts have been verified offline at 20, 60 and
+80 items/min in Mk2, using one, three and four refineries on one production
+floor. Crude-oil supply and residue drainage are retained. This is geometry,
+connectivity and binary validation, not an in-game throughput guarantee; see
+[the placement model](docs/sfy-layout-model.md) for stacking and hydraulic limits.
+
+The Python package and commands retain the `flab2bp` name. For example:
+
+```bash
+uv sync
+uv run flab2bp 'https://factoriolab.github.io/sfy/list?o=iron-plate*60&v=11' \
+  --flow path/to/export.csv --designer mk3 -o out/plates
+```
+
+Satisfactory defaults to `sections`, its only production planner, with one layout
+budget. The CLI and web API reject the former `best`, `manifold-rows` and
+`grid-routed` Satisfactory choices rather than translating or falling back.
+Historical measurements and reference implementations remain available as
+evidence, not production alternatives. Inherited DSP functionality retains its
+own defaults; the following inherited interface notes describe that DSP path.
+
+## Web interface
 
 ### Requirements and setup
 
@@ -13,26 +38,30 @@ it runs the same solver as the CLI and renders the generated blueprint in 3D.
 - [Bun](https://bun.sh/) for the browser interface and TypeScript cross-validation
 - A C++17-capable compiler when building the native extensions from source
 
-The viewer's item names, icons, recipes, and building geometry are extracted from the game and
-are not stored in Git. Populate `web/public/assets/` once from a local Dyson Sphere Program
-installation, or copy an already-generated directory from another installation:
+Satisfactory visualization uses the bundled registry and the Python binary decoder;
+it does not require DSP assets or a local game installation. The optional DSP
+viewer needs its extracted `web/public/assets/` directory.
 
 ```bash
 uv sync
 cd web
 bun install --frozen-lockfile
-bun run extract-assets "/path/to/Dyson Sphere Program"
 cd ..
 uv run flab2bp-web
 ```
 
-Open <http://127.0.0.1:8000>. Skip asset extraction when `web/public/assets/` is already
-populated. `flab2bp-web` builds the front end when necessary; pass `--build` to force a rebuild,
-`--no-build` to serve an existing build, or `--host` and `--port` to change the listener.
+Open <http://127.0.0.1:8000>. `flab2bp-web` builds the front end when necessary;
+pass `--build` to force a rebuild, `--no-build` to serve an existing build, or
+`--host` and `--port` to change the listener. For DSP viewing only, run
+`bun run extract-assets "/path/to/Dyson Sphere Program"` from `web/`, or copy
+an existing extracted assets directory.
 
-Paste a FactorioLab URL, choose the strategy, candidate policies, and per-layout budget, then
-press **Build**. The page exposes the resulting blueprint for copying and renders it without a
-second tool.
+Paste a Satisfactory FactorioLab URL, choose the Blueprint Designer and press
+**Build**. Automatic flow capture is selected when entering a Satisfactory URL
+without a supplied CSV; a local flow export can be used instead. The completed
+factory appears in 3D alongside its validation report and both binary downloads.
+The inherited DSP controls below retain their own strategies and blueprint-string
+copying workflow.
 
 **A build is a job, not a request.** `--budget` is per layout and `best` lays out every
 candidate with freeform, sequence-pair, CaDiCaL-based transport-routing and hierarchical,
@@ -253,14 +282,11 @@ sequence-pair per-island exact-layout search's non-convergence. Full measurement
 refusal text, and the ranked residual blockers are in
 `docs/superpowers/evidence/2026-09-07-lane-fanout/gate/verdict.md`.
 
-## Satisfactory (in progress)
+## Satisfactory production sections
 
-A second target is being built alongside the DSP one: `flab2bp.sfy` reads and writes Satisfactory
-blueprints (`.sbp`/`.sbpcfg`) byte-for-byte, and carries a game-data registry — every buildable,
-recipe, connection port and placement limit — extracted from an installed copy of the game into
-`src/flab2bp/sfy/data/`. Nothing in it is typed in by hand. Milestone 1 is the format, the
-registry and a first authored blueprint: `uv run python scripts/sfy_checkpoint1.py` builds one
-into `out/sfy/` (not committed) and checks it; its docstring says how to load it in game.
+`flab2bp.sfy` reads and writes Satisfactory blueprint pairs (`.sbp`/`.sbpcfg`)
+and uses the extracted game registry in `src/flab2bp/sfy/data/` for machines,
+ports, conveyors, lifts, pipes, pumps, junctions, beams, floor holes and designers.
 
 The same `flab2bp` command takes a Satisfactory URL:
 
@@ -276,13 +302,32 @@ into a save's `blueprints/<session>` folder and load them from inside a Blueprin
 Designer. `--designer` picks `mk1`, `mk2` or `mk3`, sized from the game's own
 designer buildable, and defaults to `mk1`.
 
-`--strategy` accepts `manifold-rows`, `grid-routed`, or `best` (the default).
-The manifold lays recipe rows and belt corridors; the grid strategy packs
-machines and searches conveyor paths, including lifts and attachment turns.
-`best` runs both serially with equal shares of one layout deadline and selects
-a validator-clean result by blueprint count, occupied volume, belt length, then
-stable strategy order. The report names the winner, its measurements and any
-losing refusals. A refused grid search is not proof that the factory cannot fit.
+`--strategy` accepts only `sections` (the default). Solid recipe groups use
+opposing machine rows; supported mixed-material groups add separate pipe
+manifolds and retain every ingredient and product, including fluid byproducts.
+Exact machine clocks, fractional last machines and transport-tier ceilings
+are preserved. Each external material has a rated vertical pass-through lane,
+with a bottom feed, a local consumption/collection branch and a top continuation.
+
+Whole sections are composed by material dependency, keeping consumers above
+their producers while allowing independent recipe sections to share a floor.
+The local routers connect section interfaces, not arbitrarily packed individual
+machines. Full base/roof slabs and beam outlines define the repeatable module;
+matching floor/ceiling holes align its material trunks. The selected designer
+contains one complete blueprint, not a silently truncated partial factory.
+
+**Stacking:** keep the same XY position and orientation and raise each copy by
+the stack pitch printed in its `.sbpcfg`. Manually bridge the matching holes
+across the **400 cm (4 m) seam** with lifts or pipes; automatic joining is not
+promised. Feed the bottom inputs, connect power (including pumps), and drain
+the top outputs, including byproducts. Supply all copies' combined demand and
+keep accumulated flow within each reported trunk capacity. For liquids, also
+provide the reported inlet head above the bottom port: it is calculated from
+the actual routed path to the next pump inlet, not assumed external pressure.
+
+`--budget` supplies one layout/validation deadline (15 seconds by default).
+There is no strategy race or fallback, and a routing refusal is not proof of
+geometric infeasibility.
 
 **FactorioLab's own solved flow is required**, unlike the DSP path, which re-derives a recipe
 selection when none is given. Pass `--flow` with the CSV the list view's "download as CSV"
@@ -292,47 +337,81 @@ written, `2` a bad URL, spec or missing flow, and `3` no validator-clean layout 
 no encodable blueprint. `--allow-invalid` remains DSP-only; it cannot override
 the Satisfactory strategy's validation contract.
 
-Both strategies refuse **fluids** (`fluids are M5`) and a **run past the fastest
-belt the save can build** (`run exceeds the belt ceiling`). The manifold also
-refuses chains that do not fit its single level of rows. The grid reports
-packing and routing failures separately, including budget exhaustion.
+Supported solid-production families include constructors, assemblers,
+manufacturers, smelters and foundries; supported mixed recipes include refinery
+plastic production with heavy-oil residue retained as an output. This is not
+arbitrary fluid-network support: cyclic/recycled coupled dependencies,
+unsupported port geometry, insufficient belt/pipe capacity or hydraulic head,
+and geometry beyond the designer remain explicit refusals.
 
-The web build API accepts the same strategy/designer choices and a pinned flow.
-Successful Satisfactory jobs expose downloadable `.sbp`/`.sbpcfg` artifacts in
-their result, not DSP viewer geometry. The Satisfactory viewer is M4 work.
+The web build API accepts the same strategy/designer choices and a pinned or
+automatically captured flow. Successful Satisfactory jobs are visualized in the
+same web UI and expose downloadable `.sbp`/`.sbpcfg` pairs. Generated configs
+describe net input/output rates, machine recipes and clocks, estimated production
+power, required Power Shards/Somersloops and hookup instructions. The existing
+verified icon/color defaults are retained; the game takes the name from the filename.
 
-For the current in-game checkpoint, run
-`uv run python scripts/sfy_checkpoint3.py --out out/sfy --time-budget 15`.
-It writes grid-routed concrete and plate factory pairs plus a separately labelled
-lift-and-attachment transport witness, with installation and per-belt rates in
-`out/sfy/checkpoint3-README.md`. The witness is not a complete factory benchmark.
-Binary/physical validation does not replace the in-game paste test, and the
-[M3 corpus acceptance gate](docs/superpowers/specs/2026-09-13-satisfactory-target-design.md#15-m3-implementation-status--acceptance-remains-open)
-remains open.
+Open or drop an existing `.sbp` to inspect it, including historical files with
+arbitrary object IDs. The schematic viewer shows registry-derived machine geometry,
+sampled belts and pipes, splitters/mergers, junctions/pumps, lift spans,
+foundations, beams, floor holes, storage and power links.
+Use Q/E to rotate, O for top-down, drag to orbit and scroll to zoom. Layer controls,
+ghost/solid/hidden machines, click selection, connection navigation and the
+building/material list support inspection. Unknown geometry is marked explicitly.
+Lift envelopes and dynamic floor-hole middle meshes are not complete game housing
+or cap meshes; the preview is not a paste test.
 
-For the manifold, what fits is the sum of four things, measured rather than assumed, against the designer's own
-32 m (Mk.1), 40 m (Mk.2) or 48 m (Mk.3):
+Offline stack/fluid reports and native investigation artifacts are retained at
+`/home/dannyb/satisfactory-tests/stackable-production/`. The Mk3 examples include
+Plastic 10/min and 20/min (one refinery each, retaining heavy-oil residue) and
+Reinforced Iron Plate 10/min (fourteen machines across three mixed-recipe floors).
+These are measured examples, not general fit guarantees.
 
-- **each row's own band, 15.6–22.6 m** over the corpus — the machine's hard clearance boxes and
-  the chains that feed and drain it, every distance the game's;
-- **a margin at each wall of what the turn there costs**, 1.01 m today — *this project's choice*,
-  and derived rather than picked: a turn made by a conveyor attachment spends its own soft box
-  and one shortest legal belt, less whatever the row's band already covers;
-- **a gap between two rows of what their trunk's two turns still want**, 2.02 m today, and 1 m
-  between two rows of ONE group, which no trunk turns between — *ours*, same derivation;
-- **nothing at all between two rows the spec's own rates pair** — where one group makes exactly
-  what another eats, machine for machine, the two are laid facing each other with one straight
-  belt per pair and no chains and no trunk between them.
+Binary/physical validation does not replace an in-game paste test. Native
+length/curvature/fluid-identity checks are distinguished from project-owned
+collision, connectivity, stack and hydraulic checks. Partial clearance and
+dynamic cap-mesh coverage remain explicitly reported; a clean report does not
+establish that unread game rules passed.
 
-So `iron-plate*60` is 27.6 m and fits a **Mk.1**, because its three Smelters and three
-Constructors pair; `concrete*60` is two halves of one group at 34.2 m and needs a **Mk.2**;
-`reinforced-iron-plate*10` is 95 m and fits none of the three. Every refusal names its cause,
-says the centimetres it wanted, and exits 3.
-[docs/sfy-layout-model.md](docs/sfy-layout-model.md) has each number and where it comes from.
+The section cutover also corrects objective export rates when another recipe
+consumes the same item: the CSV's gross item flow is not exported a second time.
+For example, wire plus cable exports only the wire left after cable production.
+
+Historical manifold measurements remain in
+[docs/sfy-layout-model.md](docs/sfy-layout-model.md); they describe the retired
+layout, not current section spacing or fit guarantees.
 
 The committed data files mean neither the tests nor a build need a game install.
 [docs/sfy-regenerating-game-data.md](docs/sfy-regenerating-game-data.md) is the runbook for
 regenerating them after a game update, in order, with the prerequisites each step needs.
+
+### Satisfactory in-game verification
+
+**No Satisfactory in-game load, paste or throughput verification has been performed.**
+Offline checks and the browser preview are not game-acceptance evidence. The local
+verification pack at `/home/dannyb/satisfactory-tests/in-game-verification/` contains
+matched pairs, `SHA256SUMS`, `manifest.json`, `EXPECTATIONS.txt`, a concrete
+`CHECKLIST.txt` and an unfilled `RESULTS.template.json`; its status is explicitly
+`NOT_RUN` until a human records game results.
+
+Use a backed-up test save/session, not a live factory. Save one disposable blueprint
+in-game to identify that session's actual blueprint folder; on Windows the usual
+root is `%LOCALAPPDATA%\FactoryGame\Saved\SaveGames\blueprints\<session name>\`.
+With the game closed, copy each `.sbp` with its same-stem `.sbpcfg`, never overwrite
+an existing pair, then reload the session. Load it in the specified Blueprint
+Designer mark and separately select the original blueprint in the build menu for
+placement on a recorded, flat, unobstructed test site. Record those two outcomes
+separately, including any missing unlocks or construction resources.
+
+Compare machine counts, recipes, clocks, floors, splitters/mergers and both ends
+of every lift with the pack's expectations. Supply every listed boundary input,
+connect the power network, leave all outputs unblocked, let buffers settle, then
+count each output over a timed interval. Preserve exact error text, game build,
+mods/settings, location/orientation, screenshots and the original pair's hashes.
+Before repairing suspect connections, capture the first stall. Re-save from the
+Designer under a new name and return both game-written files alongside the
+untouched originals; never replace the failing control. The DSP location and
+paste protocol in `docs/IN_GAME_TESTING.md` do not apply to Satisfactory.
 
 ## Development
 
@@ -350,11 +429,16 @@ bun run lint
 bun run test
 ```
 
-### Does it actually work?
+### Runtime verification
 
-`pytest` pins behaviour; it does not answer "can both strategies lay out every real URL, cleanly,
-right now". That is a separate gate, because the full matrix is minutes of CP-SAT and belongs
-nowhere near an edit loop:
+The Satisfactory corpus audit exercises `sections` and reports flow-pinning status:
+
+```bash
+uv run python scripts/sfy_audit.py --strategy sections
+```
+
+The inherited DSP audit below is separate. Unit tests do not establish that
+every real factory fits within a time-limited solver budget:
 
 ```bash
 uv run python scripts/audit.py                  # every tier, both strategies, exits non-zero if not

@@ -1,7 +1,7 @@
 """Does every Satisfactory corpus URL build, cleanly, right now?
 
     uv run python scripts/sfy_audit.py                     # every entry, every mark
-    uv run python scripts/sfy_audit.py --strategy grid-routed
+    uv run python scripts/sfy_audit.py --strategy sections
     uv run python scripts/sfy_audit.py --designer mk1      # one mark
     uv run python scripts/sfy_audit.py --budget 15         # seconds per cell
     uv run python scripts/sfy_audit.py --only plastic-20   # one entry
@@ -61,8 +61,8 @@ THE FIVE THINGS A CELL CAN BE, AND WHY THE DIFFERENCE MATTERS
 
 WHY IT IS SERIAL
 ----------------
-The strategy race is serial in-process under one budget. The audit also visits
-cells serially so the report's wall times describe the same resource policy.
+The section planner runs in-process under one budget. The audit visits cells
+serially so the report's wall times describe the same resource policy.
 """
 
 from __future__ import annotations
@@ -99,7 +99,7 @@ from flab2bp.sfy.layout.model import SfyPlacement  # noqa: E402
 from flab2bp.sfy.layout.validate import Report  # noqa: E402
 from flab2bp.sfy.strategy_names import SFY_STRATEGY_CHOICES, SfyStrategyName  # noqa: E402
 
-#: Seconds per cell, shared by the race when ``best`` is requested.
+#: Seconds per cell for the connected-section planner.
 DEFAULT_BUDGET_S: Final = 15.0
 
 
@@ -155,7 +155,7 @@ class Cell:
     url_id: str
     designer: str
     verdict: str
-    strategy: SfyStrategyName = "best"
+    strategy: SfyStrategyName = "sections"
     winner: str = ""
     measure: Measure | None = None
     rounds: int | None = None
@@ -246,7 +246,7 @@ def run_cell(
     designer: str,
     budget_s: float,
     *,
-    strategy: SfyStrategyName = "best",
+    strategy: SfyStrategyName = "sections",
     build: BuildFn = pipeline.build,
 ) -> Cell:
     """Build one entry in one mark and classify what happened.
@@ -327,7 +327,7 @@ def run_cell(
 
 
 def not_run(
-    entry: SfyCorpusEntry, designer: str, why: str, *, strategy: SfyStrategyName = "best"
+    entry: SfyCorpusEntry, designer: str, why: str, *, strategy: SfyStrategyName = "sections"
 ) -> Cell:
     """A cell this run never reached.  Counted as a miss, never as a pass."""
     return Cell(
@@ -630,7 +630,7 @@ def report_path(
     complete = covers_matrix(cells, strategies=names)
     stamp = (today or date.today()).isoformat()
     all_strategies = set(names) == set(SFY_STRATEGY_CHOICES)
-    strategy_part = "+".join(names) or "best"
+    strategy_part = "+".join(names) or "sections"
     suffix = "" if all_strategies else f"-{strategy_part}"
     if requested is not None:
         if requested.resolve().is_relative_to(EVIDENCE_DIR.resolve()):
@@ -656,7 +656,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="append",
         default=[],
         choices=SFY_STRATEGY_CHOICES,
-        help="requested strategy; repeat for a combined matrix, default best",
+        help="requested strategy; default sections",
     )
     ap.add_argument(
         "--designer",
@@ -698,7 +698,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     args = ap.parse_args(argv)
-    strategies: tuple[SfyStrategyName, ...] = tuple(dict.fromkeys(args.strategy or ["best"]))
+    strategies: tuple[SfyStrategyName, ...] = tuple(dict.fromkeys(args.strategy or ["sections"]))
 
     wanted = tuple(args.only) or tuple(e.url_id for e in SFY_CORPUS)
     unknown = tuple(name for name in wanted if name not in {e.url_id for e in SFY_CORPUS})

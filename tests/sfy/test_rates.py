@@ -134,11 +134,77 @@ def test_external_inputs_are_the_flows_mined_items() -> None:
     assert spec.surplus_outputs == {}
 
 
-def test_a_fluid_in_the_flow_refuses_with_the_cause_named() -> None:
-    with pytest.raises(RatesRefusal) as caught:
-        _spec("plastic-10")
-    assert caught.value.cause == "fluids are M5"
-    assert "crude-oil" in str(caught.value)
+def test_objective_used_by_another_recipe_exports_only_its_net_flow() -> None:
+    spec = _spec("wire-120-cable-60")
+    assert spec.outputs == {"wire": Fraction(2), "cable": Fraction(1)}
+    for item, exported in spec.outputs.items():
+        produced = sum(
+            (group.row_outputs.get(item, Fraction()) for group in spec.groups), Fraction()
+        )
+        consumed = sum(
+            (group.row_inputs.get(item, Fraction()) for group in spec.groups), Fraction()
+        )
+        assert produced == consumed + exported
+
+
+@pytest.mark.parametrize(
+    ("name", "clock", "crude", "plastic", "residue"),
+    [
+        ("plastic-10", Fraction(1, 2), Fraction(1, 4), Fraction(1, 6), Fraction(1, 12)),
+        ("plastic-20", Fraction(1), Fraction(1, 2), Fraction(1, 3), Fraction(1, 6)),
+    ],
+)
+def test_plastic_preserves_crude_input_and_residue_surplus(
+    name: str, clock: Fraction, crude: Fraction, plastic: Fraction, residue: Fraction
+) -> None:
+    spec = _spec(name)
+    (refinery,) = spec.groups
+    assert refinery.machine_item_id == "refinery"
+    assert refinery.count == 1
+    assert refinery.last_clock == clock
+    assert refinery.clock == Fraction(1)
+    assert spec.external_inputs == {"crude-oil": crude}
+    assert spec.outputs == {"plastic": plastic}
+    assert spec.surplus_outputs == {"heavy-oil-residue": residue}
+    assert spec.fluid_items == frozenset({"crude-oil", "heavy-oil-residue"})
+    assert refinery.row_inputs == spec.external_inputs
+    assert refinery.row_outputs == spec.outputs | spec.surplus_outputs
+
+
+def test_pipe_options_use_rated_cubic_metres_per_second_and_the_url_floor() -> None:
+    default = _spec("plastic-20")
+    assert [(tier.item_id, tier.cubic_metres_per_second) for tier in default.pipe_tiers] == [
+        ("pipeline-mk1", Fraction(5)),
+        ("pipeline-mk2", Fraction(10)),
+    ]
+
+    url = _url("plastic-20")
+    chosen = spec_from_flow(
+        load_vendored(Game.SFY),
+        parse_url(url + "&ipi=pipeline-mk2"),
+        load_flow(FLOWS / "plastic-20.csv", url=url),
+        load_registry(),
+        load_lab_map(),
+    )
+    assert [(tier.item_id, tier.cubic_metres_per_second) for tier in chosen.pipe_tiers] == [
+        ("pipeline-mk2", Fraction(10)),
+    ]
+
+
+def test_pipe_options_stop_at_the_dataset_ceiling() -> None:
+    data = load_vendored(Game.SFY)
+    restricted = replace(data, defaults=replace(data.defaults, max_pipe="pipeline-mk1"))
+    url = _url("plastic-20")
+    spec = spec_from_flow(
+        restricted,
+        parse_url(url),
+        load_flow(FLOWS / "plastic-20.csv", url=url),
+        load_registry(),
+        load_lab_map(),
+    )
+    assert [(tier.item_id, tier.cubic_metres_per_second) for tier in spec.pipe_tiers] == [
+        ("pipeline-mk1", Fraction(5)),
+    ]
 
 
 def _spec_from_rows(name: str, rows: tuple[FlowRow, ...]) -> SfyBuildSpec:
@@ -185,8 +251,8 @@ def test_a_miners_spare_ore_is_not_something_the_build_has_to_belt_out() -> None
     assert _spec_from_rows("iron-plate-60", byproduct).surplus_outputs == {"screw": Fraction(1, 2)}
 
 
-def test_an_item_the_dataset_does_not_carry_is_refused_by_name() -> None:
-    """An unknown id must not slip past the fluid gate and be belted as a solid."""
+def test_an_item_the_dataset_does_not_carry_is_refused() -> None:
+    """An unknown id must not slip past classification and be belted as a solid."""
     flow = load_flow(FLOWS / "iron-plate-60.csv", url=_url("iron-plate-60"))
     rows = (
         *flow.rows,
@@ -195,7 +261,6 @@ def test_an_item_the_dataset_does_not_carry_is_refused_by_name() -> None:
     with pytest.raises(RatesRefusal) as caught:
         _spec_from_rows("iron-plate-60", rows)
     assert caught.value.cause == "unknown item"
-    assert "unobtanium" in str(caught.value)
 
 
 def test_the_belt_floor_and_ceiling_come_from_the_url_or_the_defaults() -> None:

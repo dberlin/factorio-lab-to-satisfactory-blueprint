@@ -603,6 +603,63 @@ itself proves this will recover a corpus cell.
    exercised behavior is known. No extra search allowance, timeout pin, commit,
    merge or attribution rewrite is authorized by this amendment.
 
+## Accepted architectural proof experiments — 2026-09-16
+
+The user accepted the post-merge recommendation: architectural investigation
+with bounded end-to-end proofs, not another parameter sweep or a wholesale
+router replacement. Baseline is local master `3a1d159b`; the existing isolated
+`satisfactory` worktree and this plan's diagnostic directory are retained.
+Production source stays unchanged during these experiments.
+
+### Funded junction planning with turn-aware suffixes
+
+- Prepare `task16_junction_probe.py` and slice-local helpers in this plan's
+  diagnostic directory, reusing the earlier `task13_junction_*` experiment.
+- Preserve feedback-only activation after the ordinary first arrangement fails.
+  Derive reservations from real machine ports and registry geometry.
+- Migrate the diagnostic prefix/suffix composition to the current motion and
+  transactional tree-proof APIs. Never concatenate a path while retaining an
+  invalidated witness or inventing a terminal at an access node.
+- Compare ordinary rod/Mk2 with reservation plus funded admission. Each complete
+  pipeline call retains the original15-second deadline, workers, charged-work
+  limits and physical/encoding checks. Record the first remaining obstruction,
+  query/preparation work and actual completed nets, not only successful taps.
+- Only a complete validated emitted/decoded factory is a success. A negative
+  result distinguishes unsupported geometry, packing, physical rejection and
+  search-budget exhaustion; it does not prove impossibility.
+
+### Regression and preservation controls
+
+- Main owns `task16_controls.py` and control result JSON in the same directory.
+- Measure ordinary concrete/Mk1 and plate/Mk1, Mk2 and Mk3 at15seconds. Apply the
+  junction candidate to the same controls to detect activation or regression.
+- Keep candidate/baseline code and game data identical except for the declared
+  diagnostic change. Run measured solver processes serially to avoid introducing
+  cross-experiment wall-time contention. Preserve actual pairs for clean cells.
+
+### Constructive dense first-placement proof
+
+- Prepare `task16_dense_constructive.py` separately from all routing diagnostics.
+- Test one deterministic constructive free-placement method: choose real
+  registry-derived orientations and candidate positions from floor boundaries
+  and already-placed rectangle/apron separation boundaries. Maintain full hard
+  separation and foreign-machine apron legality throughout construction.
+- A bounded beam may preserve alternative placements; this is not a fixed row
+  template, a relaxed incumbent accepted as legal, or a new routing backend.
+- Include preparation, construction and independent original-model verification
+  inside the existing first-pack slice. Compare wire/Mk2 with its ordinary packer;
+  retain plate/Mk1 as a positive geometry control. Report partial placements only
+  as diagnostic evidence, never as accepted packs.
+- If a complete pack survives every original constraint, exercise it through the
+  unchanged full production pipeline within15seconds. A legal pack alone does
+  not establish a complete-factory capability gain.
+
+Main owns all source integration, measured executions and evidence updates.
+Parallel experiment authors own disjoint task16-prefixed scripts only; they skip
+builds, test suites, linters, formatters and solver runs. The first full-factory
+proof determines whether incremental integration is justified or a larger
+placement/topology design is needed. No extra allowance or timeout pin is allowed.
+
 ## Self-review
 
 - **Spec coverage.** Section 8.1 (grid, levels): Task 4. Section 8.2 (lift, splitter/merger objects): Tasks 6, 7. Section 8.4 (lifts as turns, per-turn choice): Tasks 6, 7 and constraint 8. Section 9 (strategy 2, protocol, race key): Tasks 2, 10, 11. Section 10 (validation as the gate): every strategy test asserts `validate` clean; Task 3 narrows the one `partial` width. Section 12 (milestones, corpus gate): Tasks 1, 11. Section 14's two extractor gaps: Task 1. Not covered, by R-M3-0: stacking, passthroughs, manifest, zip, web viewer (M4).

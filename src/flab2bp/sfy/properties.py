@@ -1098,7 +1098,7 @@ def _read_struct_array(r: Reader, tag: Tag, end: int, count: int, modern: bool) 
     items: list[Value] = []
     if count and name in BINARY_STRUCTS:
         region = end - r.pos
-        if region < 0 or region % count:
+        if region < count or region % count:
             return None
         elem = region // count
         items = [_read_struct_value(r, name, elem, modern, native=True) for _ in range(count)]
@@ -1110,7 +1110,11 @@ def _read_struct_array(r: Reader, tag: Tag, end: int, count: int, modern: bool) 
 def _read_array_body(r: Reader, tag: Tag, end: int, modern: bool) -> Value | None:
     """Decode an array value, or return ``None`` for a layout we do not know."""
     count = r.i32()
-    if count < 0:
+    # Every decoded element consumes at least one byte. In particular, a
+    # zero-byte binary-struct region must not turn an attacker-controlled count
+    # into arbitrarily many BinaryStruct(name, b"") objects. Respect both the
+    # property's declared region and the physically available input.
+    if count < 0 or count > min(end, len(r.data)) - r.pos:
         return None
     inner = tag.inner_type or ""
     if inner == "StructProperty":

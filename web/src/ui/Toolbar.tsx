@@ -1,9 +1,12 @@
 import { type MachineLook, useBlueprint } from '../state/BlueprintProvider';
+import { SatisfactoryToolbar } from './SatisfactoryPanels';
 
 const MACHINE_LOOKS: MachineLook[] = ['ghosted', 'solid', 'hidden'];
 
 export function Toolbar() {
-  const { document, blueprint, sceneModel, stale, view, setView } = useBlueprint();
+  const { document, blueprint, sceneModel, stale, view, setView, satisfactoryScene } =
+    useBlueprint();
+  if (satisfactoryScene) return <SatisfactoryToolbar scene={satisfactoryScene} />;
   if (!blueprint) return <header className="toolbar">No blueprint loaded</header>;
 
   const title = blueprint.header.shortDesc || '(untitled)';

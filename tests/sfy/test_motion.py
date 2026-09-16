@@ -13,12 +13,16 @@ from flab2bp.sfy.layout.model import Vector
 from flab2bp.sfy.layout.motion import motion_profile
 from flab2bp.sfy.layout.realise import Terminal, realise
 from flab2bp.sfy.layout.router import Routed, RouteFailureKind, route_net
+from flab2bp.sfy.layout.rrr import _overlap, _physical
 from flab2bp.sfy.layout.transitions import incline_run_nodes, sfy_transitions
 from tests.sfy.test_rrr import BELT, ITEM, LIFT, _lattice, _measures, _occupancy, _registry
 
 
 def _fixed(
-    path: tuple[Node, ...], *, sink_facing: Vector = (0.0, -1.0, 0.0)
+    path: tuple[Node, ...],
+    *,
+    sink_facing: Vector = (0.0, -1.0, 0.0),
+    lift_heights: range = range(0),
 ) -> tuple[Routed, Terminal, Terminal]:
     lattice = _lattice()
     source = Terminal(path[0], lattice.world(path[0]), (1.0, 0.0, 0.0), None, "wall")
@@ -32,7 +36,7 @@ def _fixed(
         if (x, y, z) not in allowed
     )
     transitions = sfy_transitions(
-        lattice.n + 1, range(0), incline_run_nodes(_registry().limits, lattice.grid_cm)
+        lattice.n + 1, lift_heights, incline_run_nodes(_registry().limits, lattice.grid_cm)
     )
     routed = route_net(
         _occupancy(),
@@ -133,3 +137,50 @@ def test_consecutive_attachment_turns_share_previous_reach_not_previous_cost(
         motion=routed.motion,
     )
     assert built.turns == ("attachment", "attachment")
+
+
+@pytest.mark.parametrize("flat,legal", ((1, False), (2, True)))
+@pytest.mark.parametrize("following", ("lift", "slope", "sink"))
+def test_lift_connector_requires_a_real_belt_and_clear_shaft_approach(
+    flat: int, legal: bool, following: str
+) -> None:
+    approach = tuple((x, 4, 2) for x in range(4, 9))
+    bridge = tuple((x, 4, 6) for x in range(8, 9 + flat))
+    x = 8 + flat
+    if following == "lift":
+        departure = tuple((x + step, 4, 10) for step in range(5))
+    elif following == "slope":
+        departure = ((x + 1, 4, 6), *((x + step, 4, 5) for step in range(2, 7)))
+    else:
+        departure = ()
+    path = (*approach, *bridge, *departure)
+    routed, source, sink = _fixed(path, sink_facing=(-1.0, 0.0, 0.0), lift_heights=range(4, 5))
+    if not legal:
+        assert routed.path is None
+        assert routed.kind is RouteFailureKind.MOTION_EXHAUSTED
+        return
+    assert routed.path == path
+    assert routed.motion is not None
+    built = realise(
+        path,
+        source=source,
+        sink=sink,
+        lattice=_lattice(),
+        measures=_measures(),
+        registry=_registry(),
+        belt_class=BELT,
+        lift_class=LIFT,
+        item_id=ITEM,
+        rate=Fraction(1, 8),
+        ids=count(1000),
+        motion=routed.motion,
+    )
+    geometry = _physical((built,), _registry())
+    lift_ids = {lift.id for lift in built.lifts}
+    for shaft in geometry:
+        if shaft.object_id in lift_ids:
+            assert not any(
+                _overlap(shaft.bounds, part.bounds)
+                for part in geometry
+                if part.object_id != shaft.object_id and shaft.object_id not in part.contacts
+            )

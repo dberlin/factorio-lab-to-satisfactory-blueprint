@@ -38,6 +38,7 @@ export const RequestStrategy = z.enum([
   'sequence-pair',
   'transport-routing',
   'hierarchical',
+  'sections',
 ]);
 
 /** Strategies the server may report for an actual layout attempt or result. */
@@ -46,6 +47,7 @@ export const ExplicitStrategy = z.enum([
   'sequence-pair',
   'transport-routing',
   'hierarchical',
+  'sections',
 ]);
 
 export const ProliferatorTier = z.enum(['auto', 'none', '1', '2', '3']);
@@ -184,6 +186,50 @@ const BuildResult = AttemptFacts.extend({
   attempts: z.array(Attempt),
 });
 
+const SfyBuildResult = z.object({
+  game: z.literal('sfy'),
+  blueprint: z.null(),
+  valid: z.boolean(),
+  strategy: z.literal('sections'),
+  designer: z.enum(['mk1', 'mk2', 'mk3']),
+  candidate: z.string(),
+  machines: z.number(),
+  title: z.string(),
+  description: z.string(),
+  flow_pinned: z.boolean(),
+  outputs: z.record(z.string(), Rate),
+  external_inputs: z.record(z.string(), Rate),
+  measure: z.object({
+    blueprints: z.number(),
+    volume_cm3: z.number(),
+    belt_cm: z.number(),
+    lifts: z.number(),
+    attachments: z.number(),
+  }),
+  refused: z.array(AttemptFailure),
+  report: z.object({
+    ok: z.boolean(),
+    checks_run: z.array(z.string()),
+    skipped: z.array(z.string()),
+    findings: z.array(
+      z.object({
+        check: z.string(),
+        severity: z.string(),
+        message: z.string(),
+        objects: z.array(z.string()),
+      }),
+    ),
+  }),
+  artifacts: z.array(
+    z.object({
+      name: z.string(),
+      url: z.string(),
+      content_type: z.string(),
+      size_bytes: z.number(),
+    }),
+  ),
+});
+
 /** A refusal: which pairs were tried and each exact projection failure. */
 const Refusal = z.object({ message: z.string(), attempts: z.array(AttemptFailure) });
 
@@ -222,7 +268,7 @@ const Job = z.object({
   progress: Step.nullable(),
   /** Pairs that have already ended, newest last. */
   settled: z.array(Step),
-  result: BuildResult.nullable(),
+  result: z.union([SfyBuildResult, BuildResult]).nullable(),
   refusal: Refusal.nullable(),
   error: z.string().nullable(),
 });
@@ -246,6 +292,7 @@ export const BuildOptions = z
     machine_rank: MachineRank,
     power_tower: PowerTower,
     band: BandSelection,
+    designer: z.enum(['mk1', 'mk2', 'mk3']).optional(),
     name: z.string(),
     allow_invalid: z.boolean(),
     fetch_flow: z.boolean(),
@@ -278,6 +325,7 @@ export const DEFAULT_OPTIONS: BuildOptions = {
   power_tower: 'auto',
   name: '',
   band: 'portable',
+  designer: 'mk1',
   // Off by default, exactly as the CLI has it: a blueprint that pastes cleanly
   // and then does not run is the worst outcome available here.
   allow_invalid: false,
@@ -327,6 +375,15 @@ export interface ProjectedSolve {
   totalS: number;
 }
 
+/** Match the game path, not an arbitrary substring in a URL's query. */
+export function isSatisfactoryUrl(url: string): boolean {
+  try {
+    return new URL(url).pathname.split('/')[1] === 'sfy';
+  } catch {
+    return false;
+  }
+}
+
 /**
  * The wall clock a request is asking for, before it is submitted.
  *
@@ -335,6 +392,16 @@ export interface ProjectedSolve {
  * so the panel does the multiplication rather than leaving it to be discovered.
  */
 export function projectSolve(options: BuildOptions): ProjectedSolve {
+  if (isSatisfactoryUrl(options.url)) {
+    return {
+      candidates: 1,
+      strategies: 1,
+      attempts: 1,
+      graceS: 0,
+      searchS: options.budget_s,
+      totalS: options.budget_s,
+    };
+  }
   const candidates =
     options.flow.trim() || options.fetch_flow ? 1 : options.candidate_policies.length;
   const strategies = options.strategy === 'best' ? PRODUCTION_STRATEGY_COUNT : 1;

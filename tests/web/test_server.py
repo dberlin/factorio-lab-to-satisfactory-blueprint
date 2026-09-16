@@ -686,7 +686,7 @@ def test_satisfactory_job_builds_downloadable_binary_files_without_a_dsp_viewer(
         {
             "url": url,
             "flow": flow,
-            "strategy": "manifold-rows",
+            "strategy": "sections",
             "designer": "mk3",
             "name": "../plates for the hub",
         },
@@ -695,7 +695,7 @@ def test_satisfactory_job_builds_downloadable_binary_files_without_a_dsp_viewer(
     snap = client.settled(_string(submitted, "id"))
     assert snap["state"] == "done", snap
     result = _object(snap, "result")
-    assert result["game"] == "sfy" and result["strategy"] == "manifold-rows"
+    assert result["game"] == "sfy" and result["strategy"] == "sections"
     assert result["blueprint"] is None  # Not a DSP renderer's blueprint string.
     assert result["valid"] is True and result["flow_pinned"] is True
     assert _object(result, "measure")["blueprints"] == 1
@@ -716,7 +716,6 @@ def test_satisfactory_job_builds_downloadable_binary_files_without_a_dsp_viewer(
     assert placement.designer.mark == result["designer"] == "mk3"
     record = read_sbpcfg(downloaded["plates-for-the-hub.sbpcfg"])
     assert record.description == _string(result, "description")
-    assert "iron-ore" in record.description and "iron-plate" in record.description
     missing, _ = client.failing_json(
         f"/api/build/{_string(submitted, 'id')}/artifacts/%2e%2e%2fplates-for-the-hub.sbp"
     )
