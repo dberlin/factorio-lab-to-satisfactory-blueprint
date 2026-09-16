@@ -68,6 +68,7 @@ __all__ = [
     "attachment_pitch_cm",
     "attachment_reach_cm",
     "attachment_turn",
+    "attachment_turn_tight",
     "belt_pitch_cm",
     "bridge_z_cm",
     "choose_turn",
@@ -322,7 +323,38 @@ def attachment_turn(measures: Measures) -> Turn:
     return Turn(kind=ATTACHMENT, reach=measures.reach, cost=measures.box + measures.lead_in)
 
 
-def choose_turn(measures: Measures, along: float, across: float) -> Turn:
+def attachment_turn_tight(measures: Measures) -> Turn:
+    """The same turn, charged for what a belt may not share rather than for the box.
+
+    The difference from :func:`attachment_turn` is one term and it is the soft
+    box.  A splitter's clearance is ``CT_Soft`` -- :func:`attachment_box_cm`'s
+    own docstring says so, and says in as many words that it is not a bound on
+    anything -- so the game lets a belt run straight through it.  What a turn at
+    a corner really denies the straight into it is therefore the ``reach`` to the
+    attachment's own port, plus the shortest belt the game allows between that
+    port and whatever cut comes before it: ``reach + lead_in``, 100 + 101 = 201 cm
+    with the shipped registry, where :func:`attachment_turn` charges
+    ``box + lead_in`` = 301.
+
+    Both are honest and they answer different questions.  A MANIFOLD corridor
+    packs attachments into columns a belt pitch apart and wants the box kept
+    clear, so it prices the box and :mod:`~flab2bp.sfy.layout.laying` keeps
+    using :func:`attachment_turn`.  A GRID-ROUTED path is a single belt through
+    open floor: nothing else is laid against this corner, and charging it for a
+    box the game shares costs a whole grid step -- which is the difference
+    between a three-node leg fitting and not, and
+    :mod:`~flab2bp.sfy.layout.realise` measured that refusal.
+    """
+    return Turn(kind=ATTACHMENT, reach=measures.reach, cost=measures.reach + measures.lead_in)
+
+
+def choose_turn(
+    measures: Measures,
+    along: float,
+    across: float,
+    *,
+    options: Sequence[Turn] | None = None,
+) -> Turn:
     """Which way to turn a belt that has ``along`` cm coming in and ``across`` out.
 
     The two ways are not better or worse in the abstract and this does not treat
@@ -340,10 +372,21 @@ def choose_turn(measures: Measures, along: float, across: float) -> Turn:
     Where NEITHER fits, the cheaper is returned rather than a refusal.  This
     function is about which turn to try; whether the belt it makes can actually
     be drawn is the drawing's business, and it refuses with the centimetres.
+
+    ``options`` is the two turns to weigh, and it is here so that the RULE above
+    -- one that fits beats one that does not, and the cheaper of two that fit
+    wins -- is stated once for every caller.  The default is the manifold's pair;
+    :mod:`~flab2bp.sfy.layout.realise` passes :func:`attachment_turn_tight` in
+    place of :func:`attachment_turn` because a grid-routed corner stands in open
+    floor rather than in a packed column, and that function says why.
     """
-    options = (arc_turn(measures), attachment_turn(measures))
-    fits = [turn for turn in options if turn.cost <= along + _EPS and turn.cost <= across + _EPS]
-    return min(fits or options, key=lambda turn: turn.cost)
+    weighed = (
+        tuple(options) if options is not None else (arc_turn(measures), attachment_turn(measures))
+    )
+    if not weighed:
+        raise CorridorError("path", "a corner has to be turned somehow; no turn was offered")
+    fits = [turn for turn in weighed if turn.cost <= along + _EPS and turn.cost <= across + _EPS]
+    return min(fits or weighed, key=lambda turn: turn.cost)
 
 
 @dataclass(frozen=True, slots=True)

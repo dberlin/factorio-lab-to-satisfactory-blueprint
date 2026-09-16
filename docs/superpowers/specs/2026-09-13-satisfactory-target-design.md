@@ -268,8 +268,10 @@ blueprints, then total occupied volume, then belt length).
    section 14 for what that cost).
 2. **Grid-routed placement.** Machines are packed per level on the hologram
    grid (greedy then CP-SAT rectangle packing on integer grid cells), every belt
-   is routed by a 3D orthogonal router on the lattice with lifts as vertical
-   edges and lift-turns at ports.
+   is found by a geometric interval router in the shape of the DSP
+   `geometric_router`: straight runs as intervals on the 1 m lattice, turns
+   where runs meet, inclines as 2:1 ramp moves, lifts as vertical edges; never a
+   cell-by-cell search. Lift-turns are made at ports.
 3. **Continuous CP-SAT.** One model per blueprint: machine positions as integer
    grid multiples, 3D no-overlap on hard clearance boxes, belt length bounds,
    port-to-port distance bounds; spline routing as a post-pass with collision
@@ -367,17 +369,21 @@ In-game checkpoints (user):
 1. A hand-built one-constructor blueprint with a belt and a pole loads and
    places.
 2. A single-blueprint chain runs at the flow's rate.
-3. A two-blueprint stack auto-connects when placed.
+3. A grid-routed build, with its lifts and its attachment turns, pastes and
+   runs.
+4. A two-blueprint stack auto-connects when placed.
 
 Milestones, each with its own plan:
 
 - M1 Format and registry: codec, extractor, fixtures, checkpoint 1.
 - M2 Lab game parameter, spec, rates, manifold rows in one blueprint,
   validator, checkpoint 2.
-- M3 Stacking contract, lifts and passthroughs, manifest, zip, web UI,
-  checkpoint 3.
-- M4 Fluids, power and foundations completed across strategies.
-- M5 Grid-routed and continuous CP-SAT strategies, the race, the bench.
+- M3 Section 9's strategy 2 brought forward: the grid packer, the geometric
+  interval router, the serial race against manifold rows, checkpoint 3.
+- M4 Stacking contract, lifts through passthroughs, manifest, zip, web viewer,
+  checkpoint 4.
+- M5 Fluids, power completed across strategies, the continuous CP-SAT
+  experiment, the bench.
 
 ## 13. Out of scope
 
@@ -415,16 +421,21 @@ no trunk turns between them, so their gap is one grid step -- and `concrete*60`
 is 3422 cm of band and builds in a Mk2.
 
 **The corpus, measured at `f85afe3f`.** 36 cells (12 entries x 3 marks): 7 CLEAN, 25
-refused `rows exceed the designer depth`, 3 refused `fluids are M4`, 1 refused
-`corridor needs a bridge that does not fit`. Both gates pass and no cell is off
+refused `rows exceed the designer depth`, 3 refused `fluids are M5`, 1 refused
+`corridor needs a bridge that does not fit` -- that fluid cause was named
+`fluids are M4` at the time of that run, which is what the evidence file below
+prints; the milestone reorder renamed it to `fluids are M5` at `3140f266` and
+the cells it refused are the same three. Both gates pass and no cell is off
 its pin; `docs/superpowers/evidence/sfy-m2-audit-2026-09-14.md` is the table,
 cell by cell, with the centimetres each depth refusal measured -- the run at
 `6a35a02b` and, appended under it, the re-take after Task 8d.
 
-**The refusal inventory.** `flab2bp.sfy.layout.strategy.REFUSALS` is 24 named
-causes and the only ones the strategy may raise -- `_refuse` raises `ValueError`
+**The refusal inventory.** `flab2bp.sfy.layout.refusals.REFUSALS` is 31 named
+causes and the only ones a strategy may raise -- `refuse` raises `ValueError`
 on anything else, and the mapping tables that turn a `RowError`, a
-`CorridorError` or a `PowerError` into one are pinned by a test. Three of the 24
+`CorridorError` or a `PowerError` into one are pinned by a test. M3 moved the
+list out of `strategy.py` into a leaf both strategies share, and added the
+grid-routed strategy's seven to it. Three of them
 ever fire over the corpus -- the depth, the fluids and, since Task 8d made a Mk2
 deep enough for `steel-beam*20`'s two rows, the bridge its ore trunk needs to
 ride over its coal trunk. That is the honest reading of the list: it is a
@@ -454,3 +465,79 @@ without walking the class's supers, so a Mk2 or Mk3 power pole comes out with no
 grid. And `flab2bp.bench.sfy_corpus` still reaches `flab2bp.rates.CandidatePolicy`
 for its policy type, which drags the DSP catalog -- and `Tier` -- into a
 Satisfactory-only import; moving `Tier` out is a small M3 chore.
+
+**Why M3 is now packing and routing (R-M3-0).** Section 12's milestone list is
+the order that ruling set -- section 9's strategy 2 brought forward, stacking
+and its companions moved to M4 -- and
+`docs/superpowers/plans/2026-09-15-satisfactory-m3-grid-router-race.md` is the
+plan that carries it out, both extractor gaps above included.
+
+## 15. M3 implementation status — acceptance remains open
+
+The grid packer, geometric interval router, conveyor realiser, negotiated nets,
+power placement and serial strategy race are implemented. CLI strategy selection
+and backend binary downloads use the real Satisfactory pipeline; this is not the
+M4 web viewer. The extractor and import-cost chores above are complete.
+
+**Measured corpus, not milestone completion.** The turn-aware run at `fdd54806`
+plus the reviewed working-tree changes uses 15 seconds per cell and records
+1.2 mean runnable processes. The complete table is
+[`sfy-m3-audit-2026-09-15.md`](../evidence/sfy-m3-audit-2026-09-15.md).
+
+| Requested strategy | CLEAN | REFUSED | Unruled budget failures |
+| --- | ---: | ---: | ---: |
+| manifold-rows | 7 | 29 | 0 |
+| grid-routed | 5 | 31 | 14 |
+| best | 7 | 29 | 12 |
+
+The 108-cell gate **fails**: 19 CLEAN, 63 ruled refusals and 26 unruled budget
+failures, with no INVALID or CRASH. Later packing timeouts propagate unchanged;
+earlier geometric failures cannot mask them. No timeout is pinned as geometric
+impossibility; 72 grid/best cells remain unpinned.
+
+**Turn legality is now part of the shared interval search, but acceptance has
+not improved overall.** Explicit primitive/turn/endpoint witnesses survive
+realisation, tap cuts and rip-up/restore. The new short-corner regression passes.
+Grid gains plate/mk2, but concrete/mk1 now exhausts its budget under both grid
+and best: the earlier manifold-depth conversion is not reproduced within15s.
+The net matrix change is20→19 CLEAN and25→26 budget failures.
+
+The approved arrangement continuation and original deadline are unchanged.
+Five of the manifold's seven clean cells are now also grid-clean; rod/mk3 and
+steel-beam/mk3 still exhaust grid's routing budget. The common-clean comparison:
+
+| Entry | Mark | Manifold volume, cm³ | Grid volume, cm³ | Manifold belt, cm | Grid belt, cm |
+| --- | --- | ---: | ---: | ---: | ---: |
+| iron-plate-60 | mk1 | 7.5072e9 | 7.616e9 | 7382 | 6300 |
+| iron-plate-60 | mk2 | 9.384e9 | 1.241e10 | 8182 | 9300 |
+| iron-plate-60 | mk3 | 1.12608e10 | 1.5912e10 | 8982 | 9600 |
+| concrete-60 | mk2 | 4.704e9 | 8.4e9 | 10260 | 9800 |
+| concrete-60 | mk3 | 1.08288e10 | 1.008e10 | 10540 | 10600 |
+
+The race retains all seven manifold successes but no longer adds concrete/mk1.
+It selects grid for concrete/mk3 and manifold for the other six. Volume precedes
+belt length in the specified race key, so concrete/mk3's smaller volume wins
+despite slightly more belt. No timeout has been pinned to conceal this regression.
+
+**Checkpoint 3 follows the user-approved amended contract.**
+The previously generated pairs in `out/sfy/` contain two complete flat factories
+(concrete/mk1 and plate/mk1) and a separately labelled lift-and-attachment
+transport witness. Their recorded binary/physical round trips and validator
+contracts passed before this amendment; the artifacts were not replaced.
+Current tests regenerate and validate the plate factory and transport witness.
+Fresh concrete/mk1 generation within15s is no longer established by the audit.
+The transport witness is not a complete corpus factory or a routing benchmark;
+no current complete grid-clean factory contains a lift. Current plate/mk3 has
+eleven attachment corners and two taps. In-game paste, snapping and throughput
+checks remain pending; generated instructions disclose partial clearance checks.
+
+Supply-aware forest admission and bounded dense local repair were measured but
+did not recover a valid factory/placement; neither speculative policy was shipped.
+The remaining acceptance work is resolving budget failures and completing
+measured pins, plus the in-game checkpoint result. Search failure is not proof
+of game impossibility, and passing unit tests does not close these gates.
+
+The turn-aware consolidated gate passes1,815 SFY/CLI/web/native tests. Independent
+native review is clean; the SFY review's tap-stub restore shadow finding has a
+failing-before/passing-after regression and clean re-review. This establishes the
+implemented legality contract, not the still-failing factory completion gate.

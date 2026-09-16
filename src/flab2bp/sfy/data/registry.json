@@ -16622,7 +16622,7 @@
    "depth_cm": null,
    "designer_dims": null,
    "display_name": "Power Pole Mk.2",
-   "grid_snap_cm": null,
+   "grid_snap_cm": 50.0,
    "height_cm": null,
    "manufacturing_speed": null,
    "max_potential": null,
@@ -16698,7 +16698,7 @@
    "depth_cm": null,
    "designer_dims": null,
    "display_name": "Power Pole Mk.3",
-   "grid_snap_cm": null,
+   "grid_snap_cm": 50.0,
    "height_cm": null,
    "manufacturing_speed": null,
    "max_potential": null,
@@ -17690,7 +17690,7 @@
    "depth_cm": null,
    "designer_dims": null,
    "display_name": "Power Tower Platform",
-   "grid_snap_cm": null,
+   "grid_snap_cm": 50.0,
    "height_cm": null,
    "manufacturing_speed": null,
    "max_potential": null,
@@ -39538,6 +39538,7 @@
   "belt_min_length_cm": 100.02,
   "hologram_grid_cm": 100.0,
   "hologram_rotation_step_deg": 90.0,
+  "lift_clearance_half_extent_cm": 95.0,
   "lift_max_cm": 4800.0,
   "lift_min_cm": 400.0,
   "lift_min_vertical_cm": 150.0,
@@ -39562,6 +39563,7 @@
   "belt_min_length_cm": "binary-derived",
   "hologram_grid_cm": "binary",
   "hologram_rotation_step_deg": "constant",
+  "lift_clearance_half_extent_cm": "binary-derived",
   "lift_max_cm": "binary-derived",
   "lift_min_cm": "binary-derived",
   "lift_min_vertical_cm": "binary-derived",
@@ -39584,7 +39586,7 @@
    ],
    "build_version": 502094,
    "cue4parse": "1.2.2.0",
-   "extracted": "2026-09-14",
+   "extracted": "2026-09-15",
    "game_enum": "GAME_UE5_6",
    "native_direction_defaults": {
     "component_defaults": [
@@ -39993,6 +39995,43 @@
    "docs_sha256": "a81d250e96aa13db3c0bf8c332c199ad930b2f15323e2c1a069afa4c07f971bb",
    "extracted": "2026-09-14"
   },
+  "grid_snap": {
+   "applied_to": {
+    "Build_PowerPoleMk1_C": {
+     "grid_snap_cm": 50.0,
+     "hologram": "Holo_PowerPole_C",
+     "stated_on": "Build_PowerPoleMk1_C"
+    },
+    "Build_PowerPoleMk2_C": {
+     "grid_snap_cm": 50.0,
+     "hologram": "Holo_PowerPole_C",
+     "stated_on": "Build_PowerPoleMk1_C"
+    },
+    "Build_PowerPoleMk3_C": {
+     "grid_snap_cm": 50.0,
+     "hologram": "Holo_PowerPole_C",
+     "stated_on": "Build_PowerPoleMk1_C"
+    },
+    "Build_PowerTowerPlatform_C": {
+     "grid_snap_cm": 50.0,
+     "hologram": "Holo_PowerPole_C",
+     "stated_on": "Build_PowerTower_C"
+    },
+    "Build_PowerTower_C": {
+     "grid_snap_cm": 50.0,
+     "hologram": "Holo_PowerPole_C",
+     "stated_on": "Build_PowerTower_C"
+    },
+    "Build_StreetLight_C": {
+     "grid_snap_cm": 50.0,
+     "hologram": "Holo_StreetLight_C",
+     "stated_on": "Build_StreetLight_C"
+    }
+   },
+   "property": "mHologramClass",
+   "read_from": "mGridSnapSize on the hologram class default object",
+   "source": "assets"
+  },
   "hologram_rules": {
    "dll": "FactoryGameEGS-FactoryGame-Win64-Shipping.dll",
    "dll_sha256": "65fc5a6bde6d44782da387976b144a41a6b94e4fa78ec6e1bc49c3dad2d47513",
@@ -40003,9 +40042,9 @@
    "tool": "sfy-native 0.1.0"
   },
   "inputs_sha256": {
-   "assets.json": "0562165b4064d5c424ce2fbc68f94df0a7e39f9acb1edb604324537752ad56ef",
+   "assets.json": "819acece30af61077a21962b97071e0a2469defdd9c94f929955f72bf00c1a93",
    "docs.json": "cf6cc33614d050144e1b869c0e318e9c5413002e26164c91ebb06eb096b1fbbf",
-   "hologram_rules.json": "49ad04e2c70ec9540cdfcc43b37fe2d6d5152b95498373f85520fd61d576958a",
+   "hologram_rules.json": "9e3417f5878b32c9fc69a140d3cb609367c6ed035a2ec2735f34b4bbf9256949",
    "native.json": "c6b204d7a5ba3fd7c7389ae50d22b8b3f1deafe623b8c4d0a8bb5c028078a11f",
    "native_directions.json": "4c6857ad39ce0b15fae789fabea4d6ff0e917e157d9eeb57a55ccd72d62e295c"
   },
@@ -40101,6 +40140,21 @@
      "status": "extracted"
     },
     "reason": "the step the build gun rotates a hologram by. It is in no cooked asset, no shipped header and no constructor immediate tools/sfy-native found; 90 degrees is this project's constant, not a number read from the game."
+   },
+   "lift_clearance_half_extent_cm": {
+    "E": [
+     100.0,
+     100.0
+    ],
+    "E_from": "the 16-byte initialiser at 0x19b8118 in .data, read by the PDB symbol AFGBuildableConveyorLift::CLEARANCE_EXTENT_2D (sfy-native data; bytes 00000000000059400000000000005940)",
+    "caveat": "this is the INITIALISER, what the shipped image holds before the game runs. FitClearance reads the global at hologram time, so a game that stored to it would make this stale; nothing disassembled writes to it, and that is not a proof that nothing does.",
+    "evaluated_in": "AFGBuildableConveyorLift::FitClearance at 0x4e5dd0, which reads the two doubles (0x4e5e52, 0x4e5e5c) and adds the -5 vector to them (0x4e5edb and the two following) -- see the lift.clearance rule's data_reads",
+    "formula": "E -5.0, per component",
+    "governed_by": {
+     "effect": "compute",
+     "rule": "lift.clearance",
+     "status": "partial"
+    }
    },
    "lift_max_cm": {
     "H": 200.0,

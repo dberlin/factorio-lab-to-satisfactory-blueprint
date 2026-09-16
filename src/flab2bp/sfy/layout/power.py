@@ -7,6 +7,12 @@ it stands a line of poles along each row and hands back the
 :class:`~flab2bp.sfy.layout.model.WireObj` a placement carries, or refuses with a
 named cause.
 
+:func:`place` is the manifold's own stage and the rows are its shape.  What is
+not the manifold's -- every number a pole stands on, :class:`Pole`, :func:`wire`
+and :func:`hold_to_the_link_count` -- is public so that
+:mod:`flab2bp.sfy.layout.grid_power`, which stands the same poles on a lattice
+node instead of along a row, reads them here rather than restating them.
+
 Where the numbers come from
 ---------------------------
 Everything about a pole and a wire is read out of ``registry.json``:
@@ -65,14 +71,17 @@ __all__ = [
     "CHAIN_LINKS_PER_POLE",
     "POLE_CLASS",
     "WIRE_CLASS",
+    "Pole",
     "PowerError",
     "PowerPlan",
     "PowerRow",
     "box_bounds",
+    "hold_to_the_link_count",
     "machine_budget",
     "place",
     "pole_grid_cm",
     "power_port",
+    "wire",
     "wire_limit_cm",
 ]
 
@@ -184,22 +193,24 @@ def power_port(registry: Registry, class_name: str) -> Port:
 def pole_grid_cm(registry: Registry, class_name: str) -> float:
     """The grid a pole of this class snaps to, in centimetres.
 
-    ``Buildable.grid_snap_cm`` is filled only where the class's own hologram
-    overrides ``AFGBuildableHologram::mGridSnapSize``; in the shipped assets that
-    is ``Holo_PowerPole_C`` (the Mk1 and the Power Tower) and
-    ``Holo_StreetLight_C``, all three at 50.  A class that states none -- and
-    :data:`POLE_CLASS` is one, because the extraction found no ``mHologramClass``
-    on its class default object -- snaps on the global grid instead, which is
-    ``limits.hologram_grid_cm``: 100, read out of the shipped DLL.
+    ``Buildable.grid_snap_cm`` is filled where the class's hologram overrides
+    ``AFGBuildableHologram::mGridSnapSize``; in the shipped assets that is
+    ``Holo_PowerPole_C`` (all three power pole marks, the Power Tower and its
+    platform) and ``Holo_StreetLight_C``, every one of them at 50.
+    :data:`POLE_CLASS` is one of them: the Mk2 restates no ``mHologramClass`` of
+    its own, which in a cooked asset means the archetype's -- the Mk1's
+    ``Holo_PowerPole_C`` -- and the extractor reads it through the class's
+    supers.  A class no hologram in that chain gives a grid snaps on the global
+    one instead, which is ``limits.hologram_grid_cm``: 100, read out of the
+    shipped DLL.
 
-    Taking the global grid where the class is silent is the safe reading in both
+    Taking the global grid where the chain is silent is the safe reading in both
     directions, and ``buildable.grid_snap`` is why.  That rule's effect is
     ``snap``, not ``refuse``: ``SnapToFloor`` loads ``mGridSnapSize`` and passes
     it to ``FHologramHelpers::SnapToFloor``, which MOVES the hologram, and nothing
     in it turns a placement away for standing off the grid.  So being on the
     wrong grid would cost a nudge rather than a build -- and 100 is a multiple of
-    50, so a pole placed on the global grid stands on the 50 cm one as well,
-    whatever the Mk2's own hologram turns out to override.
+    50, so a pole placed on the global grid stands on the 50 cm one as well.
     """
     buildable = registry.buildables.get(class_name)
     if buildable is None:
@@ -450,8 +461,14 @@ def _stand(
 
 
 @dataclass(frozen=True, slots=True)
-class _Pole:
-    """One pole before it has an id: where it stands, and which row it serves."""
+class Pole:
+    """One pole before it has an id: where it stands, and which row it serves.
+
+    Public so that a second placer can hand its own poles to :func:`wire` rather
+    than writing the wire-length refusal out again.  A build with no rows in it
+    -- the grid-routed one -- puts every pole in row ``0``, which costs it
+    nothing: ``row`` only groups a chain, and one group is what it wants.
+    """
 
     row: int
     pose: Pose
@@ -464,7 +481,7 @@ def _port_at(pose: Pose, port: Port) -> Vector:
 
 def _plan_wires(
     rows: Sequence[PowerRow],
-    poles: Sequence[_Pole],
+    poles: Sequence[Pole],
     registry: Registry,
     *,
     limit: float,
@@ -522,12 +539,12 @@ def place(
     pole_port = power_port(registry, pole_class)
     counts = [max(1, -(-len(row.machines) // budget)) for row in rows]
     while True:
-        poles: list[_Pole] = []
+        poles: list[Pole] = []
         wheres: list[str] = []
         for index, row in enumerate(rows):
             poses, where = _stand(row, counts[index], registry, grid, designer)
             wheres.append(where)
-            poles += [_Pole(index, pose, _port_at(pose, pole_port)) for pose in poses]
+            poles += [Pole(index, pose, _port_at(pose, pole_port)) for pose in poses]
         chosen, short = _plan_wires(rows, poles, registry, limit=limit, capacity=budget)
         if short is None:
             break
@@ -553,7 +570,7 @@ def place(
                 ),
             )
         )
-    _hold_to_the_link_count(wires, registry, classes)
+    hold_to_the_link_count(wires, registry, classes)
     lines = tuple(
         f"row {index}: {counts[index]} x {pole_class} at y="
         f"{next(p.pose.y for p in poles if p.row == index):.0f}, {where}"
@@ -563,7 +580,7 @@ def place(
 
 
 def _chain(
-    poles: Sequence[_Pole],
+    poles: Sequence[Pole],
     placed: Sequence[PoleObj],
     *,
     ids: Iterator[int],
@@ -589,16 +606,16 @@ def _chain(
         line = sorted(by_row[row], key=lambda i: poles[i].pose.x)
         ends.append((line[0], line[-1]))
         out += [
-            _wire(poles, placed, a, b, ids, wire_class, limit, port)
+            wire(poles, placed, a, b, ids, wire_class, limit, port)
             for a, b in itertools.pairwise(line)
         ]
     for (_, last), (first, _) in itertools.pairwise(ends):
-        out.append(_wire(poles, placed, last, first, ids, wire_class, limit, port))
+        out.append(wire(poles, placed, last, first, ids, wire_class, limit, port))
     return out
 
 
-def _wire(
-    poles: Sequence[_Pole],
+def wire(
+    poles: Sequence[Pole],
     placed: Sequence[PoleObj],
     a: int,
     b: int,
@@ -619,7 +636,7 @@ def _wire(
     )
 
 
-def _hold_to_the_link_count(
+def hold_to_the_link_count(
     wires: Sequence[WireObj], registry: Registry, classes: dict[int, str]
 ) -> None:
     """Refuse a connection this module has overloaded, before the validator sees it.

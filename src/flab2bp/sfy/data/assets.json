@@ -2,7 +2,7 @@
   "provenance": {
     "build_version": 502094,
     "cue4parse": "1.2.2.0",
-    "extracted": "2026-09-14",
+    "extracted": "2026-09-15",
     "game_enum": "GAME_UE5_6",
     "archives": [
       "FactoryGame-Windows.pak:13576",
@@ -6458,6 +6458,7 @@
   "holograms": {
     "Build_Barrier_Corner_C": {
       "class": "Holo_Barrier_Corner_C",
+      "stated_on": "Build_Barrier_Corner_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -6472,6 +6473,7 @@
     },
     "Build_Barrier_Low_01_C": {
       "class": "Holo_Barrier_C",
+      "stated_on": "Build_Barrier_Low_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -6486,6 +6488,7 @@
     },
     "Build_Barrier_Tall_01_C": {
       "class": "Holo_Barrier_C",
+      "stated_on": "Build_Barrier_Tall_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -6500,6 +6503,7 @@
     },
     "Build_Beam_C": {
       "class": "Holo_Beam_C",
+      "stated_on": "Build_Beam_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -6514,6 +6518,7 @@
     },
     "Build_Beam_Cable_C": {
       "class": "Holo_Beam_C",
+      "stated_on": "Build_Beam_Cable_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -6528,6 +6533,7 @@
     },
     "Build_Beam_Cable_Cluster_C": {
       "class": "Holo_Beam_C",
+      "stated_on": "Build_Beam_Cable_Cluster_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -6542,6 +6548,7 @@
     },
     "Build_Beam_Concrete_C": {
       "class": "Holo_Beam_C",
+      "stated_on": "Build_Beam_Concrete_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -6556,6 +6563,7 @@
     },
     "Build_Beam_Connector_C": {
       "class": "Holo_BeamConnector_C",
+      "stated_on": "Build_Beam_Connector_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -6570,6 +6578,7 @@
     },
     "Build_Beam_Connector_Double_C": {
       "class": "Holo_BeamConnector_C",
+      "stated_on": "Build_Beam_Connector_Double_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -6584,6 +6593,7 @@
     },
     "Build_Beam_Cross_C": {
       "class": "Holo_Beam_C",
+      "stated_on": "Build_Beam_Cross_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -6598,6 +6608,7 @@
     },
     "Build_Beam_H_C": {
       "class": "Holo_Beam_C",
+      "stated_on": "Build_Beam_H_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -6612,6 +6623,7 @@
     },
     "Build_Beam_Painted_C": {
       "class": "Holo_Beam_C",
+      "stated_on": "Build_Beam_Painted_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -6626,6 +6638,7 @@
     },
     "Build_Beam_Prototype_01_C": {
       "class": "Holo_Beam_C",
+      "stated_on": "Build_Beam_Prototype_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -6640,6 +6653,7 @@
     },
     "Build_Beam_Shelf_C": {
       "class": "Holo_Beam_C",
+      "stated_on": "Build_Beam_Shelf_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -6654,6 +6668,7 @@
     },
     "Build_Beam_Support_C": {
       "class": "Holo_Beam_Support_C",
+      "stated_on": "Build_Beam_Support_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -6668,6 +6683,37 @@
     },
     "Build_BigGarageDoor_16x8_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_BigGarageDoor_16x8_C",
+      "mBendRadius": null,
+      "mBendRadius2D": null,
+      "mGridSnapSize": null,
+      "mMaximumHeight": null,
+      "mMaxIncline": null,
+      "mMaxSplineLength": null,
+      "mMinBendRadius": null,
+      "mMinimumHeight": null,
+      "mMinimumHeightWithVerticalConnection": null,
+      "mRotationStep": null,
+      "mStepHeight": null
+    },
+    "Build_BigGarageDoor_16x8_Concrete_C": {
+      "class": "Holo_Wall_C",
+      "stated_on": "Build_BigGarageDoor_16x8_C",
+      "mBendRadius": null,
+      "mBendRadius2D": null,
+      "mGridSnapSize": null,
+      "mMaximumHeight": null,
+      "mMaxIncline": null,
+      "mMaxSplineLength": null,
+      "mMinBendRadius": null,
+      "mMinimumHeight": null,
+      "mMinimumHeightWithVerticalConnection": null,
+      "mRotationStep": null,
+      "mStepHeight": null
+    },
+    "Build_BigGarageDoor_16x8_Steel_C": {
+      "class": "Holo_Wall_C",
+      "stated_on": "Build_BigGarageDoor_16x8_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -6682,6 +6728,7 @@
     },
     "Build_BlueprintDesigner_C": {
       "class": "Holo_BlueprintDesigner_C",
+      "stated_on": "Build_BlueprintDesigner_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -6696,6 +6743,7 @@
     },
     "Build_BlueprintDesigner_MK2_C": {
       "class": "Holo_BlueprintDesigner_C",
+      "stated_on": "Build_BlueprintDesigner_MK2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -6710,6 +6758,7 @@
     },
     "Build_BlueprintDesigner_Mk3_C": {
       "class": "Holo_BlueprintDesigner_Mk3_C",
+      "stated_on": "Build_BlueprintDesigner_Mk3_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -6724,6 +6773,7 @@
     },
     "Build_Blueprint_C": {
       "class": "Holo_Blueprint_C",
+      "stated_on": "Build_Blueprint_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -6738,6 +6788,7 @@
     },
     "Build_CandyCaneDecor_C": {
       "class": "Holo_CandyCaneDecor_C",
+      "stated_on": "Build_CandyCaneDecor_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -6752,6 +6803,7 @@
     },
     "Build_CatwalkCross_C": {
       "class": "Holo_WalkwayCross_C",
+      "stated_on": "Build_CatwalkCross_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -6766,6 +6818,7 @@
     },
     "Build_CatwalkRamp_C": {
       "class": "Holo_WalkwayStraight_C",
+      "stated_on": "Build_CatwalkRamp_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -6780,6 +6833,7 @@
     },
     "Build_CatwalkStairs_C": {
       "class": "Holo_WalkwayStraight_C",
+      "stated_on": "Build_CatwalkStairs_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -6794,6 +6848,7 @@
     },
     "Build_CatwalkStraight_C": {
       "class": "Holo_WalkwayStraight_C",
+      "stated_on": "Build_CatwalkStraight_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -6808,6 +6863,7 @@
     },
     "Build_CatwalkT_C": {
       "class": "Holo_WalkwayT_C",
+      "stated_on": "Build_CatwalkT_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -6822,6 +6878,7 @@
     },
     "Build_CeilingLight_C": {
       "class": "Holo_CeilingLight_C",
+      "stated_on": "Build_CeilingLight_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -6836,6 +6893,7 @@
     },
     "Build_CentralStorage_C": {
       "class": "FGStackableStorageHologram",
+      "stated_on": "Build_CentralStorage_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -6850,6 +6908,22 @@
     },
     "Build_ChainLinkFence_C": {
       "class": "Holo_Barrier_C",
+      "stated_on": "Build_ChainLinkFence_C",
+      "mBendRadius": null,
+      "mBendRadius2D": null,
+      "mGridSnapSize": null,
+      "mMaximumHeight": null,
+      "mMaxIncline": null,
+      "mMaxSplineLength": null,
+      "mMinBendRadius": null,
+      "mMinimumHeight": null,
+      "mMinimumHeightWithVerticalConnection": null,
+      "mRotationStep": null,
+      "mStepHeight": null
+    },
+    "Build_CheatFluidPump_C": {
+      "class": "Holo_PipelinePump_C",
+      "stated_on": "Build_PipelinePumpMk2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -6864,6 +6938,7 @@
     },
     "Build_CheatTrainTeleportStation_C": {
       "class": "Holo_TrainStation_C",
+      "stated_on": "Build_CheatTrainTeleportStation_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -6878,6 +6953,7 @@
     },
     "Build_ConcreteConcaveRoundFoundation_8x1_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_ConcreteConcaveRoundFoundation_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -6892,6 +6968,7 @@
     },
     "Build_Concrete_Barrier_01_C": {
       "class": "Holo_Barrier_C",
+      "stated_on": "Build_Concrete_Barrier_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -6906,6 +6983,7 @@
     },
     "Build_ConveyorAttachmentMergerLift_C": {
       "class": "Holo_ConveyorAttachment_C",
+      "stated_on": "Build_ConveyorAttachmentMergerLift_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -6920,6 +6998,7 @@
     },
     "Build_ConveyorAttachmentMergerPriorityLift_C": {
       "class": "Holo_ConveyorAttachment_C",
+      "stated_on": "Build_ConveyorAttachmentMergerPriorityLift_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -6934,6 +7013,7 @@
     },
     "Build_ConveyorAttachmentMergerPriority_C": {
       "class": "Holo_ConveyorAttachment_C",
+      "stated_on": "Build_ConveyorAttachmentMergerPriority_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -6948,6 +7028,7 @@
     },
     "Build_ConveyorAttachmentMerger_C": {
       "class": "Holo_ConveyorAttachment_C",
+      "stated_on": "Build_ConveyorAttachmentMerger_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -6962,6 +7043,7 @@
     },
     "Build_ConveyorAttachmentSplitterLift_C": {
       "class": "Holo_ConveyorAttachment_C",
+      "stated_on": "Build_ConveyorAttachmentSplitterLift_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -6976,6 +7058,7 @@
     },
     "Build_ConveyorAttachmentSplitterProgrammableLift_C": {
       "class": "Holo_ConveyorAttachment_C",
+      "stated_on": "Build_ConveyorAttachmentSplitterProgrammableLift_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -6990,6 +7073,7 @@
     },
     "Build_ConveyorAttachmentSplitterProgrammable_C": {
       "class": "Holo_ConveyorAttachment_C",
+      "stated_on": "Build_ConveyorAttachmentSplitterProgrammable_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7004,6 +7088,7 @@
     },
     "Build_ConveyorAttachmentSplitterSmartLift_C": {
       "class": "Holo_ConveyorAttachment_C",
+      "stated_on": "Build_ConveyorAttachmentSplitterSmartLift_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7018,6 +7103,7 @@
     },
     "Build_ConveyorAttachmentSplitterSmart_C": {
       "class": "Holo_ConveyorAttachment_C",
+      "stated_on": "Build_ConveyorAttachmentSplitterSmart_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7032,6 +7118,7 @@
     },
     "Build_ConveyorAttachmentSplitter_C": {
       "class": "Holo_ConveyorAttachment_C",
+      "stated_on": "Build_ConveyorAttachmentSplitter_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7046,6 +7133,82 @@
     },
     "Build_ConveyorBeltMk1_C": {
       "class": "Holo_ConveyorBelt_C",
+      "stated_on": "Build_ConveyorBeltMk1_C",
+      "mBendRadius": null,
+      "mBendRadius2D": null,
+      "mGridSnapSize": null,
+      "mMaximumHeight": null,
+      "mMaxIncline": null,
+      "mMaxSplineLength": null,
+      "mMinBendRadius": null,
+      "mMinimumHeight": null,
+      "mMinimumHeightWithVerticalConnection": null,
+      "mRotationStep": null,
+      "mStepHeight": null
+    },
+    "Build_ConveyorBeltMk2_C": {
+      "class": "Holo_ConveyorBelt_C",
+      "stated_on": "Build_ConveyorBeltMk1_C",
+      "mBendRadius": null,
+      "mBendRadius2D": null,
+      "mGridSnapSize": null,
+      "mMaximumHeight": null,
+      "mMaxIncline": null,
+      "mMaxSplineLength": null,
+      "mMinBendRadius": null,
+      "mMinimumHeight": null,
+      "mMinimumHeightWithVerticalConnection": null,
+      "mRotationStep": null,
+      "mStepHeight": null
+    },
+    "Build_ConveyorBeltMk3_C": {
+      "class": "Holo_ConveyorBelt_C",
+      "stated_on": "Build_ConveyorBeltMk1_C",
+      "mBendRadius": null,
+      "mBendRadius2D": null,
+      "mGridSnapSize": null,
+      "mMaximumHeight": null,
+      "mMaxIncline": null,
+      "mMaxSplineLength": null,
+      "mMinBendRadius": null,
+      "mMinimumHeight": null,
+      "mMinimumHeightWithVerticalConnection": null,
+      "mRotationStep": null,
+      "mStepHeight": null
+    },
+    "Build_ConveyorBeltMk4_C": {
+      "class": "Holo_ConveyorBelt_C",
+      "stated_on": "Build_ConveyorBeltMk1_C",
+      "mBendRadius": null,
+      "mBendRadius2D": null,
+      "mGridSnapSize": null,
+      "mMaximumHeight": null,
+      "mMaxIncline": null,
+      "mMaxSplineLength": null,
+      "mMinBendRadius": null,
+      "mMinimumHeight": null,
+      "mMinimumHeightWithVerticalConnection": null,
+      "mRotationStep": null,
+      "mStepHeight": null
+    },
+    "Build_ConveyorBeltMk5_C": {
+      "class": "Holo_ConveyorBelt_C",
+      "stated_on": "Build_ConveyorBeltMk1_C",
+      "mBendRadius": null,
+      "mBendRadius2D": null,
+      "mGridSnapSize": null,
+      "mMaximumHeight": null,
+      "mMaxIncline": null,
+      "mMaxSplineLength": null,
+      "mMinBendRadius": null,
+      "mMinimumHeight": null,
+      "mMinimumHeightWithVerticalConnection": null,
+      "mRotationStep": null,
+      "mStepHeight": null
+    },
+    "Build_ConveyorBeltMk6_C": {
+      "class": "Holo_ConveyorBelt_C",
+      "stated_on": "Build_ConveyorBeltMk1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7060,6 +7223,7 @@
     },
     "Build_ConveyorCeilingAttachment_C": {
       "class": "Holo_ConveyorCeilingAttachment_C",
+      "stated_on": "Build_ConveyorCeilingAttachment_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7074,6 +7238,82 @@
     },
     "Build_ConveyorLiftMk1_C": {
       "class": "Holo_ConveyorLift_C",
+      "stated_on": "Build_ConveyorLiftMk1_C",
+      "mBendRadius": null,
+      "mBendRadius2D": null,
+      "mGridSnapSize": null,
+      "mMaximumHeight": null,
+      "mMaxIncline": null,
+      "mMaxSplineLength": null,
+      "mMinBendRadius": null,
+      "mMinimumHeight": null,
+      "mMinimumHeightWithVerticalConnection": null,
+      "mRotationStep": null,
+      "mStepHeight": null
+    },
+    "Build_ConveyorLiftMk2_C": {
+      "class": "Holo_ConveyorLift_C",
+      "stated_on": "Build_ConveyorLiftMk1_C",
+      "mBendRadius": null,
+      "mBendRadius2D": null,
+      "mGridSnapSize": null,
+      "mMaximumHeight": null,
+      "mMaxIncline": null,
+      "mMaxSplineLength": null,
+      "mMinBendRadius": null,
+      "mMinimumHeight": null,
+      "mMinimumHeightWithVerticalConnection": null,
+      "mRotationStep": null,
+      "mStepHeight": null
+    },
+    "Build_ConveyorLiftMk3_C": {
+      "class": "Holo_ConveyorLift_C",
+      "stated_on": "Build_ConveyorLiftMk1_C",
+      "mBendRadius": null,
+      "mBendRadius2D": null,
+      "mGridSnapSize": null,
+      "mMaximumHeight": null,
+      "mMaxIncline": null,
+      "mMaxSplineLength": null,
+      "mMinBendRadius": null,
+      "mMinimumHeight": null,
+      "mMinimumHeightWithVerticalConnection": null,
+      "mRotationStep": null,
+      "mStepHeight": null
+    },
+    "Build_ConveyorLiftMk4_C": {
+      "class": "Holo_ConveyorLift_C",
+      "stated_on": "Build_ConveyorLiftMk1_C",
+      "mBendRadius": null,
+      "mBendRadius2D": null,
+      "mGridSnapSize": null,
+      "mMaximumHeight": null,
+      "mMaxIncline": null,
+      "mMaxSplineLength": null,
+      "mMinBendRadius": null,
+      "mMinimumHeight": null,
+      "mMinimumHeightWithVerticalConnection": null,
+      "mRotationStep": null,
+      "mStepHeight": null
+    },
+    "Build_ConveyorLiftMk5_C": {
+      "class": "Holo_ConveyorLift_C",
+      "stated_on": "Build_ConveyorLiftMk1_C",
+      "mBendRadius": null,
+      "mBendRadius2D": null,
+      "mGridSnapSize": null,
+      "mMaximumHeight": null,
+      "mMaxIncline": null,
+      "mMaxSplineLength": null,
+      "mMinBendRadius": null,
+      "mMinimumHeight": null,
+      "mMinimumHeightWithVerticalConnection": null,
+      "mRotationStep": null,
+      "mStepHeight": null
+    },
+    "Build_ConveyorLiftMk6_C": {
+      "class": "Holo_ConveyorLift_C",
+      "stated_on": "Build_ConveyorLiftMk1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7088,6 +7328,7 @@
     },
     "Build_ConveyorMonitor_C": {
       "class": "Holo_ConveyorMonitor_C",
+      "stated_on": "Build_ConveyorMonitor_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7102,6 +7343,7 @@
     },
     "Build_ConveyorPoleStackable_C": {
       "class": "Holo_ConveyorStackable_C",
+      "stated_on": "Build_ConveyorPoleStackable_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7116,6 +7358,7 @@
     },
     "Build_ConveyorPoleWall_C": {
       "class": "Holo_ConveyorWallAttachment_C",
+      "stated_on": "Build_ConveyorPoleWall_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7130,6 +7373,7 @@
     },
     "Build_ConveyorPole_C": {
       "class": "Holo_ConveyorPole_C",
+      "stated_on": "Build_ConveyorPole_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7144,6 +7388,7 @@
     },
     "Build_ConveyorWallHole_C": {
       "class": "Holo_ConveyorWallHole_C",
+      "stated_on": "Build_ConveyorWallHole_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7158,6 +7403,7 @@
     },
     "Build_DoorMiddle_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_DoorMiddle_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7172,6 +7418,7 @@
     },
     "Build_DownQuarterPipeInCorner_Asphalt_8x4_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_DownQuarterPipeInCorner_Asphalt_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7186,6 +7433,7 @@
     },
     "Build_DownQuarterPipeInCorner_ConcretePolished_8x4_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_DownQuarterPipeInCorner_ConcretePolished_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7200,6 +7448,7 @@
     },
     "Build_DownQuarterPipeInCorner_Concrete_8x4_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_DownQuarterPipeInCorner_Concrete_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7214,6 +7463,7 @@
     },
     "Build_DownQuarterPipeInCorner_Grip_8x4_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_DownQuarterPipeInCorner_Grip_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7228,6 +7478,7 @@
     },
     "Build_DownQuarterPipeOutCorner_Asphalt_8x4_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_DownQuarterPipeOutCorner_Asphalt_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7242,6 +7493,7 @@
     },
     "Build_DownQuarterPipeOutCorner_ConcretePolished_8x4_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_DownQuarterPipeOutCorner_ConcretePolished_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7256,6 +7508,7 @@
     },
     "Build_DownQuarterPipeOutCorner_Concrete_8x4_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_DownQuarterPipeOutCorner_Concrete_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7270,6 +7523,7 @@
     },
     "Build_DownQuarterPipeOutCorner_Grip_8x4_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_DownQuarterPipeOutCorner_Grip_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7284,6 +7538,7 @@
     },
     "Build_DownQuarterPipe_Asphalt_8x4_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_DownQuarterPipe_Asphalt_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7298,6 +7553,7 @@
     },
     "Build_DownQuarterPipe_ConcretePolished_8x4_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_DownQuarterPipe_ConcretePolished_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7312,6 +7568,7 @@
     },
     "Build_DownQuarterPipe_Concrete_8x4_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_DownQuarterPipe_Concrete_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7326,6 +7583,7 @@
     },
     "Build_DownQuarterPipe_Grip_8x4_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_DownQuarterPipe_Grip_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7340,6 +7598,7 @@
     },
     "Build_ElevatorFloorStop_C": {
       "class": "Holo_ElevatorFloorStop_C",
+      "stated_on": "Build_ElevatorFloorStop_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7354,6 +7613,7 @@
     },
     "Build_Elevator_C": {
       "class": "Holo_Elevator_C",
+      "stated_on": "Build_Elevator_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7368,6 +7628,7 @@
     },
     "Build_Fence_01_C": {
       "class": "Holo_Railing_C",
+      "stated_on": "Build_Fence_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7382,6 +7643,7 @@
     },
     "Build_Flat_Frame_01_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_Flat_Frame_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7396,6 +7658,7 @@
     },
     "Build_FloodlightPole_C": {
       "class": "Holo_FloodLightPole_C",
+      "stated_on": "Build_FloodlightPole_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7410,6 +7673,7 @@
     },
     "Build_FloodlightWall_C": {
       "class": "Holo_FloodLightWall_C",
+      "stated_on": "Build_FloodlightWall_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7424,6 +7688,7 @@
     },
     "Build_FluidTruckStation_C": {
       "class": "FGDockingStationHologram",
+      "stated_on": "Build_FluidTruckStation_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7438,6 +7703,7 @@
     },
     "Build_FoundationGlass_01_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_FoundationGlass_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7452,6 +7718,7 @@
     },
     "Build_FoundationPassthrough_Hypertube_C": {
       "class": "FGPassthroughPipeHyperHologram",
+      "stated_on": "Build_FoundationPassthrough_Hypertube_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7466,6 +7733,7 @@
     },
     "Build_FoundationPassthrough_Lift_C": {
       "class": "FGPassthroughHologram",
+      "stated_on": "Build_FoundationPassthrough_Lift_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7480,6 +7748,7 @@
     },
     "Build_FoundationPassthrough_Pipe_C": {
       "class": "FGPassthroughHologram",
+      "stated_on": "Build_FoundationPassthrough_Pipe_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7494,6 +7763,7 @@
     },
     "Build_Foundation_8x1_01_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_Foundation_8x1_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7508,6 +7778,7 @@
     },
     "Build_Foundation_8x2_01_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_Foundation_8x2_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7522,6 +7793,7 @@
     },
     "Build_Foundation_8x4_01_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_Foundation_8x4_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7536,6 +7808,7 @@
     },
     "Build_Foundation_Asphalt_8x1_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_Foundation_Asphalt_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7550,6 +7823,7 @@
     },
     "Build_Foundation_Asphalt_8x2_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_Foundation_Asphalt_8x2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7564,6 +7838,7 @@
     },
     "Build_Foundation_Asphalt_8x4_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_Foundation_Asphalt_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7578,6 +7853,7 @@
     },
     "Build_Foundation_ConcretePolished_8x1_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_Foundation_ConcretePolished_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7592,6 +7868,7 @@
     },
     "Build_Foundation_ConcretePolished_8x2_2_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_Foundation_ConcretePolished_8x2_2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7606,6 +7883,7 @@
     },
     "Build_Foundation_ConcretePolished_8x4_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_Foundation_ConcretePolished_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7620,6 +7898,7 @@
     },
     "Build_Foundation_Concrete_8x1_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_Foundation_Concrete_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7634,6 +7913,7 @@
     },
     "Build_Foundation_Concrete_8x2_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_Foundation_Concrete_8x2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7648,6 +7928,7 @@
     },
     "Build_Foundation_Concrete_8x4_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_Foundation_Concrete_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7662,6 +7943,7 @@
     },
     "Build_Foundation_Frame_01_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_Foundation_Frame_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7676,6 +7958,7 @@
     },
     "Build_Foundation_Metal_8x1_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_Foundation_Metal_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7690,6 +7973,7 @@
     },
     "Build_Foundation_Metal_8x2_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_Foundation_Metal_8x2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7704,6 +7988,7 @@
     },
     "Build_Foundation_Metal_8x4_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_Foundation_Metal_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7718,6 +8003,7 @@
     },
     "Build_Gate_Automated_8x4_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Gate_Automated_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7732,6 +8018,7 @@
     },
     "Build_GeneratorGeoThermal_C": {
       "class": "FGGeoThermalGeneratorHologram",
+      "stated_on": "Build_GeneratorGeoThermal_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7746,6 +8033,7 @@
     },
     "Build_HubTerminal_C": {
       "class": "FGFactoryHologram",
+      "stated_on": "Build_HubTerminal_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7760,6 +8048,7 @@
     },
     "Build_HyperPoleStackable_C": {
       "class": "Holo_PipelineStackable_C",
+      "stated_on": "Build_HyperPoleStackable_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7774,6 +8063,7 @@
     },
     "Build_HyperTubeJunction_C": {
       "class": "Holo_HyperTubeJunction_C",
+      "stated_on": "Build_HyperTubeJunction_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7788,6 +8078,7 @@
     },
     "Build_HyperTubeWallHole_C": {
       "class": "Holo_PipelineSupportWallHole_C",
+      "stated_on": "Build_HyperTubeWallHole_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7802,6 +8093,7 @@
     },
     "Build_HyperTubeWallSupport_C": {
       "class": "Holo_PipelineSupportWall_C",
+      "stated_on": "Build_HyperTubeWallSupport_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7816,6 +8108,7 @@
     },
     "Build_HypertubeTJunction_C": {
       "class": "Holo_HypertubeTJunction_C",
+      "stated_on": "Build_HypertubeTJunction_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7830,6 +8123,7 @@
     },
     "Build_InvertedRamp_Asphalt_8x1_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_InvertedRamp_Asphalt_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7844,6 +8138,7 @@
     },
     "Build_InvertedRamp_Asphalt_8x2_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_InvertedRamp_Asphalt_8x2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7858,6 +8153,7 @@
     },
     "Build_InvertedRamp_Asphalt_8x4_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_InvertedRamp_Asphalt_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7872,6 +8168,7 @@
     },
     "Build_InvertedRamp_Concrete_8x1_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_InvertedRamp_Concrete_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7886,6 +8183,7 @@
     },
     "Build_InvertedRamp_Concrete_8x2_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_InvertedRamp_Concrete_8x2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7900,6 +8198,7 @@
     },
     "Build_InvertedRamp_Concrete_8x4_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_InvertedRamp_Concrete_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7914,6 +8213,7 @@
     },
     "Build_InvertedRamp_Metal_8x1_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_InvertedRamp_Metal_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7928,6 +8228,7 @@
     },
     "Build_InvertedRamp_Metal_8x2_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_InvertedRamp_Metal_8x2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7942,6 +8243,7 @@
     },
     "Build_InvertedRamp_Metal_8x4_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_InvertedRamp_Metal_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7956,6 +8258,7 @@
     },
     "Build_InvertedRamp_Polished_8x1_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_InvertedRamp_Polished_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7970,6 +8273,7 @@
     },
     "Build_InvertedRamp_Polished_8x2_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_InvertedRamp_Polished_8x2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7984,6 +8288,7 @@
     },
     "Build_InvertedRamp_Polished_8x4_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_InvertedRamp_Polished_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -7998,6 +8303,7 @@
     },
     "Build_Inverted_ConcreteFoundation_Convex_8x4_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_Inverted_ConcreteFoundation_Convex_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8012,6 +8318,7 @@
     },
     "Build_JumpPadAdjustable_C": {
       "class": "Holo_JumpPadLauncher_C",
+      "stated_on": "Build_JumpPadAdjustable_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8026,6 +8333,7 @@
     },
     "Build_Ladder_C": {
       "class": "Holo_Ladder_C",
+      "stated_on": "Build_Ladder_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8040,6 +8348,7 @@
     },
     "Build_LandingPad_C": {
       "class": "Holo_LandingPad_C",
+      "stated_on": "Build_LandingPad_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8054,6 +8363,7 @@
     },
     "Build_LargeFan_C": {
       "class": "Holo_LargeVent_C",
+      "stated_on": "Build_LargeFan_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8068,6 +8378,7 @@
     },
     "Build_LargeVent_C": {
       "class": "Holo_LargeVent_C",
+      "stated_on": "Build_LargeVent_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8082,6 +8393,7 @@
     },
     "Build_LightsControlPanel_C": {
       "class": "Holo_BuildingGradualBase_NoClearanceMesh_C",
+      "stated_on": "Build_LightsControlPanel_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8096,6 +8408,7 @@
     },
     "Build_LookoutTower_C": {
       "class": "FGFactoryBuildingHologram",
+      "stated_on": "Build_LookoutTower_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8110,6 +8423,7 @@
     },
     "Build_Mam_C": {
       "class": "Holo_BuildingGradualBase_C",
+      "stated_on": "Build_Mam_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8124,6 +8438,7 @@
     },
     "Build_PillarBase_C": {
       "class": "Holo_PillarBase_C",
+      "stated_on": "Build_PillarBase_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8138,6 +8453,7 @@
     },
     "Build_PillarBase_Small_C": {
       "class": "Holo_PillarBase_C",
+      "stated_on": "Build_PillarBase_Small_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8152,6 +8468,7 @@
     },
     "Build_PillarMiddle_C": {
       "class": "Holo_Pillar_C",
+      "stated_on": "Build_PillarMiddle_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8166,6 +8483,7 @@
     },
     "Build_PillarMiddle_Concrete_C": {
       "class": "Holo_Pillar_C",
+      "stated_on": "Build_PillarMiddle_Concrete_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8180,6 +8498,7 @@
     },
     "Build_PillarMiddle_Frame_C": {
       "class": "Holo_Pillar_C",
+      "stated_on": "Build_PillarMiddle_Frame_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8194,6 +8513,7 @@
     },
     "Build_PillarTop_C": {
       "class": "Holo_PillarBase_C",
+      "stated_on": "Build_PillarTop_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8208,6 +8528,7 @@
     },
     "Build_Pillar_Small_Concrete_C": {
       "class": "Holo_Pillar_C",
+      "stated_on": "Build_Pillar_Small_Concrete_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8222,6 +8543,7 @@
     },
     "Build_Pillar_Small_Frame_C": {
       "class": "Holo_Pillar_C",
+      "stated_on": "Build_Pillar_Small_Frame_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8236,6 +8558,7 @@
     },
     "Build_Pillar_Small_Metal_C": {
       "class": "Holo_Pillar_C",
+      "stated_on": "Build_Pillar_Small_Metal_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8250,6 +8573,7 @@
     },
     "Build_PipeHyperStart_C": {
       "class": "Holo_PipeHyperStart_C",
+      "stated_on": "Build_PipeHyperStart_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8264,6 +8588,7 @@
     },
     "Build_PipeHyperSupport_C": {
       "class": "Holo_PipelineSupport_C",
+      "stated_on": "Build_PipeHyperSupport_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8278,6 +8603,7 @@
     },
     "Build_PipeHyper_C": {
       "class": "Holo_PipeHyper_C",
+      "stated_on": "Build_PipeHyper_C",
       "mBendRadius": 300.0,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8292,6 +8618,7 @@
     },
     "Build_PipeSupportStackable_C": {
       "class": "Holo_PipelineStackable_C",
+      "stated_on": "Build_PipeSupportStackable_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8306,6 +8633,7 @@
     },
     "Build_PipelineJunction_Cross_C": {
       "class": "FGPipelineJunctionHologram",
+      "stated_on": "Build_PipelineJunction_Cross_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8320,6 +8648,7 @@
     },
     "Build_PipelineJunction_T_C": {
       "class": "FGPipelineJunctionHologram",
+      "stated_on": "Build_PipelineJunction_T_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8334,6 +8663,22 @@
     },
     "Build_PipelineMK2_C": {
       "class": "Holo_Pipeline_C",
+      "stated_on": "Build_PipelineMK2_C",
+      "mBendRadius": 100.0,
+      "mBendRadius2D": null,
+      "mGridSnapSize": null,
+      "mMaximumHeight": null,
+      "mMaxIncline": null,
+      "mMaxSplineLength": null,
+      "mMinBendRadius": null,
+      "mMinimumHeight": null,
+      "mMinimumHeightWithVerticalConnection": null,
+      "mRotationStep": null,
+      "mStepHeight": null
+    },
+    "Build_PipelineMK2_NoIndicator_C": {
+      "class": "Holo_Pipeline_C",
+      "stated_on": "Build_PipelineMK2_C",
       "mBendRadius": 100.0,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8348,6 +8693,7 @@
     },
     "Build_PipelinePumpMk2_C": {
       "class": "Holo_PipelinePump_C",
+      "stated_on": "Build_PipelinePumpMk2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8362,6 +8708,7 @@
     },
     "Build_PipelinePump_C": {
       "class": "Holo_PipelinePump_C",
+      "stated_on": "Build_PipelinePump_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8376,6 +8723,7 @@
     },
     "Build_PipelineSupportWallHole_C": {
       "class": "Holo_PipelineSupportWallHole_C",
+      "stated_on": "Build_PipelineSupportWallHole_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8390,6 +8738,7 @@
     },
     "Build_PipelineSupportWall_C": {
       "class": "Holo_PipelineSupportWall_C",
+      "stated_on": "Build_PipelineSupportWall_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8404,6 +8753,7 @@
     },
     "Build_PipelineSupport_C": {
       "class": "Holo_PipelineSupport_C",
+      "stated_on": "Build_PipelineSupport_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8418,6 +8768,22 @@
     },
     "Build_Pipeline_C": {
       "class": "Holo_Pipeline_C",
+      "stated_on": "Build_Pipeline_C",
+      "mBendRadius": 100.0,
+      "mBendRadius2D": null,
+      "mGridSnapSize": null,
+      "mMaximumHeight": null,
+      "mMaxIncline": null,
+      "mMaxSplineLength": null,
+      "mMinBendRadius": null,
+      "mMinimumHeight": null,
+      "mMinimumHeightWithVerticalConnection": null,
+      "mRotationStep": null,
+      "mStepHeight": null
+    },
+    "Build_Pipeline_NoIndicator_C": {
+      "class": "Holo_Pipeline_C",
+      "stated_on": "Build_Pipeline_C",
       "mBendRadius": 100.0,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8432,6 +8798,7 @@
     },
     "Build_PortalPotty_C": {
       "class": "FGBuildableHologram",
+      "stated_on": "Build_PortalPotty_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8446,6 +8813,7 @@
     },
     "Build_PowerLine_C": {
       "class": "Holo_PowerLine_C",
+      "stated_on": "Build_PowerLine_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8460,6 +8828,37 @@
     },
     "Build_PowerPoleMk1_C": {
       "class": "Holo_PowerPole_C",
+      "stated_on": "Build_PowerPoleMk1_C",
+      "mBendRadius": null,
+      "mBendRadius2D": null,
+      "mGridSnapSize": 50.0,
+      "mMaximumHeight": null,
+      "mMaxIncline": null,
+      "mMaxSplineLength": null,
+      "mMinBendRadius": null,
+      "mMinimumHeight": null,
+      "mMinimumHeightWithVerticalConnection": null,
+      "mRotationStep": null,
+      "mStepHeight": null
+    },
+    "Build_PowerPoleMk2_C": {
+      "class": "Holo_PowerPole_C",
+      "stated_on": "Build_PowerPoleMk1_C",
+      "mBendRadius": null,
+      "mBendRadius2D": null,
+      "mGridSnapSize": 50.0,
+      "mMaximumHeight": null,
+      "mMaxIncline": null,
+      "mMaxSplineLength": null,
+      "mMinBendRadius": null,
+      "mMinimumHeight": null,
+      "mMinimumHeightWithVerticalConnection": null,
+      "mRotationStep": null,
+      "mStepHeight": null
+    },
+    "Build_PowerPoleMk3_C": {
+      "class": "Holo_PowerPole_C",
+      "stated_on": "Build_PowerPoleMk1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": 50.0,
@@ -8474,6 +8873,37 @@
     },
     "Build_PowerPoleWallDouble_C": {
       "class": "Holo_PowerSocketDouble_C",
+      "stated_on": "Build_PowerPoleWallDouble_C",
+      "mBendRadius": null,
+      "mBendRadius2D": null,
+      "mGridSnapSize": null,
+      "mMaximumHeight": null,
+      "mMaxIncline": null,
+      "mMaxSplineLength": null,
+      "mMinBendRadius": null,
+      "mMinimumHeight": null,
+      "mMinimumHeightWithVerticalConnection": null,
+      "mRotationStep": 45.0,
+      "mStepHeight": null
+    },
+    "Build_PowerPoleWallDouble_Mk2_C": {
+      "class": "Holo_PowerSocketDouble_C",
+      "stated_on": "Build_PowerPoleWallDouble_C",
+      "mBendRadius": null,
+      "mBendRadius2D": null,
+      "mGridSnapSize": null,
+      "mMaximumHeight": null,
+      "mMaxIncline": null,
+      "mMaxSplineLength": null,
+      "mMinBendRadius": null,
+      "mMinimumHeight": null,
+      "mMinimumHeightWithVerticalConnection": null,
+      "mRotationStep": 45.0,
+      "mStepHeight": null
+    },
+    "Build_PowerPoleWallDouble_Mk3_C": {
+      "class": "Holo_PowerSocketDouble_C",
+      "stated_on": "Build_PowerPoleWallDouble_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8488,6 +8918,37 @@
     },
     "Build_PowerPoleWall_C": {
       "class": "Holo_PowerSocket_C",
+      "stated_on": "Build_PowerPoleWall_C",
+      "mBendRadius": null,
+      "mBendRadius2D": null,
+      "mGridSnapSize": null,
+      "mMaximumHeight": null,
+      "mMaxIncline": null,
+      "mMaxSplineLength": null,
+      "mMinBendRadius": null,
+      "mMinimumHeight": null,
+      "mMinimumHeightWithVerticalConnection": null,
+      "mRotationStep": 45.0,
+      "mStepHeight": null
+    },
+    "Build_PowerPoleWall_Mk2_C": {
+      "class": "Holo_PowerSocket_C",
+      "stated_on": "Build_PowerPoleWall_C",
+      "mBendRadius": null,
+      "mBendRadius2D": null,
+      "mGridSnapSize": null,
+      "mMaximumHeight": null,
+      "mMaxIncline": null,
+      "mMaxSplineLength": null,
+      "mMinBendRadius": null,
+      "mMinimumHeight": null,
+      "mMinimumHeightWithVerticalConnection": null,
+      "mRotationStep": 45.0,
+      "mStepHeight": null
+    },
+    "Build_PowerPoleWall_Mk3_C": {
+      "class": "Holo_PowerSocket_C",
+      "stated_on": "Build_PowerPoleWall_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8502,6 +8963,7 @@
     },
     "Build_PowerStorageMk1_C": {
       "class": "FGBuildableHologram",
+      "stated_on": "Build_PowerStorageMk1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8516,6 +8978,7 @@
     },
     "Build_PowerSwitch_C": {
       "class": "FGPowerSwitchHologram",
+      "stated_on": "Build_PowerSwitch_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8528,8 +8991,24 @@
       "mRotationStep": null,
       "mStepHeight": null
     },
+    "Build_PowerTowerPlatform_C": {
+      "class": "Holo_PowerPole_C",
+      "stated_on": "Build_PowerTower_C",
+      "mBendRadius": null,
+      "mBendRadius2D": null,
+      "mGridSnapSize": 50.0,
+      "mMaximumHeight": null,
+      "mMaxIncline": null,
+      "mMaxSplineLength": null,
+      "mMinBendRadius": null,
+      "mMinimumHeight": null,
+      "mMinimumHeightWithVerticalConnection": null,
+      "mRotationStep": null,
+      "mStepHeight": null
+    },
     "Build_PowerTower_C": {
       "class": "Holo_PowerPole_C",
+      "stated_on": "Build_PowerTower_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": 50.0,
@@ -8544,6 +9023,7 @@
     },
     "Build_PriorityPowerSwitch_C": {
       "class": "FGPowerSwitchHologram",
+      "stated_on": "Build_PriorityPowerSwitch_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8558,6 +9038,7 @@
     },
     "Build_QuarterPipeInCorner_Asphalt_8x4_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeInCorner_Asphalt_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8572,6 +9053,7 @@
     },
     "Build_QuarterPipeInCorner_ConcretePolished_8x4_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeInCorner_ConcretePolished_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8586,6 +9068,7 @@
     },
     "Build_QuarterPipeInCorner_Concrete_8x4_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeInCorner_Concrete_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8600,6 +9083,7 @@
     },
     "Build_QuarterPipeInCorner_Grip_8x4_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeInCorner_Grip_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8614,6 +9098,7 @@
     },
     "Build_QuarterPipeMiddleInCorner_Asphalt_8x1_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeMiddleInCorner_Asphalt_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8628,6 +9113,7 @@
     },
     "Build_QuarterPipeMiddleInCorner_Asphalt_8x2_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeMiddleInCorner_Asphalt_8x2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8642,6 +9128,7 @@
     },
     "Build_QuarterPipeMiddleInCorner_Asphalt_8x4_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeMiddleInCorner_Asphalt_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8656,6 +9143,7 @@
     },
     "Build_QuarterPipeMiddleInCorner_Concrete_8x1_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeMiddleInCorner_Concrete_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8670,6 +9158,7 @@
     },
     "Build_QuarterPipeMiddleInCorner_Concrete_8x2_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeMiddleInCorner_Concrete_8x2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8684,6 +9173,7 @@
     },
     "Build_QuarterPipeMiddleInCorner_Concrete_8x4_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeMiddleInCorner_Concrete_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8698,6 +9188,7 @@
     },
     "Build_QuarterPipeMiddleInCorner_Ficsit_8x1_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeMiddleInCorner_Ficsit_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8712,6 +9203,7 @@
     },
     "Build_QuarterPipeMiddleInCorner_Ficsit_8x2_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeMiddleInCorner_Ficsit_8x2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8726,6 +9218,7 @@
     },
     "Build_QuarterPipeMiddleInCorner_Ficsit_8x4_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeMiddleInCorner_Ficsit_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8740,6 +9233,7 @@
     },
     "Build_QuarterPipeMiddleInCorner_Grip_8x1_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeMiddleInCorner_Grip_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8754,6 +9248,7 @@
     },
     "Build_QuarterPipeMiddleInCorner_Grip_8x2_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeMiddleInCorner_Grip_8x2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8768,6 +9263,7 @@
     },
     "Build_QuarterPipeMiddleInCorner_Grip_8x4_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeMiddleInCorner_Grip_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8782,6 +9278,7 @@
     },
     "Build_QuarterPipeMiddleInCorner_PolishedConcrete_8x1_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeMiddleInCorner_PolishedConcrete_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8796,6 +9293,7 @@
     },
     "Build_QuarterPipeMiddleInCorner_PolishedConcrete_8x2_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeMiddleInCorner_PolishedConcrete_8x2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8810,6 +9308,7 @@
     },
     "Build_QuarterPipeMiddleInCorner_PolishedConcrete_8x4_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeMiddleInCorner_PolishedConcrete_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8824,6 +9323,7 @@
     },
     "Build_QuarterPipeMiddleOutCorner_Asphalt_4x1_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeMiddleOutCorner_Asphalt_4x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8838,6 +9338,7 @@
     },
     "Build_QuarterPipeMiddleOutCorner_Asphalt_4x2_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeMiddleOutCorner_Asphalt_4x2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8852,6 +9353,7 @@
     },
     "Build_QuarterPipeMiddleOutCorner_Asphalt_4x4_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeMiddleOutCorner_Asphalt_4x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8866,6 +9368,7 @@
     },
     "Build_QuarterPipeMiddleOutCorner_Concrete_4x1_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeMiddleOutCorner_Concrete_4x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8880,6 +9383,7 @@
     },
     "Build_QuarterPipeMiddleOutCorner_Concrete_4x2_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeMiddleOutCorner_Concrete_4x2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8894,6 +9398,7 @@
     },
     "Build_QuarterPipeMiddleOutCorner_Concrete_4x4_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeMiddleOutCorner_Concrete_4x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8908,6 +9413,7 @@
     },
     "Build_QuarterPipeMiddleOutCorner_Ficsit_4x1_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeMiddleOutCorner_Ficsit_4x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8922,6 +9428,7 @@
     },
     "Build_QuarterPipeMiddleOutCorner_Ficsit_4x2_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeMiddleOutCorner_Ficsit_4x2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8936,6 +9443,7 @@
     },
     "Build_QuarterPipeMiddleOutCorner_Ficsit_4x4_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeMiddleOutCorner_Ficsit_4x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8950,6 +9458,7 @@
     },
     "Build_QuarterPipeMiddleOutCorner_Grip_4x1_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeMiddleOutCorner_Grip_4x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8964,6 +9473,7 @@
     },
     "Build_QuarterPipeMiddleOutCorner_Grip_4x2_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeMiddleOutCorner_Grip_4x2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8978,6 +9488,7 @@
     },
     "Build_QuarterPipeMiddleOutCorner_Grip_4x4_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeMiddleOutCorner_Grip_4x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -8992,6 +9503,7 @@
     },
     "Build_QuarterPipeMiddleOutCorner_PolishedConcrete_4x1_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeMiddleOutCorner_PolishedConcrete_4x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9006,6 +9518,7 @@
     },
     "Build_QuarterPipeMiddleOutCorner_PolishedConcrete_4x2_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeMiddleOutCorner_PolishedConcrete_4x2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9020,6 +9533,7 @@
     },
     "Build_QuarterPipeMiddleOutCorner_PolishedConcrete_4x4_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeMiddleOutCorner_PolishedConcrete_4x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9034,6 +9548,7 @@
     },
     "Build_QuarterPipeMiddle_Asphalt_8x1_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeMiddle_Asphalt_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9048,6 +9563,7 @@
     },
     "Build_QuarterPipeMiddle_Asphalt_8x2_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeMiddle_Asphalt_8x2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9062,6 +9578,7 @@
     },
     "Build_QuarterPipeMiddle_Asphalt_8x4_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeMiddle_Asphalt_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9076,6 +9593,7 @@
     },
     "Build_QuarterPipeMiddle_Concrete_8x1_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeMiddle_Concrete_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9090,6 +9608,7 @@
     },
     "Build_QuarterPipeMiddle_Concrete_8x2_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeMiddle_Concrete_8x2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9104,6 +9623,7 @@
     },
     "Build_QuarterPipeMiddle_Concrete_8x4_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeMiddle_Concrete_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9118,6 +9638,7 @@
     },
     "Build_QuarterPipeMiddle_Ficsit_8x1_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeMiddle_Ficsit_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9132,6 +9653,7 @@
     },
     "Build_QuarterPipeMiddle_Ficsit_8x2_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeMiddle_Ficsit_8x2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9146,6 +9668,7 @@
     },
     "Build_QuarterPipeMiddle_Ficsit_8x4_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeMiddle_Ficsit_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9160,6 +9683,7 @@
     },
     "Build_QuarterPipeMiddle_Grip_8x1_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeMiddle_Grip_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9174,6 +9698,7 @@
     },
     "Build_QuarterPipeMiddle_Grip_8x2_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeMiddle_Grip_8x2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9188,6 +9713,7 @@
     },
     "Build_QuarterPipeMiddle_Grip_8x4_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeMiddle_Grip_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9202,6 +9728,7 @@
     },
     "Build_QuarterPipeMiddle_PolishedConcrete_8x1_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeMiddle_PolishedConcrete_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9216,6 +9743,7 @@
     },
     "Build_QuarterPipeMiddle_PolishedConcrete_8x2_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeMiddle_PolishedConcrete_8x2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9230,6 +9758,7 @@
     },
     "Build_QuarterPipeMiddle_PolishedConcrete_8x4_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeMiddle_PolishedConcrete_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9244,6 +9773,7 @@
     },
     "Build_QuarterPipeOutCorner_Asphalt_8x4_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeOutCorner_Asphalt_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9258,6 +9788,7 @@
     },
     "Build_QuarterPipeOutCorner_ConcretePolished_8x4_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeOutCorner_ConcretePolished_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9272,6 +9803,7 @@
     },
     "Build_QuarterPipeOutCorner_Concrete_8x4_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeOutCorner_Concrete_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9286,6 +9818,7 @@
     },
     "Build_QuarterPipeOutCorner_Grip_8x4_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipeOutCorner_Grip_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9300,6 +9833,7 @@
     },
     "Build_QuarterPipe_02_C": {
       "class": "Holo_FoundationSideZoop_C",
+      "stated_on": "Build_QuarterPipe_02_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9314,6 +9848,7 @@
     },
     "Build_QuarterPipe_Asphalt_8x4_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipe_Asphalt_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9328,6 +9863,7 @@
     },
     "Build_QuarterPipe_C": {
       "class": "Holo_FoundationSideZoop_C",
+      "stated_on": "Build_QuarterPipe_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9342,6 +9878,7 @@
     },
     "Build_QuarterPipe_ConcretePolished_8x4_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipe_ConcretePolished_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9356,6 +9893,7 @@
     },
     "Build_QuarterPipe_Concrete_8x4_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipe_Concrete_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9370,6 +9908,7 @@
     },
     "Build_QuarterPipe_Grip_8x4_C": {
       "class": "Holo_Foundation_C",
+      "stated_on": "Build_QuarterPipe_Grip_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9384,6 +9923,7 @@
     },
     "Build_Railing_01_C": {
       "class": "Holo_Railing_C",
+      "stated_on": "Build_Railing_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9398,6 +9938,7 @@
     },
     "Build_RailroadBlockSignal_C": {
       "class": "Holo_RailroadSignal_C",
+      "stated_on": "Build_RailroadBlockSignal_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9412,6 +9953,7 @@
     },
     "Build_RailroadEndStop_C": {
       "class": "Holo_RailroadEndStop_C",
+      "stated_on": "Build_RailroadEndStop_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9426,6 +9968,7 @@
     },
     "Build_RailroadPathSignal_C": {
       "class": "Holo_RailroadSignal_C",
+      "stated_on": "Build_RailroadPathSignal_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9440,6 +9983,7 @@
     },
     "Build_RailroadSwitchControl_C": {
       "class": "FGRailroadSwitchControlHologram",
+      "stated_on": "Build_RailroadSwitchControl_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9454,6 +9998,7 @@
     },
     "Build_RailroadTrack_C": {
       "class": "Holo_RailroadTrack_C",
+      "stated_on": "Build_RailroadTrack_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9468,6 +10013,7 @@
     },
     "Build_RampDouble_8x1_C": {
       "class": "Holo_RampDouble_C",
+      "stated_on": "Build_RampDouble_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9482,6 +10028,7 @@
     },
     "Build_RampDouble_Asphalt_8x1_C": {
       "class": "Holo_RampDouble_C",
+      "stated_on": "Build_RampDouble_Asphalt_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9496,6 +10043,7 @@
     },
     "Build_RampDouble_Asphalt_8x2_C": {
       "class": "Holo_RampDouble_C",
+      "stated_on": "Build_RampDouble_Asphalt_8x2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9510,6 +10058,7 @@
     },
     "Build_RampDouble_Asphalt_8x4_C": {
       "class": "Holo_RampDouble_C",
+      "stated_on": "Build_RampDouble_Asphalt_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9524,6 +10073,7 @@
     },
     "Build_RampDouble_C": {
       "class": "Holo_RampDouble_C",
+      "stated_on": "Build_RampDouble_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9538,6 +10088,7 @@
     },
     "Build_RampDouble_Concrete_8x1_C": {
       "class": "Holo_RampDouble_C",
+      "stated_on": "Build_RampDouble_Concrete_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9552,6 +10103,7 @@
     },
     "Build_RampDouble_Concrete_8x2_C": {
       "class": "Holo_RampDouble_C",
+      "stated_on": "Build_RampDouble_Concrete_8x2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9566,6 +10118,7 @@
     },
     "Build_RampDouble_Concrete_8x4_C": {
       "class": "Holo_RampDouble_C",
+      "stated_on": "Build_RampDouble_Concrete_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9580,6 +10133,7 @@
     },
     "Build_RampDouble_Metal_8x1_C": {
       "class": "Holo_RampDouble_C",
+      "stated_on": "Build_RampDouble_Metal_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9594,6 +10148,7 @@
     },
     "Build_RampDouble_Metal_8x2_C": {
       "class": "Holo_RampDouble_C",
+      "stated_on": "Build_RampDouble_Metal_8x2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9608,6 +10163,7 @@
     },
     "Build_RampDouble_Metal_8x4_C": {
       "class": "Holo_RampDouble_C",
+      "stated_on": "Build_RampDouble_Metal_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9622,6 +10178,7 @@
     },
     "Build_RampDouble_Polished_8x1_C": {
       "class": "Holo_RampDouble_C",
+      "stated_on": "Build_RampDouble_Polished_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9636,6 +10193,7 @@
     },
     "Build_RampDouble_Polished_8x2_C": {
       "class": "Holo_RampDouble_C",
+      "stated_on": "Build_RampDouble_Polished_8x2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9650,6 +10208,7 @@
     },
     "Build_RampDouble_Polished_8x4_C": {
       "class": "Holo_RampDouble_C",
+      "stated_on": "Build_RampDouble_Polished_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9664,6 +10223,7 @@
     },
     "Build_RampInverted_8x1_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_RampInverted_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9678,6 +10238,7 @@
     },
     "Build_RampInverted_8x2_01_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_RampInverted_8x2_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9692,6 +10253,7 @@
     },
     "Build_Ramp_8x1_01_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_Ramp_8x1_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9706,6 +10268,7 @@
     },
     "Build_Ramp_8x2_01_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_Ramp_8x2_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9720,6 +10283,7 @@
     },
     "Build_Ramp_8x4_01_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_Ramp_8x4_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9734,6 +10298,7 @@
     },
     "Build_Ramp_8x4_Inverted_01_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_Ramp_8x4_Inverted_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9748,6 +10313,7 @@
     },
     "Build_Ramp_8x8x8_C": {
       "class": "Holo_RampDouble_C",
+      "stated_on": "Build_Ramp_8x8x8_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9762,6 +10328,7 @@
     },
     "Build_Ramp_Asphalt_8x1_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_Ramp_Asphalt_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9776,6 +10343,7 @@
     },
     "Build_Ramp_Asphalt_8x2_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_Ramp_Asphalt_8x2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9790,6 +10358,7 @@
     },
     "Build_Ramp_Asphalt_8x4_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_Ramp_Asphalt_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9804,6 +10373,7 @@
     },
     "Build_Ramp_Concrete_8x1_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_Ramp_Concrete_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9818,6 +10388,7 @@
     },
     "Build_Ramp_Concrete_8x2_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_Ramp_Concrete_8x2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9832,6 +10403,7 @@
     },
     "Build_Ramp_Concrete_8x4_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_Ramp_Concrete_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9846,6 +10418,7 @@
     },
     "Build_Ramp_Diagonal_8x1_01_C": {
       "class": "Holo_CornerRamp_C",
+      "stated_on": "Build_Ramp_Diagonal_8x1_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9860,6 +10433,7 @@
     },
     "Build_Ramp_Diagonal_8x1_02_C": {
       "class": "Holo_CornerRamp_C",
+      "stated_on": "Build_Ramp_Diagonal_8x1_02_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9874,6 +10448,7 @@
     },
     "Build_Ramp_DownCorner_Asphalt_8x1_C": {
       "class": "Holo_CornerRamp_C",
+      "stated_on": "Build_Ramp_DownCorner_Asphalt_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9888,6 +10463,7 @@
     },
     "Build_Ramp_DownCorner_Concrete_8x1_C": {
       "class": "Holo_CornerRamp_C",
+      "stated_on": "Build_Ramp_DownCorner_Concrete_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9902,6 +10478,7 @@
     },
     "Build_Ramp_DownCorner_Metal_8x1_C": {
       "class": "Holo_CornerRamp_C",
+      "stated_on": "Build_Ramp_DownCorner_Metal_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9916,6 +10493,7 @@
     },
     "Build_Ramp_DownCorner_Polished_8x1_C": {
       "class": "Holo_CornerRamp_C",
+      "stated_on": "Build_Ramp_DownCorner_Polished_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9930,6 +10508,7 @@
     },
     "Build_Ramp_Frame_01_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_Ramp_Frame_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9944,6 +10523,7 @@
     },
     "Build_Ramp_Frame_Inverted_01_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_Ramp_Frame_Inverted_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9958,6 +10538,7 @@
     },
     "Build_Ramp_Metal_8x1_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_Ramp_Metal_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9972,6 +10553,7 @@
     },
     "Build_Ramp_Metal_8x2_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_Ramp_Metal_8x2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -9986,6 +10568,7 @@
     },
     "Build_Ramp_Metal_8x4_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_Ramp_Metal_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10000,6 +10583,7 @@
     },
     "Build_Ramp_Polished_8x1_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_Ramp_Polished_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10014,6 +10598,7 @@
     },
     "Build_Ramp_Polished_8x2_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_Ramp_Polished_8x2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10028,6 +10613,7 @@
     },
     "Build_Ramp_Polished_8x4_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_Ramp_Polished_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10042,6 +10628,7 @@
     },
     "Build_Ramp_UpCorner_Asphalt_8x1_C": {
       "class": "Holo_CornerRamp_C",
+      "stated_on": "Build_Ramp_UpCorner_Asphalt_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10056,6 +10643,7 @@
     },
     "Build_Ramp_UpCorner_Concrete_8x1_C": {
       "class": "Holo_CornerRamp_C",
+      "stated_on": "Build_Ramp_UpCorner_Concrete_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10070,6 +10658,7 @@
     },
     "Build_Ramp_UpCorner_Metal_8x1_C": {
       "class": "Holo_CornerRamp_C",
+      "stated_on": "Build_Ramp_UpCorner_Metal_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10084,6 +10673,7 @@
     },
     "Build_Ramp_UpCorner_Polished_8x1_C": {
       "class": "Holo_CornerRamp_C",
+      "stated_on": "Build_Ramp_UpCorner_Polished_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10098,6 +10688,7 @@
     },
     "Build_ResourceSinkShop_C": {
       "class": "Holo_BuildingGradualBase_C",
+      "stated_on": "Build_ResourceSinkShop_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10112,6 +10703,7 @@
     },
     "Build_Roof_A_01_C": {
       "class": "Holo_Roof_C",
+      "stated_on": "Build_Roof_A_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10126,6 +10718,7 @@
     },
     "Build_Roof_A_02_C": {
       "class": "Holo_Roof_C",
+      "stated_on": "Build_Roof_A_02_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10140,6 +10733,7 @@
     },
     "Build_Roof_A_03_C": {
       "class": "Holo_Roof_C",
+      "stated_on": "Build_Roof_A_03_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10154,6 +10748,7 @@
     },
     "Build_Roof_A_04_C": {
       "class": "Holo_Roof_C",
+      "stated_on": "Build_Roof_A_04_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10168,6 +10763,7 @@
     },
     "Build_Roof_Metal_InCorner_01_C": {
       "class": "Holo_CornerWall_C",
+      "stated_on": "Build_Roof_Metal_InCorner_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10182,6 +10778,7 @@
     },
     "Build_Roof_Metal_InCorner_02_C": {
       "class": "Holo_CornerWall_C",
+      "stated_on": "Build_Roof_Metal_InCorner_02_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10196,6 +10793,7 @@
     },
     "Build_Roof_Metal_InCorner_03_C": {
       "class": "Holo_CornerWall_C",
+      "stated_on": "Build_Roof_Metal_InCorner_03_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10210,6 +10808,7 @@
     },
     "Build_Roof_Metal_OutCorner_01_C": {
       "class": "Holo_CornerWall_C",
+      "stated_on": "Build_Roof_Metal_OutCorner_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10224,6 +10823,7 @@
     },
     "Build_Roof_Metal_OutCorner_02_C": {
       "class": "Holo_CornerWall_C",
+      "stated_on": "Build_Roof_Metal_OutCorner_02_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10238,6 +10838,7 @@
     },
     "Build_Roof_Metal_OutCorner_03_C": {
       "class": "Holo_CornerWall_C",
+      "stated_on": "Build_Roof_Metal_OutCorner_03_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10252,6 +10853,7 @@
     },
     "Build_Roof_Orange_01_C": {
       "class": "Holo_Roof_C",
+      "stated_on": "Build_Roof_Orange_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10266,6 +10868,7 @@
     },
     "Build_Roof_Orange_02_C": {
       "class": "Holo_Roof_C",
+      "stated_on": "Build_Roof_Orange_02_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10280,6 +10883,7 @@
     },
     "Build_Roof_Orange_03_C": {
       "class": "Holo_Roof_C",
+      "stated_on": "Build_Roof_Orange_03_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10294,6 +10898,7 @@
     },
     "Build_Roof_Orange_04_C": {
       "class": "Holo_Roof_C",
+      "stated_on": "Build_Roof_Orange_04_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10308,6 +10913,7 @@
     },
     "Build_Roof_Orange_InCorner_01_C": {
       "class": "Holo_CornerWall_C",
+      "stated_on": "Build_Roof_Orange_InCorner_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10322,6 +10928,7 @@
     },
     "Build_Roof_Orange_InCorner_02_C": {
       "class": "Holo_CornerWall_C",
+      "stated_on": "Build_Roof_Orange_InCorner_02_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10336,6 +10943,7 @@
     },
     "Build_Roof_Orange_InCorner_03_C": {
       "class": "Holo_CornerWall_C",
+      "stated_on": "Build_Roof_Orange_InCorner_03_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10350,6 +10958,7 @@
     },
     "Build_Roof_Orange_OutCorner_01_C": {
       "class": "Holo_CornerWall_C",
+      "stated_on": "Build_Roof_Orange_OutCorner_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10364,6 +10973,7 @@
     },
     "Build_Roof_Orange_OutCorner_02_C": {
       "class": "Holo_CornerWall_C",
+      "stated_on": "Build_Roof_Orange_OutCorner_02_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10378,6 +10988,7 @@
     },
     "Build_Roof_Orange_OutCorner_03_C": {
       "class": "Holo_CornerWall_C",
+      "stated_on": "Build_Roof_Orange_OutCorner_03_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10392,6 +11003,7 @@
     },
     "Build_Roof_Tar_01_C": {
       "class": "Holo_Roof_C",
+      "stated_on": "Build_Roof_Tar_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10406,6 +11018,7 @@
     },
     "Build_Roof_Tar_02_C": {
       "class": "Holo_Roof_C",
+      "stated_on": "Build_Roof_Tar_02_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10420,6 +11033,7 @@
     },
     "Build_Roof_Tar_03_C": {
       "class": "Holo_Roof_C",
+      "stated_on": "Build_Roof_Tar_03_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10434,6 +11048,7 @@
     },
     "Build_Roof_Tar_04_C": {
       "class": "Holo_Roof_C",
+      "stated_on": "Build_Roof_Tar_04_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10448,6 +11063,7 @@
     },
     "Build_Roof_Tar_InCorner_01_C": {
       "class": "Holo_CornerWall_C",
+      "stated_on": "Build_Roof_Tar_InCorner_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10462,6 +11078,7 @@
     },
     "Build_Roof_Tar_InCorner_02_C": {
       "class": "Holo_CornerWall_C",
+      "stated_on": "Build_Roof_Tar_InCorner_02_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10476,6 +11093,7 @@
     },
     "Build_Roof_Tar_InCorner_03_C": {
       "class": "Holo_CornerWall_C",
+      "stated_on": "Build_Roof_Tar_InCorner_03_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10490,6 +11108,7 @@
     },
     "Build_Roof_Tar_OutCorner_01_C": {
       "class": "Holo_CornerWall_C",
+      "stated_on": "Build_Roof_Tar_OutCorner_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10504,6 +11123,7 @@
     },
     "Build_Roof_Tar_OutCorner_02_C": {
       "class": "Holo_CornerWall_C",
+      "stated_on": "Build_Roof_Tar_OutCorner_02_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10518,6 +11138,7 @@
     },
     "Build_Roof_Tar_OutCorner_03_C": {
       "class": "Holo_CornerWall_C",
+      "stated_on": "Build_Roof_Tar_OutCorner_03_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10532,6 +11153,7 @@
     },
     "Build_Roof_Window_01_C": {
       "class": "Holo_Roof_C",
+      "stated_on": "Build_Roof_Window_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10546,6 +11168,7 @@
     },
     "Build_Roof_Window_02_C": {
       "class": "Holo_Roof_C",
+      "stated_on": "Build_Roof_Window_02_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10560,6 +11183,7 @@
     },
     "Build_Roof_Window_03_C": {
       "class": "Holo_Roof_C",
+      "stated_on": "Build_Roof_Window_03_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10574,6 +11198,7 @@
     },
     "Build_Roof_Window_04_C": {
       "class": "Holo_Roof_C",
+      "stated_on": "Build_Roof_Window_04_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10588,6 +11213,7 @@
     },
     "Build_Roof_Window_InCorner_01_C": {
       "class": "Holo_CornerWall_C",
+      "stated_on": "Build_Roof_Window_InCorner_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10602,6 +11228,7 @@
     },
     "Build_Roof_Window_InCorner_02_C": {
       "class": "Holo_CornerWall_C",
+      "stated_on": "Build_Roof_Window_InCorner_02_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10616,6 +11243,7 @@
     },
     "Build_Roof_Window_InCorner_03_C": {
       "class": "Holo_CornerWall_C",
+      "stated_on": "Build_Roof_Window_InCorner_03_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10630,6 +11258,7 @@
     },
     "Build_Roof_Window_OutCorner_01_C": {
       "class": "Holo_CornerWall_C",
+      "stated_on": "Build_Roof_Window_OutCorner_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10644,6 +11273,7 @@
     },
     "Build_Roof_Window_OutCorner_02_C": {
       "class": "Holo_CornerWall_C",
+      "stated_on": "Build_Roof_Window_OutCorner_02_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10658,6 +11288,7 @@
     },
     "Build_Roof_Window_OutCorner_03_C": {
       "class": "Holo_CornerWall_C",
+      "stated_on": "Build_Roof_Window_OutCorner_03_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10672,6 +11303,7 @@
     },
     "Build_SnowCannon_C": {
       "class": "Holo_SnowCannon_C",
+      "stated_on": "Build_SnowCannon_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10686,6 +11318,7 @@
     },
     "Build_SnowDispenser_C": {
       "class": "Holo_SnowDispenser_C",
+      "stated_on": "Build_SnowDispenser_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10700,6 +11333,7 @@
     },
     "Build_Snowman_C": {
       "class": "Holo_Snowman_C",
+      "stated_on": "Build_Snowman_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10714,6 +11348,7 @@
     },
     "Build_SpaceElevator_C": {
       "class": "FGSpaceElevatorHologram",
+      "stated_on": "Build_SpaceElevator_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10728,6 +11363,7 @@
     },
     "Build_StackableShelf_C": {
       "class": "Holo_StackableShelf_C",
+      "stated_on": "Build_StackableShelf_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10742,6 +11378,7 @@
     },
     "Build_Stair_Asphalt_8x1_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_Stair_Asphalt_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10756,6 +11393,7 @@
     },
     "Build_Stair_Asphalt_8x2_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_Stair_Asphalt_8x2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10770,6 +11408,7 @@
     },
     "Build_Stair_Asphalt_8x4_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_Stair_Asphalt_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10784,6 +11423,7 @@
     },
     "Build_Stair_Concrete_8x1_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_Stair_Concrete_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10798,6 +11438,7 @@
     },
     "Build_Stair_Concrete_8x2_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_Stair_Concrete_8x2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10812,6 +11453,7 @@
     },
     "Build_Stair_Concrete_8x4_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_Stair_Concrete_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10826,6 +11468,7 @@
     },
     "Build_Stair_FicsitSet_8x1_01_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_Stair_FicsitSet_8x1_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10840,6 +11483,7 @@
     },
     "Build_Stair_FicsitSet_8x2_01_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_Stair_FicsitSet_8x2_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10854,6 +11498,7 @@
     },
     "Build_Stair_FicsitSet_8x4_01_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_Stair_FicsitSet_8x4_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10868,6 +11513,7 @@
     },
     "Build_Stair_GripMetal_8x1_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_Stair_GripMetal_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10882,6 +11528,7 @@
     },
     "Build_Stair_GripMetal_8x2_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_Stair_GripMetal_8x2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10896,6 +11543,7 @@
     },
     "Build_Stair_GripMetal_8x4_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_Stair_GripMetal_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10910,6 +11558,7 @@
     },
     "Build_Stair_PolishedConcrete_8x1_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_Stair_PolishedConcrete_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10924,6 +11573,7 @@
     },
     "Build_Stair_PolishedConcrete_8x2_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_Stair_PolishedConcrete_8x2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10938,6 +11588,7 @@
     },
     "Build_Stair_PolishedConcrete_8x4_C": {
       "class": "Holo_Ramp_C",
+      "stated_on": "Build_Stair_PolishedConcrete_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10952,6 +11603,7 @@
     },
     "Build_StandaloneWidgetSign_Huge_C": {
       "class": "Holo_StandaloneSign_Huge_C",
+      "stated_on": "Build_StandaloneWidgetSign_Huge_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10966,6 +11618,7 @@
     },
     "Build_StandaloneWidgetSign_Large_C": {
       "class": "Holo_StandaloneSign_Large_C",
+      "stated_on": "Build_StandaloneWidgetSign_Large_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10980,6 +11633,7 @@
     },
     "Build_StandaloneWidgetSign_Medium_C": {
       "class": "Holo_StandaloneSign_Medium_C",
+      "stated_on": "Build_StandaloneWidgetSign_Medium_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -10994,6 +11648,7 @@
     },
     "Build_StandaloneWidgetSign_Portrait_C": {
       "class": "Holo_StandaloneSign_Portrait_C",
+      "stated_on": "Build_StandaloneWidgetSign_Portrait_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11008,6 +11663,7 @@
     },
     "Build_StandaloneWidgetSign_SmallVeryWide_C": {
       "class": "Holo_StandaloneSign_Small_C",
+      "stated_on": "Build_StandaloneWidgetSign_SmallVeryWide_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11022,6 +11678,7 @@
     },
     "Build_StandaloneWidgetSign_SmallWide_C": {
       "class": "Holo_StandaloneSign_Small_C",
+      "stated_on": "Build_StandaloneWidgetSign_SmallWide_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11036,6 +11693,7 @@
     },
     "Build_StandaloneWidgetSign_Small_C": {
       "class": "Holo_StandaloneSign_Small_C",
+      "stated_on": "Build_StandaloneWidgetSign_Small_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11050,6 +11708,7 @@
     },
     "Build_StandaloneWidgetSign_Square_C": {
       "class": "Holo_StandaloneSign_Medium_C",
+      "stated_on": "Build_StandaloneWidgetSign_Square_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11064,6 +11723,7 @@
     },
     "Build_StandaloneWidgetSign_Square_Small_C": {
       "class": "Holo_StandaloneSign_Medium_C",
+      "stated_on": "Build_StandaloneWidgetSign_Square_Small_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11078,6 +11738,7 @@
     },
     "Build_StandaloneWidgetSign_Square_Tiny_C": {
       "class": "Holo_StandaloneSign_Small_C",
+      "stated_on": "Build_StandaloneWidgetSign_Square_Tiny_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11092,6 +11753,7 @@
     },
     "Build_SteelWall_8x1_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_SteelWall_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11106,6 +11768,7 @@
     },
     "Build_SteelWall_8x4_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_SteelWall_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11120,6 +11783,7 @@
     },
     "Build_SteelWall_8x4_DoorC_01_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_SteelWall_8x4_DoorC_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11134,6 +11798,7 @@
     },
     "Build_SteelWall_8x4_DoorS_01_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_SteelWall_8x4_DoorS_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11148,6 +11813,7 @@
     },
     "Build_SteelWall_8x4_Gate_01_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_SteelWall_8x4_Gate_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11162,6 +11828,7 @@
     },
     "Build_SteelWall_8x4_Window_01_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_SteelWall_8x4_Window_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11176,6 +11843,7 @@
     },
     "Build_SteelWall_8x4_Window_02_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_SteelWall_8x4_Window_02_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11190,6 +11858,7 @@
     },
     "Build_SteelWall_8x4_Window_03_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_SteelWall_8x4_Window_03_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11204,6 +11873,7 @@
     },
     "Build_SteelWall_8x4_Window_04_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_SteelWall_8x4_Window_04_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11218,6 +11888,7 @@
     },
     "Build_SteelWall_FlipTris_8x1_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_SteelWall_FlipTris_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11232,6 +11903,7 @@
     },
     "Build_SteelWall_FlipTris_8x2_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_SteelWall_FlipTris_8x2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11246,6 +11918,7 @@
     },
     "Build_SteelWall_FlipTris_8x4_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_SteelWall_FlipTris_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11260,6 +11933,7 @@
     },
     "Build_SteelWall_FlipTris_8x8_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_SteelWall_FlipTris_8x8_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11274,6 +11948,7 @@
     },
     "Build_SteelWall_Tris_8x1_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_SteelWall_Tris_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11288,6 +11963,7 @@
     },
     "Build_SteelWall_Tris_8x2_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_SteelWall_Tris_8x2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11302,6 +11978,7 @@
     },
     "Build_SteelWall_Tris_8x4_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_SteelWall_Tris_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11316,6 +11993,7 @@
     },
     "Build_SteelWall_Tris_8x8_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_SteelWall_Tris_8x8_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11330,6 +12008,7 @@
     },
     "Build_StorageBlueprint_C": {
       "class": "Holo_BuildingGradualBase_NoClearanceMesh_C",
+      "stated_on": "Build_StorageBlueprint_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11344,6 +12023,7 @@
     },
     "Build_StorageContainerMk1_C": {
       "class": "FGStackableStorageHologram",
+      "stated_on": "Build_StorageContainerMk1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11358,6 +12038,7 @@
     },
     "Build_StorageContainerMk2_C": {
       "class": "FGStackableStorageHologram",
+      "stated_on": "Build_StorageContainerMk2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11372,6 +12053,7 @@
     },
     "Build_StorageHazard_C": {
       "class": "Holo_StorageBox_C",
+      "stated_on": "Build_StorageHazard_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11386,6 +12068,7 @@
     },
     "Build_StorageIntegrated_C": {
       "class": "FGBuildableHologram",
+      "stated_on": "Build_StorageIntegrated_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11400,6 +12083,7 @@
     },
     "Build_StorageMedkit_C": {
       "class": "Holo_StorageBox_C",
+      "stated_on": "Build_StorageMedkit_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11414,6 +12098,7 @@
     },
     "Build_StoragePlayer_C": {
       "class": "Holo_StorageBox_C",
+      "stated_on": "Build_StoragePlayer_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11428,6 +12113,7 @@
     },
     "Build_StreetLight_C": {
       "class": "Holo_StreetLight_C",
+      "stated_on": "Build_StreetLight_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": 50.0,
@@ -11442,6 +12128,7 @@
     },
     "Build_TarpFence_C": {
       "class": "Holo_Barrier_C",
+      "stated_on": "Build_TarpFence_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11456,6 +12143,7 @@
     },
     "Build_TradingPost_C": {
       "class": "Holo_TradingPost_C",
+      "stated_on": "Build_TradingPost_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11470,6 +12158,7 @@
     },
     "Build_TrainDockingStationLiquid_C": {
       "class": "Holo_TrainPlatformCargo_C",
+      "stated_on": "Build_TrainDockingStationLiquid_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11484,6 +12173,7 @@
     },
     "Build_TrainDockingStation_C": {
       "class": "Holo_TrainPlatformCargo_C",
+      "stated_on": "Build_TrainDockingStation_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11498,6 +12188,7 @@
     },
     "Build_TrainPlatformEmpty_02_C": {
       "class": "Holo_TrainPlatformEmpty_C",
+      "stated_on": "Build_TrainPlatformEmpty_02_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11512,6 +12203,7 @@
     },
     "Build_TrainPlatformEmpty_C": {
       "class": "Holo_TrainPlatformEmpty_C",
+      "stated_on": "Build_TrainPlatformEmpty_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11526,6 +12218,7 @@
     },
     "Build_TrainStation_C": {
       "class": "Holo_TrainStation_C",
+      "stated_on": "Build_TrainStation_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11540,6 +12233,7 @@
     },
     "Build_TruckStation_C": {
       "class": "FGDockingStationHologram",
+      "stated_on": "Build_TruckStation_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11554,6 +12248,7 @@
     },
     "Build_VehiclePath_Base_C": {
       "class": "Holo_VehiclePath_C",
+      "stated_on": "Build_VehiclePath_Base_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11568,6 +12263,7 @@
     },
     "Build_VehiclePath_Explorer_C": {
       "class": "Holo_VehiclePath_Explorer_C",
+      "stated_on": "Build_VehiclePath_Explorer_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11582,6 +12278,7 @@
     },
     "Build_VehiclePath_FactoryCart_C": {
       "class": "Holo_VehiclePath_FactoryCart_C",
+      "stated_on": "Build_VehiclePath_FactoryCart_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11596,6 +12293,7 @@
     },
     "Build_VehiclePath_Tractor_C": {
       "class": "Holo_VehiclePath_Tractor_C",
+      "stated_on": "Build_VehiclePath_Tractor_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11610,6 +12308,7 @@
     },
     "Build_VehiclePath_Truck_C": {
       "class": "Holo_VehiclePath_Truck_C",
+      "stated_on": "Build_VehiclePath_Truck_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11624,6 +12323,7 @@
     },
     "Build_VehiclePath_Universal_C": {
       "class": "Holo_VehiclePath_Universal_C",
+      "stated_on": "Build_VehiclePath_Universal_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11638,6 +12338,7 @@
     },
     "Build_WalkwayCross_C": {
       "class": "Holo_WalkwayCross_C",
+      "stated_on": "Build_WalkwayCross_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11652,6 +12353,7 @@
     },
     "Build_WalkwayRamp_C": {
       "class": "Holo_WalkwayStraight_C",
+      "stated_on": "Build_WalkwayRamp_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11666,6 +12368,7 @@
     },
     "Build_WalkwayStraight_C": {
       "class": "Holo_WalkwayStraight_C",
+      "stated_on": "Build_WalkwayStraight_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11680,6 +12383,7 @@
     },
     "Build_WalkwayT_C": {
       "class": "Holo_WalkwayT_C",
+      "stated_on": "Build_WalkwayT_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11694,6 +12398,7 @@
     },
     "Build_WallSet_Steel_Angular_8x4_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_WallSet_Steel_Angular_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11708,6 +12413,7 @@
     },
     "Build_WallSet_Steel_Angular_8x8_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_WallSet_Steel_Angular_8x8_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11722,6 +12428,7 @@
     },
     "Build_Wall_8x4_01_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_8x4_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11736,6 +12443,7 @@
     },
     "Build_Wall_8x4_02_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_8x4_02_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11750,6 +12458,7 @@
     },
     "Build_Wall_Concrete_8x1_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Concrete_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11764,6 +12473,7 @@
     },
     "Build_Wall_Concrete_8x4_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Concrete_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11778,6 +12488,7 @@
     },
     "Build_Wall_Concrete_8x4_ConveyorHole_01_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Concrete_8x4_ConveyorHole_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11792,6 +12503,7 @@
     },
     "Build_Wall_Concrete_8x4_ConveyorHole_02_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Concrete_8x4_ConveyorHole_02_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11806,6 +12518,7 @@
     },
     "Build_Wall_Concrete_8x4_ConveyorHole_03_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Concrete_8x4_ConveyorHole_03_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11820,6 +12533,7 @@
     },
     "Build_Wall_Concrete_8x4_Corner_01_C": {
       "class": "Holo_CornerWall_C",
+      "stated_on": "Build_Wall_Concrete_8x4_Corner_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11834,6 +12548,7 @@
     },
     "Build_Wall_Concrete_8x4_Corner_2_C": {
       "class": "Holo_CornerWall_C",
+      "stated_on": "Build_Wall_Concrete_8x4_Corner_2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11848,6 +12563,7 @@
     },
     "Build_Wall_Concrete_8x4_Window_01_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Concrete_8x4_Window_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11862,6 +12578,7 @@
     },
     "Build_Wall_Concrete_8x4_Window_02_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Concrete_8x4_Window_02_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11876,6 +12593,7 @@
     },
     "Build_Wall_Concrete_8x4_Window_03_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Concrete_8x4_Window_03_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11890,6 +12608,7 @@
     },
     "Build_Wall_Concrete_8x4_Window_04_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Concrete_8x4_Window_04_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11904,6 +12623,7 @@
     },
     "Build_Wall_Concrete_8x8_Corner_01_C": {
       "class": "Holo_CornerWall_C",
+      "stated_on": "Build_Wall_Concrete_8x8_Corner_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11918,6 +12638,7 @@
     },
     "Build_Wall_Concrete_8x8_Corner_2_C": {
       "class": "Holo_CornerWall_C",
+      "stated_on": "Build_Wall_Concrete_8x8_Corner_2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11932,6 +12653,7 @@
     },
     "Build_Wall_Concrete_Angular_8x4_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Concrete_Angular_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11946,6 +12668,7 @@
     },
     "Build_Wall_Concrete_Angular_8x8_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Concrete_Angular_8x8_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11960,6 +12683,7 @@
     },
     "Build_Wall_Concrete_CDoor_8x4_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Concrete_CDoor_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11974,6 +12698,7 @@
     },
     "Build_Wall_Concrete_FlipTris_8x1_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Concrete_FlipTris_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -11988,6 +12713,7 @@
     },
     "Build_Wall_Concrete_FlipTris_8x2_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Concrete_FlipTris_8x2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12002,6 +12728,7 @@
     },
     "Build_Wall_Concrete_FlipTris_8x4_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Concrete_FlipTris_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12016,6 +12743,7 @@
     },
     "Build_Wall_Concrete_FlipTris_8x8_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Concrete_FlipTris_8x8_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12030,6 +12758,7 @@
     },
     "Build_Wall_Concrete_Gate_8x4_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Concrete_Gate_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12044,6 +12773,7 @@
     },
     "Build_Wall_Concrete_SDoor_8x4_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Concrete_SDoor_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12058,6 +12788,7 @@
     },
     "Build_Wall_Concrete_Tris_8x1_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Concrete_Tris_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12072,6 +12803,7 @@
     },
     "Build_Wall_Concrete_Tris_8x2_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Concrete_Tris_8x2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12086,6 +12818,7 @@
     },
     "Build_Wall_Concrete_Tris_8x4_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Concrete_Tris_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12100,6 +12833,7 @@
     },
     "Build_Wall_Concrete_Tris_8x8_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Concrete_Tris_8x8_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12114,6 +12848,7 @@
     },
     "Build_Wall_Concrete_Tris_Curved_8x8_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Concrete_Tris_Curved_8x8_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12128,6 +12863,7 @@
     },
     "Build_Wall_Concrete_Tris_Glass_8x8_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Concrete_Tris_Glass_8x8_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12142,6 +12878,7 @@
     },
     "Build_Wall_Conveyor_8x4_01_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Conveyor_8x4_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12156,6 +12893,7 @@
     },
     "Build_Wall_Conveyor_8x4_01_Steel_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Conveyor_8x4_01_Steel_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12170,6 +12908,7 @@
     },
     "Build_Wall_Conveyor_8x4_02_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Conveyor_8x4_02_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12184,6 +12923,7 @@
     },
     "Build_Wall_Conveyor_8x4_02_Steel_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Conveyor_8x4_02_Steel_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12198,6 +12938,7 @@
     },
     "Build_Wall_Conveyor_8x4_03_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Conveyor_8x4_03_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12212,6 +12953,7 @@
     },
     "Build_Wall_Conveyor_8x4_03_Steel_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Conveyor_8x4_03_Steel_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12226,6 +12968,7 @@
     },
     "Build_Wall_Conveyor_8x4_04_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Conveyor_8x4_04_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12240,6 +12983,7 @@
     },
     "Build_Wall_Conveyor_8x4_04_Steel_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Conveyor_8x4_04_Steel_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12254,6 +12998,22 @@
     },
     "Build_Wall_Door_8x4_01_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Door_8x4_01_C",
+      "mBendRadius": null,
+      "mBendRadius2D": null,
+      "mGridSnapSize": null,
+      "mMaximumHeight": null,
+      "mMaxIncline": null,
+      "mMaxSplineLength": null,
+      "mMinBendRadius": null,
+      "mMinimumHeight": null,
+      "mMinimumHeightWithVerticalConnection": null,
+      "mRotationStep": null,
+      "mStepHeight": null
+    },
+    "Build_Wall_Door_8x4_01_Steel_C": {
+      "class": "Holo_Wall_C",
+      "stated_on": "Build_SteelWall_8x4_DoorC_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12268,6 +13028,22 @@
     },
     "Build_Wall_Door_8x4_03_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Door_8x4_03_C",
+      "mBendRadius": null,
+      "mBendRadius2D": null,
+      "mGridSnapSize": null,
+      "mMaximumHeight": null,
+      "mMaxIncline": null,
+      "mMaxSplineLength": null,
+      "mMinBendRadius": null,
+      "mMinimumHeight": null,
+      "mMinimumHeightWithVerticalConnection": null,
+      "mRotationStep": null,
+      "mStepHeight": null
+    },
+    "Build_Wall_Door_8x4_03_Steel_C": {
+      "class": "Holo_Wall_C",
+      "stated_on": "Build_SteelWall_8x4_DoorS_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12282,6 +13058,7 @@
     },
     "Build_Wall_Frame_01_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Frame_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12296,6 +13073,7 @@
     },
     "Build_Wall_Gate_8x4_01_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Gate_8x4_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12310,6 +13088,7 @@
     },
     "Build_Wall_Inverted_Concrete_Tris_Curved_8x8_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Inverted_Concrete_Tris_Curved_8x8_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12324,6 +13103,7 @@
     },
     "Build_Wall_Orange_8x1_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Orange_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12338,6 +13118,7 @@
     },
     "Build_Wall_Orange_8x4_Corner_01_C": {
       "class": "Holo_CornerWall_C",
+      "stated_on": "Build_Wall_Orange_8x4_Corner_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12352,6 +13133,7 @@
     },
     "Build_Wall_Orange_8x4_Corner_02_C": {
       "class": "Holo_CornerWall_C",
+      "stated_on": "Build_Wall_Orange_8x4_Corner_02_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12366,6 +13148,7 @@
     },
     "Build_Wall_Orange_8x8_Corner_01_C": {
       "class": "Holo_CornerWall_C",
+      "stated_on": "Build_Wall_Orange_8x8_Corner_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12380,6 +13163,7 @@
     },
     "Build_Wall_Orange_8x8_Corner_02_C": {
       "class": "Holo_CornerWall_C",
+      "stated_on": "Build_Wall_Orange_8x8_Corner_02_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12394,6 +13178,7 @@
     },
     "Build_Wall_Orange_Angular_8x4_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Orange_Angular_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12408,6 +13193,7 @@
     },
     "Build_Wall_Orange_Angular_8x8_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Orange_Angular_8x8_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12422,6 +13208,7 @@
     },
     "Build_Wall_Orange_FlipTris_8x1_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Orange_FlipTris_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12436,6 +13223,7 @@
     },
     "Build_Wall_Orange_FlipTris_8x2_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Orange_FlipTris_8x2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12450,6 +13238,7 @@
     },
     "Build_Wall_Orange_FlipTris_8x4_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Orange_FlipTris_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12464,6 +13253,7 @@
     },
     "Build_Wall_Orange_FlipTris_8x8_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Orange_FlipTris_8x8_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12478,6 +13268,7 @@
     },
     "Build_Wall_Orange_Tris_8x1_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Orange_Tris_8x1_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12492,6 +13283,7 @@
     },
     "Build_Wall_Orange_Tris_8x2_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Orange_Tris_8x2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12506,6 +13298,7 @@
     },
     "Build_Wall_Orange_Tris_8x4_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Orange_Tris_8x4_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12520,6 +13313,7 @@
     },
     "Build_Wall_Orange_Tris_8x8_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Orange_Tris_8x8_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12534,6 +13328,7 @@
     },
     "Build_Wall_Steel_8x4_Corner_01_C": {
       "class": "Holo_CornerWall_C",
+      "stated_on": "Build_Wall_Steel_8x4_Corner_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12548,6 +13343,7 @@
     },
     "Build_Wall_Steel_8x4_Corner_2_C": {
       "class": "Holo_CornerWall_C",
+      "stated_on": "Build_Wall_Steel_8x4_Corner_2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12562,6 +13358,7 @@
     },
     "Build_Wall_Steel_8x8_Corner_01_C": {
       "class": "Holo_CornerWall_C",
+      "stated_on": "Build_Wall_Steel_8x8_Corner_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12576,6 +13373,7 @@
     },
     "Build_Wall_Steel_8x8_Corner_2_C": {
       "class": "Holo_CornerWall_C",
+      "stated_on": "Build_Wall_Steel_8x8_Corner_2_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12590,6 +13388,7 @@
     },
     "Build_Wall_Window_8x4_01_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Window_8x4_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12604,6 +13403,7 @@
     },
     "Build_Wall_Window_8x4_02_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Window_8x4_02_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12618,6 +13418,7 @@
     },
     "Build_Wall_Window_8x4_03_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Window_8x4_03_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12632,6 +13433,7 @@
     },
     "Build_Wall_Window_8x4_04_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Window_8x4_04_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12646,6 +13448,7 @@
     },
     "Build_Wall_Window_8x4_05_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Window_8x4_05_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12660,6 +13463,7 @@
     },
     "Build_Wall_Window_8x4_06_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Window_8x4_06_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12674,6 +13478,7 @@
     },
     "Build_Wall_Window_8x4_07_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Window_8x4_07_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12688,6 +13493,7 @@
     },
     "Build_Wall_Window_Thin_8x4_01_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Window_Thin_8x4_01_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12702,6 +13508,7 @@
     },
     "Build_Wall_Window_Thin_8x4_02_C": {
       "class": "Holo_Wall_C",
+      "stated_on": "Build_Wall_Window_Thin_8x4_02_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12716,6 +13523,7 @@
     },
     "Build_WaterPump_C": {
       "class": "Holo_WaterPump_C",
+      "stated_on": "Build_WaterPump_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12730,6 +13538,7 @@
     },
     "Build_WorkBenchIntegrated_C": {
       "class": "FGBuildableHologram",
+      "stated_on": "Build_WorkBenchIntegrated_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12744,6 +13553,7 @@
     },
     "Build_WorkBench_C": {
       "class": "Holo_BuildingGradualBase_C",
+      "stated_on": "Build_WorkBench_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12758,6 +13568,7 @@
     },
     "Build_Workshop_C": {
       "class": "Holo_BuildingGradualBase_C",
+      "stated_on": "Build_Workshop_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12772,6 +13583,7 @@
     },
     "Build_WreathDecor_C": {
       "class": "Holo_WreathDecor_C",
+      "stated_on": "Build_WreathDecor_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12786,6 +13598,7 @@
     },
     "Build_XmassLightsLine_C": {
       "class": "Holo_PowerLine_C",
+      "stated_on": "Build_XmassLightsLine_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,
@@ -12800,6 +13613,7 @@
     },
     "Build_XmassTree_C": {
       "class": "FGBuildableHologram",
+      "stated_on": "Build_XmassTree_C",
       "mBendRadius": null,
       "mBendRadius2D": null,
       "mGridSnapSize": null,

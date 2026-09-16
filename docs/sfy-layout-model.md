@@ -137,7 +137,7 @@ report. `needs spec` marks a check that cannot run without an `SfyBuildSpec`.
 | --- | --- | --- | --- | --- |
 | `geom.bounds` | `project` | — | no | every origin, clearance-box corner and spline point inside `[-half, half]² × [0, height]` of the designer, sized from `designer_dims` and the shipped foundation's footprint |
 | `geom.hard_clearance` | `buildable.clearance` | refuse | no | no two **hard** clearance boxes lap, by a separating-axis test on the boxes' full `RelativeTransform`. Soft boxes may share space — that is how a machine stands on a foundation. A box flagged `ExcludeForSnapping` is still tested: the flag excludes it from *snapping*, not from clearance, and the finding says the flag was there |
-| `belt.capsule` | `project` | — | no | a conveyor's clearance laps no other conveyor's and no hard box: for a belt, the chain `belt.clearance` lays — `Min = (-L/2, -79, -15)`, `Max = (L/2, 79, 15)` per segment; for a lift, the one box `lift.clearance` says spans it, as wide as the connector clearance the registry carries on the lift's two ports (the game's own half-extent is in `.data` and was never read) |
+| `belt.capsule` | `project` | — | no | a conveyor's clearance laps no other conveyor's and no hard box: for a belt, the chain `belt.clearance` lays — `Min = (-L/2, -79, -15)`, `Max = (L/2, 79, 15)` per segment; for a lift, the one box `lift.clearance` says spans it, as wide as `limits.lift_clearance_half_extent_cm` — the game's own half-extent, read out of `.data` by the PDB symbol `AFGBuildableConveyorLift::CLEARANCE_EXTENT_2D` and shrunk by the 5 cm `FitClearance` takes off each axis, 95 cm each way (a registry that carries no such limit falls back to half the connector clearance on the lift's two ports, and the skip note says which was used) |
 | `belt.max_length` | `belt.max_length` | refuse | no | `spline_length` ≤ `mMaxSplineLength` (`limits.belt_max_spline_cm`), arc length, strict |
 | `belt.min_length` | `belt.min_length` | refuse | no | the **polyline** between stored points > `mMeshLength × 0.5001` (`limits.belt_min_length_cm`), strict |
 | `belt.incline` | `belt.incline` | refuse | no | per chord, <code>&#124;π/2 − acos(clamp(u.Z, −1, 1))&#124;</code> ≤ `mMaxIncline × 0.017453292`, with the game's `float` `π/2` and its `ZeroVector` for a chord of no length |
@@ -162,10 +162,11 @@ says what it could not cover: `geom.hard_clearance`, because
 `buildable.clearance` is `partial`, and `belt.capsule`, because `belt.clearance`
 leaves the `FFGClearanceData` flag bytes and
 `GetNextDistanceExceedingTolerance` unread — and, since lifts joined it,
-because `lift.clearance` is `partial` too: how wide the game's own lift box is
-comes from a mutable module global at `0x19B8118` that `sfy-native` will not
-quote, so the width used here is this project's reading of the connector
-clearance and not the game's number. They still run and their findings
+because `lift.clearance` is `partial` too, though no longer for its width:
+`sfy-native` quotes the module global at `0x19B8118` by its PDB symbol now, so
+the 95 cm each way is the game's. What is still unread is where along its axis
+the game puts that box, and the skip note names the width each lift here
+actually got and where it was read. They still run and their findings
 still stand. `power.wires` joins them on a placement with no wires, and
 `flow.boundary` on one with no boundary end.
 
@@ -364,7 +365,7 @@ fixture corpus carries a template of it and none of the Mk3.
 | how many wires it takes | `Port.max_connections`, `max_connections_source` `asset` | 7 |
 | how many machines one pole carries | `max_connections` − `CHAIN_LINKS_PER_POLE`. **Ours**: two links held back on every pole, which is the most any pole in this shape spends on the chain (one neighbour each side, or one neighbour and the row beside it) | 5 |
 | how far a wire reaches | `limits.wire_max_cm[Build_PowerLine_C]`, source `docs` (`mMaxLength`) | 10 000 cm |
-| the grid a pole snaps to | `Buildable.grid_snap_cm` where the class's hologram overrides `mGridSnapSize` (the Mk1, the Power Tower and the street light, all 50); otherwise `limits.hologram_grid_cm`, read out of the shipped DLL. The Mk2 states none, so it takes the global 100 — which is a multiple of 50, so it stands on the pole grid either way | 100 cm |
+| the grid a pole snaps to | `Buildable.grid_snap_cm` where the class's hologram overrides `mGridSnapSize` (all three pole marks, the Power Tower and its platform, and the street light, all 50); otherwise `limits.hologram_grid_cm`, read out of the shipped DLL. The Mk2 and the Mk3 name no hologram of their own and take the Mk1's `Holo_PowerPole_C` through the super chain | 50 cm |
 | where along the row the line stands | **ours**, and computed rather than assumed: the band between the machine line's own hard `+Y` face and the merger chain's near face is tried first, and only where that band is narrower than the pole's own box does the line go past the chain. The placement's description says which of the two happened | past the chain, in both `iron-plate-60` rows |
 | where along `X` | **ours**: the midpoints of the machine pitch, one per group of machines, each group taking the free midpoint nearest its own centre | — |
 
@@ -423,10 +424,13 @@ carry would go and look at the wrong thing.
 | the power stage | `wire exceeds the maximum length` · `no room for a power pole` · `a machine has no power connection` |
 | a bound ran out | `corridor assignment exceeded the budget` (columns tried) · `layout exceeded the budget` (the clock) |
 | the extraction left a hole | `the game data does not describe a machine this build needs` · `the game data states no limit this build needs` |
-| not this milestone | `fluids are M4` |
+| not this milestone | `fluids are M5` |
 
-The module refuses to raise anything else. `_refuse` checks the string against
-`REFUSALS` and raises `ValueError` on a cause nobody declared; `_row_cause` and
+The module refuses to raise anything else. The table is
+`flab2bp.sfy.layout.refusals.REFUSALS`, shared with the grid-routed strategy and
+holding its causes too; the ones above are the manifold's own, plus the five both
+raise. `refuse` checks the string against it and raises `ValueError` on a cause
+nobody declared; `_row_cause` and
 the two mapping tables beside it do the same for a cause arriving from the row
 builder, the corridor or the power stage, rather than defaulting to some other
 refusal's name. An input no row makes and the spec does not belt in is not in the
@@ -502,3 +506,351 @@ so a reject is a real answer and not an approximation. Measured over 40
 full-length (5599 cm, 112 boxes each) belts: **69.2 s → 0.13 s** where the runs
 are parallel and apart, and **70.4 s → 3.3 s** for a 20 × 20 crossing grid at
 one height where all 400 pairs really clash.
+
+## The lattice
+
+A second layout strategy, `grid-routed`, packs machines on the build gun's own 1 m
+hologram grid and finds every belt with a geometric interval router rather than
+with the hand-written corridors above. `flab2bp.sfy.layout.lattice` is the world
+that router searches: `Lattice` says where a node is, `Occupancy` says whether a
+belt centreline may pass one, and `occupancy_for` flattens a placement onto both.
+
+### Where a node is
+
+Node `(i, j, k)` is world `(−half + 100·i, −half + 100·j, 100·k)` for
+`0 ≤ i, j, k ≤ n`, where `half` is `Designer.half_cm`, `n` is the designer's side
+in grid steps (`dims × 8` for every mark the game ships) and the `100` is
+`limits.hologram_grid_cm` — the build gun's own smallest move, read from the game
+and never written here. There is no half-step offset: a node sits on the grid
+line, not in the middle of a cell, because what is being placed is a *centreline*
+and not a tile.
+
+A belt centreline runs along lattice lines between nodes, so a belt at level `k`
+has centreline `z = 100·k`. That is the same lattice the hand-built corridors
+already stand on: 200 cm for a row or corridor belt and 300 for a bridge are
+levels 2 and 3.
+
+### Which levels a belt may stand on
+
+The slab's top is 100 cm — one grid step — and a grid-snapped machine's belt port
+sits one step above that, at 200. So **levels 0 and 1 are impassable everywhere**:
+level 0 is inside the foundation and level 1 is the band between the slab and the
+ports. Level 2 is the port level and the ground belt level, and nothing routes
+below it.
+
+The topmost level and the four outermost *lines* are impassable too, for the
+reason `geom.bounds` gives — see entry 5 of the list below — which is why
+`Lattice` states the lines and levels a belt may stand on at all, once, and both
+the predicate and the flattened array read them from there.
+
+### What a level costs, and how tall a lift may be
+
+R-M3-3 is not only a floor. A move that lands on level `k` pays `0.01 × (k − 2)`
+on top of its family price, so a belt prefers the port level and climbs only to
+cross something. **That toll is ours**: nothing in the game charges a belt for
+height. It is sized so that it can never reorder two paths of different length —
+a whole grid step costs `1`, so even the full height of a mk3 designer tolls less
+than a third of one extra step. `transitions.level_toll` is the one place it is
+written.
+
+A conveyor lift is a vertical edge of this lattice, and how tall it may be is the
+game's: `lift_min_cm` 400, `lift_max_cm` 4800 and `lift_step_cm` 100, all read
+from the shipped binary, which divided by the grid step is `4 ≤ h ≤ 48` in steps
+of one level. The designer caps it again — a lift may not be taller than the
+lattice above the port level — so the window a router is handed is
+`4 ≤ h ≤ min(48, n − 2)`, which on a mk1 is 4 to 30. Not one of those numbers is
+written down: they are `Registry.limits` divided by `hologram_grid_cm`, clamped
+by `Lattice.n`.
+
+### What blocks a node
+
+A node at level `k` is impassable for belts when the 158 × 158 × 30 cm box a belt
+carries there — twice `BELT_CLEARANCE_HALF_WIDTH_CM` square, twice
+`BELT_CLEARANCE_HALF_HEIGHT_CM` tall, and orientation-free because a node does not
+yet know which way the belt through it will run — meets any hard clearance box,
+the designer wall, or a lift's column box. The boxes are `registry.json`'s, placed
+by the one composition `flab2bp.sfy.geometry.placed_box` writes; the lift's is
+`validate.lift_box`; the belt's own half extents are `belt.clearance`'s, read out
+of `AFGBuildableConveyorBelt::CreateClearanceData`. Soft boxes block nothing, on
+the game's own `CT_Soft` marking, so a conveyor attachment — whose only box is
+soft — denies a belt nothing at all.
+
+A committed straight run blocks its own nodes and **the two nodes across the run
+from each of them**, at its level, for every other net. Both halves are real
+collisions rather than simplifications: two belts 100 cm apart lap by 58 cm, and a
+belt ending or turning on the node beside a run reaches 50 cm along its own last
+segment into the run's 79. Adjacent levels never interact — 100 cm of separation
+is more than the 30 cm a belt box is tall.
+
+### The seven places the lattice is stricter than the game
+
+Legality is what the hologram allows; where this lattice allows less, it is ours,
+and this list is the whole of it — every entry says what it costs.
+
+1. **Belt pitch is 200 cm.** The game's own closest legal pitch is 158, which is
+   not a multiple of the grid step. The lattice can offer 100, which laps by 58
+   and is refused, or 200, which clears by 42.
+2. **The node beyond a run's last node, along the run, stays free** for a
+   perpendicular belt — and only that node. A run's clearance chain stops at its
+   last node, so a belt crossing 100 cm past it comes no closer than 21 cm.
+3. **R7's one grid step between two machines' hard boxes stays.**
+   `buildable.clearance` is `partial`: `AFGHologram::TestClearanceOverlap` was
+   never read, so the gap two holograms really need is unknown and this project
+   keeps its own.
+4. **A belt's own path out of its port is blocked here like any other node.** A
+   Constructor's `Output0` sits at `(0, 300, 100)` inside a hard box that runs to
+   `y = 500`, so the belt leaving it has to cross its own machine. Opening those
+   nodes is not the occupancy's business: they belong to one port's net alone, so
+   they travel on that terminal's own reach and are handed to the router per
+   query. What the occupancy promises instead is the other half — committing a
+   path never takes *ownership* of a node the world already denies, so a repair
+   search can never rip a net up in the hope of freeing a node a machine is
+   standing in.
+5. **The outermost lines and the topmost level are closed.** A centreline on line
+   `0` or line `n` hangs 79 cm of its own clearance outside the designer, and one
+   at `z = height_cm` hangs 15 cm through the ceiling; `geom.bounds` refuses
+   both, and `geom.bounds` is itself this project's rule — the designer *clips*
+   what overhangs rather than refusing it. The cost is one line in from each
+   wall and the top level, out of `n + 1` per axis.
+6. **A rotated clearance box is blocked by its world-axis bounding box.** A box
+   turned by a quarter turn — which is every box a grid-snapped build places — is
+   its own AABB, so this costs nothing today. A box at any other yaw is
+   over-covered: a Constructor's 800 × 1000 box turned 45° bounds to
+   1273 × 1273, about three extra lines in `X`. It is stricter, never laxer, and
+   `_mark_box` says so.
+7. **Belt geometry is bounded by one box per spline segment, not by the
+   game's chain.** `belt.clearance` lays a chain of short boxes hugging the
+   curve; `_belt_boxes` lays one axis-aligned box over the whole segment, sized
+   from the four Bézier control points, containing the curve with clearance
+   padding. This is a conservative routing proxy, including endpoint padding,
+   not an exact reconstruction of the game's chain. On a turn it also denies
+   the corner the arc never reaches: up to `r(1 − 1/√2)`, about 58 cm on a
+   200 cm quarter turn.
+
+### The flat array and the predicate must agree
+
+`Occupancy.free` is the predicate and `Occupancy.flags` is the flat byte array the
+router's kernel actually searches. They must agree node for node. A `free()` that
+knows something the array does not is the DSP router's worst failure mode: the
+search happily returns a path, the committer asks `free()` about each node it is
+about to build on, finds one refused and drops the whole net — every round, having
+learned nothing, because nothing in the search was told. `base` is the array as
+the world alone left it, before any path was committed, and rip-up restores from
+it rather than writing "passable", because a ripped node is not necessarily a free
+one.
+
+The loops that flatten a placement onto the lattice are the only per-node Python
+in the grid-routed strategy. They are written as such: a box's node range is
+computed once per axis and the resulting slab is written a column at a time, never
+one predicate call per node per box.
+
+### Object collision is not centreline passability
+
+`Occupancy.static_bounds` retains the physical obstacle bounds from flattening.
+The routing loop separately caches bounds for committed realised objects and
+removes/restores them with their net. Lift-column admission compares those
+bounds, not two already belt-inflated node masks. A virtual belt overlapping
+both a lift and a machine does not prove that the lift overlaps the machine:
+the regression's lift starts at Y=505 cm beside a Constructor ending at Y=500 cm.
+Their 5 cm gap is legal under the same box contract that previously rejected it.
+
+Centre-shaft, floor, roof and designer checks remain. A linked belt's endpoint
+segment may meet its lift; the rest of that belt is still collision-checked,
+including a later segment that returns through the shaft. Unknown foreign
+occupancy without registered physical bounds fails closed. Belt bounds retain
+the conservative Bézier-hull proxy above; this does not claim that the unread
+game clearance rule has become known.
+
+### Turn and connector legality belong in search
+
+Satisfactory supplies a finite motion policy to the shared geometric interval
+kernel. Its product state retains heading, slope-leg progress, the previous
+turn's geometric reach and the outgoing room still owed to that turn. Each
+state has its own cost envelope over the shared occupancy/history profiles.
+Transient progress translates whole intervals; mature straight states retain
+whole-run closure. This is the same router, not a cell-priority fallback. DSP
+queries without a policy keep their existing graph semantics.
+
+The policy reads turn options, merged-ramp reserve and lift geometry from the
+registry-backed geometry helpers. A lift's belt connection is flat; a ramp via
+is not a corner or a cut. Actual connector facing and off-grid stub length enter
+the initial and accepting states. A goal coordinate alone is not success.
+Attachment turns additionally require flat legs and an eligible object standing
+domain. Turn cost and geometric reach remain distinct: a shared minimum belt
+is paid once, not once at each adjacent attachment.
+
+Search preserves the selected primitive and turn actions, including a final
+action for a corner into a sink stub. The realiser validates and replays that
+witness rather than making a new greedy choice. Fixed authored paths use the
+same geometry predicates and a finite option resolver. Certified paths are not
+subsequently shortened by coordinate-only loop deletion or rewritten to repair
+lift landings.
+
+Motion-constrained queries run forward. Their exhaustion is distinct from a
+physical sealed pocket and does not manufacture wall blame. Policy preparation,
+state search and certification consume the original deadline and work ledger.
+Only states whose remaining geometric obligations are equivalent are merged;
+state growth and interval fragmentation can still exhaust the budget.
+
+This certificate does not replace full physical admission. Lift shafts and
+object collisions, maximum spline chunking and the final emitted-belt chord
+minimum remain checked afterward. A first candidate may fail those checks;
+only a fully admitted and validated placement is a successful factory.
+
+## Grid-routed
+
+`flab2bp.sfy.layout.grid`'s `GridRouted` is the second strategy, and it is a
+**loop** rather than a pipeline. Nothing in it lays a row and nothing in it is a
+template: every machine stands wherever a CP-SAT no-overlap model likes it on the
+hologram grid, and where a belt goes is what the router returns.
+
+### The loop
+
+A fluid is refused first, before a limit is read or a lattice is built — the same
+sentence `ManifoldRows` refuses on, asked of FactorioLab's own dataset. Then the
+limits are read once into one `Measures`, the `Lattice` is built from the designer
+and the registry, and for each deterministic arrangement under the deadline:
+
+1. `packer.pack` stands the machines, seeded by the arrangement number so that two
+   runs of one spec walk the same seed sequence, and priced by what the last
+   arrangement's routing learned;
+2. `lattice.occupancy_for` flattens them;
+3. `grid_nets.nets_for` says what has to be belted;
+4. `rrr.route_all` negotiates every net across rip-up rounds;
+5. with nothing stranded, `grid_power.place_on_free_nodes` stands the poles on the
+   occupancy the router left holding its **best** round — not its last — and
+   `floor.foundations` lays the slab. The object counter starts past the ids the
+   packer spent on its machines, so one numbering covers the build.
+
+Where a net *is* stranded, its id and the router's blame become a `Feedback`: the
+previous evidence decayed by `packer.DECAY` (0.85) at the boundary, plus one
+`STRANDED_WEIGHT` per stranded net and one node of belt per `BLAME_WEIGHT` the
+router charged (`HOT_NODE_SCALE`). Failed-net weights increase the span objective.
+Hot-node weights select at most eight distinct XY positions whose belt-inflated
+machine footprints are kept clear in the next arrangement. If those keep-outs
+make the packing model infeasible, it retries without them under the same absolute
+deadline: routing history is search guidance, not evidence that a factory cannot fit.
+
+### The wall, and how it is split
+
+The deadline is `absolute_deadline` when a caller gives one (a race hands both
+strategies the same `time.monotonic()` frame) and `time.monotonic() +
+time_budget_s` otherwise. The first `INITIAL_ARRANGEMENTS` (3, ours) reserve equal
+shares of what is *left*. An early finish hands unused time on. From the third
+arrangement onward the slice ends exactly at the original deadline, so additional
+arrangements may use the remaining wall without a new count cap. Inside a slice
+the packer takes `PACK_SHARE` (two thirds, ours) and the router the rest. The
+packer also has a deterministic-work limit.
+The recovery measurement found that a 1.67-second first pack returned an unroutable
+incumbent for plate-60/mk1, whereas a three-second pack returned an arrangement
+that routed in one round. The user-approved continuation preserves that initial
+schedule and the total deadline. It converts concrete-60/mk1 within the original
+15-second budget; stopping after three had refused it with time left.
+
+Every packing failure keeps its own cause, whether it is the first arrangement
+or a later one. An earlier routing miss cannot disguise a later packing timeout
+as a ruled geometric refusal. A pack that proves the machines do not stand
+(`the packer found no arrangement`) remains distinct from a search bound.
+
+### The lift class
+
+`route_all` takes one lift class for the whole build, so it has to be the one that
+carries the fastest piece of belt the router can lay. No piece of a net's tree
+carries more than that net's own total rate, so the heaviest net's tier bounds
+every piece; the lift is the buildable whose `native_class` is
+`FGBuildableConveyorLift` and whose `belt_speed_per_min` equals that tier's
+conveyor's. Both numbers are the game's, on both sides — a registry that renamed
+either class would still pair them.
+
+### The refusals
+
+Every cause is one of `refusals.REFUSALS` and every stage's own error is mapped
+here, with no default anywhere: a cause this module has not been taught raises
+`ValueError` at the point of use rather than reaching a caller wearing another
+cause's name (the discipline `strategy._row_cause` states).
+
+| raised by | cause | refusal |
+| --- | --- | --- |
+| `packer.PackError` | `the packer found no arrangement` | itself — a pack has one reading |
+| `packer.PackError` | `packing exceeded the budget` | itself |
+| `grid_nets.NetError` | `ceiling` | `run exceeds the belt ceiling` |
+| | `lattice` | `a port is off the hologram lattice` |
+| | `ports` | `more input items than the machine has belt ports` |
+| | `data` | *the game data does not describe a machine this build needs* |
+| `realise.RealiseError` | any of `corner`/`leg`/`lift`/`stub` | `a belt could not be laid` |
+| `power.PowerError` | `wire`/`room`/`port`/`data`/`limits` | as the manifold names them |
+| `corridors.CorridorError` | `limits`/`data` | the two shared extraction causes |
+| `manifold.RowError` | by message | `strategy._row_cause`'s table |
+| `budget.BudgetExhausted` | — | by stage: packing, or routing |
+
+The continuation loop exits on its global deadline as `routing exceeded the
+budget`, retaining the last stranded-net details. These diagnostics do not prove
+game impossibility. Packing exceptions retain their stage-specific cause; an
+earlier geometric miss never turns a later timeout into an acceptable corpus
+pin. A placement finishing after the global deadline is not returned.
+
+### What is ours
+
+`INITIAL_ARRANGEMENTS` (3 reserved initial shares), `PACK_SHARE` (two thirds), `STRANDED_WEIGHT` (1),
+`HOT_NODE_SCALE` (one node of belt per `BLAME_WEIGHT`) and `WORKERS` (1) are search
+policy, not game limits. Single-worker CP-SAT avoids thread races, but a wall-time
+limit still makes the returned incumbent sensitive to host load.
+
+Before CP-SAT, necessary packing bounds can prove a refusal without consuming
+the search budget. The first sums each machine's minimum complete-yaw rectangle
+area. Three conservative size scales add stronger bounds: an exact one-dimensional
+knapsack certifies each transformed side capacity, then transformed minimum-yaw
+areas are compared against that capacity squared. These use the model's existing
+rounded, half-grid-inflated hard rectangles, never apron area or routing blame.
+Failure to find a certificate says nothing about feasibility; it cannot turn
+an UNKNOWN solve into an impossibility claim.
+
+The description counts the exact `Realised.turns` replayed by the realiser:
+arcs and attachment corners separately, plus authored lift transitions. Tap
+attachments have no turn entry, so subtracting the attachment-turn count from
+all attachments gives the tap count without guessing from path geometry.
+
+### Wall branches and realisation
+
+A wall-sourced or wall-sunk item may use several independent boundary belts when
+the committed tree has no legal tap. Each connected component carries its own
+balanced share; a machine supplying the same item as an external input does not
+erase the external obligation. The description lists every physical wall
+crossing, not the inset routing node. These are the player's connections to make,
+not an inferred single trunk.
+
+Tap queries start or end one outward flat step beyond the attachment's actual
+side port, outside the committed trunk's shadow. That displacement is explicit
+connector-to-access stub credit, not a fictitious physical port or an
+uncertified path rewrite. The selected stub and native path are staked as
+separate adjoining segments. Unselected ports are not opened as transit cells,
+so they cannot become ramp vias through the trunk's shadow.
+
+A candidate tap must preserve legal witnesses for both remaining parent pieces.
+Cached fixed-path prefix/suffix relations test the proposed cuts without
+emitting objects or searching a graph per candidate. Selecting a tap commits
+the updated parent and child witnesses with ownership; rip-up and restore keep
+the proofs and physical claims together. This applies to splitters, mergers
+and required external-input branches.
+
+The grid packer and realiser use the same attachment-turn requirement:
+`reach + shortest_belt` (201 cm, three grid steps for the current registry),
+rather than the manifold corridor's conservative 301 cm. On a shared flat leg,
+two attachment reaches need only one minimum-length belt between them, not two.
+The attachment box is soft, but it must still remain inside the designer:
+`Lattice.object_lines` intersects belt-legal nodes with the direct object-box
+wall bound. Arcs need no attachment box. Attachment candidates also require
+horizontal belt tangents on both ports: an incline's spare run does not create
+a horizontal tangent. Those eligibility checks happen before turn selection,
+so a legal arc remains available when an attachment is not. Tap candidates use
+the same object bound and leave clearance on both sides of a ramp.
+The packer's port apron includes the endpoint at that many steps from the port;
+subtracting one step would let another machine block the first-free approach.
+
+Routing can still refuse or exhaust its bounds. Turn-aware reachability does
+not prove that every shaft is clear, every final spline chunk is long enough,
+or the current packing can be completed. Changing designer size need not
+improve a time-limited packing incumbent. These are measured outcomes, not
+proof that the factory is impossible. The M3 audit records the actual
+per-strategy matrix; budget exhaustion and invalid geometry are not ruled
+geometric refusals.

@@ -351,28 +351,31 @@ def test_trace_must_be_a_boolean() -> None:
         parse_options({"url": URL, "trace": "yes"})
 
 
-class TestSatisfactoryIsNotOnTheWebPathYet:
-    """`--designer` and the sfy pages exist here; a Satisfactory BUILD does not.
-
-    M2 wires Satisfactory into the CLI only.  What the web layer gains is the
-    two halves that would otherwise be quietly wrong: `_validate_web_fetch_url`
-    no longer treats `/sfy/list` as navigation off the supported pages, and
-    `designer` is an accepted, validated option rather than an unknown one.
-    Running the build is M3, so an sfy URL is refused in so many words instead
-    of being handed to the DSP pipeline, which would read it against DSP's
-    dataset.
-    """
+class TestSatisfactoryWebOptions:
+    """Strategy choices belong to the game named by the URL."""
 
     SFY_URL = "https://factoriolab.github.io/sfy/list?o=iron-plate*60&v=11"
 
-    def test_a_satisfactory_url_is_refused_with_a_reason(self) -> None:
-        with pytest.raises(InvalidOptions, match="not available in the web UI yet"):
-            parse_options({"url": self.SFY_URL})
+    @pytest.mark.parametrize("strategy", ["best", "manifold-rows", "grid-routed"])
+    def test_satisfactory_strategy_choices_are_accepted(self, strategy: str) -> None:
+        options = parse_options({"url": self.SFY_URL, "strategy": strategy, "budget_s": 10})
+        assert options.strategy == strategy
+        assert options.solver_ceiling_s == 10
+        assert options.projected_total_s == 10
 
-    def test_it_is_refused_before_any_dsp_option_is_validated(self) -> None:
-        """A band nobody can use must not be what an sfy request is told about."""
-        with pytest.raises(InvalidOptions, match="not available in the web UI yet"):
-            parse_options({"url": self.SFY_URL, "band": "nonsense"})
+    @pytest.mark.parametrize("strategy", [s for s in pipeline.STRATEGY_CHOICES if s != "best"])
+    def test_dsp_strategies_are_refused_for_satisfactory(self, strategy: str) -> None:
+        with pytest.raises(InvalidOptions, match="strategy"):
+            parse_options({"url": self.SFY_URL, "strategy": strategy})
+
+    @pytest.mark.parametrize("strategy", ["manifold-rows", "grid-routed"])
+    def test_satisfactory_strategies_are_refused_for_dsp(self, strategy: str) -> None:
+        with pytest.raises(InvalidOptions, match="strategy"):
+            parse_options({"url": URL, "strategy": strategy})
+
+    def test_satisfactory_trace_is_not_silently_empty(self) -> None:
+        with pytest.raises(InvalidOptions, match="trace"):
+            parse_options({"url": self.SFY_URL, "trace": True})
 
     @pytest.mark.parametrize("path", ["/sfy/list", "/sfy/flow", "/dsp/list", "/dsp/flow"])
     def test_every_game_and_view_is_a_fetchable_page(self, path: str) -> None:

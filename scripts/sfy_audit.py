@@ -1,6 +1,7 @@
 """Does every Satisfactory corpus URL build, cleanly, right now?
 
     uv run python scripts/sfy_audit.py                     # every entry, every mark
+    uv run python scripts/sfy_audit.py --strategy grid-routed
     uv run python scripts/sfy_audit.py --designer mk1      # one mark
     uv run python scripts/sfy_audit.py --budget 15         # seconds per cell
     uv run python scripts/sfy_audit.py --only plastic-20   # one entry
@@ -14,8 +15,8 @@ WHERE THE REPORT LANDS
 The committed evidence under ``docs/`` is a claim about the whole matrix, so
 only a run that covered the whole matrix writes it.  A narrower run -- one mark,
 one entry, or one the ``--max-seconds`` cap stopped partway -- writes an
-untracked ``out/sfy/audit-<date>-<marks>-<entries>.md`` and says on stdout that
-it left the evidence alone.  ``--report PATH`` overrides either.
+untracked ``out/sfy/audit-<date>-<strategy>-<marks>-<entries>.md``. Full runs
+write strategy-specific M3 evidence; partial runs cannot write under evidence.
 
 TWO GATES OVER ONE RUN
 ----------------------
@@ -26,8 +27,8 @@ refuse on depth, is progress or a wash, and a gate that went red on either
 would be a gate against improvement.
 
 ``--strict`` asks the other question -- did each cell do what the corpus says it
-does -- against a per-mark pin that is a measurement rather than a wish.  That
-makes the same run a regression pin, and the two together are what a change
+does -- against a per-strategy, per-mark pin measured rather than wished for.
+This makes the same run a regression pin, and the two together are what a change
 should be read against: the default one says nothing broke, the strict one says
 what moved.
 
@@ -60,16 +61,14 @@ THE FIVE THINGS A CELL CAN BE, AND WHY THE DIFFERENCE MATTERS
 
 WHY IT IS SERIAL
 ----------------
-The DSP audit fans out over processes because CP-SAT saturates a core for tens
-of seconds per cell.  Nothing here solves: the manifold strategy is arithmetic
-over rows and the expensive part is the validator, which is CPU-bound but
-short.  One process keeps the wall times in the report comparable with each
-other, which is the only reason they are recorded.
+The strategy race is serial in-process under one budget. The audit also visits
+cells serially so the report's wall times describe the same resource policy.
 """
 
 from __future__ import annotations
 
 import argparse
+import re
 import subprocess
 import sys
 from collections import Counter
@@ -95,13 +94,12 @@ from flab2bp.bench.sfy_corpus import (  # noqa: E402
 )
 from flab2bp.layout.base import LayoutAttemptFailure, NoValidLayout  # noqa: E402
 from flab2bp.sfy import pipeline  # noqa: E402
+from flab2bp.sfy.layout.measure import Measure  # noqa: E402
 from flab2bp.sfy.layout.model import SfyPlacement  # noqa: E402
 from flab2bp.sfy.layout.validate import Report  # noqa: E402
+from flab2bp.sfy.strategy_names import SFY_STRATEGY_CHOICES, SfyStrategyName  # noqa: E402
 
-#: Seconds one cell may spend laying out, matching the plan's own
-#: ``--budget 15``.  Nothing in this corpus comes near it -- the manifold
-#: strategy refuses on arithmetic or lays the rows out in well under a second --
-#: so a cell that ever reached this number would itself be the finding.
+#: Seconds per cell, shared by the race when ``best`` is requested.
 DEFAULT_BUDGET_S: Final = 15.0
 
 
@@ -122,13 +120,31 @@ class BuiltBlueprint(Protocol):
     @property
     def refused(self) -> tuple[LayoutAttemptFailure, ...]: ...
 
+    @property
+    def strategy(self) -> str: ...
+
+    @property
+    def measure(self) -> Measure: ...
+
+    @property
+    def blueprint(self) -> object | None: ...
+
+    @property
+    def record(self) -> object | None: ...
+
 
 class BuildFn(Protocol):
     """How :func:`run_cell` reaches a build.  :func:`flab2bp.sfy.pipeline.build`
     satisfies it, and so does a test's stand-in."""
 
     def __call__(
-        self, url: str, *, designer: str, time_budget_s: float, flow: Path
+        self,
+        url: str,
+        *,
+        designer: str,
+        time_budget_s: float,
+        flow: Path,
+        strategy: SfyStrategyName,
     ) -> BuiltBlueprint: ...
 
 
@@ -139,6 +155,14 @@ class Cell:
     url_id: str
     designer: str
     verdict: str
+    strategy: SfyStrategyName = "best"
+    winner: str = ""
+    measure: Measure | None = None
+    rounds: int | None = None
+    #: Verbatim turn-kind census from the placement, never inferred from corners.
+    turns: str = ""
+    refused: tuple[LayoutAttemptFailure, ...] = ()
+    encoding_failed: bool = False
     #: The refusal cause, or the exception type on a ``CRASH``.  Empty on a
     #: ``CLEAN`` or ``INVALID`` cell, which have nothing of the kind to name.
     cause: str = ""
@@ -153,10 +177,15 @@ class Cell:
     poles: int = 0
     wires: int = 0
     seconds: float = 0.0
-    #: What the corpus pins THIS mark to do: ``CLEAN`` or a refusal cause.
+    #: What the corpus pins THIS requested strategy and mark to do.
     #: Empty when the entry pins nothing for it, which makes ``--strict`` say
     #: nothing rather than guess.
     expected: str = ""
+
+    @property
+    def key(self) -> tuple[SfyStrategyName, str, str]:
+        """The requested strategy, URL id and designer identify a matrix cell."""
+        return self.strategy, self.url_id, self.designer
 
     @property
     def gate_ok(self) -> bool:
@@ -168,7 +197,11 @@ class Cell:
         """
         if self.verdict == "CLEAN":
             return True
-        return self.verdict == "REFUSED" and is_ruled_cause(self.cause)
+        if self.verdict != "REFUSED" or self.encoding_failed:
+            return False
+        if self.refused:
+            return all(is_ruled_cause(failure.reason) for failure in self.refused)
+        return is_ruled_cause(self.cause)
 
     @property
     def as_pinned(self) -> bool:
@@ -198,7 +231,7 @@ class Cell:
 
     @property
     def summary(self) -> str:
-        """The verdict as a report cell: ``REFUSED(fluids are M4)``."""
+        """The verdict as a report cell: ``REFUSED(fluids are M5)``."""
         if self.verdict == "REFUSED":
             return f"REFUSED({self.cause})"
         if self.verdict == "CRASH":
@@ -213,6 +246,7 @@ def run_cell(
     designer: str,
     budget_s: float,
     *,
+    strategy: SfyStrategyName = "best",
     build: BuildFn = pipeline.build,
 ) -> Cell:
     """Build one entry in one mark and classify what happened.
@@ -223,7 +257,13 @@ def run_cell(
     """
     started = perf_counter()
     try:
-        built = build(entry.url, designer=designer, time_budget_s=budget_s, flow=entry.flow_path)
+        built = build(
+            entry.url,
+            designer=designer,
+            time_budget_s=budget_s,
+            flow=entry.flow_path,
+            strategy=strategy,
+        )
     except NoValidLayout as exc:
         # `SpecInfeasible` is a subclass, so a fluid chain arrives here too:
         # the rate model refusing before any layout is the same shape of result
@@ -233,23 +273,28 @@ def run_cell(
             designer,
             "REFUSED",
             started,
-            cause=exc.reason,
-            detail="; ".join(exc.attempt_reasons),
+            strategy=strategy,
+            refused=exc.attempt_failures,
+            cause=(
+                "; ".join(dict.fromkeys(f.reason for f in exc.attempt_failures))
+                if exc.attempt_failures
+                else exc.reason
+            ),
+            detail=(
+                _failure_details(exc.attempt_failures)
+                if exc.attempt_failures
+                else "; ".join(exc.attempt_reasons)
+            ),
         )
     except Exception as exc:  # noqa: BLE001 - a gate that let one through is not a gate
-        return _cell(entry, designer, "CRASH", started, cause=type(exc).__name__, detail=str(exc))
-
-    if built.refused:
-        # `build` returns rather than raises when the placement was judged and
-        # then could not be WRITTEN.  The report can be spotless and there still
-        # be no blueprint, so reading `report.ok` alone would call this clean.
         return _cell(
             entry,
             designer,
-            "REFUSED",
+            "CRASH",
             started,
-            cause="; ".join(f.reason for f in built.refused),
-            placement=built.placement,
+            strategy=strategy,
+            cause=type(exc).__name__,
+            detail=str(exc),
         )
 
     errors = Counter(finding.check for finding in built.report.errors)
@@ -261,19 +306,37 @@ def run_cell(
             started,
             checks=tuple(f"{check} x{count}" for check, count in sorted(errors.items())),
             detail=built.report.errors[0].message,
-            placement=built.placement,
+            strategy=strategy,
+            built=built,
         )
-    return _cell(entry, designer, "CLEAN", started, placement=built.placement)
+    if built.blueprint is None or built.record is None:
+        # A winning placement may retain loser refusals. Only absent encoded
+        # output means writing failed; the failed gate must not be rescued by
+        # a ruled loser cause.
+        return _cell(
+            entry,
+            designer,
+            "REFUSED",
+            started,
+            strategy=strategy,
+            built=built,
+            cause="; ".join(f.reason for f in built.refused) or "blueprint encoding failed",
+            detail=_failure_details(built.refused),
+        )
+    return _cell(entry, designer, "CLEAN", started, strategy=strategy, built=built)
 
 
-def not_run(entry: SfyCorpusEntry, designer: str, why: str) -> Cell:
+def not_run(
+    entry: SfyCorpusEntry, designer: str, why: str, *, strategy: SfyStrategyName = "best"
+) -> Cell:
     """A cell this run never reached.  Counted as a miss, never as a pass."""
     return Cell(
         url_id=entry.url_id,
         designer=designer,
+        strategy=strategy,
         verdict="NOT RUN",
         detail=why,
-        expected=_expected(entry, designer),
+        expected=_expected(entry, strategy, designer),
     )
 
 
@@ -302,18 +365,21 @@ def render_report(
     drifted = [cell for cell in cells if not cell.as_pinned]
 
     lines = [
-        f"# Satisfactory M2 corpus audit, {date.today().isoformat()}",
+        f"# Satisfactory M3 corpus audit, {date.today().isoformat()}",
         "",
         f"**Gate{' (--strict)' if strict else ''}: {'PASS' if passed else 'FAIL'}** -- "
         f"{tally['CLEAN']} CLEAN, {ruled} expected REFUSED, "
         f"{unruled + tally['INVALID'] + tally['CRASH'] + tally['NOT RUN']} other "
         f"({unruled} unruled refusal, {tally['INVALID']} INVALID, "
         f"{tally['CRASH']} CRASH, {tally['NOT RUN']} NOT RUN) over "
-        f"{len(cells)} cells; {len(drifted)} off their pin.",
+        f"{len(cells)} cells; {len(drifted)} off their pin; "
+        f"{sum(not cell.expected for cell in cells)} unpinned.",
         "",
         f"* head: `{head}`{' (working tree dirty)' if dirty else ''}",
         f"* budget: {budget_s:g} s per cell; marks: {', '.join(marks)}",
+        f"* strategies: {', '.join(sorted({cell.strategy for cell in cells}))}",
         f"* command: `uv run python scripts/sfy_audit.py --budget {budget_s:g}"
+        f" --strategy {' --strategy '.join(sorted({cell.strategy for cell in cells}))}"
         f"{' --strict' if strict else ''}`",
     ]
     if cpu_load is not None:
@@ -327,17 +393,32 @@ def render_report(
         "",
         "## Every cell",
         "",
-        "| entry | mark | verdict | cause or checks | pinned | machines | belts | poles "
-        "| wires | s |",
-        "| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: |",
+        "| strategy | entry | mark | winner | verdict | cause or checks | pinned "
+        "| volume cm³ | belt cm | lifts | attachments | rounds | turns by kind "
+        "| machines | belts | poles | wires | s |",
+        "| --- | --- | --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: "
+        "| ---: | --- | ---: | ---: | ---: | ---: | ---: |",
     ]
     for cell in cells:
         detail = cell.cause if cell.verdict in {"REFUSED", "CRASH"} else ", ".join(cell.checks)
         mark = "" if cell.ok(strict=strict) else "**"
-        pin = cell.expected or "--"
+        pin = (
+            "unpinned"
+            if not cell.expected
+            else ("as pinned" if cell.as_pinned else f"**{cell.expected}**")
+        )
+        measured = cell.measure
+        dimensions = (
+            f"{measured.volume_cm3:g} | {measured.belt_cm:g} | "
+            f"{measured.lifts} | {measured.attachments}"
+            if measured is not None
+            else "-- | -- | -- | --"
+        )
         lines.append(
-            f"| {cell.url_id} | {cell.designer} | {mark}{cell.verdict}{mark} "
-            f"| {detail or '--'} | {'as pinned' if cell.as_pinned else f'**{pin}**'} "
+            f"| {cell.strategy} | {cell.url_id} | {cell.designer} | {cell.winner or '--'} "
+            f"| {mark}{cell.verdict}{mark} | {detail or '--'} | {pin} "
+            f"| {dimensions} | {cell.rounds if cell.rounds is not None else '--'} "
+            f"| {cell.turns or '--'} "
             f"| {cell.machines} | {cell.belts} | {cell.poles} | {cell.wires} "
             f"| {cell.seconds:.2f} |"
         )
@@ -349,11 +430,12 @@ def render_report(
     for cause, group in _by_cause(refusals):
         lines += [
             f"### `{cause}` -- {len(group)} cells"
-            + ("" if is_ruled_cause(cause) else "  **no ruling allows this cause**"),
+            + ("" if all(cell.gate_ok for cell in group) else "  **unruled or failed encoding**"),
             "",
         ]
         lines += [
-            f"* `{cell.url_id}` in {cell.designer}: {cell.detail or 'no further detail'}"
+            f"* `{cell.strategy}/{cell.url_id}` in {cell.designer}: "
+            f"{cell.detail or 'no further detail'}"
             for cell in group
         ]
         lines.append("")
@@ -362,7 +444,7 @@ def render_report(
     if missed:
         lines += ["## What fails the gate", ""]
         lines += [
-            f"* `{cell.url_id}` in {cell.designer}: {cell.summary}"
+            f"* `{cell.strategy}/{cell.url_id}` in {cell.designer}: {cell.summary}"
             + (f" -- {cell.detail}" if cell.detail else "")
             for cell in missed
         ]
@@ -370,10 +452,10 @@ def render_report(
 
     lines += ["## What moved off its pin", ""]
     if not drifted:
-        lines += ["Nothing: every cell did what the corpus says it does.", ""]
+        lines += ["Nothing: no measured pin changed; unpinned cells are not comparisons.", ""]
     else:
         lines += [
-            f"* `{cell.url_id}` in {cell.designer}: pinned "
+            f"* `{cell.strategy}/{cell.url_id}` in {cell.designer}: pinned "
             f"{'CLEAN' if cell.expected == CLEAN else f'REFUSED({cell.expected})'}, "
             f"got {cell.summary}"
             for cell in drifted
@@ -385,10 +467,27 @@ def render_report(
             "look at, and under `--strict` it fails the gate.",
             "",
         ]
+    losers = [cell for cell in cells if cell.verdict == "CLEAN" and cell.refused]
+    if losers:
+        lines += ["## Refusals beside successful winners", ""]
+        lines += [
+            f"* `{cell.strategy}/{cell.url_id}` in {cell.designer}, winner "
+            f"`{cell.winner}`: " + _failure_details(cell.refused)
+            for cell in losers
+        ]
+        lines.append("")
     return "\n".join(lines) + "\n"
 
 
 # --- internals --------------------------------------------------------------
+
+
+def _failure_details(failures: Sequence[LayoutAttemptFailure]) -> str:
+    """Keep concrete nested diagnostics beside each strategy's canonical cause."""
+    return "; ".join(
+        str(failure) + (f" ({_failure_details(failure.children)})" if failure.children else "")
+        for failure in failures
+    )
 
 
 def _cell(
@@ -397,14 +496,33 @@ def _cell(
     verdict: str,
     started: float,
     *,
+    strategy: SfyStrategyName,
     cause: str = "",
     detail: str = "",
     checks: tuple[str, ...] = (),
-    placement: SfyPlacement | None = None,
+    built: BuiltBlueprint | None = None,
+    refused: tuple[LayoutAttemptFailure, ...] = (),
 ) -> Cell:
+    placement = built.placement if built is not None else None
+    rounds: int | None = None
+    turns = ""
+    if placement is not None:
+        for line in placement.description.splitlines():
+            match = re.fullmatch(r"routing: (\d+) rip-up rounds.*", line)
+            if match:
+                rounds = int(match[1])
+            if line.startswith("turns: "):
+                turns = line.removeprefix("turns: ")
     return Cell(
         url_id=entry.url_id,
         designer=designer,
+        strategy=strategy,
+        winner=built.strategy if built is not None else "",
+        measure=built.measure if built is not None else None,
+        rounds=rounds,
+        turns=turns,
+        refused=built.refused if built is not None else refused,
+        encoding_failed=(built is not None and (built.blueprint is None or built.record is None)),
         verdict=verdict,
         cause=cause,
         detail=detail,
@@ -414,14 +532,14 @@ def _cell(
         poles=len(placement.poles) if placement else 0,
         wires=len(placement.wires) if placement else 0,
         seconds=perf_counter() - started,
-        expected=_expected(entry, designer),
+        expected=_expected(entry, strategy, designer),
     )
 
 
-def _expected(entry: SfyCorpusEntry, designer: str) -> str:
-    """What THIS mark is pinned to do, or empty when the entry does not say."""
+def _expected(entry: SfyCorpusEntry, strategy: SfyStrategyName, designer: str) -> str:
+    """The measured pin for this strategy and mark, or empty when unmeasured."""
     try:
-        return entry.expectation(designer)
+        return entry.expectation(strategy, designer)
     except KeyError:  # a mark asked for on the command line the entry does not pin
         return ""
 
@@ -467,7 +585,7 @@ def _marks(entry: SfyCorpusEntry, asked: Sequence[str]) -> tuple[str, ...]:
     return tuple(mark for mark in entry.designers if not asked or mark in asked)
 
 
-def covers_matrix(cells: Sequence[Cell]) -> bool:
+def covers_matrix(cells: Sequence[Cell], *, strategies: Sequence[SfyStrategyName] = ()) -> bool:
     """Whether these cells are a verdict on every entry in every mark it pins.
 
     Asked of the cells rather than of the command line on purpose, so that the
@@ -476,8 +594,18 @@ def covers_matrix(cells: Sequence[Cell]) -> bool:
     A ``NOT RUN`` cell is the absence of a verdict, so it does not cover its
     square.
     """
-    ran = {(cell.url_id, cell.designer) for cell in cells if cell.verdict != "NOT RUN"}
-    whole = {(entry.url_id, mark) for entry in SFY_CORPUS for mark in entry.designers}
+    requested = set(strategies) or {cell.strategy for cell in cells}
+    if not requested or not requested <= set(SFY_STRATEGY_CHOICES):
+        return False
+    ran = {
+        (cell.strategy, cell.url_id, cell.designer) for cell in cells if cell.verdict != "NOT RUN"
+    }
+    whole = {
+        (strategy, entry.url_id, mark)
+        for strategy in requested
+        for entry in SFY_CORPUS
+        for mark in entry.designers
+    }
     return ran >= whole
 
 
@@ -488,28 +616,48 @@ def report_path(
     marks: Sequence[str] = (),
     only: Sequence[str] = (),
     today: date | None = None,
+    strategies: Sequence[SfyStrategyName] = (),
 ) -> tuple[Path, bool]:
     """Where this run's report goes, and whether that is the committed evidence.
 
     The committed evidence is a claim about the whole matrix, so only a run that
     covered the whole matrix may write it.  Anything narrower -- one mark, one
     entry, a run the wall-clock cap stopped -- lands under ``out/``, which this
-    repository does not track, named for what it actually measured.  An explicit
-    ``--report`` beats both: somebody who names a path has said where they want
-    it.
+    repository does not track, named for what it actually measured. Explicit
+    paths under the evidence directory must still cover their claimed matrix.
     """
-    if requested is not None:
-        return requested, False
+    names = tuple(sorted(set(strategies) or {cell.strategy for cell in cells}))
+    complete = covers_matrix(cells, strategies=names)
     stamp = (today or date.today()).isoformat()
-    if covers_matrix(cells):
-        return EVIDENCE_DIR / f"sfy-m2-audit-{stamp}.md", True
+    all_strategies = set(names) == set(SFY_STRATEGY_CHOICES)
+    strategy_part = "+".join(names) or "best"
+    suffix = "" if all_strategies else f"-{strategy_part}"
+    if requested is not None:
+        if requested.resolve().is_relative_to(EVIDENCE_DIR.resolve()):
+            if not complete:
+                raise ValueError("a partial matrix cannot overwrite committed evidence")
+            if requested.name != f"sfy-m3-audit-{stamp}{suffix}.md":
+                raise ValueError("evidence filename must identify this complete strategy matrix")
+        return requested, False
+    if complete:
+        return EVIDENCE_DIR / f"sfy-m3-audit-{stamp}{suffix}.md", True
     mark_part = "+".join(marks) if marks else "all-marks"
     only_part = "+".join(only) if only else "all-entries"
-    return _ROOT / "out" / "sfy" / f"audit-{stamp}-{mark_part}-{only_part}.md", False
+    return (
+        _ROOT / "out" / "sfy" / f"audit-{stamp}-{strategy_part}-{mark_part}-{only_part}.md",
+        False,
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument(
+        "--strategy",
+        action="append",
+        default=[],
+        choices=SFY_STRATEGY_CHOICES,
+        help="requested strategy; repeat for a combined matrix, default best",
+    )
     ap.add_argument(
         "--designer",
         action="append",
@@ -550,6 +698,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     args = ap.parse_args(argv)
+    strategies: tuple[SfyStrategyName, ...] = tuple(dict.fromkeys(args.strategy or ["best"]))
 
     wanted = tuple(args.only) or tuple(e.url_id for e in SFY_CORPUS)
     unknown = tuple(name for name in wanted if name not in {e.url_id for e in SFY_CORPUS})
@@ -561,21 +710,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     cells: list[Cell] = []
     started = perf_counter()
     stopped = ""
-    for entry in entries:
-        for mark in _marks(entry, args.designer):
-            if stopped:
-                cells.append(not_run(entry, mark, stopped))
-                continue
-            cell = run_cell(entry, mark, args.budget)
-            cells.append(cell)
-            flag = "  " if cell.ok(strict=args.strict) else "<-"
-            pin = "" if cell.as_pinned else f"  (pinned {cell.expected or 'nothing'})"
-            print(
-                f"{flag} {cell.url_id:26} {cell.designer} {cell.summary} "
-                f"[{cell.seconds:5.2f}s]{pin}"
-            )
-            if args.max_seconds and perf_counter() - started > args.max_seconds:
-                stopped = f"the {args.max_seconds:g}s wall-clock cap expired"
+    for strategy in strategies:
+        for entry in entries:
+            for mark in _marks(entry, args.designer):
+                if stopped:
+                    cells.append(not_run(entry, mark, stopped, strategy=strategy))
+                    continue
+                cell = run_cell(entry, mark, args.budget, strategy=strategy)
+                cells.append(cell)
+                flag = "  " if cell.ok(strict=args.strict) else "<-"
+                pin = "" if cell.as_pinned else f"  (pinned {cell.expected or 'nothing'})"
+                print(
+                    f"{flag} {cell.strategy} {cell.url_id:26} {cell.designer} {cell.summary} "
+                    f"winner={cell.winner or '--'} [{cell.seconds:5.2f}s]{pin}",
+                    flush=True,
+                )
+                if args.max_seconds and perf_counter() - started > args.max_seconds:
+                    stopped = f"the {args.max_seconds:g}s wall-clock cap expired"
 
     head, dirty = _head()
     if args.head:
@@ -590,9 +741,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         strict=args.strict,
     )
     if not args.no_report:
-        path, committed = report_path(
-            cells, requested=args.report, marks=args.designer, only=args.only
-        )
+        try:
+            path, committed = report_path(
+                cells,
+                requested=args.report,
+                marks=args.designer,
+                only=args.only,
+                strategies=strategies,
+            )
+        except ValueError as exc:
+            ap.error(str(exc))
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
         print(f"\nreport: {path}")

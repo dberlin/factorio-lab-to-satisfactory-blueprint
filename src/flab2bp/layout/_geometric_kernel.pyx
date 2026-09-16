@@ -2,6 +2,49 @@
 # distutils: language = c++
 """Directed affine-interval wavefront; no cell-priority search or A* fallback."""
 from time import monotonic
+from math import isfinite
+
+from .geometric_motion import MotionStep, MotionWitness, validate_motion
+
+
+class _MotionBudget(Exception):
+    pass
+
+
+class _MotionCancelled(Exception):
+    pass
+class _MotionPreparation:
+    def __init__(self, limit, deadline, cancelled):
+        self.limit = limit
+        self.deadline = deadline
+        self.cancelled = cancelled
+        self.work = 0
+        self.checks = 0
+
+    def poll(self, force=False):
+        self.checks += 1
+        if (force or self.checks % 4096 == 1) and self.cancelled is not None and self.cancelled():
+            raise _MotionCancelled
+        if (force or self.checks % 64 == 1) and self.deadline is not None and monotonic() >= self.deadline:
+            raise _MotionBudget
+
+    def __call__(self):
+        self.poll()
+        if self.work >= self.limit:
+            raise _MotionBudget
+        self.work += 1
+
+
+
+
+def _motion_interrupted(status, work, began):
+    return (status, None, None, (), {
+        "charged_work": work, "prepared_cells": 0, "interval_pops": 0,
+        "labels": 0, "offers": 0, "intersections": 0, "profile_scans": 0,
+        "certified_edges": 0, "retained_native_bytes": 0,
+        "copied_history_cells": 0, "preparation_s": monotonic() - began,
+        "search_s": 0.0, "certification_s": 0.0,
+    }, None)
 
 from cpython.ref cimport PyObject
 from libcpp.vector cimport vector
@@ -18,13 +61,24 @@ cdef extern from *:
     #include <mutex>
     #include <queue>
     #include <stdexcept>
+    #include <unordered_map>
     #include <vector>
 
     namespace flab_geometry {
     using Index = std::int64_t;
     using Clock = std::chrono::steady_clock;
     constexpr double infinity = std::numeric_limits<double>::infinity();
-    struct Move { int dx, dy, dz; bool via; double cost; };
+    struct Move { int dx, dy, dz; bool via; double cost; int motion = -1; };
+    struct MotionBox { int xlo, xhi, ylo, yhi, zlo, zhi; };
+    struct MotionEdge { int source, move, target, guard, action; };
+    struct MotionEndpoint { Index cell; int state, action; };
+    struct Policy {
+        bool enabled = false;
+        std::vector<MotionEdge> edges;
+        std::vector<std::vector<MotionBox>> guards;
+        std::vector<MotionEndpoint> initial, accepting;
+    };
+    struct MotionTrace { Index path_index; int edge, primitive, source, target, width; };
     struct Extra { Index source, target; double cost; };
     struct Run { int lo, hi; double price; bool free; };
     struct Segment { int lo, hi; Index label; };
@@ -40,7 +94,13 @@ cdef extern from *:
         // Real labels cover one uniform row-price run. A reverse edge pays
         // this source toll: it is the original forward landing price.
         double toll = 0.0;
+        int state = 0, edge = -1, primitive = -1;
         long double value(int x) const { return cost + slope * (x - lo); }
+    };
+    struct TerminalGoal { int x, action; };
+    struct StateRow {
+        std::vector<Segment> envelope;
+        std::vector<TerminalGoal> goals;
     };
     struct Row {
         std::vector<Run> runs;
@@ -48,6 +108,7 @@ cdef extern from *:
         std::vector<Extra> extras;
         std::vector<int> goals;
     };
+    using StateRows = std::unordered_map<int, StateRow>;
     struct Goal { int x, y, z; double toll; };
     struct GoalSegment { int lo, hi, y, y_hi, z; double toll; };
     struct Entry { long double lower; int near; Index label; int horizontal = 0; };
@@ -63,6 +124,8 @@ cdef extern from *:
         int status = 2;
         std::vector<Index> path;
         std::vector<Reach> reached;
+        std::vector<MotionTrace> motion;
+        int initial_state = -1, final_state = -1, final_action = -1;
         double cost = infinity;
         Index work = 0, prepared_cells = 0, interval_pops = 0;
         Index labels = 0, offers = 0, intersections = 0, profile_scans = 0;
@@ -119,6 +182,9 @@ cdef extern from *:
         const std::vector<Index>& starts;
         const std::vector<Index>& goal_indices;
         const std::vector<Extra>& extras;
+        const Policy* policy;
+        std::vector<StateRows> state_rows;
+        std::unordered_map<int, std::vector<int>> state_edges;
         Index limit;
         Clock::time_point deadline;
         bool timed;
@@ -144,6 +210,31 @@ cdef extern from *:
             z = int(i % nz); i /= nz;
             if (transposed) { x = int(i % nx); y = int(i / nx); }
             else { y = int(i % ny); x = int(i / ny); }
+        }
+        std::vector<Segment>& envelope(int y, int z, int state) {
+            return policy ? state_rows[y * nz + z][state].envelope : rows[y * nz + z].envelope;
+        }
+        bool closure_edge(const MotionEdge& edge) const {
+            return edge.source == edge.target && edge.guard < 0 && edge.action < 0;
+        }
+        double horizontal_move(const Label& source, int sign, int& primitive, int& edge) {
+            double base = infinity;
+            const auto& level = moves[source.z];
+            for (int i = 0; i < int(level.size()); ++i) {
+                check();
+                const Move& move = level[i];
+                if (move.dx != sign || move.dy || move.dz || move.via || move.cost >= base) continue;
+                if (!policy) { base = move.cost; primitive = i; continue; }
+                const auto found = state_edges.find(source.state);
+                if (found == state_edges.end()) continue;
+                for (int at : found->second) {
+                    check();
+                    const MotionEdge& choice = policy->edges[at];
+                    if (choice.move != move.motion || !closure_edge(choice)) continue;
+                    base = move.cost; primitive = i; edge = at; break;
+                }
+            }
+            return base;
         }
         double price(int x, int y, int z) const {
             if (reverse_reach) return 0.0;
@@ -555,12 +646,8 @@ cdef extern from *:
         void queue_horizontal(Index identity, long double bound) {
             Label source = labels[identity];
             for (int sign : {-1, 1}) {
-                long double base = infinity;
-                for (const Move& move : moves[source.z]) {
-                    check();
-                    if (move.dx == sign && move.dy == 0 && move.dz == 0 && !move.via)
-                        base = std::min(base, static_cast<long double>(move.cost));
-                }
+                int primitive = -1, edge = -1;
+                long double base = horizontal_move(source, sign, primitive, edge);
                 if (!std::isfinite(base)) continue;
                 int origin = sign < 0 ? (source.slope < -base ? source.hi : source.lo)
                                       : (source.slope > base ? source.lo : source.hi);
@@ -600,8 +687,7 @@ cdef extern from *:
         bool offer(const Label& label) {
             check(); ++answer.offers;
             if (std::isfinite(best) && lower(label) >= best) return false;
-            Row& target = rows[label.y * nz + label.z];
-            auto& envelope = target.envelope;
+            auto& envelope = this->envelope(label.y, label.z, label.state);
             if (envelope.empty()) envelope.push_back({0, nx - 1, -1});
             auto begin = std::lower_bound(envelope.begin(), envelope.end(), label.lo,
                 [](const Segment& segment, int x) { return segment.hi < x; });
@@ -625,14 +711,18 @@ cdef extern from *:
                     Index identity = Index(labels.size()); labels.push_back(fresh);
                     append(l, h, identity);
                     queue.push({lower(fresh), proximity(fresh), identity});
-                    for (int x : target.goals) {
+                    auto terminal = [&](int x, int action) {
                         check();
-                        long double terminal = fresh.value(x)
+                        long double cost = fresh.value(x)
                             + (backwards && charge_occupied_cells ? price(x, fresh.y, fresh.z) : 0.0);
-                        if (l <= x && x <= h && terminal < best) {
-                            best = terminal; goal_label = identity; goal_x = x;
+                        if (l <= x && x <= h && cost < best) {
+                            best = cost; goal_label = identity; goal_x = x; answer.final_action = action;
                         }
-                    }
+                    };
+                    if (policy) {
+                        for (const TerminalGoal& goal : state_rows[fresh.y * nz + fresh.z][fresh.state].goals)
+                            terminal(goal.x, goal.action);
+                    } else for (int x : rows[fresh.y * nz + fresh.z].goals) terminal(x, -1);
                     if (h < hi) append(h + 1, hi, old);
                 }
                 if (b > label.hi) append(label.hi + 1, b, old);
@@ -648,9 +738,10 @@ cdef extern from *:
             envelope.insert(envelope.begin() + first, patch.begin(), patch.end());
             return true;
         }
-        void cross(Index identity, int lo, int hi, const Move& move) {
+        void cross(Index identity, int lo, int hi, const Move& move, int edge = -1, int primitive = -1) {
             // Copy: offer may grow labels and invalidate references into it.
             Label source = labels[identity];
+            int state = policy ? policy->edges[edge].target : source.state;
             int y = source.y + move.dy, z = source.z + move.dz;
             if (y < 0 || y >= ny || z < 0 || z >= nz) return;
             int target_lo = std::max(0, lo + move.dx), target_hi = std::min(nx - 1, hi + move.dx);
@@ -696,7 +787,7 @@ cdef extern from *:
                 if (!mids) {
                     ++answer.intersections;
                     offer({y, z, l, h, source.value(l - move.dx) + move.cost + (backwards ? source.toll : target.price),
-                           source.slope, identity, -1, move.dx, move.via, false});
+                           source.slope, identity, -1, move.dx, move.via, false, 0.0, state, edge, primitive});
                 } else {
                     // A blocked landing cannot use a ramp: leave its via
                     // profile unknown rather than scanning it needlessly.
@@ -714,26 +805,35 @@ cdef extern from *:
                         ++answer.intersections;
                         offer({y, z, ml, mh, source.value(ml - move.dx) + move.cost + (backwards ? source.toll : target.price)
                                + (charge_occupied_cells ? mid.price : 0.0),
-                               source.slope, identity, -1, move.dx, true, false});
+                               source.slope, identity, -1, move.dx, true, false, 0.0, state, edge, primitive});
                     }
                 }
             }
         }
+        void cross_motion(Index identity, int lo, int hi, const Move& move, int edge, int primitive) {
+            const MotionEdge& choice = policy->edges[edge];
+            if (choice.guard < 0) { cross(identity, lo, hi, move, edge, primitive); return; }
+            Label source = labels[identity];
+            for (const MotionBox& box : policy->guards[choice.guard]) {
+                check();
+                if (source.y < box.ylo || source.y > box.yhi || source.z < box.zlo || source.z > box.zhi) continue;
+                int l = std::max(lo, box.xlo), h = std::min(hi, box.xhi);
+                if (l <= h) cross(identity, l, h, move, edge, primitive);
+            }
+        }
         void horizontal(Index identity, int lo, int hi, int direction) {
             Label source = labels[identity];
-            double left_base = infinity, right_base = infinity;
-            for (const Move& move : moves[source.z]) {
-                if (move.dy == 0 && move.dz == 0 && !move.via) {
-                    if (move.dx == -1) left_base = std::min(left_base, move.cost);
-                    if (move.dx == 1) right_base = std::min(right_base, move.cost);
-                }
-            }
+            int left_primitive = -1, right_primitive = -1, left_edge = -1, right_edge = -1;
+            double left_base = horizontal_move(source, -1, left_primitive, left_edge);
+            double right_base = horizontal_move(source, 1, right_primitive, right_edge);
             if (!std::isfinite(left_base) && !std::isfinite(right_base)) return;
             row(source.y, source.z, lo, hi);
             double toll = price(lo, source.y, source.z);
             for (int sign : {-1, 1}) {
                 if (direction != 0 && sign != direction) continue;
                 long double base = sign < 0 ? left_base : right_base;
+                int primitive = sign < 0 ? left_primitive : right_primitive;
+                int edge = sign < 0 ? left_edge : right_edge;
                 if (!std::isfinite(base)) continue;
                 int origin = sign < 0 ? (source.slope < -(base + toll) ? hi : lo)
                                       : (source.slope > base + toll ? lo : hi);
@@ -770,7 +870,8 @@ cdef extern from *:
                             if (l != at + 1 || l > h) break;
                             long double slope = base + run.price;
                             long double first = cost + base + (backwards ? previous_toll : run.price);
-                            if (!offer({source.y, source.z, l, h, first, slope, identity, origin, 0, false, true})) break;
+                            if (!offer({source.y, source.z, l, h, first, slope, identity, origin, 0, false, true,
+                                        0.0, source.state, edge, primitive})) break;
                             cost = first + slope * (h - l); at = h; previous_toll = run.price;
                         } else {
                             if (run.lo >= at) continue;
@@ -780,7 +881,8 @@ cdef extern from *:
                             long double slope = -(base + run.price);
                             long double first = cost + base + (backwards ? previous_toll : run.price)
                                 - slope * (at - l - 1);
-                            if (!offer({source.y, source.z, l, h, first, slope, identity, origin, 0, false, true})) break;
+                            if (!offer({source.y, source.z, l, h, first, slope, identity, origin, 0, false, true,
+                                        0.0, source.state, edge, primitive})) break;
                             cost = first; at = l; previous_toll = run.price;
                         }
                     }
@@ -799,18 +901,26 @@ cdef extern from *:
         void reconstruct() {
             Index identity = goal_label;
             int x = goal_x;
+            if (policy) answer.final_state = labels[goal_label].state;
             while (identity >= 0) {
                 check();
                 const Label& label = labels[identity];
                 answer.path.push_back(index(x, label.y, label.z));
-                if (label.parent < 0) break;
+                if (label.parent < 0) {
+                    if (policy) answer.initial_state = label.state;
+                    break;
+                }
                 const Label& parent = labels[label.parent];
+                if (policy) answer.motion.push_back({Index(answer.path.size() - 1),
+                    label.edge, label.primitive, parent.state, label.state, label.via ? 2 : 1});
                 if (label.fixed >= 0) {
                     int target = label.fixed;
                     if (label.horizontal) {
                         int step = target > x ? 1 : -1;
                         for (int k = x + step; k != target; k += step) {
                             check(); answer.path.push_back(index(k, label.y, label.z));
+                            if (policy) answer.motion.push_back({Index(answer.path.size() - 1),
+                                label.edge, label.primitive, parent.state, label.state, 1});
                         }
                     }
                     x = target;
@@ -823,8 +933,83 @@ cdef extern from *:
                 identity = label.parent;
             }
             if (!backwards) std::reverse(answer.path.begin(), answer.path.end());
+            if (policy) {
+                std::reverse(answer.motion.begin(), answer.motion.end());
+                for (MotionTrace& trace : answer.motion) {
+                    check();
+                    // Reverse offsets identify landings, not ramp-via cells.
+                    trace.path_index = Index(answer.path.size() - 1) - trace.path_index - trace.width;
+                }
+            }
+        }
+        void certify_motion() {
+            auto began = Clock::now();
+            try {
+                reconstruct();
+                const auto& path = answer.path;
+                auto endpoint = [&](const auto& endpoints, Index cell, int state, int action) {
+                    for (const MotionEndpoint& point : endpoints) {
+                        check();
+                        if (point.cell == cell && point.state == state && point.action == action) return true;
+                    }
+                    return false;
+                };
+                if (path.empty() || !endpoint(policy->initial, path.front(), answer.initial_state, -1)
+                    || !endpoint(policy->accepting, path.back(), answer.final_state, answer.final_action))
+                    throw std::logic_error("motion witness has no admitted endpoint state");
+                int x, y, z; cell(path.front(), x, y, z);
+                double cost = charge_occupied_cells ? price(x, y, z) : 0.0;
+                int state = answer.initial_state;
+                std::size_t at = 0;
+                for (const MotionTrace& trace : answer.motion) {
+                    check(); ++answer.certified_edges;
+                    if (trace.path_index != Index(at) || trace.edge < 0 || trace.edge >= int(policy->edges.size()))
+                        throw std::logic_error("motion witness has invalid primitive provenance");
+                    const MotionEdge& edge = policy->edges[trace.edge];
+                    if (edge.source != state || trace.source != state || trace.target != edge.target
+                        || trace.primitive < 0 || trace.primitive >= int(forward_moves[z].size()))
+                        throw std::logic_error("motion witness has invalid state transition");
+                    const Move& move = forward_moves[z][trace.primitive];
+                    if (move.motion != edge.move)
+                        throw std::logic_error("motion witness substituted a physical primitive");
+                    if (edge.guard >= 0) {
+                        bool allowed = false;
+                        for (const MotionBox& box : policy->guards[edge.guard]) {
+                            check();
+                            if (box.xlo <= x && x <= box.xhi && box.ylo <= y && y <= box.yhi
+                                && box.zlo <= z && z <= box.zhi) { allowed = true; break; }
+                        }
+                        if (!allowed) throw std::logic_error("motion witness violates its source guard");
+                    }
+                    int tx = x + move.dx, ty = y + move.dy, tz = z + move.dz;
+                    std::size_t end = at + (move.via ? 2 : 1);
+                    if (tx < 0 || tx >= nx || ty < 0 || ty >= ny || tz < 0 || tz >= nz
+                        || end >= path.size() || path[end] != index(tx, ty, tz) || !flags[path[end]])
+                        throw std::logic_error("motion witness violates its directed landing");
+                    double via_price = 0.0;
+                    if (move.via) {
+                        int mx = x + move.dx / 2, my = y + move.dy / 2;
+                        Index via = index(mx, my, z);
+                        if (path[at + 1] != via || !flags[via])
+                            throw std::logic_error("motion witness violates its source-level ramp via");
+                        if (charge_occupied_cells) via_price = price(mx, my, z);
+                    }
+                    cost += move.cost + price(tx, ty, tz) + via_price;
+                    x = tx; y = ty; z = tz; state = edge.target; at = end;
+                }
+                if (at + 1 != path.size() || state != answer.final_state || !std::isfinite(cost)
+                    || std::abs(cost - best) > 1e-9 * std::max(1.0L, std::abs(best)))
+                    throw std::logic_error("motion witness differs from its directed graph price");
+                answer.cost = cost;
+                check(true);
+            } catch (...) {
+                answer.certification_s = std::chrono::duration<double>(Clock::now() - began).count();
+                throw;
+            }
+            answer.certification_s = std::chrono::duration<double>(Clock::now() - began).count();
         }
         void certify() {
+            if (policy) { certify_motion(); return; }
             auto began = Clock::now();
             try {
                 reconstruct();
@@ -889,6 +1074,24 @@ cdef extern from *:
             for (const Row& row : rows) answer.memory_bytes += Index(row.runs.capacity() * sizeof(Run)
                 + row.envelope.capacity() * sizeof(Segment) + row.extras.capacity() * sizeof(Extra)
                 + row.goals.capacity() * sizeof(int));
+            if (policy) {
+                answer.memory_bytes += Index(sizeof(Policy) + state_rows.capacity() * sizeof(StateRows)
+                    + state_edges.bucket_count() * sizeof(void*)
+                    + answer.motion.capacity() * sizeof(MotionTrace)
+                    + policy->edges.capacity() * sizeof(MotionEdge)
+                    + policy->guards.capacity() * sizeof(std::vector<MotionBox>)
+                    + (policy->initial.capacity() + policy->accepting.capacity()) * sizeof(MotionEndpoint));
+                for (const auto& row : state_rows) {
+                    answer.memory_bytes += Index(row.bucket_count() * sizeof(void*) + row.size() * sizeof(StateRows::value_type));
+                    for (const auto& item : row) answer.memory_bytes += Index(
+                        item.second.envelope.capacity() * sizeof(Segment) + item.second.goals.capacity() * sizeof(TerminalGoal));
+                }
+                for (const auto& item : state_edges) answer.memory_bytes += Index(
+                    sizeof(decltype(state_edges)::value_type) + item.second.capacity() * sizeof(int));
+                for (const auto& guard : policy->guards) answer.memory_bytes += Index(guard.capacity() * sizeof(MotionBox));
+                answer.memory_bytes += Index(forward_moves.capacity() * sizeof(std::vector<Move>));
+                for (const auto& level : forward_moves) answer.memory_bytes += Index(level.capacity() * sizeof(Move));
+            }
             answer.memory_bytes += Index(distance_profiles.capacity() * sizeof(std::shared_ptr<const DistanceProfile>));
             answer.memory_bytes += Index(distance_topology.capacity() * sizeof(std::vector<Move>));
             for (const auto& level : distance_topology)
@@ -914,16 +1117,17 @@ cdef extern from *:
              double pressure_, const std::vector<std::vector<Move>>& moves_, const std::vector<Index>& starts_,
              const std::vector<Index>& goals_, const std::vector<Extra>& extras_, Index limit_, double remaining,
              const double* present_, bool charge_occupied_cells_, PyObject* cancelled_, bool reverse_reach_,
-             bool backwards_, bool transposed_)
+             bool backwards_, bool transposed_, const Policy* policy_ = nullptr)
             : nx(transposed_ ? ny_ : nx_), ny(transposed_ ? nx_ : ny_), nz(nz_), transposed(transposed_),
               flags(flags_), history(history_), history_list(history_list_),
               present(present_), charge_occupied_cells(charge_occupied_cells_), cancelled(cancelled_),
               reverse_reach(reverse_reach_), backwards(backwards_), pressure(pressure_),
               forward_moves(moves_), forward_extras(extras_), moves(backwards_ ? backward_moves : moves_),
               starts(starts_), goal_indices(goals_), extras(backwards_ ? backward_extras : extras_),
-              limit(limit_), timed(remaining >= 0),
+              policy(policy_), limit(limit_), deadline(Clock::now()), timed(remaining >= 0),
               rows(std::size_t(ny) * nz) {
-            deadline = Clock::now() + std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(std::max(0.0, remaining)));
+            if (!policy) deadline = Clock::now();
+            deadline += std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(std::max(0.0, remaining)));
         }
         Answer solve() {
             auto began = Clock::now();
@@ -933,6 +1137,23 @@ cdef extern from *:
                 for (Index goal : goal_indices) {
                     check(); int x, y, z; cell(goal, x, y, z);
                     goals.push_back({x, y, z, price(x, y, z)}); rows[y * nz + z].goals.push_back(x);
+                }
+                if (policy) {
+                    auto prepared = Clock::now();
+                    try {
+                        state_rows.resize(rows.size());
+                        for (int i = 0; i < int(policy->edges.size()); ++i) {
+                            charge(); state_edges[policy->edges[i].source].push_back(i);
+                        }
+                        for (const MotionEndpoint& goal : policy->accepting) {
+                            charge(); int x, y, z; cell(goal.cell, x, y, z);
+                            state_rows[y * nz + z][goal.state].goals.push_back({x, goal.action});
+                        }
+                    } catch (...) {
+                        answer.preparation_s += std::chrono::duration<double>(Clock::now() - prepared).count();
+                        throw;
+                    }
+                    answer.preparation_s += std::chrono::duration<double>(Clock::now() - prepared).count();
                 }
                 if (backwards) {
                     backward_moves.resize(nz);
@@ -972,7 +1193,12 @@ cdef extern from *:
                     offer({y, z, x, x, 0.0, 0, -1, -1, 0, false, false});
                     if (best == 0.0) break;
                 }
-                for (Index start : starts) {
+                if (policy) for (const MotionEndpoint& start : policy->initial) {
+                    check(); int x, y, z; cell(start.cell, x, y, z);
+                    offer({y, z, x, x, charge_occupied_cells ? price(x, y, z) : 0.0,
+                           0, -1, -1, 0, false, false, 0.0, start.state});
+                }
+                else for (Index start : starts) {
                     if (best == 0.0) break;
                     check(); int x, y, z; cell(start, x, y, z);
                     if (backwards && is_goal(x, y, z)) continue;
@@ -993,7 +1219,7 @@ cdef extern from *:
                     Label source = labels[entry.label];
                     if (backwards && !flags[index(source.lo, source.y, source.z)]) continue;
                     std::vector<Segment> active;
-                    for (const Segment& segment : rows[source.y * nz + source.z].envelope) {
+                    for (const Segment& segment : envelope(source.y, source.z, source.state)) {
                         check(); ++answer.profile_scans;
                         if (segment.label == entry.label) active.push_back(segment);
                     }
@@ -1019,7 +1245,22 @@ cdef extern from *:
                                    0, entry.label, x, 0, false, false});
                         }
                         if (entry.lower >= best) continue;
-                        for (const Move& move : moves[source.z]) {
+                        if (policy) {
+                            auto found = state_edges.find(source.state);
+                            if (found != state_edges.end()) for (int edge : found->second) {
+                                check();
+                                const MotionEdge& choice = policy->edges[edge];
+                                const auto& level = moves[source.z];
+                                for (int primitive = 0; primitive < int(level.size()); ++primitive) {
+                                    check();
+                                    const Move& move = level[primitive];
+                                    if (move.motion != choice.move) continue;
+                                    if (move.dy == 0 && move.dz == 0 && !move.via && std::abs(move.dx) == 1
+                                        && closure_edge(choice)) continue;
+                                    cross_motion(entry.label, segment.lo, segment.hi, move, edge, primitive);
+                                }
+                            }
+                        } else for (const Move& move : moves[source.z]) {
                             check();
                             if (entry.lower >= best) break;
                             if (move.dy == 0 && move.dz == 0 && !move.via && std::abs(move.dx) == 1) continue;
@@ -1034,6 +1275,7 @@ cdef extern from *:
                     certify();
                     check(true); answer.status = 0;
                 }
+                else if (policy) { check(true); answer.status = 5; }
                 else {
                     for (int y = 0; y < ny; ++y) for (int z = 0; z < nz; ++z)
                         for (const Segment& segment : rows[y * nz + z].envelope) {
@@ -1048,8 +1290,10 @@ cdef extern from *:
                 }
             } catch (const Limit&) {
                 answer.status = 1; answer.path.clear(); answer.reached.clear(); answer.cost = infinity;
+                answer.motion.clear();
             } catch (const Cancelled&) {
                 answer.status = 3; answer.path.clear(); answer.reached.clear(); answer.cost = infinity;
+                answer.motion.clear();
             }
             answer.search_s = std::chrono::duration<double>(Clock::now() - began).count()
                               - answer.preparation_s - answer.certification_s;
@@ -1059,8 +1303,17 @@ cdef extern from *:
     Answer run(int nx, int ny, int nz, const unsigned char* flags, const double* history, PyObject* history_list, double pressure,
                const std::vector<std::vector<Move>>& moves, const std::vector<Index>& starts,
                const std::vector<Index>& goals, const std::vector<Extra>& extras, Index limit, double remaining,
-               const double* present, bool charge_occupied_cells, PyObject* cancelled, bool transposed) {
+               const double* present, bool charge_occupied_cells, PyObject* cancelled, bool transposed,
+               const Policy& policy) {
         auto began = Clock::now();
+        if (policy.enabled) {
+            Answer answer = Wave(nx, ny, nz, flags, history, history_list, pressure, moves, starts, goals,
+                                 extras, limit, remaining, present, charge_occupied_cells, cancelled,
+                                 false, false, transposed, &policy).solve();
+            answer.preparation_s += std::chrono::duration<double>(Clock::now() - began).count()
+                - answer.preparation_s - answer.search_s - answer.certification_s;
+            return answer;
+        }
         if (!goals.empty() && goals.size() < starts.size()) {
             double left = remaining < 0 ? -1 : std::max(0.0,
                 remaining - std::chrono::duration<double>(Clock::now() - began).count());
@@ -1123,6 +1376,22 @@ cdef extern from *:
         int dx, dy, dz
         bint via
         double cost
+        int motion
+    cdef cppclass MotionBox "flab_geometry::MotionBox":
+        int xlo, xhi, ylo, yhi, zlo, zhi
+    cdef cppclass MotionEdge "flab_geometry::MotionEdge":
+        int source, move, target, guard, action
+    cdef cppclass MotionEndpoint "flab_geometry::MotionEndpoint":
+        Index cell
+        int state, action
+    cdef cppclass Policy "flab_geometry::Policy":
+        bint enabled
+        vector[MotionEdge] edges
+        vector[vector[MotionBox]] guards
+        vector[MotionEndpoint] initial, accepting
+    cdef cppclass MotionTrace "flab_geometry::MotionTrace":
+        Index path_index
+        int edge, primitive, source, target, width
     cdef cppclass Extra "flab_geometry::Extra":
         Index source, target
         double cost
@@ -1132,18 +1401,22 @@ cdef extern from *:
         int status
         vector[Index] path
         vector[Reach] reached
+        vector[MotionTrace] motion
+        int initial_state, final_state, final_action
         double cost
         Index work, prepared_cells, interval_pops, labels, offers, intersections, profile_scans
         Index certified_edges, memory_bytes
         double preparation_s, search_s, certification_s
     Answer run "flab_geometry::run"(int, int, int, const unsigned char*, const double*, PyObject*, double,
                                    const vector[vector[Move]]&, const vector[Index]&, const vector[Index]&,
-                                   const vector[Extra]&, Index, double, const double*, bint, PyObject*, bint) except + nogil
+                                   const vector[Extra]&, Index, double, const double*, bint, PyObject*, bint,
+                                   const Policy&) except + nogil
 
 def search_intervals(const unsigned char[::1] flags, history, double pressure,
                      int nx, int ny, int nz, transitions, starts, goals, extra_edges,
-                     Index max_work, deadline, present=None, bint charge_occupied_cells=False, cancelled=None):
-    """Return status/path/price/component/counters; status 2 is forward, 4 reverse."""
+                     Index max_work, deadline, present=None, bint charge_occupied_cells=False, cancelled=None,
+                     motion=None):
+    """Return status/path/price/component/counters/motion; status 5 is motion exhaustion."""
     cdef double began = monotonic()
     cdef double remaining = -1
     cdef const double[::1] hist
@@ -1159,6 +1432,13 @@ def search_intervals(const unsigned char[::1] flags, history, double pressure,
     cdef Move move
     cdef Extra edge
     cdef Answer result
+    cdef Policy policy
+    cdef MotionEdge motion_edge
+    cdef MotionEndpoint endpoint
+    cdef MotionBox box
+    cdef vector[MotionBox] boxes
+    cdef MotionTrace trace
+    cdef Index boundary_work = 0
     cdef Index size = <Index>nx * ny * nz
     cdef Index node
     cdef int sxlo = nx, sxhi = -1, sylo = ny, syhi = -1
@@ -1184,57 +1464,138 @@ def search_intervals(const unsigned char[::1] flags, history, double pressure,
             history_ptr = &hist[0]
     if len(transitions) != nz:
         raise ValueError("geometric transitions do not match levels")
-    for node in starts:
-        if node < 0 or node >= size:
-            raise ValueError("geometric start is outside occupancy")
-        seeds.push_back(node)
-        x, y = <int>(node // nz // ny), <int>(node // nz % ny)
-        sxlo, sxhi = min(sxlo, x), max(sxhi, x)
-        sylo, syhi = min(sylo, y), max(syhi, y)
-    for node in goals:
-        if node < 0 or node >= size:
-            raise ValueError("geometric goal is outside occupancy")
-        ends.push_back(node)
-        x, y = <int>(node // nz // ny), <int>(node // nz % ny)
-        gxlo, gxhi = min(gxlo, x), max(gxhi, x)
-        gylo, gyhi = min(gylo, y), max(gyhi, y)
-    # Compress along the query's larger endpoint separation. The field stays
-    # borrowed in physical order; only coordinates and primitive directions rotate.
-    transposed = (not seeds.empty() and not ends.empty()
-                  and max(0, gylo - syhi, sylo - gyhi) > max(0, gxlo - sxhi, sxlo - gxhi))
-    for row in transitions:
-        level_moves.clear()
-        for dx, dy, dz, via, cost in row:
-            move.dx, move.dy, move.dz = (dy if transposed else dx), (dx if transposed else dy), dz
-            move.via, move.cost = via, cost
-            level_moves.push_back(move)
-        moves.push_back(level_moves)
-    for source, edges in extra_edges.items():
-        edge.source = source
-        for target, cost in edges:
-            edge.target, edge.cost = target, cost
-            if edge.source < 0 or edge.source >= size or edge.target < 0 or edge.target >= size:
-                raise ValueError("geometric connector is outside occupancy")
-            extras.push_back(edge)
+    preparation = None
+    if motion is not None:
+        if extra_edges:
+            raise ValueError("motion-constrained queries do not support extra graph edges")
+        preparation = _MotionPreparation(max_work, deadline, cancelled)
+    try:
+        if preparation is not None:
+            validate_motion(motion, size, preparation)
+            policy.enabled = True
+            shape_indices = {}
+            for i, shape in enumerate(motion.moves):
+                preparation()
+                shape_indices[shape] = i
+        for node in starts:
+            if preparation is not None:
+                preparation()
+            if node < 0 or node >= size:
+                raise ValueError("geometric start is outside occupancy")
+            seeds.push_back(node)
+            x, y = <int>(node // nz // ny), <int>(node // nz % ny)
+            sxlo, sxhi = min(sxlo, x), max(sxhi, x)
+            sylo, syhi = min(sylo, y), max(syhi, y)
+        for node in goals:
+            if preparation is not None:
+                preparation()
+            if node < 0 or node >= size:
+                raise ValueError("geometric goal is outside occupancy")
+            ends.push_back(node)
+            x, y = <int>(node // nz // ny), <int>(node // nz % ny)
+            gxlo, gxhi = min(gxlo, x), max(gxhi, x)
+            gylo, gyhi = min(gylo, y), max(gyhi, y)
+        # Swap XY (a reflection), keeping original flat indices and move IDs.
+        transposed = (not seeds.empty() and not ends.empty()
+                      and max(0, gylo - syhi, sylo - gyhi) > max(0, gxlo - sxhi, sxlo - gxhi))
+        for row in transitions:
+            level_moves.clear()
+            for dx, dy, dz, via, cost in row:
+                if preparation is not None:
+                    preparation()
+                    if any(type(delta) is not int or not -(2**30) <= delta <= 2**30 for delta in (dx, dy, dz)):
+                        raise ValueError("motion physical displacement must be a bounded integer")
+                    if type(via) is not bool or (via and (dx % 2 or dy % 2)):
+                        raise ValueError("motion physical ramp via requires even XY displacements")
+                    if not isfinite(cost) or cost < 0:
+                        raise ValueError("motion physical movement price must be finite and nonnegative")
+                    move.motion = shape_indices.get((dx, dy, dz, via), -1)
+                move.dx, move.dy, move.dz = (dy if transposed else dx), (dx if transposed else dy), dz
+                move.via, move.cost = via, cost
+                level_moves.push_back(move)
+            moves.push_back(level_moves)
+        for source, edges in extra_edges.items():
+            edge.source = source
+            for target, cost in edges:
+                edge.target, edge.cost = target, cost
+                if edge.source < 0 or edge.source >= size or edge.target < 0 or edge.target >= size:
+                    raise ValueError("geometric connector is outside occupancy")
+                extras.push_back(edge)
+        if preparation is not None:
+            for choice in motion.edges:
+                preparation()
+                motion_edge.source, motion_edge.move, motion_edge.target = choice.source, choice.move, choice.target
+                motion_edge.guard, motion_edge.action = choice.guard, choice.action
+                policy.edges.push_back(motion_edge)
+            for guard in motion.guards:
+                preparation()
+                boxes.clear()
+                for xlo, xhi, ylo, yhi, zlo, zhi in guard.boxes:
+                    preparation()
+                    box.xlo, box.xhi = (ylo, yhi) if transposed else (xlo, xhi)
+                    box.ylo, box.yhi = (xlo, xhi) if transposed else (ylo, yhi)
+                    box.zlo, box.zhi = zlo, zhi
+                    boxes.push_back(box)
+                policy.guards.push_back(boxes)
+            admitted_starts, admitted_goals = set(starts), set(goals)
+            for point in motion.initial:
+                preparation()
+                if point.cell in admitted_starts:
+                    endpoint.cell, endpoint.state, endpoint.action = point.cell, point.state, point.action
+                    policy.initial.push_back(endpoint)
+            for point in motion.accepting:
+                preparation()
+                if point.cell in admitted_goals:
+                    endpoint.cell, endpoint.state, endpoint.action = point.cell, point.state, point.action
+                    policy.accepting.push_back(endpoint)
+            boundary_work = preparation.work
+            preparation.poll(True)
+    except _MotionBudget:
+        return _motion_interrupted(1, preparation.work, began)
+    except _MotionCancelled:
+        return _motion_interrupted(3, preparation.work, began)
     if deadline is not None:
         remaining = max(0.0, deadline - monotonic())
     cdef double boundary_s = monotonic() - began
     if history_list != NULL:
         # List-backed repair histories are borrowed lazily under the GIL.
-        result = run(nx, ny, nz, &flags[0], history_ptr, history_list, pressure, moves, seeds, ends, extras, max_work, remaining, present_ptr, charge_occupied_cells, cancelled_ptr, transposed)
+        result = run(nx, ny, nz, &flags[0], history_ptr, history_list, pressure, moves, seeds, ends, extras, max_work - boundary_work, remaining, present_ptr, charge_occupied_cells, cancelled_ptr, transposed, policy)
     else:
         with nogil:
-            result = run(nx, ny, nz, &flags[0], history_ptr, NULL, pressure, moves, seeds, ends, extras, max_work, remaining, present_ptr, charge_occupied_cells, cancelled_ptr, transposed)
+            result = run(nx, ny, nz, &flags[0], history_ptr, NULL, pressure, moves, seeds, ends, extras, max_work - boundary_work, remaining, present_ptr, charge_occupied_cells, cancelled_ptr, transposed, policy)
+    witness = None
+    path = None
+    if result.status == 0:
+        if preparation is None:
+            path = tuple(result.path)
+        else:
+            witness_began = monotonic()
+            try:
+                steps = []
+                for trace in result.motion:
+                    preparation.poll()
+                    motion_edge = policy.edges[trace.edge]
+                    steps.append(MotionStep(trace.path_index, motion_edge.move,
+                                            trace.source, trace.target, motion_edge.action))
+                witness = MotionWitness(result.initial_state, result.final_state, tuple(steps), result.final_action)
+                path = tuple(result.path)
+                preparation.poll(True)
+            except _MotionBudget:
+                result.status, witness, path = 1, None, None
+            except _MotionCancelled:
+                result.status, witness, path = 3, None, None
+            result.certification_s += monotonic() - witness_began
     return (
         result.status,
-        tuple(result.path) if result.status == 0 else None,
+        path,
         result.cost if result.status == 0 else None,
         tuple((part.y, part.z, part.lo, part.hi) for part in result.reached),
-        {"charged_work": result.work, "prepared_cells": result.prepared_cells,
+        {"charged_work": result.work + boundary_work, "prepared_cells": result.prepared_cells,
          "interval_pops": result.interval_pops, "labels": result.labels,
          "offers": result.offers, "intersections": result.intersections,
          "profile_scans": result.profile_scans, "certified_edges": result.certified_edges,
          "retained_native_bytes": result.memory_bytes, "copied_history_cells": 0,
          "preparation_s": result.preparation_s + boundary_s,
          "search_s": result.search_s, "certification_s": result.certification_s},
+        witness,
     )

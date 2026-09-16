@@ -14,6 +14,7 @@ will not, and the exit code the CLI turns each one into is the subject of
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -21,7 +22,13 @@ import pytest
 from flab2bp.layout.base import NoValidLayout, SpecInfeasible
 from flab2bp.sfy import pipeline
 from flab2bp.sfy.codec import read_sbp_file, read_sbpcfg
+from flab2bp.sfy.labmap import LabMap
 from flab2bp.sfy.layout.emit import decode
+from flab2bp.sfy.layout.measure import Measure
+from flab2bp.sfy.layout.model import SfyPlacement
+from flab2bp.sfy.layout.validate import Finding, Severity
+from flab2bp.sfy.registry import Registry
+from flab2bp.sfy.spec import Designer, SfyBuildSpec
 
 FLOWS = Path(__file__).resolve().parents[1] / "fixtures" / "sfy_flows"
 
@@ -40,6 +47,7 @@ def iron_plate_mk3() -> pipeline.SfyBuild:
     """One real Mk.3 build, shared by every test that needs a finished one."""
     return pipeline.build(
         flow_url("iron-plate-60"),
+        strategy="manifold-rows",
         designer="mk3",
         flow=FLOWS / "iron-plate-60.csv",
     )
@@ -121,6 +129,7 @@ def test_a_build_that_does_not_fit_the_requested_designer_refuses_with_its_cause
         pipeline.build(
             flow_url("iron-rod-60"),
             designer="mk1",
+            strategy="manifold-rows",
             flow=FLOWS / "iron-rod-60.csv",
         )
     assert caught.value.reason == "rows exceed the designer depth"
@@ -134,7 +143,7 @@ def test_a_flow_that_moves_a_fluid_is_refused_before_any_geometry() -> None:
             designer="mk3",
             flow=FLOWS / "plastic-10.csv",
         )
-    assert caught.value.reason == "fluids are M4"
+    assert caught.value.reason == "fluids are M5"
 
 
 def test_a_build_without_a_flow_refuses_and_names_both_ways_to_supply_one() -> None:
@@ -184,3 +193,256 @@ def test_two_ways_of_supplying_a_flow_at_once_are_refused(
         )
     assert named in str(caught.value)
     assert "a flow file" in str(caught.value)
+
+
+class _RaceArm:
+    def __init__(
+        self,
+        name: str,
+        placement: SfyPlacement,
+        clock: list[float],
+        *,
+        duration: float = 0.0,
+        refusal: NoValidLayout | None = None,
+    ) -> None:
+        self.name = name
+        self.placement = placement
+        self.clock = clock
+        self.duration = duration
+        self.refusal = refusal
+        self.calls: list[tuple[float, float | None]] = []
+
+    def lay_out(
+        self,
+        spec: SfyBuildSpec,
+        designer: Designer,
+        *,
+        time_budget_s: float = 15.0,
+        absolute_deadline: float | None = None,
+        registry: Registry | None = None,
+        lab_map: LabMap | None = None,
+    ) -> SfyPlacement:
+        self.calls.append((time_budget_s, absolute_deadline))
+        self.clock[0] += self.duration
+        if self.refusal is not None:
+            raise self.refusal
+        return self.placement
+
+
+def _race(
+    monkeypatch: pytest.MonkeyPatch,
+    clean: pipeline.SfyBuild,
+    *,
+    first_duration: float = 1.0,
+    first_refusal: NoValidLayout | None = None,
+    second_refusal: NoValidLayout | None = None,
+) -> tuple[_RaceArm, _RaceArm]:
+    clock = [100.0]
+    first = _RaceArm(
+        "manifold-rows",
+        clean.placement,
+        clock,
+        duration=first_duration,
+        refusal=first_refusal,
+    )
+    second = _RaceArm(
+        "grid-routed",
+        replace(clean.placement, short_desc="grid"),
+        clock,
+        refusal=second_refusal,
+    )
+    monkeypatch.setattr("flab2bp.sfy.pipeline.time.monotonic", lambda: clock[0])
+    monkeypatch.setattr(pipeline, "STRATEGIES", {first.name: first, second.name: second})
+    return first, second
+
+
+@pytest.mark.parametrize(
+    ("first_measure", "second_measure", "winner"),
+    [
+        (Measure(1, 20, 10, 0, 0), Measure(2, 10, 5, 0, 0), "manifold-rows"),
+        (Measure(1, 20, 10, 0, 0), Measure(1, 10, 50, 0, 0), "grid-routed"),
+        (Measure(1, 20, 10, 0, 0), Measure(1, 20, 5, 0, 0), "grid-routed"),
+        (Measure(1, 20, 10, 0, 0), Measure(1, 20, 10, 0, 0), "manifold-rows"),
+    ],
+)
+def test_best_runs_both_strategies_in_one_clock_frame_and_picks_by_the_race_key(
+    monkeypatch: pytest.MonkeyPatch,
+    iron_plate_mk3: pipeline.SfyBuild,
+    first_measure: Measure,
+    second_measure: Measure,
+    winner: str,
+) -> None:
+    first, second = _race(monkeypatch, iron_plate_mk3)
+    monkeypatch.setattr(
+        pipeline,
+        "measure",
+        lambda placement, registry: (
+            first_measure if placement is first.placement else second_measure
+        ),
+    )
+    result = pipeline.build(
+        flow_url("iron-plate-60"),
+        designer="mk3",
+        flow=FLOWS / "iron-plate-60.csv",
+        time_budget_s=10.0,
+    )
+    assert result.strategy == winner
+    assert result.measure == (first_measure if winner == first.name else second_measure)
+    assert first.calls == [(5.0, 105.0)]
+    assert second.calls == [(5.0, 106.0)]
+    assert result.report.ok and result.blueprint is not None
+
+
+def test_an_overrunning_arm_cannot_win_or_extend_the_total_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+    iron_plate_mk3: pipeline.SfyBuild,
+) -> None:
+    first, second = _race(monkeypatch, iron_plate_mk3, first_duration=8.0)
+    result = pipeline.build(
+        flow_url("iron-plate-60"),
+        designer="mk3",
+        flow=FLOWS / "iron-plate-60.csv",
+        time_budget_s=10.0,
+    )
+    assert first.calls == [(5.0, 105.0)]
+    assert second.calls == [(2.0, 110.0)]
+    assert result.strategy == "grid-routed"
+    assert result.refused[0].reason == "layout exceeded the budget"
+
+
+def test_a_strategy_that_refuses_is_reported_beside_the_winner(
+    monkeypatch: pytest.MonkeyPatch,
+    iron_plate_mk3: pipeline.SfyBuild,
+    tmp_path: Path,
+) -> None:
+    _race(
+        monkeypatch,
+        iron_plate_mk3,
+        first_refusal=NoValidLayout(
+            "rows exceed the designer depth",
+            attempt_reasons=("needs another row",),
+        ),
+    )
+    result = pipeline.build(
+        flow_url("iron-plate-60"),
+        designer="mk3",
+        flow=FLOWS / "iron-plate-60.csv",
+    )
+    assert result.strategy == "grid-routed"
+    assert [(f.strategy, f.reason) for f in result.refused] == [
+        ("manifold-rows", "rows exceed the designer depth"),
+    ]
+    assert result.refused[0].children[0].reason == "needs another row"
+    sbp, cfg = pipeline.write(result, tmp_path)
+    assert decode(read_sbp_file(sbp), pipeline.registry()) == result.placement
+    assert read_sbpcfg(cfg.read_bytes()).description == result.placement.description
+
+
+def test_both_refusing_raises_no_valid_layout_naming_both_causes(
+    monkeypatch: pytest.MonkeyPatch,
+    iron_plate_mk3: pipeline.SfyBuild,
+) -> None:
+    _race(
+        monkeypatch,
+        iron_plate_mk3,
+        first_refusal=NoValidLayout("rows exceed the designer depth"),
+        second_refusal=NoValidLayout("a belt could not be routed"),
+    )
+    with pytest.raises(NoValidLayout) as caught:
+        pipeline.build(
+            flow_url("iron-plate-60"),
+            designer="mk3",
+            flow=FLOWS / "iron-plate-60.csv",
+        )
+    assert [(f.strategy, f.reason) for f in caught.value.attempt_failures] == [
+        ("manifold-rows", "rows exceed the designer depth"),
+        ("grid-routed", "a belt could not be routed"),
+    ]
+
+
+def test_a_validator_error_disqualifies_an_otherwise_returned_layout(
+    monkeypatch: pytest.MonkeyPatch,
+    iron_plate_mk3: pipeline.SfyBuild,
+) -> None:
+    first, _ = _race(monkeypatch, iron_plate_mk3)
+    failed = replace(
+        iron_plate_mk3.report,
+        findings=(Finding("geom.bounds", Severity.ERROR, "outside designer"),),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "validate",
+        lambda placement, *args, **kwargs: (
+            failed if placement is first.placement else iron_plate_mk3.report
+        ),
+    )
+    result = pipeline.build(
+        flow_url("iron-plate-60"),
+        designer="mk3",
+        flow=FLOWS / "iron-plate-60.csv",
+    )
+    assert result.strategy == "grid-routed"
+    assert "geom.bounds" in result.refused[0].reason
+
+
+def test_explicit_strategy_runs_alone_with_the_whole_budget(
+    monkeypatch: pytest.MonkeyPatch,
+    iron_plate_mk3: pipeline.SfyBuild,
+) -> None:
+    first, second = _race(monkeypatch, iron_plate_mk3)
+    result = pipeline.build(
+        flow_url("iron-plate-60"),
+        designer="mk3",
+        flow=FLOWS / "iron-plate-60.csv",
+        strategy="grid-routed",
+        time_budget_s=10,
+    )
+    assert result.strategy == "grid-routed"
+    assert first.calls == [] and second.calls == [(10.0, 110.0)]
+
+
+def test_encoding_failure_keeps_the_winners_identity_and_the_loser_cause(
+    monkeypatch: pytest.MonkeyPatch,
+    iron_plate_mk3: pipeline.SfyBuild,
+) -> None:
+    _race(
+        monkeypatch,
+        iron_plate_mk3,
+        first_refusal=NoValidLayout("rows exceed the designer depth"),
+    )
+
+    def cannot_emit(*args: object, **kwargs: object) -> None:
+        raise ValueError("missing format template")
+
+    monkeypatch.setattr(pipeline, "emit", cannot_emit)
+    result = pipeline.build(
+        flow_url("iron-plate-60"),
+        designer="mk3",
+        flow=FLOWS / "iron-plate-60.csv",
+    )
+    assert result.strategy == "grid-routed"
+    assert result.blueprint is None and result.record is None
+    assert [failure.reason for failure in result.refused] == [
+        "rows exceed the designer depth",
+        "blueprint encoding failed: missing format template",
+    ]
+
+
+def test_an_exhausted_total_budget_does_not_start_the_second_strategy(
+    monkeypatch: pytest.MonkeyPatch,
+    iron_plate_mk3: pipeline.SfyBuild,
+) -> None:
+    first, second = _race(monkeypatch, iron_plate_mk3, first_duration=12.0)
+    with pytest.raises(NoValidLayout) as caught:
+        pipeline.build(
+            flow_url("iron-plate-60"),
+            designer="mk3",
+            flow=FLOWS / "iron-plate-60.csv",
+            time_budget_s=10,
+        )
+    assert first.calls == [(5.0, 105.0)]
+    assert second.calls == []
+    assert [(failure.strategy, failure.reason) for failure in caught.value.attempt_failures] == [
+        ("manifold-rows", "layout exceeded the budget"),
+        ("grid-routed", "layout exceeded the budget"),
+    ]

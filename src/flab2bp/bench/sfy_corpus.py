@@ -23,8 +23,8 @@ What the gate accepts, and why it is not simply "no exceptions"
 Legality is what the hologram does; the audit reports what the validator says.
 A refusal is therefore a RESULT, not an error -- but only when its cause is one
 the plan already ruled on.  :data:`RULED_CAUSES` is that list, and it is
-deliberately a subset of :data:`~flab2bp.sfy.layout.strategy.REFUSALS`: several
-of the strategy's causes are excluded on purpose, because a build that ran out
+deliberately a subset of :data:`~flab2bp.sfy.layout.refusals.REFUSALS`: several
+of the strategies' causes are excluded on purpose, because a build that ran out
 of seconds or of passes, or whose rows contradict the spec, is a build nobody
 has shown fits.  The comment above :data:`RULED_CAUSES` names each exclusion.
 
@@ -46,26 +46,31 @@ measured ceiling today is two rows in an mk3.
 
 Tier is orientation, not a budget
 ---------------------------------
-The DSP corpus makes :class:`~flab2bp.bench.corpus.Tier` set the CP-SAT budget.
-There is no CP-SAT here: the manifold strategy either lays the rows out in well
-under a second or refuses on arithmetic, so the audit's budget is the one number
-its ``--budget`` flag carries and the tier says only how big the chain is.
+The DSP corpus makes :class:`~flab2bp.bench.tier.Tier` set the CP-SAT budget.
+The audit's budget is the one number its ``--budget`` flag carries; the tier
+says only how big the chain is, not how much time either strategy receives.
 
-What importing this module still costs
---------------------------------------
-Nine ``flab2bp.dsp`` modules, and they are not free-standing: importing ``Tier``
-imports :mod:`flab2bp.bench.corpus`, which imports
+What importing this module costs
+--------------------------------
+No DSP module and no rate solver.  It used to cost nine ``flab2bp.dsp`` modules
+and five ``flab2bp.rates`` ones, none of them free-standing: importing ``Tier``
+imported :mod:`flab2bp.bench.corpus`, which imports
 :class:`flab2bp.rates.CandidatePolicy`, which is the DSP rate solver and brings
 ``flab2bp.dsp.catalog``, ``registry``, ``rules``, ``colliders``, ``provenance``,
 ``quaternion`` and the two geometry kernels with it.  A list of twelve
-Satisfactory URLs has no use for any of them.
+Satisfactory URLs has no use for any of them, so ``Tier`` now lives in the leaf
+:mod:`flab2bp.bench.tier`, which imports nothing but ``enum``, and
+``bench.corpus`` re-exports it for the other game's gate.
 
-``tests/sfy/test_corpus.py`` pins exactly that and no more: with
-``bench.corpus`` already imported, reading this module must add no further DSP
-module.  The guard therefore holds the seam where it is rather than closing it
--- closing it means moving ``Tier`` into a leaf module that imports nothing,
-which is an M3 chore and deliberately not done here, because moving a name the
-DSP corpus reads is a change to the other game's gate.
+``tests/sfy/test_corpus.py`` measures that in a fresh interpreter: reading this
+module must load no ``flab2bp.dsp`` or ``flab2bp.rates`` module at all, and
+none of the named DSP bake-off modules -- ``layout.freeform``,
+``routing_domain``, ``geometric_router``, ``finalize`` and the two Cython
+kernels.  What it does load beside itself is small and deliberate:
+:mod:`flab2bp.bench.tier` for ``Tier``, and ``flab2bp.layout.base`` with
+``budget`` and ``process_resources`` behind
+:mod:`flab2bp.sfy.layout.refusals` -- the vocabulary both games share, which
+the Satisfactory strategy genuinely uses.
 """
 
 from __future__ import annotations
@@ -74,9 +79,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Literal
 
-from flab2bp.bench.corpus import Tier
-from flab2bp.sfy.layout.strategy import REFUSALS
+from flab2bp.bench.tier import Tier
+from flab2bp.sfy.layout.refusals import REFUSALS
 from flab2bp.sfy.pipeline import DESIGNER_MARKS
+from flab2bp.sfy.strategy_names import SFY_STRATEGY_CHOICES, SfyStrategyName
 
 __all__ = [
     "CLEAN",
@@ -118,9 +124,14 @@ _LIST: Final = "https://factoriolab.github.io/sfy/list?v=11&o="
 #: * ``corridor needs a bridge that does not fit`` -- R2/M3.  Belts only, on one
 #:   level: where two trunks must cross and the climb does not fit under the
 #:   designer's roof there is no lift to fall back on.
-#: * ``fluids are M4`` -- R4.
+#: * ``fluids are M5`` -- R4.  The milestone reorder of 2026-09-15 (spec section
+#:   12) moved piping from M4 to M5; the cause is named for the milestone that
+#:   will carry it, so the string is the later one.
+#: * ``a belt could not be routed`` and ``the packer found no arrangement`` --
+#:   M3 Task 11's ruled grid outcomes. Budget exhaustion, invalid geometry and
+#:   crashes remain failures, never evidence that a layout is impossible.
 #:
-#: Four of the strategy's causes are deliberately absent.  ``corridor
+#: Four of the strategies' causes are deliberately absent.  ``corridor
 #: assignment exceeded the budget`` is a clock running out, not a shape being
 #: impossible, and ``row splitting did not converge`` is the same in passes
 #: rather than seconds: the row/corridor walk gave up, which says nothing about
@@ -135,7 +146,9 @@ RULED_CAUSES: Final = (
     "row too deep",
     "run exceeds the belt ceiling",
     "corridor needs a bridge that does not fit",
-    "fluids are M4",
+    "fluids are M5",
+    "a belt could not be routed",
+    "the packer found no arrangement",
 )
 
 
@@ -148,9 +161,10 @@ def is_ruled_cause(cause: str) -> bool:
 class SfyCorpusEntry:
     """One URL, its captured flow, and what each designer mark is expected to do.
 
-    ``expects`` pins one outcome per mark -- :data:`CLEAN`, or the ruled cause
-    that mark refuses with -- and every one of them is a MEASUREMENT taken by
-    ``scripts/sfy_audit.py``, not a wish.  That makes the pair of gates mean two
+    ``expects`` pins an outcome per ``(requested strategy, mark)`` -- :data:`CLEAN`,
+    or a ruled cause -- and every pin is a MEASUREMENT taken by
+    ``scripts/sfy_audit.py``, not a wish. An unmeasured strategy has no pins.
+    Once measured, a strategy pins every mark. That makes the gates mean two
     different things:
 
     * the default gate asks only whether each cell is CLEAN or refuses for a
@@ -176,10 +190,9 @@ class SfyCorpusEntry:
     url: str
     flow_file: str
     tier: Tier
-    #: ``(mark, CLEAN or a ruled cause)`` for every mark in ``designers``.  A
-    #: tuple of pairs rather than a mapping because the entry is frozen and
-    #: hashable, the way ``CorpusEntry.budget_floors`` already is.
-    expects: tuple[tuple[str, str], ...] = ()
+    #: ``((strategy, mark), CLEAN or a ruled cause)``. Frozen and hashable;
+    #: absent strategies are explicitly unmeasured, never copied from a rival.
+    expects: tuple[tuple[tuple[SfyStrategyName, str], str], ...] = ()
     designers: tuple[str, ...] = DESIGNER_MARKS
     note: str = ""
 
@@ -192,18 +205,25 @@ class SfyCorpusEntry:
             )
         pinned = dict(self.expects)
         if len(pinned) != len(self.expects):
-            raise ValueError(f"{self.url_id} pins the same mark twice in `expects`")
-        if set(pinned) != set(self.designers):
-            raise ValueError(
-                f"{self.url_id} is built in {', '.join(self.designers)} but pins "
-                f"{', '.join(sorted(pinned)) or 'nothing'}; --strict needs exactly "
-                "one expectation per mark, so a mark with none would be pinned to "
-                "nothing at all"
-            )
+            raise ValueError(f"{self.url_id} pins the same strategy and mark twice in `expects`")
+        for strategy in {strategy for strategy, _ in pinned}:
+            if strategy not in SFY_STRATEGY_CHOICES:
+                raise ValueError(f"{self.url_id} pins unknown strategy {strategy!r}")
+            marks = {mark for name, mark in pinned if name == strategy}
+            if marks != set(self.designers):
+                raise ValueError(
+                    f"{self.url_id}: {strategy} needs exactly one expectation per mark "
+                    f"in {', '.join(self.designers)}"
+                )
         stray = tuple(
-            f"{mark}={outcome!r}"
-            for mark, outcome in self.expects
-            if outcome != CLEAN and not is_ruled_cause(outcome)
+            f"{strategy}/{mark}={outcome!r}"
+            for (strategy, mark), outcome in self.expects
+            if outcome != CLEAN
+            and not (
+                all(is_ruled_cause(cause) for cause in outcome.split("; "))
+                if strategy == "best"
+                else is_ruled_cause(outcome)
+            )
         )
         if stray:
             raise ValueError(
@@ -217,24 +237,25 @@ class SfyCorpusEntry:
         """The committed export this entry is built from."""
         return FLOWS_DIR / self.flow_file
 
-    def expectation(self, mark: str) -> str:
-        """What ``mark`` is pinned to do: :data:`CLEAN`, or a refusal cause."""
-        return dict(self.expects)[mark]
+    def expectation(self, strategy: SfyStrategyName, mark: str) -> str:
+        """The measured outcome; ``best`` joins distinct attempt causes with ``; ``.
+
+        Raises ``KeyError`` for an unmeasured strategy.
+        """
+        return dict(self.expects)[strategy, mark]
 
     @property
     def largest(self) -> str:
         """The biggest mark this entry is run in -- its best chance of fitting."""
         return [m for m in DESIGNER_MARKS if m in self.designers][-1]
 
-    @property
-    def expected(self) -> Literal["clean", "refuse"]:
-        """What the largest mark is expected to do, for a one-line summary."""
-        return "clean" if self.expectation(self.largest) == CLEAN else "refuse"
+    def expected(self, strategy: SfyStrategyName) -> Literal["clean", "refuse"]:
+        """The largest mark's measured outcome for this requested strategy."""
+        return "clean" if self.expectation(strategy, self.largest) == CLEAN else "refuse"
 
-    @property
-    def expected_cause(self) -> str | None:
-        """The largest mark's expected refusal cause, or ``None`` if it builds."""
-        outcome = self.expectation(self.largest)
+    def expected_cause(self, strategy: SfyStrategyName) -> str | None:
+        """The largest mark's refusal cause, or ``None`` if it builds."""
+        outcome = self.expectation(strategy, self.largest)
         return None if outcome == CLEAN else outcome
 
 
@@ -244,9 +265,11 @@ _DEPTH: Final = "rows exceed the designer depth"
 _BRIDGE: Final = "corridor needs a bridge that does not fit"
 
 
-def _pins(mk1: str, mk2: str, mk3: str) -> tuple[tuple[str, str], ...]:
-    """One expectation per mark, in mark order, as ``expects`` wants them."""
-    return (("mk1", mk1), ("mk2", mk2), ("mk3", mk3))
+def _pins(
+    mk1: str, mk2: str, mk3: str, *, strategy: SfyStrategyName = "manifold-rows"
+) -> tuple[tuple[tuple[SfyStrategyName, str], str], ...]:
+    """Measured outcomes in mark order; existing measurements are manifold-only."""
+    return (((strategy, "mk1"), mk1), ((strategy, "mk2"), mk2), ((strategy, "mk3"), mk3))
 
 
 SFY_CORPUS: Final[tuple[SfyCorpusEntry, ...]] = (
@@ -359,7 +382,7 @@ SFY_CORPUS: Final[tuple[SfyCorpusEntry, ...]] = (
         _LIST + "plastic*20",
         "plastic-20.csv",
         Tier.TRIVIAL,
-        expects=_pins("fluids are M4", "fluids are M4", "fluids are M4"),
+        expects=_pins("fluids are M5", "fluids are M5", "fluids are M5"),
         note="the fluid URL, here to be refused: crude oil into a Refinery",
     ),
 )

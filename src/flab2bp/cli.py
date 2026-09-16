@@ -39,6 +39,7 @@ from flab2bp.layout.observe import (
     SearchEvent,
 )
 from flab2bp.sfy import pipeline as sfy_pipeline
+from flab2bp.sfy.strategy_names import SFY_STRATEGY_CHOICES
 from flab2bp.strategy_names import STRATEGY_CHOICES
 
 if TYPE_CHECKING:
@@ -65,7 +66,7 @@ DEFAULT_DESIGNER_MARK = sfy_pipeline.DEFAULT_DESIGNER_MARK
 #: silence -- a band or a strategy that was asked for and ignored is exactly the
 #: kind of thing a player would otherwise believe had taken effect.
 _DSP_ONLY_FLAGS: dict[str, str] = {
-    "strategy": "--strategy",
+    "allow_invalid": "--allow-invalid",
     "band": "--band",
     "sequence_islands": "--sequence-islands",
     "candidate_policy": "--candidate-policy",
@@ -386,10 +387,17 @@ def _sfy_report(build: sfy_pipeline.SfyBuild, *, out: TextIO | None = None) -> N
     )
     print(
         f"{build.strategy}: {len(placement.machines)} machines in "
-        f"{len(spec.groups)} rows, {len(placement.belts)} belts, "
+        f"{len(spec.groups)} groups, {len(placement.belts)} belts, "
         f"{len(placement.poles)} poles, {len(placement.wires)} wires; "
         f"power {spec.power_mw:.1f} MW (report figure); "
         f"shards {spec.power_shards}; entries [{entries}]; exits [{exits}]",
+        file=out,
+    )
+    measured = build.measure
+    print(
+        f"  measure: {measured.blueprints} blueprint(s), "
+        f"volume {measured.volume_cm3:g} cm³, belt {measured.belt_cm:g} cm, "
+        f"{measured.lifts} lifts, {measured.attachments} attachments",
         file=out,
     )
     # Same line `_report` prints, and for the same reason: "no findings" and
@@ -401,9 +409,11 @@ def _sfy_report(build: sfy_pipeline.SfyBuild, *, out: TextIO | None = None) -> N
         print("  recipe selection NOT pinned to a flow", file=out)
 
     if build.refused:
-        print(f"  {len(build.refused)} refusal(s) with no layout to show:", file=out)
-        for failure in build.refused[:5]:
+        print(f"  {len(build.refused)} layout/encoding refusal(s):", file=out)
+        for failure in build.refused:
             print(f"    {failure}", file=out)
+            for detail in failure.children:
+                print(f"      {detail.reason}", file=out)
 
     if report.skipped:
         print(
@@ -488,10 +498,11 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("url", help="a factoriolab.github.io/dsp/... or /sfy/... URL")
     ap.add_argument(
         "--strategy",
-        choices=STRATEGY_CHOICES,
+        choices=tuple(dict.fromkeys((*STRATEGY_CHOICES, *SFY_STRATEGY_CHOICES))),
         default="best",
-        help="layout backend; best runs freeform, sequence-pair, transport-routing "
-        "and hierarchical and keeps the smallest valid result (default). "
+        help="layout backend for the URL's game; Satisfactory best races "
+        "manifold-rows and grid-routed in one budget. DSP best runs freeform, "
+        "sequence-pair, transport-routing and hierarchical and keeps the smallest valid result. "
         "transport-routing constructs interfaces with bounded native SAT routing. "
         "hierarchical decomposes the spec into blocks, solves them apart and "
         "composes them; it automatically competes in best. Racing shares one "
@@ -652,6 +663,12 @@ def main(argv: list[str] | None = None) -> int:
     game = _game_of(args.url)
     if game is Game.SFY:
         return _sfy_main(args)
+    if args.strategy not in STRATEGY_CHOICES:
+        print(
+            "flab2bp: --strategy for a DSP URL must be one of " + ", ".join(STRATEGY_CHOICES),
+            file=sys.stderr,
+        )
+        return 2
     if args.designer is not None:
         print(
             "flab2bp: --designer names a Satisfactory Blueprint Designer and this "
@@ -825,15 +842,21 @@ def main(argv: list[str] | None = None) -> int:
 def _sfy_main(args: argparse.Namespace) -> int:
     """The Satisfactory arm of :func:`main`, with :func:`main`'s exit codes.
 
-    ``0`` a blueprint was written, ``1`` the validator found errors and
-    ``--allow-invalid`` was not passed, ``2`` the URL, the spec or the flow was
-    refused, ``3`` no layout -- the same four the DSP arm returns, so a script
-    that already reads them needs no change for a second game.
+    ``0`` a blueprint was written, ``2`` the URL, the spec or the flow was
+    refused, ``3`` no validator-clean layout or no encodable blueprint. Unlike
+    DSP, this strategy contract never returns an invalid placement to override.
 
     ``SpecInfeasible`` is caught before ``NoValidLayout`` deliberately: it is a
     subclass of it, but "this flow moves a fluid" is a bad SPEC (2), not a
     search that found no layout (3).
     """
+    if args.strategy not in SFY_STRATEGY_CHOICES:
+        print(
+            "flab2bp: --strategy for a Satisfactory URL must be one of "
+            + ", ".join(SFY_STRATEGY_CHOICES),
+            file=sys.stderr,
+        )
+        return 2
     # Compared against the parser's OWN defaults rather than against a copy of
     # them written here: a default that moves stays in one place, and a flag
     # left alone is never reported as ignored.
@@ -853,6 +876,7 @@ def _sfy_main(args: argparse.Namespace) -> int:
     try:
         build = sfy_pipeline.build(
             args.url,
+            strategy=args.strategy,
             designer=args.designer or DEFAULT_DESIGNER_MARK,
             time_budget_s=args.budget,
             flow=args.flow,
@@ -866,8 +890,13 @@ def _sfy_main(args: argparse.Namespace) -> int:
         return 2
     except NoValidLayout as exc:
         print(f"flab2bp: {exc}", file=sys.stderr)
-        for reason in exc.attempt_reasons[:5]:
-            print(f"  {reason}", file=sys.stderr)
+        for failure in exc.attempt_failures:
+            print(f"  {failure}", file=sys.stderr)
+            for detail in failure.children:
+                print(f"    {detail.reason}", file=sys.stderr)
+        if not exc.attempt_failures:
+            for reason in exc.attempt_reasons:
+                print(f"  {reason}", file=sys.stderr)
         return 3
     except (ValueError, KeyError) as exc:
         print(f"flab2bp: {exc}", file=sys.stderr)
@@ -875,19 +904,12 @@ def _sfy_main(args: argparse.Namespace) -> int:
 
     _sfy_report(build)
 
-    if build.blueprint is None:
+    if build.blueprint is None or build.record is None:
         # Laid out and judged, then unwritable: a refusal with a reason, which
         # `_sfy_report` has already printed in full. Same exit code as any other
         # "there is no blueprint at the end of this".
         print("flab2bp: this build produced no blueprint", file=sys.stderr)
         return 3
-
-    if build.report.errors and not args.allow_invalid:
-        print(
-            "flab2bp: refusing to emit an invalid blueprint; pass --allow-invalid to override",
-            file=sys.stderr,
-        )
-        return 1
 
     # A directory, not a file: the game reads a blueprint as a PAIR of files
     # sharing one stem out of a save's `blueprints/<session>` folder.

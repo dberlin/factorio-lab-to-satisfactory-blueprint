@@ -18,6 +18,8 @@ from flab2bp import cli
 from flab2bp.layout.base import LayoutAttemptFailure
 from flab2bp.sfy import pipeline as sfy_pipeline
 from flab2bp.sfy.layout.validate import Finding, Report, Severity
+from flab2bp.sfy.strategy_names import SFY_STRATEGY_CHOICES
+from flab2bp.strategy_names import STRATEGY_CHOICES
 
 FLOWS = Path(__file__).resolve().parent / "fixtures" / "sfy_flows"
 FLOW = FLOWS / "iron-plate-60.csv"
@@ -74,7 +76,17 @@ def test_a_pinned_satisfactory_build_writes_both_files_and_reports_to_stdout(
 ) -> None:
     """The headline run: one command, one directory, two files, exit 0."""
     code = cli.main(
-        [sfy_url(), "--flow", str(FLOW), "--designer", "mk3", "-o", str(tmp_path / "out")]
+        [
+            sfy_url(),
+            "--flow",
+            str(FLOW),
+            "--designer",
+            "mk3",
+            "--strategy",
+            "manifold-rows",
+            "-o",
+            str(tmp_path / "out"),
+        ]
     )
     captured = capsys.readouterr()
     assert code == 0, captured.err
@@ -84,7 +96,7 @@ def test_a_pinned_satisfactory_build_writes_both_files_and_reports_to_stdout(
 
     head = captured.out.splitlines()[0]
     assert head.startswith("manifold-rows: ")
-    for part in ("machines in ", " rows, ", " belts, ", " poles, ", " wires; "):
+    for part in ("machines in ", " groups, ", " belts, ", " poles, ", " wires; "):
         assert part in head
     assert "power " in head and "MW (report figure)" in head
     assert "shards " in head
@@ -106,6 +118,8 @@ def test_a_build_that_does_not_fit_the_designer_exits_three_with_the_reason(
             str(FLOW_TWO_ROWS),
             "--designer",
             "mk1",
+            "--strategy",
+            "manifold-rows",
             "-o",
             str(tmp_path),
         ]
@@ -129,7 +143,7 @@ def test_dsp_only_flags_are_ignored_on_the_satisfactory_path_with_one_line(
             "-o",
             str(tmp_path),
             "--strategy",
-            "freeform",
+            "manifold-rows",
             "--band",
             "5x40",
         ]
@@ -137,7 +151,7 @@ def test_dsp_only_flags_are_ignored_on_the_satisfactory_path_with_one_line(
     assert code == 0
     ignored = [line for line in capsys.readouterr().err.splitlines() if "ignoring them" in line]
     assert len(ignored) == 1
-    assert "--strategy" in ignored[0] and "--band" in ignored[0]
+    assert "--band" in ignored[0] and "--strategy" not in ignored[0]
 
 
 def test_a_named_build_is_written_under_that_name(tmp_path: Path) -> None:
@@ -169,7 +183,7 @@ def test_a_flow_that_moves_a_fluid_exits_two_rather_than_three(
     url = flow.read_text(encoding="utf-8").splitlines()[0].strip().strip('"')
     code = cli.main([url, "--flow", str(flow), "--designer", "mk3", "-o", str(tmp_path)])
     assert code == 2
-    assert "fluids are M4" in capsys.readouterr().err
+    assert "fluids are M5" in capsys.readouterr().err
 
 
 def test_a_url_naming_neither_game_falls_through_to_the_dsp_arm_and_exits_two(
@@ -195,11 +209,12 @@ def test_a_url_naming_neither_game_falls_through_to_the_dsp_arm_and_exits_two(
 
 @pytest.fixture(scope="module")
 def clean_build() -> sfy_pipeline.SfyBuild:
-    return sfy_pipeline.build(sfy_url(), designer="mk3", flow=FLOW)
-
-
-def _as(build: sfy_pipeline.SfyBuild, **changes: object) -> sfy_pipeline.SfyBuild:
-    return replace(build, **changes)  # type: ignore[arg-type]
+    return sfy_pipeline.build(
+        sfy_url(),
+        strategy="manifold-rows",
+        designer="mk3",
+        flow=FLOW,
+    )
 
 
 def _failing(report: Report) -> Report:
@@ -213,37 +228,22 @@ def _serve(monkeypatch: pytest.MonkeyPatch, build: sfy_pipeline.SfyBuild) -> Non
     monkeypatch.setattr(sfy_pipeline, "build", lambda *a, **k: build)
 
 
-def test_validation_errors_withhold_the_blueprint_with_exit_one(
+def test_invalid_candidates_remain_refused_with_the_dsp_override(
     clean_build: sfy_pipeline.SfyBuild,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Exit 1 and NO files: a blueprint that pastes and then does not run is the
-    worst outcome available, so it is not written at all."""
-    _serve(monkeypatch, _as(clean_build, report=_failing(clean_build.report)))
-    assert cli.main([sfy_url(), "--flow", str(FLOW), "--designer", "mk3", "-o", str(tmp_path)]) == 1
-
-    captured = capsys.readouterr()
-    assert "refusing to emit an invalid blueprint" in captured.err
-    assert "1 VALIDATION ERRORS: {'geom.bounds': 1}" in captured.out
-    assert "geom.bounds: a machine reaches outside the designer" in captured.out
-    assert list(tmp_path.iterdir()) == []
-
-
-def test_allow_invalid_writes_the_files_anyway_and_exits_zero(
-    clean_build: sfy_pipeline.SfyBuild,
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """The override is the DSP flag's, with the DSP flag's consequence."""
-    _serve(monkeypatch, _as(clean_build, report=_failing(clean_build.report)))
+    monkeypatch.setattr(
+        sfy_pipeline, "validate", lambda *args, **kwargs: _failing(clean_build.report)
+    )
     code = cli.main(
         [
             sfy_url(),
             "--flow",
             str(FLOW),
+            "--strategy",
+            "manifold-rows",
             "--designer",
             "mk3",
             "-o",
@@ -251,12 +251,11 @@ def test_allow_invalid_writes_the_files_anyway_and_exits_zero(
             "--allow-invalid",
         ]
     )
-    assert code == 0
-    assert sorted(p.name for p in tmp_path.iterdir()) == [
-        "iron-plate-mk3.sbp",
-        "iron-plate-mk3.sbpcfg",
-    ]
-    assert "VALIDATION ERRORS" in capsys.readouterr().out
+    assert code == 3
+    error = capsys.readouterr().err
+    assert "--allow-invalid" in error and "ignoring" in error
+    assert "geom.bounds" in error
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_a_placement_that_cannot_be_written_exits_three_and_reports_the_refusal(
@@ -265,21 +264,16 @@ def test_a_placement_that_cannot_be_written_exits_three_and_reports_the_refusal(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """``blueprint is None``: laid out and judged, then unwritable.
-
-    This is the arm `flab2bp.pipeline`'s encoding-failure refusal mirrors, and
-    it is also the only way `_sfy_report`'s refusals branch is reached today.
-    """
+    """An encoding refusal withholds both files and retains its diagnostics."""
     failure = LayoutAttemptFailure(
         candidate="iron-plate*60",
         strategy="manifold-rows",
         reason="blueprint encoding failed: the registry has no asset path for Recipe_Nope_C",
     )
-    _serve(monkeypatch, _as(clean_build, blueprint=None, record=None, refused=(failure,)))
+    _serve(monkeypatch, replace(clean_build, blueprint=None, record=None, refused=(failure,)))
     assert cli.main([sfy_url(), "--flow", str(FLOW), "--designer", "mk3", "-o", str(tmp_path)]) == 3
 
     captured = capsys.readouterr()
-    assert "1 refusal(s) with no layout to show:" in captured.out
     assert "manifold-rows/iron-plate*60: blueprint encoding failed" in captured.out
     assert "this build produced no blueprint" in captured.err
     assert list(tmp_path.iterdir()) == []
@@ -292,7 +286,7 @@ def test_writing_a_build_with_no_blueprint_refuses_rather_than_writing_half_a_pa
     failure = LayoutAttemptFailure(
         candidate="iron-plate*60", strategy="manifold-rows", reason="blueprint encoding failed: x"
     )
-    build = _as(clean_build, blueprint=None, record=None, refused=(failure,))
+    build = replace(clean_build, blueprint=None, record=None, refused=(failure,))
     with pytest.raises(ValueError, match="nothing to write"):
         sfy_pipeline.write(build, tmp_path)
     assert not tmp_path.exists() or list(tmp_path.iterdir()) == []
@@ -308,6 +302,7 @@ def test_every_dsp_only_flag_is_listed_so_a_new_one_cannot_be_ignored_silently()
     """
     neutral = {
         "help",
+        "strategy",
         "url",
         "flow",
         "fetch_flow",
@@ -318,7 +313,6 @@ def test_every_dsp_only_flag_is_listed_so_a_new_one_cannot_be_ignored_silently()
         "out",
         "name",
         "verbose",
-        "allow_invalid",
     }
     parser = cli.build_parser()
     dests = {action.dest for action in parser._actions}
@@ -329,3 +323,53 @@ def test_every_dsp_only_flag_is_listed_so_a_new_one_cannot_be_ignored_silently()
     spellings = {action.dest: set(action.option_strings) for action in parser._actions}
     for dest, flag in cli._DSP_ONLY_FLAGS.items():
         assert flag in spellings[dest], f"{dest} is not spelled {flag} by the parser"
+
+
+@pytest.mark.parametrize("strategy", SFY_STRATEGY_CHOICES)
+def test_the_cli_accepts_sfy_strategy_choices_for_an_sfy_url(
+    strategy: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Reaches the real flow boundary rather than rejecting the strategy.
+    assert cli.main([sfy_url(), "--strategy", strategy]) == 2
+    error = capsys.readouterr().err
+    assert "--flow" in error and "--fetch-flow" in error
+
+
+@pytest.mark.parametrize("strategy", [s for s in STRATEGY_CHOICES if s != "best"])
+def test_dsp_strategies_are_not_silently_ignored_for_sfy(
+    strategy: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert cli.main([sfy_url(), "--strategy", strategy]) == 2
+    assert "--strategy" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("strategy", ["manifold-rows", "grid-routed"])
+def test_sfy_strategies_are_refused_for_dsp(
+    strategy: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert cli.main([DSP_URL, "--strategy", strategy]) == 2
+    assert "--strategy" in capsys.readouterr().err
+
+
+def test_cli_writes_the_winner_and_reports_the_loser_and_measure(
+    clean_build: sfy_pipeline.SfyBuild,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    loser = LayoutAttemptFailure(
+        clean_build.spec.label,
+        "grid-routed",
+        "a belt could not be routed",
+    )
+    _serve(monkeypatch, replace(clean_build, refused=(loser,)))
+    assert cli.main([sfy_url(), "--flow", str(FLOW), "-o", str(tmp_path)]) == 0
+    assert (tmp_path / "iron-plate-mk3.sbp").is_file()
+    assert (tmp_path / "iron-plate-mk3.sbpcfg").is_file()
+    report = capsys.readouterr().out
+    assert "grid-routed" in report and loser.reason in report
+    assert f"volume {clean_build.measure.volume_cm3:g} cm³" in report
+    assert f"belt {clean_build.measure.belt_cm:g} cm" in report

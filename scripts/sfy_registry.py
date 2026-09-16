@@ -167,6 +167,25 @@ BELT_MIN_LENGTH_FACTOR = 0.5001
 BELT_MIN_LENGTH_EVIDENCE = "0xaa58b2"
 BELT_MIN_LENGTH_RULE = "belt.min_length"
 
+# A lift's clearance box is the third of that shape, and the input is neither a
+# constructor immediate nor a Docs.json value: it is a module global's
+# *initialiser*, read out of the shipped image by its PDB symbol.
+# ``AFGBuildableConveyorLift::FitClearance`` reads two doubles from
+# ``AFGBuildableConveyorLift::CLEARANCE_EXTENT_2D`` and adds ``-5`` to each, and
+# ``scripts/sfy_native_rules.py`` puts the tool's own read of it -- section,
+# RVA, bytes, doubles and the shrunk values -- in the ``lift.clearance`` rule's
+# ``data_reads``. This takes it from there rather than transcribing a number,
+# which is why the merge reads the rules file raw as well as through
+# :func:`load_rules`: :class:`HologramRule` carries a rule's claims, and this is
+# a reading attached to one.
+#
+# The two components must agree. A lift's footprint is a square column in the
+# shipped build, and the registry says so with one number; a build where the two
+# axes differ needs two fields and the placer needs to know which is which, so
+# the merge stops rather than pick one.
+LIFT_CLEARANCE_RULE = "lift.clearance"
+LIFT_CLEARANCE_SYMBOL = "AFGBuildableConveyorLift::CLEARANCE_EXTENT_2D"
+
 # The one source a port *name* may come from. ``flab2bp.sfy.registry`` re-checks
 # it on load: which component sits in ``mConnection0`` is stated by the cooked
 # class default object and nowhere else, and what a component happens to be
@@ -299,6 +318,11 @@ GOVERNED_BY: dict[str, str] = {
     "production_boost_per_slot": "manufacturer.production_boost",
     "production_boost_slots_default": "manufacturer.production_boost",
     "lift_step_cm": "lift.step",
+    # `compute`, like the two overclocking rules: FitClearance works the box out
+    # and refuses nothing over it. Whether the box overlaps is decided by
+    # `buildable.clearance`, and a validator that reads this as a bound would
+    # refuse builds the game accepts.
+    "lift_clearance_half_extent_cm": "lift.clearance",
     "lift_min_cm": "lift.height_range",
     "lift_max_cm": "lift.height_range",
     "lift_min_vertical_cm": "lift.height_range",
@@ -494,6 +518,68 @@ def _check_belt_min_length(rules: Mapping[str, Any]) -> str:
     return found[0]
 
 
+def _lift_clearance_half_extent() -> tuple[float, dict[str, Any]]:
+    """What ``lift.clearance``'s own read of the image says a lift's box is wide.
+
+    Returns the half-extent and the provenance to file beside it. Everything
+    here comes out of the rule's ``data_reads`` entry, which is
+    ``sfy-native data``'s output for the PDB symbol plus the arithmetic the
+    rule's instructions apply; nothing is transcribed. A rule with no such
+    entry, an entry for another symbol, one the tool read out of a section that
+    is not initialised, or two components that disagree all stop the merge:
+    each of those means the reading has changed, and a stale width is a column
+    of air the placer would deny for the wrong reason.
+    """
+    raw = json.loads((DATA / "hologram_rules.json").read_text(encoding="utf-8"))
+    rule = next((r for r in raw["rules"] if r["id"] == LIFT_CLEARANCE_RULE), None)
+    if rule is None:
+        raise SystemExit(
+            f"hologram_rules.json has no {LIFT_CLEARANCE_RULE} rule, so nothing states how "
+            "wide a conveyor lift's clearance box is; re-run scripts/sfy_native_rules.py"
+        )
+    reads = [r for r in rule.get("data_reads", ()) if r["symbol"] == LIFT_CLEARANCE_SYMBOL]
+    if len(reads) != 1:
+        raise SystemExit(
+            f"{LIFT_CLEARANCE_RULE} carries {len(reads)} reads of {LIFT_CLEARANCE_SYMBOL}, "
+            "wanted one: the half-extent of a lift's clearance box is that global's "
+            "initialiser and nothing else states it"
+        )
+    read = reads[0]
+    if read["section"] not in (".data", ".rdata"):
+        raise SystemExit(
+            f"{LIFT_CLEARANCE_RULE} read {LIFT_CLEARANCE_SYMBOL} out of "
+            f"{read['section']!r}, which is not an initialised section"
+        )
+    values = [float(v) for v in read["values"]]
+    if len(values) != 2 or len(set(values)) != 1 or values[0] <= 0:
+        raise SystemExit(
+            f"{LIFT_CLEARANCE_SYMBOL} now gives {values} for a lift's clearance "
+            "half-extent, and the registry states one number because the footprint is "
+            "square. Two different axes need two fields and a placer that knows which "
+            "is which; re-read lift.clearance before this limit can be written."
+        )
+    return values[0], {
+        "formula": f"E {read['adjustment']:+}, per component",
+        "E": read["doubles"],
+        "E_from": (
+            f"the {read['bytes']}-byte initialiser at {read['rva']} in {read['section']}, "
+            f"read by the PDB symbol {LIFT_CLEARANCE_SYMBOL} "
+            f"(sfy-native data; bytes {read['hex']})"
+        ),
+        "evaluated_in": (
+            "AFGBuildableConveyorLift::FitClearance at 0x4e5dd0, which reads the two "
+            "doubles (0x4e5e52, 0x4e5e5c) and adds the -5 vector to them (0x4e5edb and "
+            "the two following) -- see the lift.clearance rule's data_reads"
+        ),
+        "caveat": (
+            "this is the INITIALISER, what the shipped image holds before the game runs. "
+            "FitClearance reads the global at hologram time, so a game that stored to it "
+            "would make this stale; nothing disassembled writes to it, and that is not a "
+            "proof that nothing does."
+        ),
+    }
+
+
 def _power_shard_values(docs: dict[str, Any]) -> tuple[dict[str, float], dict[str, Any]]:
     """What one shard in a potential slot unlocks, per shard type, and its evidence.
 
@@ -572,6 +658,50 @@ def _subsystem_defaults(assets: dict[str, Any]) -> tuple[dict[str, Any], dict[st
         )
     }
     return values, provenance
+
+
+def _attach_grid_snap(
+    holograms: Mapping[str, Mapping[str, Any]], buildables: dict[str, Any]
+) -> dict[str, Any]:
+    """Put each buildable's own hologram grid on it, and return the provenance.
+
+    A hologram that overrides ``AFGBuildableHologram::mGridSnapSize`` snaps on
+    its own grid rather than the global 100 the constructor stores. The value is
+    the hologram Blueprint's class default object -- so its source is the cooked
+    ``assets``, not the binary ``hologram_grid_cm`` beside it -- and
+    ``stated_on`` is the class whose own class default object named the
+    hologram. The two differ wherever a mark inherits: ``Build_PowerPoleMk2_C``
+    and ``Build_PowerPoleMk3_C`` restate no ``mHologramClass``, which in a cooked
+    asset means the archetype's, so all three pole marks are built by
+    ``Holo_PowerPole_C`` and all three snap at 50.
+
+    ``buildable.grid_snap`` governs this and its effect is ``snap``: the game
+    MOVES a hologram onto the grid and refuses nothing, so a finer grid here
+    costs a nudge rather than a build.
+    """
+    applied: dict[str, Any] = {}
+    for class_name, entry in sorted(buildables.items()):
+        hologram = holograms.get(class_name) or {}
+        grid = hologram.get("mGridSnapSize")
+        entry["grid_snap_cm"] = grid
+        if grid is None:
+            continue
+        applied[class_name] = {
+            "grid_snap_cm": grid,
+            "hologram": hologram.get("class"),
+            "stated_on": hologram.get("stated_on"),
+        }
+    if not applied:
+        raise SystemExit(
+            "assets.json states no mGridSnapSize for any buildable's hologram, so every "
+            "buildable would fall back on the global grid; re-run tools/sfy-extract"
+        )
+    return {
+        "source": "assets",
+        "read_from": "mGridSnapSize on the hologram class default object",
+        "property": "mHologramClass",
+        "applied_to": applied,
+    }
 
 
 def _attach_mesh_bounds(
@@ -761,6 +891,9 @@ def _limits(
             "H_from": f"Docs.json mMeshHeight on {LIFT_CLASS_PREFIX}Mk1_C and its five siblings",
             "evaluated_in": "AFGConveyorLiftHologram::BeginPlay at 0xa64e70 (see native.json)",
         }
+    half_extent, half_extent_provenance = _lift_clearance_half_extent()
+    derived["lift_clearance_half_extent_cm"] = half_extent
+    provenance["lift_clearance_half_extent_cm"] = half_extent_provenance
     mesh_length = _belt_mesh_length(docs)
     belt_min_evidence = _check_belt_min_length(load_rules())
     derived["belt_min_length_cm"] = BELT_MIN_LENGTH_FACTOR * mesh_length
@@ -1127,11 +1260,7 @@ def main(out: Path | None = None) -> int:
 
     for class_name, buildable in docs["buildables"].items():
         buildable["ports"] = assets["ports"].get(class_name, [])
-        # A hologram that overrides AFGBuildableHologram::mGridSnapSize snaps on
-        # its own grid rather than the global one; only power poles, power towers
-        # and street lights do, all to 50.
-        hologram = assets["holograms"].get(class_name) or {}
-        buildable["grid_snap_cm"] = hologram.get("mGridSnapSize")
+    grid_snap = _attach_grid_snap(assets["holograms"], docs["buildables"])
     missing_ports = sorted(set(docs["buildables"]) - set(assets["ports"]))
     conveyor_flow = _attach_flow(
         directions, assets.get("conveyor_connections", {}), docs["buildables"]
@@ -1156,6 +1285,7 @@ def main(out: Path | None = None) -> int:
             "lift_geometry": lift_geometry,
             "cost_segment": cost_segments,
             "mesh_bounds": mesh_bounds,
+            "grid_snap": grid_snap,
             "max_connections": connection_links,
             "limits": limit_provenance,
             "port_directions": {
@@ -1202,6 +1332,10 @@ def main(out: Path | None = None) -> int:
     print("port directions resolved from:", direction_counts)
     print("port connection counts resolved from:", connection_links["sources"])
     print(f"mesh boxes on {len(mesh_bounds['applied_to'])} classes")
+    print(
+        "own hologram grid on:",
+        {c: e["grid_snap_cm"] for c, e in grid_snap["applied_to"].items()},
+    )
     print("over every extracted class:", extracted_counts)
     print(f"asset paths: {len(item_paths)} item descriptors, {len(recipe_paths)} recipes")
     return 0

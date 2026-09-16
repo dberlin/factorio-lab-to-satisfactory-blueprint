@@ -1,12 +1,14 @@
 """Native directed interval-wavefront boundary.
 
 Status 2 carries complete source-reachable intervals; status 4 carries complete
-goal-reaching intervals in the same payload slot. Other statuses carry none.
+goal-reaching intervals in the same payload slot. Status 5 is constrained
+motion exhaustion, not a physical component. Other statuses carry no component.
 """
 
 from array import array
 from collections.abc import Callable, Mapping, Sequence
 
+from .geometric_motion import MotionPolicy, MotionWitness
 from .geometric_router import GeometricMetrics
 from .geometric_world import GeometricTransition
 
@@ -26,10 +28,12 @@ def search_intervals(
     present: array[float] | None = None,
     charge_occupied_cells: bool = False,
     cancelled: Callable[[], bool] | None = None,
+    motion: MotionPolicy | None = None,
 ) -> tuple[
     int,
     tuple[int, ...] | None,
     float | None,
     tuple[tuple[int, int, int, int], ...],
     GeometricMetrics,
+    MotionWitness | None,
 ]: ...

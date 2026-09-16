@@ -142,9 +142,21 @@ across into the **buildable** that builds the boxes
 `AFGBuildableManufacturer` — what a power shard and a somersloop do, which
 `registry.json`'s four overclocking limits are governed by.
 
+One rule also drives `sfy-native data`, which reads an initialised global out of
+the image by its PDB symbol instead of off an instruction operand. A validator
+that reads a *writable* global leaves a hole no operand annotation can fill —
+`sfy-native` will not quote a mutable global as a constant — and
+`AFGBuildableConveyorLift::FitClearance` takes its clearance box's half-extent
+from one. `DATA_READS` names it (`AFGBuildableConveyorLift::CLEARANCE_EXTENT_2D`),
+the tool refuses any RVA outside `.data`/`.rdata`, and the rule carries the
+section, the RVA, the bytes and the doubles under `data_reads`, with the caveat
+that an initialiser is what the image held before the game ran.
+
 The script fails rather than quoting stale instructions: if a function moved, the
 addresses in its `EVIDENCE` table no longer decode and the run stops, which is
-the signal to re-read that validator and rewrite its interpretation.
+the signal to re-read that validator and rewrite its interpretation. A
+`DATA_READS` symbol the PDB no longer publishes, or one whose bytes are not the
+count of finite doubles the rule reads, stops it the same way.
 
 It also refuses to over-claim when `sfy-native` could not read a function to an
 end the game states (a `size_source` of `ret` or `truncated`): the rule is
@@ -220,7 +232,11 @@ through CUE4Parse and writes: every buildable's connection ports (position,
 rotation, kind, direction, clearance, and a power connection's
 `mMaxNumConnectionLinks` with the `max_connections_source` saying which link of
 the archetype chain stated it), each buildable's hologram class and any placement
-limit that hologram's Blueprint overrides, the wire lengths, the full asset
+limit that hologram's Blueprint overrides — found by walking the buildable's own
+Blueprint chain, because a cooked asset carries `mHologramClass` only where a
+class overrides it, and `stated_on` names the class that did (the Mk2 and Mk3
+power poles are built by the Mk1's `Holo_PowerPole_C` and snap on its 50) —
+the wire lengths, the full asset
 path of every class Docs.json states one for — which is how a blueprint names an
 item descriptor or a recipe — and `conveyor_connections`, the component each
 conveyor class's `mConnection0`/`mConnection1` points at, read off its class
@@ -324,10 +340,15 @@ than inventing one from the port's name. A refusal means the extraction is
 wrong, not that the registry needs an edit — `registry.json` is generated, never
 hand-edited.
 
-Two of the limits are neither an asset value nor a constructor immediate but a
+Some of the limits are neither an asset value nor a constructor immediate but a
 **formula the machine code applies**, tagged `binary-derived` and carrying the
 formula, its input and the instruction in `provenance.limits[key]`: the three
-lift heights, and `belt_min_length_cm`, which is
+lift heights; `lift_clearance_half_extent_cm`, whose input is the *initialiser*
+of the module global `AFGBuildableConveyorLift::CLEARANCE_EXTENT_2D` read in
+step 3, less the 5 cm `FitClearance` shrinks each axis by (the merge takes it
+out of the `lift.clearance` rule's `data_reads` and refuses if the two axes stop
+agreeing, because the registry states one number for a square footprint); and
+`belt_min_length_cm`, which is
 `AFGConveyorBeltHologram::ValidateMinLength`'s `0.5001 × mMeshLength` (100.02 cm
 on every belt mark). The merge holds that 0.5001 to the `belt.min_length` rule's
 own evidence line and stops if the two ever disagree, and it refuses outright if

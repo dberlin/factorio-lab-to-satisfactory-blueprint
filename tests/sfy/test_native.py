@@ -364,6 +364,79 @@ def _disasm(tmp_path, symbol):
     return json.loads(out.read_text())
 
 
+#: The static the lift's clearance box takes its half-extent from.
+CLEARANCE_EXTENT = "AFGBuildableConveyorLift::CLEARANCE_EXTENT_2D"
+
+
+def _data(tmp_path, symbol, count):
+    """Run ``sfy-native data`` for one symbol, or skip without cargo and a game."""
+    import shutil
+    import subprocess
+
+    dll, pdb = _dll_and_pdb()
+    if shutil.which("cargo") is None or dll is None:
+        pytest.skip("cargo or the game install is not available")
+    out = tmp_path / "data.json"
+    done = subprocess.run(
+        [
+            "cargo", "run", "--release", "--quiet", "--",
+            str(dll), str(pdb), "data", symbol, "--bytes", str(count), "--out", str(out),
+        ],
+        cwd="tools/sfy-native",
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )  # fmt: skip
+    return done.stdout, json.loads(out.read_text())
+
+
+def test_data_mode_reads_the_lift_clearance_extent_out_of_the_image(tmp_path):
+    """The lift's clearance half-extent is a ``.data`` initialiser, quoted by symbol.
+
+    ``AFGBuildableConveyorLift::FitClearance`` reads two doubles from the module
+    global at ``0x19B8118`` and the tool's constant annotation trusts only
+    ``.rdata``, so the width was a hand read until this mode resolved the PDB
+    symbol itself. It reads the section table, refuses any RVA outside
+    ``.data``/``.rdata``, and never disassembles anything.
+    """
+    printed, record = _data(tmp_path, CLEARANCE_EXTENT, 16)
+    assert record["symbol"] == CLEARANCE_EXTENT
+    assert record["section"] == ".data"
+    assert record["rva"] == "0x19b8118"
+    assert record["bytes"] == 16
+    assert record["hex"] == "0000000000005940" * 2
+    assert record["doubles"] == [100.0, 100.0]
+    # Everything a reader needs is on stdout as well as in the JSON.
+    for part in (CLEARANCE_EXTENT, ".data", "0x19b8118", record["hex"], "100"):
+        assert part in printed, printed
+
+
+def test_data_mode_refuses_a_symbol_the_pdb_does_not_publish(tmp_path):
+    """A name with no data symbol is a refusal, never a zero-filled read."""
+    import shutil
+    import subprocess
+
+    dll, pdb = _dll_and_pdb()
+    if shutil.which("cargo") is None or dll is None:
+        pytest.skip("cargo or the game install is not available")
+    done = subprocess.run(
+        [
+            "cargo", "run", "--release", "--quiet", "--",
+            str(dll), str(pdb), "data", "AFGBuildableConveyorLift::NO_SUCH_STATIC",
+            "--bytes", "16", "--out", str(tmp_path / "data.json"),
+        ],
+        cwd="tools/sfy-native",
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )  # fmt: skip
+    assert done.returncode != 0
+    assert "NO_SUCH_STATIC" in done.stderr
+    assert not (tmp_path / "data.json").exists()
+
+
 def test_disasm_of_validate_curvature_reads_the_bend_radius(tmp_path):
     """The disasm mode must find the belt hologram's curvature check and see it read mBendRadius."""
     data = _disasm(tmp_path, "AFGConveyorBeltHologram::ValidateCurvature")

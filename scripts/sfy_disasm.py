@@ -45,9 +45,11 @@ from typing import Any
 
 __all__ = [
     "BOUNDED_SIZE_SOURCES",
+    "INITIALISED_SECTIONS",
     "NATIVE_TOOL",
     "disasm",
     "member_offsets",
+    "read_global",
     "require_bounded",
     "unbounded",
 ]
@@ -73,6 +75,47 @@ def disasm(dll: Path, pdb: Path, symbol: str, out: Path) -> list[dict[str, Any]]
         stdout=subprocess.DEVNULL,
     )  # fmt: skip
     return json.loads(out.read_text(encoding="utf-8"))
+
+
+#: The PE sections ``sfy-native data`` will read a global out of. It refuses
+#: every other one itself; this is here so that a caller can say what it was
+#: handed rather than take the tool's word for it silently.
+INITIALISED_SECTIONS = (".data", ".rdata")
+
+
+def read_global(dll: Path, pdb: Path, symbol: str, count: int, out: Path) -> dict[str, Any]:
+    """Run ``sfy-native data`` for one global and return what it read.
+
+    The record is the tool's own -- the section the RVA fell in, the RVA, the
+    bytes as hex and those bytes as little-endian doubles -- and the tool
+    refuses a symbol it cannot resolve to exactly one data symbol, an RVA
+    outside :data:`INITIALISED_SECTIONS`, and a read that runs past what the
+    file holds. So a record that comes back at all came out of an initialised
+    section of the image.
+
+    **An initialiser is not a run-time value.** It is what the image holds
+    before the game starts, and a writable global the game later stores to
+    would make it stale. Nothing here can prove one does not, so every caller
+    has to carry that caveat beside the number.
+    """
+    subprocess.run(
+        [
+            "cargo", "run", "--release", "--quiet", "--",
+            str(dll), str(pdb), "data", symbol, "--bytes", str(count), "--out", str(out),
+        ],
+        cwd=NATIVE_TOOL,
+        check=True,
+        stdout=subprocess.DEVNULL,
+    )  # fmt: skip
+    record: dict[str, Any] = json.loads(out.read_text(encoding="utf-8"))
+    section = record.get("section")
+    if section not in INITIALISED_SECTIONS:
+        raise SystemExit(
+            f"sfy-native data read {symbol} out of {section!r}, which is not one of "
+            f"{list(INITIALISED_SECTIONS)}: an initialiser is only in an initialised "
+            "section, and the tool was supposed to have refused this"
+        )
+    return record
 
 
 def member_offsets(

@@ -14,32 +14,17 @@ upstream can move.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
 
+# ``Tier`` lives in the leaf :mod:`flab2bp.bench.tier` -- which imports nothing
+# but ``enum`` -- so that the Satisfactory corpus can label its entries without
+# importing the DSP rate solver below.  The ``as`` is not noise: it is what
+# re-exports the name under mypy's strict no-implicit-reexport, so every DSP
+# caller keeps reading ``Tier`` from here.
+from flab2bp.bench.tier import Tier as Tier
 from flab2bp.rates import CandidatePolicy
 
 _RANK = "arc-smelter~assembling-machine-2~chemical-plant~matrix-lab"
 _FAST_RANK = "plane-smelter~assembling-machine-3~quantum-chemical-plant~matrix-lab"
-
-
-class Tier(Enum):
-    """Size class, which sets the solver time budget."""
-
-    TRIVIAL = "trivial"
-    SMALL = "small"
-    MID = "mid"
-    LARGE = "large"
-    STRESS = "stress"
-
-    @property
-    def time_budget_s(self) -> float:
-        return {
-            Tier.TRIVIAL: 10.0,
-            Tier.SMALL: 10.0,
-            Tier.MID: 60.0,
-            Tier.LARGE: 120.0,
-            Tier.STRESS: 300.0,
-        }[self]
 
 
 @dataclass(frozen=True, slots=True)

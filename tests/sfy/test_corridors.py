@@ -36,6 +36,7 @@ from flab2bp.sfy.layout.corridors import (
     attachment_pitch_cm,
     attachment_reach_cm,
     attachment_turn,
+    attachment_turn_tight,
     belt_pitch_cm,
     bridge_z_cm,
     choose_turn,
@@ -345,6 +346,43 @@ def test_an_arc_costs_its_radius_and_an_attachment_costs_its_box_and_a_belt() ->
     # And an attachment takes hold one through-port offset from the corner, which
     # is where the belt into it ends and the belt out of it starts.
     assert attachment_turn(measures).reach == attachment_reach_cm(registry) == 100.0
+
+
+def test_the_tight_attachment_turn_drops_the_soft_box_and_keeps_the_belt() -> None:
+    """The difference is one term, and it is a box the game lets belts through.
+
+    ``attachment_box_cm``'s own docstring says the splitter's clearance is
+    ``CT_Soft`` and is not a bound on anything, so a corner with nothing else
+    laid against it is charged the reach to the attachment's port plus the
+    shortest legal belt, and not the box.  One whole grid step of difference on
+    the shipped registry, which is what a three-node leg is made of.
+    """
+    registry = _registry()
+    measures = _measures(registry)
+    tight, packed = attachment_turn_tight(measures), attachment_turn(measures)
+    assert tight.kind == packed.kind == ATTACHMENT
+    assert tight.reach == packed.reach == attachment_reach_cm(registry)
+    assert tight.cost == attachment_reach_cm(registry) + 101.0 == 201.0
+    assert packed.cost - tight.cost == attachment_box_cm(registry) - attachment_reach_cm(registry)
+    assert packed.cost - tight.cost == measures.grid
+
+
+def test_a_caller_may_weigh_its_own_pair_of_turns() -> None:
+    """The rule is stated once; which two turns it weighs is the caller's.
+
+    A three-node leg is 300 cm, which the manifold's attachment does not fit in
+    and the tight one does with the grid step to spare.
+    """
+    measures = _measures(_registry())
+    options = (arc_turn(measures), attachment_turn_tight(measures))
+    # The manifold's pair: neither turn fits 300 cm, so the cheaper comes back
+    # over its room and the drawing is left to refuse with the centimetres.
+    packed = choose_turn(measures, along=300.0, across=300.0)
+    assert packed.cost == attachment_turn(measures).cost > 300.0
+    # The realiser's pair fits, with a grid step to spare.
+    tight = choose_turn(measures, along=300.0, across=300.0, options=options)
+    assert tight.kind == ATTACHMENT
+    assert 300.0 - tight.cost == measures.grid - 1.0
 
 
 def test_the_shipped_bend_radius_makes_the_attachment_the_cheaper_turn() -> None:

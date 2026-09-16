@@ -42,6 +42,8 @@ from flab2bp.sfy.layout.validate import (
     _first_difference,
     _place_box,
     _round_to_int,
+    lift_box,
+    lift_half_width,
     validate,
 )
 from flab2bp.sfy.registry import Port, Registry, load_registry
@@ -1089,6 +1091,82 @@ def test_a_lift_out_of_a_port_and_one_into_a_port_both_pass_every_check() -> Non
         report = validate(placement, None, _registry())
         assert report.ok, [f.message for f in report.errors]
         assert {"lift.height", "lift.step", "lift.placement"} <= set(report.checks_run)
+
+
+def test_a_lift_box_is_the_rules_span_and_the_binarys_width() -> None:
+    """The box's length is the rule's, and its width is now the game's too.
+
+    ``lift.clearance`` states the span; how WIDE the box is used to be this
+    project's own reading of the connector clearance, because
+    ``AFGBuildableConveyorLift::FitClearance`` takes the half-extent from a
+    module global and ``sfy-native``'s constant annotation trusts only
+    ``.rdata``. The tool now quotes that global through its PDB symbol, so the
+    registry carries ``lift_clearance_half_extent_cm`` -- the initialiser's
+    100 cm less the 5 cm ``FitClearance`` shrinks each axis by -- and the box
+    is the game's in both directions.
+    """
+    registry = _registry()
+    assert registry.limits.lift_clearance_half_extent_cm == 95.0
+    assert registry.limits_sources["lift_clearance_half_extent_cm"] == "binary-derived"
+
+    height_cm = 400.0
+    placement = _lift_out_of_a_machine(height_cm)
+    box = lift_box(placement.lifts[0], registry)
+    assert box.half == pytest.approx((height_cm / 2.0, 95.0, 95.0))
+
+
+def _capsule_note(placement: SfyPlacement, registry: Registry) -> str:
+    """What ``belt.capsule`` puts in ``skipped`` for this placement."""
+    report = validate(placement, None, registry, only={"belt.capsule"})
+    assert report.skipped == ("belt.capsule",)
+    (note,) = [
+        f.message
+        for f in report.findings
+        if f.check == "belt.capsule" and f.severity is Severity.INFO
+    ]
+    return note
+
+
+def test_the_capsule_note_says_which_lift_width_the_run_actually_used() -> None:
+    """``lift_half_width`` has two branches, so the skip note cannot be a constant.
+
+    With the registry's ``lift_clearance_half_extent_cm`` the width is the
+    game's own 95 cm. Without it -- a registry built before that limit was
+    filled -- the check falls back to half the connector clearance on the lift's
+    two ports, which is 100 cm and is this project's reading, not the game's. A
+    note that claimed the first while the second ran would be a false statement
+    about where a number came from, which is the one thing these notes exist to
+    prevent.
+    """
+    placement = _lift_out_of_a_machine()
+    registry = _registry()
+
+    read = _capsule_note(placement, registry)
+    assert "95 cm each way" in read
+    assert "lift_clearance_half_extent_cm" in read
+    assert "CLEARANCE_EXTENT_2D" in read
+    assert "M2 reading" not in read
+
+    unfilled = replace(
+        registry, limits=replace(registry.limits, lift_clearance_half_extent_cm=None)
+    )
+    assert lift_half_width(placement.lifts[0], unfilled) == 100.0
+    fallback = _capsule_note(placement, unfilled)
+    assert "100 cm each way" in fallback
+    assert "M2 reading" in fallback
+    assert "connector clearance" in fallback
+    assert "95 cm" not in fallback
+
+    # And a placement with no lift claims neither width.
+    beltless = replace(placement, lifts=(), links=())
+    none = _capsule_note(beltless, registry)
+    assert "this placement carries no lift" in none
+    assert "cm each way" not in none
+
+    # The part that is about belts is in all three, whatever the lifts did.
+    for note in (read, fallback, none):
+        assert "GetNextDistanceExceedingTolerance" in note
+        assert "TestClearanceOverlap" in note
 
 
 def test_lift_height_refuses_a_lift_shorter_or_taller_than_the_game_clamps_to() -> None:

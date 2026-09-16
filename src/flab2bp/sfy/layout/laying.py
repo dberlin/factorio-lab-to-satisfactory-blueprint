@@ -43,6 +43,7 @@ from flab2bp.sfy.layout.corridors import (
     descent_run_cm,
     lay_path,
 )
+from flab2bp.sfy.layout.grid_nets import NetError, tier_for
 from flab2bp.sfy.layout.manifold import MERGER_CLASS, SPLITTER_CLASS, RowError
 from flab2bp.sfy.layout.model import AttachmentObj, BeltRun, Link, Pose, Vector
 from flab2bp.sfy.layout.nets import CorridorPlan, _carried, _Net, _Node, _Terminal
@@ -504,14 +505,17 @@ def _corridor_ports(buildable: Buildable, pose: Pose, inward: float) -> tuple[Po
 
 
 def _tier(rate: Fraction, tiers: Sequence[BeltTier], item_id: str) -> BeltTier:
-    """The slowest belt the spec funds that carries ``rate``."""
-    for tier in sorted(tiers, key=lambda tier: tier.items_per_second):
-        if tier.items_per_second >= rate:
-            return tier
-    raise RowError(
-        f"run exceeds the belt ceiling: a corridor trunk carries {rate} items/s of "
-        f"{item_id!r}, past every belt this spec allows"
-    )
+    """The slowest belt the spec funds that carries ``rate``.
+
+    :func:`~flab2bp.sfy.layout.grid_nets.tier_for` is the question -- both
+    strategies ask it, so it is written once, where the grid router's nets are
+    planned -- and this says its refusal in the row builder's own vocabulary, so
+    that the manifold's caller keeps catching the one error type it catches.
+    """
+    try:
+        return tier_for(rate, tiers, item_id)
+    except NetError as exc:
+        raise RowError(str(exc)) from exc
 
 
 def _belt_class(lab_map: LabMap, tier: BeltTier) -> str:

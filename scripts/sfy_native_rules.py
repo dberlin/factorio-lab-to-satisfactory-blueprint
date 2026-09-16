@@ -57,13 +57,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from sfy_disasm import disasm, unbounded
+from sfy_disasm import disasm, read_global, unbounded
 
 from flab2bp.sfy import docs
 from flab2bp.sfy.rules import RULE_EFFECTS
@@ -268,6 +269,35 @@ ALSO_READ: dict[str, tuple[str, ...]] = {
         "AFGBuildableFactory::GetCurrentMaxProductionBoost",
         "AFGBuildableFactory::GetCurrentMaxPotentialForType",
         "AFGBuildableFactory::GetSlotsForPowerShardType",
+    ),
+}
+
+# A module global a rule's own reading needs, read out of the image by PDB
+# symbol rather than off an instruction operand.
+#
+# ``sfy-native``'s constant annotation trusts ``.rdata`` alone, because a
+# writable global is not a constant -- so a validator that reads one leaves a
+# hole in the rule that only a hand read could fill, and a hand read is not a
+# source. ``sfy-native data`` fills it instead: it resolves the symbol, refuses
+# any RVA outside ``.data``/``.rdata``, and prints the bytes and the doubles.
+#
+# ``rule id -> (symbol, bytes, count, adjustment, what)``. ``count`` is how many
+# doubles the rule's own instructions read out of the global, ``adjustment``
+# what the same instructions then add to each of them, and ``what`` the thing
+# the result is -- so the sentence this generates states the initialiser *and*
+# the number a reader would use, and neither is typed in here.
+#
+# The lift's is the static ``AFGBuildableConveyorLift::CLEARANCE_EXTENT_2D``
+# (``Buildables/FGBuildableConveyorLift.h:211``), which ``FitClearance`` reads
+# two doubles from (0x4e5e52, 0x4e5e5c) before adding the -5 vector to them
+# (0x4e5edb and the two following).
+DATA_READS: dict[str, tuple[str, int, int, float, str]] = {
+    "lift.clearance": (
+        "AFGBuildableConveyorLift::CLEARANCE_EXTENT_2D",
+        16,
+        2,
+        -5.0,
+        "the clearance box's half-extent across the lift, in centimetres, in X and Y",
     ),
 }
 
@@ -1114,37 +1144,41 @@ INTERPRETATIONS: dict[str, tuple[str, str, str, str]] = {
         "following), multiplies the top by a third vector loaded through the "
         "pointer at 0xEE7CC0 (0x4e5ebf and the two following) and writes "
         "Max = centre + extent (0x4e5ef5, 0x4e5f19) and Min = extent - centre "
-        "(0x4e5f03, 0x4e5f26). No comparison is made in either function. THE "
-        "TWO VECTORS ARE NOT IN THE EVIDENCE: 0x19B8118 and the target of "
-        "0xEE7CC0 are in .data, which sfy-native refuses to read as constants "
-        "because a mutable global is not one, so the box's half-width and its "
-        "axis are unknown here and this rule stays partial.",
+        "(0x4e5f03, 0x4e5f26). No comparison is made in either function. The "
+        "vector at 0x19B8118 is not an operand annotation -- it is in .data, "
+        "which sfy-native refuses to read as a constant because a mutable "
+        "global is not one -- so it is read separately, by the PDB symbol it "
+        "belongs to, and quoted under data_reads. THE CENTRE SCALE IS NOT IN "
+        "THE EVIDENCE: the third vector is reached through the pointer at "
+        "0xEE7CC0 (0x4e5e3b loads it, 0x4e5ebf multiplies by what it points "
+        "at), and a pointer's target is an address the loader filled in rather "
+        "than a symbol anything here names, so what scales the box's centre "
+        "along its axis is unknown and this rule stays partial for that.",
         "A lift's clearance is **one box** spanning the lift, not a chain along "
         "a spline as for a belt, and the span is read: it runs from "
         "(|height| + mMeshHeight + 100) / 2 - 30 to "
         "(height + mMeshHeight - 100) / 2, with 200 cm taken off when the lift "
         "meets a passthrough at one end and 50 cm added when it meets one at "
         "the other -- the same mMeshHeight of 200 cm that drives the lift "
-        "height limits. What is *not* read is how wide the box is: the "
-        "half-extent comes from a module global at 0x19B8118, shrunk by 5 cm on "
-        "each axis, and the centre is scaled by a second global. FitClearance "
-        "reads exactly two doubles from the first, and the class declares one "
-        "static two-component constant, "
+        "height limits. How WIDE the box is is read too, and this is where it "
+        "comes from: FitClearance reads exactly two doubles from the module "
+        "global at 0x19B8118 (0x4e5e52, 0x4e5e5c) and adds the -5 vector to "
+        "each of them (0x4e5edb and the two following), and that global is the "
+        "one static the class declares, "
         "AFGBuildableConveyorLift::CLEARANCE_EXTENT_2D "
-        "(Buildables/FGBuildableConveyorLift.h:211) -- but a static initialised "
-        "at start-up lives in .data, which sfy-native will not quote, so that "
-        "is a consistent reading and not a value this rule states. Reading the "
-        "image at 0x19B8118 by hand gives (100.0, 100.0) -- a 2 m square "
-        "footprint, 95 cm each way after FitClearance's -5 shrink -- and that "
-        "is recorded here as what a reader will see and NOT as something this "
-        "rule states: it is a mutable global, the tool will not quote it, and "
-        "nothing in this project's own geometry may be justified by it until "
-        "it comes out of the tool's own output. A placer must therefore not "
-        "compute a lift's footprint from "
-        "this rule; take the boxes registry.json already carries per buildable, "
-        "or the mesh box, and treat the width as unknown. Nothing here refuses "
-        "anything -- the effect is compute -- and whether the box overlaps is "
-        "decided by buildable.clearance.",
+        "(Buildables/FGBuildableConveyorLift.h:211). A static initialised at "
+        "start-up lives in .data, which sfy-native's operand annotation will "
+        "not quote as a constant, so it is read the other way -- by its PDB "
+        "symbol, through sfy-native's data mode -- and the numbers are in "
+        "data_reads and in the sentence at the end of this interpretation. So "
+        "a placer may take a lift's footprint from here: it is a square column "
+        "of that half-extent about the axis the lift's two ends are strung "
+        "along, spanning them. What is still unread is the box's CENTRE: "
+        "FitClearance multiplies it by a third vector reached through the "
+        "pointer at 0xEE7CC0, and nothing names that one, so where along the "
+        "axis the box sits is this rule's remaining hole and why it stays "
+        "partial. Nothing here refuses anything -- the effect is compute -- "
+        "and whether the box overlaps is decided by buildable.clearance.",
     ),
     "buildable.grid_snap": (
         "partial",
@@ -1543,8 +1577,65 @@ def _line(instruction: dict[str, Any]) -> str:
     return text
 
 
+def _data_read(rule_id: str, record: Mapping[str, Any]) -> tuple[dict[str, Any], str]:
+    """One ``sfy-native data`` record as the rule states it, and the sentence.
+
+    The record is the tool's own output for the symbol :data:`DATA_READS` names.
+    What this adds is the arithmetic the rule's instructions apply to it and the
+    caveat that goes with reading a writable global out of an image: the
+    initialiser is what the file holds *before the game runs*, the validator
+    reads the global at hologram time, and nothing that was disassembled proves
+    the game never writes to it. The sentence is appended to the hand-written
+    interpretation, the way an unbounded function's is appended to the
+    comparison, so the numbers in the rule are the tool's and only the reasoning
+    around them is written here.
+    """
+    symbol, _byte_count, doubles, adjustment, what = DATA_READS[rule_id]
+    read = list(record["doubles"])
+    if len(read) != doubles or not all(math.isfinite(value) for value in read):
+        raise SystemExit(
+            f"{rule_id}: {symbol} at {record['rva']} in {record['section']} holds "
+            f"{record['doubles']}, and this rule reads {doubles} finite doubles out of it. "
+            "Re-read the function before this rule can state a value from it."
+        )
+    values = [value + adjustment for value in read]
+    source = f"binary {record['section']} initialiser via PDB symbol {symbol}"
+    sentence = (
+        f" READ FROM THE IMAGE: sfy-native data resolved {symbol} to {record['rva']}, "
+        f"which is in {record['section']}, and read {record['bytes']} bytes there -- "
+        f"{record['hex']}, which is {tuple(read)} as little-endian doubles. Adding the "
+        f"{adjustment} this rule's own instructions apply to each component gives "
+        f"{tuple(values)}: {what}. Source: {source}. CAVEAT: that is the *initialiser*, "
+        "what the image holds before the game runs, and the validator reads the global "
+        "at hologram time -- so if anything in the running game ever stored to it this "
+        "reading would be stale. Nothing in either function disassembled here writes to "
+        "it, and neither function is the whole game, so this rule states the number and "
+        "not that it can never change."
+    )
+    return {
+        "symbol": symbol,
+        "mangled": record["mangled"],
+        "rva": record["rva"],
+        "section": record["section"],
+        "bytes": record["bytes"],
+        "hex": record["hex"],
+        "doubles": read,
+        "adjustment": adjustment,
+        "values": values,
+        "what": what,
+        "source": source,
+        # The read is what it is whatever is still unread around it: this is the
+        # game's own number, out of the tool's own output, on a rule that may
+        # well stay `partial` for something else it could not follow.
+        "status": "extracted",
+    }, sentence
+
+
 def _rule(
-    rule_id: str, function: dict[str, Any], also: Sequence[tuple[str, dict[str, Any]]] = ()
+    rule_id: str,
+    function: dict[str, Any],
+    also: Sequence[tuple[str, dict[str, Any]]] = (),
+    globals_read: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     """Turn one disassembled function into the rule record, evidence and all.
 
@@ -1553,6 +1644,12 @@ def _rule(
     evidence can quote a caller or a callee by address, and they are listed in
     ``also_read`` with the RVA each was found at. The rule's own ``rva``,
     ``class`` and ``function`` stay the entry in :data:`TARGETS`.
+
+    ``globals_read`` are ``sfy-native data`` records for the globals
+    :data:`DATA_READS` names for this rule -- a module global the function reads
+    that no instruction operand can be annotated with. Each joins ``reads``
+    beside the members, is written out under ``data_reads``, and adds its
+    sentence to the interpretation; see :func:`_data_read`.
     """
     cls, name, header = TARGETS[rule_id]
     status, effect, comparison, interpretation = INTERPRETATIONS[rule_id]
@@ -1592,6 +1689,11 @@ def _rule(
             f"{rule_id}: {cls}::{name} has no instruction at {missing} -- the function "
             "moved, and its interpretation has to be re-read before this can be written"
         )
+    data_reads = []
+    for record in globals_read:
+        entry, sentence = _data_read(rule_id, record)
+        data_reads.append(entry)
+        interpretation += sentence
     rule = {
         "id": rule_id,
         "class": cls,
@@ -1599,7 +1701,13 @@ def _rule(
         "rva": function["rva"],
         "status": status,
         "effect": effect,
-        "reads": sorted({i["member"]["name"] for i in instructions if "member" in i}),
+        # The members the function reads, and the bare name of any module global
+        # it reads that `data_reads` quotes: both are things the function reads,
+        # and a reader looking for what a rule touches should find either here.
+        "reads": sorted(
+            {i["member"]["name"] for i in instructions if "member" in i}
+            | {entry["symbol"].rpartition("::")[2] for entry in data_reads}
+        ),
         "constants": sorted(
             {
                 f"{i['constant']['at']} f32={i['constant']['f32']} f64={i['constant']['f64']}"
@@ -1618,6 +1726,8 @@ def _rule(
     }
     if also:
         rule["also_read"] = [f"{symbol} @ {other['rva']}" for symbol, other in also]
+    if data_reads:
+        rule["data_reads"] = data_reads
     return rule
 
 
@@ -1666,7 +1776,11 @@ def main(out: Path | None = None) -> int:
             for spec in ALSO_READ.get(rule_id, ()):
                 other = spec.partition("@")[0]
                 also.append((other, _one(disasm(dll, pdb, other, scratch), spec)))
-            rule = _rule(rule_id, primary, also)
+            globals_read = []
+            if rule_id in DATA_READS:
+                global_symbol, byte_count, *_rest = DATA_READS[rule_id]
+                globals_read.append(read_global(dll, pdb, global_symbol, byte_count, scratch))
+            rule = _rule(rule_id, primary, also, globals_read)
             rules.append(rule)
             across = f" (+{len(also)} functions)" if also else ""
             print(

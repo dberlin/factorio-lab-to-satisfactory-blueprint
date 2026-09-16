@@ -20,6 +20,9 @@ from pydantic import TypeAdapter
 
 from flab2bp import pipeline
 from flab2bp.layout.observe import SearchEvent, SearchObserver, SearchPhase
+from flab2bp.sfy import pipeline as sfy_pipeline
+from flab2bp.sfy.codec import read_sbp, read_sbpcfg
+from flab2bp.sfy.layout.emit import decode
 from flab2bp.web.jobs import Builder, Options, Solve, run_build
 from flab2bp.web.payload import Json
 from flab2bp.web.server import serve
@@ -408,8 +411,14 @@ def test_trace_endpoint_pages_frames_from_a_live_collector(
         assert status == 200
         frames = page["frames"]
         assert isinstance(frames, list)
-        delivered.extend(int(f["seq"]) for f in frames)
-        cursor = page["next"]
+        for frame in frames:
+            assert isinstance(frame, dict)
+            seq = frame["seq"]
+            assert isinstance(seq, int)
+            delivered.append(seq)
+        next_cursor = page["next"]
+        assert isinstance(next_cursor, int)
+        cursor = next_cursor
         if not frames:
             time.sleep(0.02)
 
@@ -663,3 +672,52 @@ def _stop(base: str) -> None:
     if httpd is not None:
         httpd.shutdown()
         httpd.server_close()
+
+
+def test_satisfactory_job_builds_downloadable_binary_files_without_a_dsp_viewer(
+    start: Callable[..., Client],
+) -> None:
+    flow_path = Path(__file__).resolve().parents[1] / "fixtures" / "sfy_flows" / "iron-plate-60.csv"
+    flow = flow_path.read_text(encoding="utf-8")
+    url = flow.splitlines()[0].strip().strip('"')
+    client = start()
+    status, submitted = client.post(
+        "/api/build",
+        {
+            "url": url,
+            "flow": flow,
+            "strategy": "manifold-rows",
+            "designer": "mk3",
+            "name": "../plates for the hub",
+        },
+    )
+    assert status == 202
+    snap = client.settled(_string(submitted, "id"))
+    assert snap["state"] == "done", snap
+    result = _object(snap, "result")
+    assert result["game"] == "sfy" and result["strategy"] == "manifold-rows"
+    assert result["blueprint"] is None  # Not a DSP renderer's blueprint string.
+    assert result["valid"] is True and result["flow_pinned"] is True
+    assert _object(result, "measure")["blueprints"] == 1
+    artifacts = result["artifacts"]
+    assert isinstance(artifacts, list)
+    downloaded: dict[str, bytes] = {}
+    for artifact in artifacts:
+        assert isinstance(artifact, dict)
+        filename = _string(artifact, "name")
+        with urllib.request.urlopen(client.base + _string(artifact, "url"), timeout=10) as response:
+            assert response.headers["Content-Type"] == "application/octet-stream"
+            assert response.headers["Content-Disposition"] == f'attachment; filename="{filename}"'
+            downloaded[filename] = response.read()
+    assert set(downloaded) == {"plates-for-the-hub.sbp", "plates-for-the-hub.sbpcfg"}
+    placement = decode(read_sbp(downloaded["plates-for-the-hub.sbp"]), sfy_pipeline.registry())
+    assert result["title"] == "../plates for the hub"
+    assert len(placement.machines) == result["machines"]
+    assert placement.designer.mark == result["designer"] == "mk3"
+    record = read_sbpcfg(downloaded["plates-for-the-hub.sbpcfg"])
+    assert record.description == _string(result, "description")
+    assert "iron-ore" in record.description and "iron-plate" in record.description
+    missing, _ = client.failing_json(
+        f"/api/build/{_string(submitted, 'id')}/artifacts/%2e%2e%2fplates-for-the-hub.sbp"
+    )
+    assert missing == 404
