@@ -310,6 +310,22 @@ def test_an_overrunning_arm_cannot_win_or_extend_the_total_deadline(
     assert result.refused[0].reason == "layout exceeded the budget"
 
 
+def test_a_result_at_the_arm_deadline_is_expired(
+    monkeypatch: pytest.MonkeyPatch,
+    iron_plate_mk3: pipeline.SfyBuild,
+) -> None:
+    _race(monkeypatch, iron_plate_mk3, first_duration=5.0)
+    result = pipeline.build(
+        flow_url("iron-plate-60"),
+        designer="mk3",
+        flow=FLOWS / "iron-plate-60.csv",
+        time_budget_s=10.0,
+    )
+    assert result.strategy == "grid-routed"
+    assert result.refused[0].strategy == "manifold-rows"
+    assert result.refused[0].reason == "layout exceeded the budget"
+
+
 def test_a_strategy_that_refuses_is_reported_beside_the_winner(
     monkeypatch: pytest.MonkeyPatch,
     iron_plate_mk3: pipeline.SfyBuild,

@@ -1219,6 +1219,12 @@ LINT_EXCEPTIONS: tuple[LintException, ...] = (
         "`1 << 30` as an infinity sentinel for the heuristic; not degrees",
     ),
     LintException(
+        "flab2bp.layout.geometric_motion",
+        "validate_motion",
+        30.0,
+        "`2**30` bounds native move displacement with signed-integer headroom; not degrees",
+    ),
+    LintException(
         "flab2bp.layout.sequence_pair",
         "derive_stage_seed",
         30.0,

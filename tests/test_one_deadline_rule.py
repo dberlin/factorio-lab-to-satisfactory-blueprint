@@ -59,6 +59,10 @@ CARVE_SITES = {
     "src/flab2bp/layout/sequence_solver.py:_route_detailed_candidate": (
         "one detailed candidate's routing attempt, charged back to the staged ledger"
     ),
+    "src/flab2bp/sfy/layout/router.py:route_net": (
+        "motion preparation's slice of the capped query allowance; preparation and "
+        "native search charges are reconciled against the same parent ledger"
+    ),
 }
 
 #: Deadline comparisons that are not a deadline comparison. Empty on purpose:

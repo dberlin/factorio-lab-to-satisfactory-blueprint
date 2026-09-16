@@ -57,6 +57,7 @@ from flab2bp.lab.games import Game
 from flab2bp.lab.schema import Dataset
 from flab2bp.lab.url import LabRequest, parse_url
 from flab2bp.layout.base import LayoutAttemptFailure, NoValidLayout, PlacementStats, SpecInfeasible
+from flab2bp.layout.budget import expired
 from flab2bp.sfy.archive import Reader
 from flab2bp.sfy.codec import Blueprint, write_sbp_file, write_sbpcfg
 from flab2bp.sfy.header import BlueprintHeader, BlueprintRecord, read_header
@@ -300,7 +301,7 @@ def build(
                 registry=game_registry,
                 lab_map=mapping,
             )
-            if time.monotonic() > arm_deadline:
+            if expired(arm_deadline, time.monotonic):
                 raise NoValidLayout("layout exceeded the budget")
             candidate_report = validate(candidate, spec, game_registry, library=library)
             if not candidate_report.ok:
@@ -311,7 +312,7 @@ def build(
                     )
                 )
             candidate_measure = measure(candidate, game_registry)
-            if time.monotonic() > arm_deadline:
+            if expired(arm_deadline, time.monotonic):
                 raise NoValidLayout("layout exceeded the budget")
         except NoValidLayout as exc:
             failures.append(
