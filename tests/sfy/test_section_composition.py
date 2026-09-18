@@ -187,7 +187,7 @@ def test_reinforced_plate_chain_uses_mixed_floors_without_stage_height_inflation
         ),
     ],
 )
-def test_full_depth_opposing_rows_are_not_partitioned_into_extra_floors(
+def test_full_rate_multi_input_factories_keep_every_machine_connected(
     machine: str,
     recipe: str,
     count: int,
@@ -209,9 +209,36 @@ def test_full_depth_opposing_rows_are_not_partitioned_into_extra_floors(
         spec, designer("mk3", registry), registry=registry, lab_map=load_lab_map()
     )
     assert len(placement.machines) == count
-    assert len({machine.pose.z for machine in placement.machines}) == 1
-    assert sum(machine.pose.yaw_deg == 0 for machine in placement.machines) == count // 2
-    assert sum(machine.pose.yaw_deg == 180 for machine in placement.machines) == count // 2
+    report = validate(placement, spec, registry)
+    assert not report.errors, [finding.message for finding in report.errors]
+
+
+def test_native_boundary_fanout_preserves_three_unequal_section_flows() -> None:
+    groups = tuple(
+        _group("Build_ConstructorMk1_C", recipe, "iron-ingot", product).model_copy(
+            update={
+                "inputs_per_machine": {"iron-ingot": consumed},
+                "outputs_per_machine": {product: produced},
+            }
+        )
+        for recipe, product, consumed, produced in (
+            ("Recipe_IronPlate_C", "iron-plate", Fraction(1, 2), Fraction(1, 3)),
+            ("Recipe_IronRod_C", "iron-rod", Fraction(1, 4), Fraction(1, 4)),
+            ("Recipe_Alternate_Screw_C", "screw", Fraction(5, 24), Fraction(5, 6)),
+        )
+    )
+    spec = SfyBuildSpec(
+        groups=groups,
+        external_inputs={"iron-ingot": Fraction(23, 24)},
+        outputs={item: rate for group in groups for item, rate in group.row_outputs.items()},
+        belt_item_id="conveyor-belt-mk6",
+        belt_items_per_second=Fraction(20),
+    )
+    registry = sfy_registry()
+    placement = SectionLayout().lay_out(
+        spec, designer("mk3", registry), registry=registry, lab_map=load_lab_map()
+    )
+    assert len(placement.machines) == len(groups)
     report = validate(placement, spec, registry)
     assert not report.errors, [finding.message for finding in report.errors]
 
@@ -252,5 +279,41 @@ def test_adjacent_independent_sections_keep_their_input_approaches_accessible() 
         assert bottom[:2] == pytest.approx(top[:2], abs=0.001)
         assert bottom[2] < top[2]
         assert bottom[2] + placement.stack_height_cm - top[2] == pytest.approx(400)
+    report = validate(placement, spec, registry)
+    assert not report.errors, [finding.message for finding in report.errors]
+
+
+@pytest.mark.parametrize("machines_per_recipe", [1, 3])
+def test_transport_uses_demand_not_the_available_upgrade_ceiling(
+    machines_per_recipe: int,
+) -> None:
+    registry = sfy_registry()
+    original = flow_spec("iron-plate-60")
+    spec = original.model_copy(
+        update={
+            "groups": tuple(
+                group.model_copy(update={"count": machines_per_recipe}) for group in original.groups
+            ),
+            "external_inputs": {"iron-ore": Fraction(machines_per_recipe, 2)},
+            "outputs": {"iron-plate": Fraction(machines_per_recipe, 3)},
+        }
+    )
+    placement = SectionLayout().lay_out(
+        spec,
+        designer("mk1" if machines_per_recipe == 1 else "mk3", registry),
+        registry=registry,
+        lab_map=load_lab_map(),
+    )
+    lanes = {lane.item_id: lane for lane in placement.stack_lanes}
+    expected_capacity = Fraction(1 if machines_per_recipe == 1 else 2)
+    assert lanes["iron-ore"].capacity_per_second == expected_capacity
+    assert lanes["iron-plate"].capacity_per_second == 1
+    allowed_belts = {"Build_ConveyorBeltMk1_C"}
+    allowed_lifts = {"Build_ConveyorLiftMk1_C"}
+    if machines_per_recipe == 3:
+        allowed_belts.add("Build_ConveyorBeltMk2_C")
+        allowed_lifts.add("Build_ConveyorLiftMk2_C")
+    assert {belt.class_name for belt in placement.belts} <= allowed_belts
+    assert {lift.class_name for lift in placement.lifts} <= allowed_lifts
     report = validate(placement, spec, registry)
     assert not report.errors, [finding.message for finding in report.errors]

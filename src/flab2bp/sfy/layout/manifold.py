@@ -13,14 +13,10 @@ registry's ports are; how steep a feeder may be is ``limits.belt_max_incline_deg
 and how short a belt may be is ``limits.belt_min_length_cm``.  Four numbers are
 this project's own and each says so where it is computed:
 
-* :func:`crossing_gap_cm`, the height one chain stands above the next, which is
-  twice the ``belt.clearance`` box's own height so that two crossing belts have
-  a full belt box of air between their centrelines;
-* the flat piece a feeder leaves its splitter by before it starts to descend,
-  which is :func:`shortest_belt_cm`, because
-  :mod:`flab2bp.sfy.layout.validate`'s ``ports.position`` holds this project to
-  belts that leave a port along the port's own facing, and a port's facing is
-  horizontal;
+* :func:`crossing_gap_cm`, the clearance between crossing belts; attachment
+  layers additionally separate their full cooked mesh bodies;
+* straight mouth approaches long enough to clear the machine or attachment
+  envelope before a feeder changes height;
 * the rule that a chain clears the whole machine LINE rather than the one
   machine beside it, so that a row of one stands where a row of ten would;
 * the choice to lay chains outward in the order the input ports run along ``X``.
@@ -55,6 +51,7 @@ from flab2bp.sfy.layout.splines import concat, incline, straight
 from flab2bp.sfy.layout.validate import (
     BELT_CLEARANCE_HALF_HEIGHT_CM,
     BELT_CLEARANCE_HALF_WIDTH_CM,
+    attachment_boxes,
 )
 from flab2bp.sfy.registry import Buildable, ClearanceBox, Limits, Port, Registry
 from flab2bp.sfy.spec import FOUNDATION_CLASS, Designer, DirectPair, SfyMachineGroup
@@ -171,6 +168,16 @@ def crossing_gap_cm(registry: Registry) -> float:
     return grid_ceil(2.0 * box_height, grid)
 
 
+def _row_layer_cm(registry: Registry) -> float:
+    """Separate cooked attachment bodies as well as the belts between them."""
+    height = max(
+        2.0 * box.reach[2]
+        for class_name in (SPLITTER_CLASS, MERGER_CLASS)
+        for box in attachment_boxes(AttachmentObj(0, class_name, Pose(0, 0, 0, 0)), registry)
+    )
+    return grid_ceil(max(crossing_gap_cm(registry), height), _grid(registry.limits))
+
+
 def slab_top_cm(registry: Registry) -> float:
     """How high the top of one foundation is, which is where a machine stands.
 
@@ -237,18 +244,26 @@ def _hard_bands(buildable: Buildable, pose: Pose) -> tuple[_Band, ...]:
     )
 
 
-def _lane_is_clear(y: float, z: float, bands: Sequence[_Band]) -> bool:
-    """Would a belt running along ``X`` at ``(y, z)`` lap one of these boxes?
+def _attachment_band(registry: Registry, class_name: str) -> _Band:
+    boxes = attachment_boxes(AttachmentObj(0, class_name, Pose(0, 0, 0, 0)), registry)
+    return _Band(
+        min(box.centre[1] - box.reach[1] for box in boxes),
+        max(box.centre[1] + box.reach[1] for box in boxes),
+        min(box.centre[2] - box.reach[2] for box in boxes),
+        max(box.centre[2] + box.reach[2] for box in boxes),
+    )
 
-    The belt's own clearance is ``belt.clearance``'s box -- 79 cm to each side,
-    15 cm above and below -- and ``X`` is ignored on purpose: a chain runs the
-    length of the row, so it has to clear the machine LINE and not the one
-    machine it happens to pass.  That is ours, and it is what makes a row of one
-    stand where a row of ten would, so that Task 8 can lengthen a row without
-    moving its chains.
-    """
+
+def _lane_is_clear(y: float, z: float, bands: Sequence[_Band], body: _Band) -> bool:
+    """Keep both the through belt and the actual attachment body off machines."""
     return not any(
         band.hits(y, z, BELT_CLEARANCE_HALF_WIDTH_CM, BELT_CLEARANCE_HALF_HEIGHT_CM)
+        or band.hits(
+            y + (body.y0 + body.y1) / 2,
+            z + (body.z0 + body.z1) / 2,
+            (body.y1 - body.y0) / 2,
+            (body.z1 - body.z0) / 2,
+        )
         for band in bands
     )
 
@@ -351,7 +366,7 @@ def build_row(
     inputs, out_port = _ports_for(group, machine)
     pitch = machine_pitch_cm(machine, limits)
     stand = slab_top_cm(registry)
-    gap = crossing_gap_cm(registry)
+    gap = _row_layer_cm(registry)
     # ``flip`` mirrors the LINE, not the machines: a machine keeps yaw 0 so that
     # its input face still looks down ``-Y``, and its ports therefore keep their
     # own ``X`` offsets.  What turns about is every attachment, so that a chain
@@ -496,7 +511,7 @@ def build_pair(
 
     pitch = max(machine_pitch_cm(maker, limits), machine_pitch_cm(eater, limits))
     stand = slab_top_cm(registry)
-    gap = crossing_gap_cm(registry)
+    gap = _row_layer_cm(registry)
     sign = -1.0 if flip else 1.0
     yaw = 180.0 if flip else 0.0
     line = _pair_line_cm(maker, eater, maker_out, eater_in, limits)
@@ -715,43 +730,51 @@ def _lay_input_chain(
     chain_z = belt_z + depth * gap
 
     drop = _descent_run(depth * gap, limits, grid)
-    lead = shortest_belt_cm(limits)
-    # Whether this chain's feeder clears the chains inside it does NOT depend on
-    # where the chain stands, so it is settled once, before the walk: the feeder
-    # is flat until its last ``drop`` centimetres, and moving the chain outward
-    # only makes it flat for longer.  Walking to the designer wall to discover
-    # that would refuse the row for its depth, which is not what is wrong with it.
-    crossing = _crossing_below(chain_z, drop, port_y, belt_z, gap, placed)
+    body = _attachment_band(registry, SPLITTER_CLASS)
+    lead = max(
+        shortest_belt_cm(limits),
+        body.y1 - abs(side.translation[1]) + BELT_CLEARANCE_HALF_WIDTH_CM + 1,
+    )
+    # A slope must finish outside the machine envelope. Its final straight is
+    # the only part allowed to enter the connected machine's recessed mouth.
+    arrival = (
+        max(
+            shortest_belt_cm(limits),
+            port_y - min(band.y0 for band in bands) + BELT_CLEARANCE_HALF_WIDTH_CM + 1,
+        )
+        if len(group.inputs_per_machine) > 1
+        else 0.0
+    )
+    # Moving a chain outwards lengthens only its flat departure. The descent
+    # ends at the machine's approach straight, so its crossing height is fixed.
+    crossing = _crossing_below(
+        chain_z, drop, port_y - arrival, belt_z, crossing_gap_cm(registry), placed
+    )
     if crossing is not None:
         lower_y, lower_z, here = crossing
         raise RowError(
             f"a feeder crosses the chain inside it: the feeder of chain {depth} for "
             f"{item_id!r} passes the chain at y = {lower_y:.0f}, z = {lower_z:.0f} at "
-            f"z = {here:.0f}, {here - lower_z:.0f} cm above it where {gap:.0f} is wanted. "
-            "Standing this chain further out does not change that -- the feeder is flat "
-            f"until its last {drop:.0f} cm -- so the row is refused rather than walked."
+            f"z = {here:.0f}, {here - lower_z:.0f} cm above it where "
+            f"{crossing_gap_cm(registry):.0f} is wanted. Standing this chain further "
+            "out does not change its descent or its machine-mouth approach."
         )
-    # Where the feeder alone would put the chain: its side port stands one
-    # ``side`` out of the attachment towards the machines, and the belt from
-    # there into the machine port is the shortest one the game allows.  A whole
-    # centimetre, rounded outwards, because a belt is not a hologram on a grid
-    # cell -- see :func:`shortest_belt_cm`.
-    y = float(math.floor(port_y - abs(side.translation[1]) - drop - lead))
+    # Reserve the departure, descent and machine approach before rounding the
+    # chain outwards to a whole centimetre.
+    y = float(math.floor(port_y - abs(side.translation[1]) - drop - lead - arrival))
     if placed:
         y = min(y, placed[-1][0] - grid)
     while True:
-        back, _ = _box_bounds(splitter.clearance[0], Pose(0.0, y, chain_z, yaw))
-        if back[1] < -designer.half_cm:
+        back_y = y + body.y0
+        if back_y < -designer.half_cm:
             raise RowError(
-                f"row too deep: chain {depth} for {item_id!r} would reach y = {back[1]:.0f} "
+                f"row too deep: chain {depth} for {item_id!r} would reach y = {back_y:.0f} "
                 f"cm, outside the {designer.mark} designer's "
                 f"{2 * designer.half_cm:.0f} x {2 * designer.half_cm:.0f} cm floor"
             )
-        if _lane_is_clear(y, chain_z, bands):
+        if _lane_is_clear(y, chain_z, bands, body):
             break
-        # A centimetre at a time, not a grid step: what the chain has to clear is
-        # the machine line's own box plus a belt's half width, which is no more a
-        # multiple of the grid than the ports are.
+        # The body clearance and connector offsets need not be grid multiples.
         y -= 1.0
 
     per_machine = _per_machine(group.inputs_per_machine[item_id], group)
@@ -798,6 +821,7 @@ def _lay_input_chain(
             upstream=(node.id, side.name),
             downstream=(machine.id, port.name),
             descend=drop,
+            arrival=arrival,
         )
         previous = node
 
@@ -841,8 +865,9 @@ def _lay_output_chain(
     # The mirror of the input chain's: the machine's output port drains into the
     # merger's side port, one ``side`` out of it towards the machines, over the
     # shortest belt the game allows.
-    y = float(math.ceil(port_y - abs(side.translation[1]) + shortest_belt_cm(limits)))
-    while not _lane_is_clear(y, belt_z, bands):
+    body = _attachment_band(registry, MERGER_CLASS)
+    y = float(math.ceil(port_y + abs(side.translation[1]) + shortest_belt_cm(limits)))
+    while not _lane_is_clear(y, belt_z, bands, body):
         y += 1.0
 
     per_machine = _per_machine(group.outputs_per_machine[item_id], group)
@@ -905,16 +930,15 @@ def _attachment_ports(
 ) -> tuple[Port, Port, Port]:
     """``(through in, through out, side)`` of a splitter or a merger.
 
-    The through axis is the pair of ports on ``+-X``; the side port is the one
-    on the machines' side, which is ``+Y`` when the attachment stands unturned
-    and ``-Y`` when it is turned about ``Z`` to face the other way.  All three
-    are picked out of the registry's own port table by position, never by name.
+    The through axis is the pair of ports on ``+-X``. A splitter stands before
+    the machines and feeds towards ``+Y``; a merger stands after them and takes
+    its feed from ``-Y``. Flipping the chain reverses both local choices.
     """
     belt_ports = [port for port in attachment.ports if port.kind == "belt"]
     through = [port for port in belt_ports if abs(port.translation[0]) > abs(port.translation[1])]
     entry = next(port for port in through if port.direction == "input")
     exit_ = next(port for port in through if port.direction == "output")
-    wanted = -1.0 if flip else 1.0
+    wanted = (-1.0 if flip else 1.0) * (1.0 if side_kind == "output" else -1.0)
     sides = [
         port for port in belt_ports if port not in (entry, exit_) and port.direction == side_kind
     ]
@@ -946,11 +970,8 @@ def shortest_belt_cm(limits: Limits) -> float:
     project is stated at and because a belt a hundredth of a centimetre over the
     bound is a belt nobody can reproduce by hand.
 
-    It is also the flat piece a feeder runs out of its splitter before it
-    descends: ``ports.position`` refuses a belt that leaves a port more than
-    ``PORT_ANGLE_RAD`` off the port's own facing and a side port faces along the
-    ground, so a feeder needs a flat piece, and the shortest legal belt is the
-    smallest honest answer for it.
+    Flat mouth approaches use at least this much run, and extend further when
+    needed to leave the connected actor's actual body before turning.
     """
     floor = limits.belt_min_length_cm
     if floor is None:
@@ -986,13 +1007,10 @@ def _crossing_below(
     ``(y, z, height)`` of that chain and of the feeder where it passes over it, or
     ``None`` when every crossing has its room.
 
-    A feeder runs flat out of its splitter and then descends over ``drop`` into
-    the machine port, so its height where it crosses a lower chain is fixed by
-    the descent alone -- **and by nothing about where its own chain stands**.
-    That is why this takes no ``y`` and why the caller settles it once instead of
-    walking the chain outward hoping for a different answer.  The room asked for
-    is one :func:`crossing_gap_cm`, which is a whole belt clearance box: ours, and
-    the same number the chains are stacked at.
+    ``port_y`` is where the descent ends, before the machine's straight mouth
+    approach. Its position fixes the height at every lower chain regardless of
+    where this chain stands. The crossing clearance is :func:`crossing_gap_cm`,
+    distinct from the larger layer spacing needed by attachment bodies.
     """
     seam = port_y - drop
     for lower_y, lower_z in placed:
@@ -1023,11 +1041,12 @@ def _run(
     upstream: tuple[int, str],
     downstream: tuple[int, str],
     descend: float = 0.0,
+    arrival: float = 0.0,
 ) -> None:
     """One belt from ``start`` to ``finish``, wired at both ends."""
     tier = _tier(rate, tiers, item_id, what)
     class_name = _belt_class(lab_map, tier)
-    points = _shape(start, finish, descend)
+    points = _shape(start, finish, descend, arrival)
     belt = BeltRun(
         id=next(ids),
         class_name=class_name,
@@ -1041,22 +1060,18 @@ def _run(
     links.append(Link(a=(belt.id, exit_), b=downstream))
 
 
-def _shape(start: Vector, finish: Vector, descend: float) -> tuple[SplinePoint, ...]:
-    """The spline one feeder or chain belt runs along.
-
-    A belt at one height is a straight run.  A belt that has to come down runs
-    flat out of its port first -- see :func:`shortest_belt_cm` -- and descends
-    over the last ``descend`` centimetres, which is the steepest descent
-    ``belt.incline`` allows and so the shortest.  Both pieces are straight, so
-    the spline never bends and ``belt.curvature`` has nothing to measure.
-    """
+def _shape(
+    start: Vector, finish: Vector, descend: float, arrival: float
+) -> tuple[SplinePoint, ...]:
+    """A straight mouth approach at both ends, with any descent between them."""
     span = math.dist(start[:2], finish[:2])
     if abs(finish[2] - start[2]) <= _EPS or descend <= 0.0:
         return straight(start, _towards(start, finish), math.dist(start, finish))
-    lead = straight(start, _towards(start, finish), span - descend)
+    lead = straight(start, _towards(start, finish), span - descend - arrival)
     seam = lead[-1][0]
     fall = incline(seam, _towards(seam, finish), descend, finish[2] - seam[2])
-    return concat(lead, fall)
+    tail = straight(fall[-1][0], _towards(start, finish), arrival)
+    return concat(lead, fall, tail)
 
 
 def _towards(start: Vector, finish: Vector) -> Vector:
@@ -1107,6 +1122,22 @@ def _extents(
             low, high = _box_bounds(box, placed.pose)
             lows.append(low)
             highs.append(high)
+        if isinstance(placed, AttachmentObj):
+            for body in attachment_boxes(placed, registry):
+                lows.append(
+                    (
+                        body.centre[0] - body.reach[0],
+                        body.centre[1] - body.reach[1],
+                        body.centre[2] - body.reach[2],
+                    )
+                )
+                highs.append(
+                    (
+                        body.centre[0] + body.reach[0],
+                        body.centre[1] + body.reach[1],
+                        body.centre[2] + body.reach[2],
+                    )
+                )
     for belt in belts:
         for location, _, _ in belt.points:
             lows.append(

@@ -62,6 +62,7 @@ __all__ = [
     "PoleObj",
     "Pose",
     "SfyPlacement",
+    "SignObj",
     "StackLane",
     "SplinePoint",
     "Vector",
@@ -226,6 +227,18 @@ class FoundationObj:
     id: int
     class_name: str
     pose: Pose
+
+
+@dataclass(frozen=True, slots=True)
+class SignObj:
+    """A native widget sign carrying authored connection text."""
+
+    id: int
+    class_name: str
+    pose: Pose
+    text: str
+    label: str = "A"
+    layout: str = "BPW_Sign4x1_3"
 
 
 @dataclass(frozen=True, slots=True)
@@ -562,6 +575,7 @@ Placed = (
     | PipeAttachmentObj
     | BeamObj
     | PassthroughObj
+    | SignObj
 )
 """Anything a placement holds: everything with an id and a class name."""
 
@@ -620,6 +634,7 @@ class SfyPlacement:
     stack_height_cm: float = field(default=0.0, compare=False)
     stack_connection_gap_cm: float = field(default=0.0, compare=False)
     stack_lanes: tuple[StackLane, ...] = field(default=(), compare=False)
+    signs: tuple[SignObj, ...] = ()
     #: Lazily built by :meth:`by_id`, and outside equality, repr and ``__init__``
     #: because it is a cache of the tuples above rather than part of the build.
     _index: dict[int, Placed] | None = field(default=None, init=False, compare=False, repr=False)
@@ -642,6 +657,7 @@ class SfyPlacement:
             *self.pipe_attachments,
             *self.beams,
             *self.passthroughs,
+            *self.signs,
             *self.wires,
         )
 

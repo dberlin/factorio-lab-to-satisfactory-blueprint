@@ -50,7 +50,15 @@ from flab2bp.sfy.layout.model import (
 )
 from flab2bp.sfy.layout.splines import straight
 from flab2bp.sfy.layout.strategy import _measure
-from flab2bp.sfy.layout.validate import beam_box, lift_box, passthrough_box, pipe_chain
+from flab2bp.sfy.layout.validate import (
+    BELT_CLEARANCE_HALF_HEIGHT_CM,
+    BELT_CLEARANCE_HALF_WIDTH_CM,
+    attachment_boxes,
+    beam_box,
+    lift_box,
+    passthrough_box,
+    pipe_chain,
+)
 from flab2bp.sfy.registry import Port, Registry
 from flab2bp.sfy.sections.fluids import _NO_INDICATOR
 from flab2bp.sfy.sections.model import (
@@ -58,13 +66,15 @@ from flab2bp.sfy.sections.model import (
     SectionError,
     SectionPort,
     endpoint,
+    interface_bounds,
     placement_bounds,
 )
+from flab2bp.sfy.sections.power import PAINTED_BEAM_CLASS, frame_socket_margin
 from flab2bp.sfy.spec import FOUNDATION_CLASS, SfyBuildSpec
 
 __all__ = ["build_stack_boundaries"]
 
-_BEAM = "Build_Beam_C"
+_BEAM = PAINTED_BEAM_CLASS
 _LIFT_HOLE = "Build_FoundationPassthrough_Lift_C"
 _PIPE_HOLE = "Build_FoundationPassthrough_Pipe_C"
 _JUNCTION = "Build_PipelineJunction_Cross_C"
@@ -155,6 +165,9 @@ class _Lane:
     bounds: tuple[Vector, Vector]
     highest_local_input_cm: float
     lowest_local_output_cm: float | None
+    consumed_branches: tuple[Fraction, ...]
+    produced_branches: tuple[Fraction, ...]
+    branch_centres: tuple[float, ...]
 
 
 class _Builder:
@@ -280,9 +293,8 @@ def _physical_obstacles(
     placement: SfyPlacement, registry: Registry, thickness: float
 ) -> Iterator[tuple[Vector, Vector]]:
     """Keep individual occupied volumes, not the empty space between actors."""
-    for obj in chain[MachineObj | AttachmentObj | PipeAttachmentObj | PoleObj | FoundationObj](
+    for obj in chain[MachineObj | PipeAttachmentObj | PoleObj | FoundationObj](
         placement.machines,
-        placement.attachments,
         placement.pipe_attachments,
         placement.poles,
         placement.foundations,
@@ -301,6 +313,7 @@ def _physical_obstacles(
     for belt in placement.belts:
         yield from _belt_boxes(belt)
     dynamic_boxes = chain(
+        (box for obj in placement.attachments for box in attachment_boxes(obj, registry)),
         (lift_box(lift, registry) for lift in placement.lifts),
         (beam_box(beam, registry) for beam in placement.beams),
         (passthrough_box(hole, registry) for hole in placement.passthroughs),
@@ -312,6 +325,16 @@ def _physical_obstacles(
             (centre[0] - reach[0], centre[1] - reach[1], centre[2] - reach[2]),
             (centre[0] + reach[0], centre[1] + reach[1], centre[2] + reach[2]),
         )
+
+
+def _branch_rates(
+    total: Fraction, peers: Sequence[SectionPort], direction: str
+) -> tuple[Fraction, ...]:
+    """Use native side ports for complete peer flows, retaining mixed supply."""
+    if not total:
+        return ()
+    rates = tuple(port.items_per_second for port in peers if port.direction == direction)
+    return rates if sum(rates, Fraction()) == total else (total,)
 
 
 def _choose_lanes(
@@ -341,42 +364,100 @@ def _choose_lanes(
     measures = _measure(registry, placement.designer)
     turning_half = max(measures.box, lift_half)
     approach_lead = _ceil(max(shortest_belt_cm(registry.limits), measures.lead), grid)
+    pipe_boxes = (
+        bounds
+        for cls in (_JUNCTION, _PUMP)
+        for box in registry.buildables[cls].clearance
+        for bounds in (box_bounds(box, Pose(0, 0, 0, 0, 90).transform()),)
+    )
+    pipe_half = max(
+        abs(bound[axis]) for bounds in pipe_boxes for bound in bounds for axis in (0, 1)
+    )
+    pipe_definitions = [registry.buildables[cls] for cls in _NO_INDICATOR.values()]
+    pipe_radius = max(
+        abs(value)
+        for definition in pipe_definitions
+        if definition.mesh_bounds_cm is not None
+        for bound in definition.mesh_bounds_cm
+        for value in bound[1:]
+    )
+    pipe_turn = max(
+        pipe_half, registry.limits.pipe_min_bend_radius_cm * 1.1 + math.sqrt(2) * pipe_radius
+    )
+    pipe_lead = _ceil(
+        max(
+            registry.limits.pipe_min_bend_radius_cm * 1.1,
+            *(
+                definition.mesh_length_cm / 2 + 1
+                for definition in pipe_definitions
+                if definition.mesh_length_cm is not None
+            ),
+        ),
+        grid,
+    )
     lattice = Lattice.over(placement.designer, registry)
     for section in sections:
         for port in (*section.inputs, *section.outputs):
             point, normal = endpoint(placement, port.object_id, port.port, registry)
+            port_half = turning_half if port.kind == "belt" else pipe_turn
             if port.kind == "belt":
                 facing = facing_for(normal, lattice, port.port)
                 first = _node_on_ray(point, facing, lattice, port.port)
-                node = _approach_node(point, facing, first, registry, lattice, section.bounds)
+                bounds = interface_bounds(placement, port.object_id, port.port, registry)
+                node = _approach_node(point, facing, first, registry, lattice, bounds)
                 finish = lattice.world(node)
+                # A flat approach can need a lift at another elevation. Do not
+                # place a stack branch on that column and cage its escape above
+                # and below with a different material's permanent geometry.
+                obstacles.append(
+                    (
+                        (finish[0] - lift_half, finish[1] - lift_half, 0),
+                        (
+                            finish[0] + lift_half,
+                            finish[1] + lift_half,
+                            placement.designer.height_cm,
+                        ),
+                    )
+                )
             else:
-                finish = _advance(point, normal, approach_lead)
+                finish = _advance(point, normal, pipe_lead)
             # Preserve just this lead and its first dynamic turn. Expanding a
             # whole section rectangle also forbids unrelated, genuinely empty
             # corners between opposing rows and beside the machines.
             obstacles.append(
                 (
                     (
-                        min(point[0], finish[0]) - turning_half,
-                        min(point[1], finish[1]) - turning_half,
-                        min(point[2], finish[2]) - turning_half,
+                        min(point[0], finish[0]) - port_half,
+                        min(point[1], finish[1]) - port_half,
+                        min(point[2], finish[2]) - port_half,
                     ),
                     (
-                        max(point[0], finish[0]) + turning_half,
-                        max(point[1], finish[1]) + turning_half,
-                        max(point[2], finish[2]) + turning_half,
+                        max(point[0], finish[0]) + port_half,
+                        max(point[1], finish[1]) + port_half,
+                        max(point[2], finish[2]) + port_half,
                     ),
                 )
             )
     split_in = _port(registry, SPLITTER_CLASS, (-1, 0, 0), "input")
     split_out = _port(registry, SPLITTER_CLASS, (1, 0, 0), "output")
-    centre = _ceil(max(abs(split_in.translation[0]), abs(split_out.translation[0])) + lead, grid)
-    span = 2 * centre
-    clearance = max(200.0, lift_half)
+    centre = _ceil(
+        max(
+            max(abs(split_in.translation[0]), abs(split_out.translation[0])) + lead,
+            measures.box + lift_half,
+        ),
+        grid,
+    )
+    branch_pitch = _ceil(
+        max(2 * measures.box, abs(split_in.translation[0]) + abs(split_out.translation[0]) + lead),
+        grid,
+    )
     for item in sorted(set(spec.external_inputs) | set(exports)):
         _check(deadline)
         kind: Literal["belt", "pipe"] = "pipe" if item in spec.fluid_items else "belt"
+        clearance = max(measures.box, lift_half) if kind == "belt" else pipe_half
+        route_half = turning_half if kind == "belt" else pipe_turn
+        route_lead = approach_lead if kind == "belt" else pipe_lead
+        shaft_half = lift_half if kind == "belt" else pipe_radius
         peers = [
             port
             for section in sections
@@ -404,65 +485,235 @@ def _choose_lanes(
                     )
                 junction_rise = _port(registry, _JUNCTION, (1, 0, 0)).translation[0]
                 level = math.floor((lowest_output - junction_rise) / grid) * grid
-        local_span = span if kind == "belt" else 0.0
+        consumed_branches = _branch_rates(
+            spec.external_inputs.get(item, Fraction()), peers, "input"
+        )
+        produced_branches = _branch_rates(exports.get(item, Fraction()), peers, "output")
+        branch_count = max(len(consumed_branches), len(produced_branches))
+        branch_centres = tuple(
+            centre + index * branch_pitch for index in range((branch_count + 1) // 2)
+        )
+        local_span = branch_centres[-1] + centre if kind == "belt" else 0.0
         branch_class = (
             _JUNCTION
             if kind == "pipe"
             else (SPLITTER_CLASS if item in spec.external_inputs else MERGER_CLASS)
         )
         side_offset = _port(registry, branch_class, (0, 1, 0)).translation[1]
-        outward = max(clearance, side_offset + approach_lead + turning_half)
-        inward = (
-            outward
-            if kind == "pipe" and item in exports and item in spec.external_inputs
-            else clearance
+        outward = max(clearance, side_offset + route_lead + route_half)
+        # Reserve real parts, not the empty corners of their enclosing cuboid.
+        # The trunk lifts are narrower than the splitter/merger between them.
+        local_parts: list[tuple[Vector, Vector]] = []
+        if kind == "belt":
+            local_parts.append(
+                (
+                    (local_span - lift_half, -lift_half, level),
+                    (local_span + lift_half, lift_half, level + lift_min),
+                )
+            )
+            for belt_z in (level, level + lift_min):
+                local_parts.append(
+                    (
+                        (0, -BELT_CLEARANCE_HALF_WIDTH_CM, belt_z - BELT_CLEARANCE_HALF_HEIGHT_CM),
+                        (
+                            local_span,
+                            BELT_CLEARANCE_HALF_WIDTH_CM,
+                            belt_z + BELT_CLEARANCE_HALF_HEIGHT_CM,
+                        ),
+                    )
+                )
+            branch_rows = [(branch_class, level, consumed_branches or produced_branches, 0.0)]
+            if consumed_branches and produced_branches:
+                branch_rows.append((MERGER_CLASS, level + lift_min, produced_branches, 180.0))
+            body_poses = [
+                (body_class, Pose(at, 0, branch_z, yaw))
+                for body_class, branch_z, rates, yaw in branch_rows
+                for at in branch_centres[: (len(rates) + 1) // 2]
+            ]
+            for body_class, body_pose in body_poses:
+                for body in attachment_boxes(AttachmentObj(-1, body_class, body_pose), registry):
+                    local_parts.append(
+                        (
+                            (
+                                body.centre[0] - body.reach[0],
+                                body.centre[1] - body.reach[1],
+                                body.centre[2] - body.reach[2],
+                            ),
+                            (
+                                body.centre[0] + body.reach[0],
+                                body.centre[1] + body.reach[1],
+                                body.centre[2] + body.reach[2],
+                            ),
+                        )
+                    )
+            for _, branch_z, rates, _ in branch_rows:
+                for index in range(len(rates)):
+                    at = branch_centres[index // 2]
+                    side = 1 if index % 2 == 0 else -1
+                    y0, y1 = sorted((side * side_offset, side * outward))
+                    local_parts.append(
+                        (
+                            (at - route_half, y0, branch_z - route_half),
+                            (at + route_half, y1, branch_z + route_half),
+                        )
+                    )
+        else:
+            pump_z = (
+                level
+                + _port(registry, _JUNCTION, (1, 0, 0)).translation[0]
+                - _port(registry, _PUMP, (-1, 0, 0), "input").translation[0]
+            )
+            for body_class, body_pose in (
+                (_JUNCTION, Pose(0, 0, level, 0, 90)),
+                (_PUMP, Pose(0, 0, pump_z, 0, 90)),
+            ):
+                local_parts.extend(
+                    box_bounds(body, body_pose.transform())
+                    for body in registry.buildables[body_class].clearance
+                )
+            # Only the branch occupies its lateral approach. Extruding that
+            # empty space up the entire pump wrongly rejects low connections
+            # beneath a solid collector on the same side of a machine row.
+            local_parts.append(
+                (
+                    (-route_half, side_offset, level - route_half),
+                    (route_half, outward, level + route_half),
+                )
+            )
+            if item in spec.external_inputs and item in exports:
+                local_parts.append(
+                    (
+                        (-route_half, -outward, level - route_half),
+                        (route_half, -side_offset, level + route_half),
+                    )
+                )
+        rotated_parts = {
+            yaw: [_box(Pose(0, 0, 0, yaw), low, high) for low, high in local_parts]
+            for yaw in (0.0, 90.0, 180.0, 270.0)
+        }
+        levels = (
+            sorted(
+                (
+                    value * grid
+                    for value in range(
+                        math.ceil((thickness / 2 + lift_min) / grid),
+                        math.floor((placement.designer.height_cm - 3 * lift_min) / grid) + 1,
+                    )
+                ),
+                key=lambda value: (abs(value - level), value),
+            )
+            if kind == "belt"
+            else [level]
         )
         candidates = []
         for ix in range(
-            math.ceil((-edge + clearance) / grid), math.floor((edge - clearance) / grid) + 1
+            math.ceil((-edge + shaft_half) / grid), math.floor((edge - shaft_half) / grid) + 1
         ):
             for iy in range(
-                math.ceil((-edge + clearance) / grid), math.floor((edge - clearance) / grid) + 1
+                math.ceil((-edge + shaft_half) / grid), math.floor((edge - shaft_half) / grid) + 1
             ):
+                _check(deadline)
+                shaft = (
+                    (ix * grid - shaft_half, iy * grid - shaft_half, 0),
+                    (
+                        ix * grid + shaft_half,
+                        iy * grid + shaft_half,
+                        placement.designer.height_cm,
+                    ),
+                )
+                if any(_overlap(shaft, obstacle) for obstacle in chain(obstacles, occupied)):
+                    continue
                 for yaw in (0.0, 90.0, 180.0, 270.0):
                     _check(deadline)
                     pose = Pose(ix * grid, iy * grid, 0, yaw)
-                    # A legal straight lead is not enough: the first dynamic
-                    # attachment/lift turn must also fit beyond its terminal.
-                    bay = _box(
-                        pose,
-                        (-clearance, -inward, level - 200),
-                        (local_span + clearance, outward, level + max(lift_min, 900) + 200),
-                    )
-                    shaft = _box(
-                        pose,
-                        (-lift_half, -lift_half, 0),
-                        (lift_half, lift_half, placement.designer.height_cm),
+                    parts = [
+                        (
+                            (low[0] + pose.x, low[1] + pose.y, low[2]),
+                            (high[0] + pose.x, high[1] + pose.y, high[2]),
+                        )
+                        for low, high in rotated_parts[yaw]
+                    ]
+                    bay = (
+                        (
+                            min(part[0][0] for part in parts),
+                            min(part[0][1] for part in parts),
+                            min(part[0][2] for part in parts),
+                        ),
+                        (
+                            max(part[1][0] for part in parts),
+                            max(part[1][1] for part in parts),
+                            max(part[1][2] for part in parts),
+                        ),
                     )
                     if any(bay[0][i] < -edge or bay[1][i] > edge for i in (0, 1)):
                         continue
-                    if any(
-                        _overlap(bay, obstacle) or _overlap(shaft, obstacle)
+                    # XY contacts are invariant as the branch changes elevation.
+                    # A dense collector may fence off a lane at its own height
+                    # while leaving a legal route above or below it.
+                    contacts = [
+                        (part, obstacle)
+                        for part in parts
                         for obstacle in chain(obstacles, occupied)
-                    ):
-                        continue
-                    branch = _point(pose, (centre if kind == "belt" else 0, 100, level))
-                    facing = quat_rotate(pose.transform().rotation, (0, 1, 0))
-                    # Prefer a branch facing its actual consumers, not a wall.
-                    penalty = max(0.0, -sum((target[i] - branch[i]) * facing[i] for i in (0, 1)))
-                    candidates.append(
-                        (math.dist(branch, target) + penalty, ix, iy, yaw, pose, bay, shaft)
-                    )
+                        if all(
+                            part[0][axis] < obstacle[1][axis] - _EPS
+                            and part[1][axis] > obstacle[0][axis] + _EPS
+                            for axis in (0, 1)
+                        )
+                    ]
+                    for candidate_level in levels:
+                        shift = candidate_level - level
+                        if any(
+                            part[0][2] + shift < obstacle[1][2] - _EPS
+                            and part[1][2] + shift > obstacle[0][2] + _EPS
+                            for part, obstacle in contacts
+                        ):
+                            continue
+                        branch = _point(
+                            pose, (centre if kind == "belt" else 0, 100, candidate_level)
+                        )
+                        facing = quat_rotate(pose.transform().rotation, (0, 1, 0))
+                        penalty = max(
+                            0.0, -sum((target[i] - branch[i]) * facing[i] for i in (0, 1))
+                        )
+                        shifted = [
+                            ((low[0], low[1], low[2] + shift), (high[0], high[1], high[2] + shift))
+                            for low, high in parts
+                        ]
+                        shifted.append(shaft)
+                        candidates.append(
+                            (
+                                math.dist(branch, target) + penalty + abs(shift),
+                                ix,
+                                iy,
+                                yaw,
+                                pose,
+                                bay,
+                                shifted,
+                                candidate_level,
+                            )
+                        )
+                        break
         if not candidates:
             raise SectionError(
-                f"{item}: no clear {local_span + 2 * clearance:g}cm by "
-                f"{inward + outward:g}cm vertical stack bay remains inside "
+                f"{item}: no clear vertical stack lane remains inside "
                 f"the {2 * edge:g}cm designer; physical obstacles or port approaches "
                 "obstruct every candidate",
                 cause="bounds",
             )
-        _, _, _, _, pose, bay, shaft = min(candidates, key=lambda value: value[:4])
-        occupied.extend((bay, shaft))
+        _, _, _, _, pose, bay, parts, level = min(candidates, key=lambda value: value[:4])
+        bay = (
+            (
+                min(part[0][0] for part in parts),
+                min(part[0][1] for part in parts),
+                min(part[0][2] for part in parts),
+            ),
+            (
+                max(part[1][0] for part in parts),
+                max(part[1][1] for part in parts),
+                max(part[1][2] for part in parts),
+            ),
+        )
+        occupied.extend(parts)
         highest_input = max(
             (
                 point[2]
@@ -483,6 +734,9 @@ def _choose_lanes(
                 bay,
                 highest_input,
                 lowest_output,
+                consumed_branches,
+                produced_branches,
+                branch_centres,
             )
         )
     return tuple(result)
@@ -498,10 +752,11 @@ def _belt_lane(
     thickness: float,
 ) -> None:
     registry = builder.registry
-    tier = spec.belt_tiers[-1]
-    if max(lane.consumed, lane.produced) > tier.items_per_second:
+    required = max(lane.consumed, lane.produced)
+    tier = next((tier for tier in spec.belt_tiers if tier.items_per_second >= required), None)
+    if tier is None:
         raise SectionError(
-            f"{lane.item}: local stack rate exceeds {tier.items_per_second}/s conveyor ceiling",
+            f"{lane.item}: local stack rate exceeds available conveyor capacity",
             cause="capacity",
         )
     belt_cls = machine_class(lab_map, tier.item_id)
@@ -538,43 +793,54 @@ def _belt_lane(
         Pose(*_point(lane.pose, (lane.span, 0, lane.level)), lane.pose.yaw_deg + 180),
         rise,
     )
-    cls = SPLITTER_CLASS if lane.consumed else MERGER_CLASS
-    actor = AttachmentObj(
-        next(builder.ids),
-        cls,
-        Pose(*_point(lane.pose, (lane.span / 2, 0, lane.level)), lane.pose.yaw_deg),
-    )
-    builder.attachments.append(actor)
-    entry = _port(registry, cls, (-1, 0, 0), "input")
-    exit_ = _port(registry, cls, (1, 0, 0), "output")
-    side = _port(registry, cls, (0, 1, 0), "output" if lane.consumed else "input")
-    builder.belt(lower_out, (actor.id, entry.name), belt_cls, lane, tier.items_per_second)
-    builder.belt((actor.id, exit_.name), turn_in, belt_cls, lane, tier.items_per_second)
-    builder.branches.append(
-        SectionPort(
-            lane.item,
-            lane.consumed or lane.produced,
-            actor.id,
-            side.name,
-            "output" if lane.consumed else "input",
-        )
+
+    def row(
+        cls: str,
+        rates: tuple[Fraction, ...],
+        z: float,
+        source: tuple[int, str],
+        target: tuple[int, str],
+        *,
+        reverse: bool = False,
+    ) -> None:
+        direction: Literal["input", "output"] = "output" if cls == SPLITTER_CLASS else "input"
+        entry = _port(registry, cls, (-1, 0, 0), "input")
+        exit_ = _port(registry, cls, (1, 0, 0), "output")
+        previous = source
+        centres = lane.branch_centres[: (len(rates) + 1) // 2]
+        for position, at in enumerate(reversed(centres) if reverse else centres):
+            index = len(centres) - 1 - position if reverse else position
+            actor = AttachmentObj(
+                next(builder.ids),
+                cls,
+                Pose(*_point(lane.pose, (at, 0, z)), lane.pose.yaw_deg + (180 if reverse else 0)),
+            )
+            builder.attachments.append(actor)
+            builder.belt(previous, (actor.id, entry.name), belt_cls, lane, tier.items_per_second)
+            previous = actor.id, exit_.name
+            for side_index, amount in enumerate(rates[2 * index : 2 * index + 2]):
+                side = (1 if side_index == 0 else -1) * (-1 if reverse else 1)
+                port = _port(registry, cls, (0, side, 0), direction)
+                builder.branches.append(
+                    SectionPort(lane.item, amount, actor.id, port.name, direction)
+                )
+        builder.belt(previous, target, belt_cls, lane, tier.items_per_second)
+
+    row(
+        SPLITTER_CLASS if lane.consumed else MERGER_CLASS,
+        lane.consumed_branches or lane.produced_branches,
+        lane.level,
+        lower_out,
+        turn_in,
     )
     if lane.consumed and lane.produced:
-        collector = AttachmentObj(
-            next(builder.ids),
+        row(
             MERGER_CLASS,
-            Pose(
-                *_point(lane.pose, (lane.span / 2, 0, lane.level + rise)), lane.pose.yaw_deg + 180
-            ),
-        )
-        builder.attachments.append(collector)
-        entry = _port(registry, MERGER_CLASS, (-1, 0, 0), "input")
-        exit_ = _port(registry, MERGER_CLASS, (1, 0, 0), "output")
-        side = _port(registry, MERGER_CLASS, (0, -1, 0), "input")
-        builder.belt(turn_out, (collector.id, entry.name), belt_cls, lane, tier.items_per_second)
-        builder.belt((collector.id, exit_.name), upper_in, belt_cls, lane, tier.items_per_second)
-        builder.branches.append(
-            SectionPort(lane.item, lane.produced, collector.id, side.name, "input")
+            lane.produced_branches,
+            lane.level + rise,
+            turn_out,
+            upper_in,
+            reverse=True,
         )
     else:
         builder.belt(turn_out, upper_in, belt_cls, lane, tier.items_per_second)
@@ -816,12 +1082,15 @@ def _frame(
             point = _advance(start, delta, length * index / count)
             beams.append(BeamObj(next(ids), _BEAM, Pose(*point, yaw, pitch_deg), length / count))
 
-    corners = (
-        (x0 + size / 2, y0 + size / 2),
-        (x1 - size / 2, y0 + size / 2),
-        (x1 - size / 2, y1 - size / 2),
-        (x0 + size / 2, y1 - size / 2),
-    )
+    # Socket actor centers sit 20cm outside their mounting post in the native
+    # references. Reserve their actual outer envelope at a full designer edge,
+    # rather than clipping outlets or moving their connection components.
+    margin = frame_socket_margin(registry)
+    left = max(x0 + size / 2, -half + margin)
+    right = min(x1 - size / 2, half - margin)
+    back = max(y0 + size / 2, -half + margin)
+    front = min(y1 - size / 2, half - margin)
+    corners = ((left, back), (right, back), (right, front), (left, front))
     for z in (thickness / 2, roof_z):
         for index, (x, y) in enumerate(corners):
             nx, ny = corners[(index + 1) % 4]
@@ -844,8 +1113,8 @@ def build_stack_boundaries(
     """Add full frames and genuine pass-through trunks; return local routing ends.
 
     Boundary rates on StackLane are local consumption/export, not the unknown
-    upstream stack load. Trunk run metadata records the funded transport ceiling.
-    Consumers must limit the number of repeated modules to that common capacity.
+    upstream stack load. Trunks use the slowest funded tier meeting local demand.
+    Consumers must limit repeated modules to the reported capacity of each lane.
     No cross-blueprint actor/component reference is authored.
     """
     _check(deadline)
@@ -861,7 +1130,7 @@ def build_stack_boundaries(
         )
     _, high = placement_bounds(placement, registry)
     bottom = thickness / 2
-    roof_requirements = [high[2] + 200 + thickness / 2]
+    roof_requirements = [high[2] + thickness / 2]
     roof_requirements.extend(
         lane.level + (700 if lane.kind == "pipe" else 2 * gap) for lane in lanes
     )

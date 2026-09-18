@@ -3537,6 +3537,19 @@
    "length_per_cost_source": null,
    "manufacturing_speed": null,
    "max_potential": null,
+   "mesh_bounds_cm": [
+    [
+     -210.22891235351562,
+     -210.22894287109375,
+     -111.79470825195312
+    ],
+    [
+     210.22897338867188,
+     210.2288818359375,
+     202.565673828125
+    ]
+   ],
+   "mesh_bounds_property": "mInstanceDataCDO.Instances",
    "mesh_height_cm": null,
    "mesh_length_cm": null,
    "min_potential": null,
@@ -3957,6 +3970,19 @@
    "length_per_cost_source": null,
    "manufacturing_speed": null,
    "max_potential": null,
+   "mesh_bounds_cm": [
+    [
+     -206.58399963378906,
+     -206.58401489257812,
+     -107.72368621826172
+    ],
+    [
+     206.58399963378906,
+     206.583984375,
+     198.15252685546875
+    ]
+   ],
+   "mesh_bounds_property": "mInstanceDataCDO.Instances",
    "mesh_height_cm": null,
    "mesh_length_cm": null,
    "min_potential": null,
@@ -15134,8 +15160,8 @@
      ],
      "translation": [
       0.0,
-      0.0,
-      0.0
+      800.0,
+      100.0
      ]
     },
     {
@@ -18295,7 +18321,7 @@
       0.0
      ],
      "translation": [
-      0.0,
+      70.0,
       0.0,
       0.0
      ]
@@ -18314,7 +18340,7 @@
       0.0
      ],
      "translation": [
-      0.0,
+      -70.0,
       0.0,
       0.0
      ]
@@ -18455,7 +18481,7 @@
       0.0
      ],
      "translation": [
-      0.0,
+      70.0,
       0.0,
       0.0
      ]
@@ -18474,7 +18500,7 @@
       0.0
      ],
      "translation": [
-      0.0,
+      -70.0,
       0.0,
       0.0
      ]
@@ -18669,7 +18695,7 @@
       0.0
      ],
      "translation": [
-      0.0,
+      80.0,
       0.0,
       0.0
      ]
@@ -18781,7 +18807,7 @@
       0.0
      ],
      "translation": [
-      0.0,
+      80.0,
       0.0,
       0.0
      ]
@@ -43352,7 +43378,7 @@
    ],
    "build_version": 502094,
    "cue4parse": "1.2.2.0",
-   "extracted": "2026-09-15",
+   "extracted": "2026-09-18",
    "game_enum": "GAME_UE5_6",
    "native_direction_defaults": {
     "component_defaults": [
@@ -43909,7 +43935,7 @@
    "tool": "sfy-native 0.1.0"
   },
   "inputs_sha256": {
-   "assets.json": "819acece30af61077a21962b97071e0a2469defdd9c94f929955f72bf00c1a93",
+   "assets.json": "00c44e6aa3943274477cd6bff8104f919d71a2da73bebd61e3bbb43858b5b208",
    "docs.json": "cd4fa85efe8ebf990ff3a2cb47cb3a198a548f9920819553a4828a609d90cae4",
    "hologram_rules.json": "9e3417f5878b32c9fc69a140d3cb609367c6ed035a2ec2735f34b4bbf9256949",
    "native.json": "c6b204d7a5ba3fd7c7389ae50d22b8b3f1deafe623b8c4d0a8bb5c028078a11f",
@@ -44159,6 +44185,16 @@
   },
   "mesh_bounds": {
    "applied_to": {
+    "Build_ConveyorAttachmentMerger_C": {
+     "mesh": "/Game/FactoryGame/Buildable/Factory/CA_Merger/Mesh/SM_Merger_01.SM_Merger_01",
+     "property": "mInstanceDataCDO.Instances",
+     "stated_on": "Build_ConveyorAttachmentMerger_C"
+    },
+    "Build_ConveyorAttachmentSplitter_C": {
+     "mesh": "/Game/FactoryGame/Buildable/Factory/CA_Splitter/Mesh/SM_Splitter_01.SM_Splitter_01",
+     "property": "mInstanceDataCDO.Instances",
+     "stated_on": "Build_ConveyorAttachmentSplitter_C"
+    },
     "Build_ConveyorBeltMk1_C": {
      "mesh": "/Game/FactoryGame/Buildable/Factory/ConveyorBeltMk1/Mesh/SM_ConveyorBelt_Mk1.SM_ConveyorBelt_Mk1",
      "property": "mMesh",
@@ -44266,10 +44302,11 @@
     }
    },
    "properties": {
+    "attachment": "mInstanceDataCDO.Instances",
     "belt": "mMesh",
     "lift": "mMidMesh"
    },
-   "read_from": "the cooked UStaticMesh's RenderData.Bounds (Origin -+ BoxExtent)",
+   "read_from": "cooked UStaticMesh RenderData.Bounds (Origin -+ BoxExtent); attachment instances transformed and combined in actor space",
    "source": "assets"
   },
   "native": {

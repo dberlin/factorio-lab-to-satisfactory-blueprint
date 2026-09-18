@@ -26,9 +26,14 @@ def free_run(run: float, rise: float, registry: Registry) -> float:
     return max(0.0, run - descent_run_cm(rise, registry))
 
 
-def fits_turn(turn: Turn, free: float, previous_reach: float) -> bool:
-    """Adjacent turns share one minimum belt, not two selection costs."""
-    return turn.cost <= free - previous_reach + _EPS
+def fits_turn(turn: Turn, free: float, previous: Turn | None) -> bool:
+    """Share a legal straight, but never share attachment bodies or mouth leads."""
+    required = turn.cost
+    if previous is not None:
+        required = max(turn.cost + previous.reach, previous.cost + turn.reach)
+        if turn.is_attachment and previous.is_attachment:
+            required = max(required, turn.body_reach + previous.body_reach)
+    return required <= free + _EPS
 
 
 def eligible(

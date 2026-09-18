@@ -21,7 +21,13 @@ from flab2bp.sfy.layout.splines import (
     spline_length,
     straight,
 )
-from flab2bp.sfy.layout.validate import Context, WorldBox, pipe_chain, required_input_head_m
+from flab2bp.sfy.layout.validate import (
+    Context,
+    WorldBox,
+    attachment_boxes,
+    pipe_chain,
+    required_input_head_m,
+)
 from flab2bp.sfy.registry import Buildable, Port, Registry
 from flab2bp.sfy.sections.fluids import _JUNCTION, _NO_INDICATOR, _pipe_port
 from flab2bp.sfy.sections.model import ProductionSection, SectionError, SectionPort, endpoint
@@ -179,6 +185,7 @@ class _Routes:
             math.dist((0, 0, 0), port.translation) for port in junction.ports
         )
         self.junction_turns: dict[tuple[int, int], _JunctionTurn] = {}
+        self.curved_turns: dict[tuple[int, int], tuple[_Box, ...]] = {}
         for pose in (Pose(0, 0, 0, 0), Pose(0, 0, 0, 0, 0, 90), Pose(0, 0, 0, 90, 0, 90)):
             ports = {
                 _heading(port_forward(pose.transform(), port)): port
@@ -201,6 +208,11 @@ class _Routes:
         self.height = placement.designer.height_cm
         context = Context(placement, spec, registry, {})
         self.obstacles = [_world_box(box) for box in context.boxes]
+        self.obstacles.extend(
+            _world_box(box)
+            for obj in placement.attachments
+            for box in attachment_boxes(obj, registry)
+        )
         self.obstacles.extend(
             _world_box(box) for boxes in context.conveyor_boxes.values() for box in boxes
         )
@@ -246,6 +258,47 @@ class _Routes:
 
     def clear(self, box: _Box, obstacles: Sequence[_Box]) -> bool:
         return self.inside(box) and not any(_overlap(box, other) for other in obstacles)
+
+    def clear_bend(
+        self, here: Vector, incoming: int, outgoing: int, obstacles: Sequence[_Box]
+    ) -> bool:
+        before, after = _HEADINGS[incoming], _HEADINGS[outgoing]
+        start = _shift(here, before, -self.radius)
+        finish = _shift(here, after, self.radius)
+        broad = _bounds(-1, (start, here, finish), self.margin)
+        contacts = [other for other in obstacles if _overlap(broad, other)]
+        if not contacts and self.inside(broad):
+            return True
+        key = (incoming, outgoing)
+        boxes = self.curved_turns.get(key)
+        if boxes is None:
+            # The virtual elbow's inflated cuboid has fictitious end caps.
+            # Beside a pump or frame post, test the same oriented native mesh
+            # envelope as validation instead of rejecting that empty space.
+            pull = self.radius * QUARTER_TURN_TANGENT
+            points = (
+                (_shift((0, 0, 0), before, -self.radius), before, _shift((0, 0, 0), before, pull)),
+                (_shift((0, 0, 0), after, self.radius), _shift((0, 0, 0), after, pull), after),
+            )
+            boxes = tuple(
+                _bounds(-1, box.corners(), 1)
+                for _, definition in self.definitions
+                for box in pipe_chain(
+                    PipeRun(-1, definition.class_name, points, "", Fraction()), self.registry
+                )
+            )
+            self.curved_turns[key] = boxes
+        return all(
+            self.clear(
+                (
+                    -1,
+                    (low[0] + here[0], low[1] + here[1], low[2] + here[2]),
+                    (high[0] + here[0], high[1] + here[1], high[2] + here[2]),
+                ),
+                contacts,
+            )
+            for _, low, high in boxes
+        )
 
     def at(self, ref: _Ref) -> tuple[Vector, Vector]:
         for node in self.nodes:
@@ -296,6 +349,8 @@ class _Routes:
             for _, definition in self.definitions
             if definition.mesh_length_cm is not None
         )
+        # Terminal legs need one bend radius; interior legs need two. Omitting
+        # the one-radius candidates can strand a legal mouth beside a wall.
         axes = tuple(
             tuple(
                 sorted(
@@ -306,17 +361,17 @@ class _Routes:
                             finish[i],
                             *((((start[i] + finish[i]) / 2),) if junctions else ()),
                             *[
-                                start[i] + sign * 2 * radius
-                                for sign in (-1, 1)
+                                start[i] + multiple * radius
+                                for multiple in (-2, -1, 1, 2)
                                 if (self.wall_margin if i == 2 else -self.half + self.wall_margin)
-                                <= start[i] + sign * 2 * radius
+                                <= start[i] + multiple * radius
                                 <= (self.height if i == 2 else self.half) - self.wall_margin
                             ],
                             *[
-                                finish[i] + sign * 2 * radius
-                                for sign in (-1, 1)
+                                finish[i] + multiple * radius
+                                for multiple in (-2, -1, 1, 2)
                                 if (self.wall_margin if i == 2 else -self.half + self.wall_margin)
-                                <= finish[i] + sign * 2 * radius
+                                <= finish[i] + multiple * radius
                                 <= (self.height if i == 2 else self.half) - self.wall_margin
                             ],
                         )
@@ -375,11 +430,7 @@ class _Routes:
                             ):
                                 continue
                     else:
-                        arc_start = _shift(here, _HEADINGS[arrival], -radius)
-                        arc_end = _shift(here, _HEADINGS[direction], radius)
-                        if not self.clear(
-                            _bounds(-1, (arc_start, here, arc_end), self.margin), obstacles
-                        ):
+                        if not self.clear_bend(here, arrival, direction, obstacles):
                             continue
                 indices = range(node[axis] + sign, len(axes[axis]) if sign > 0 else -1, sign)
                 for index in indices:

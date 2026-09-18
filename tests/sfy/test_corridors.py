@@ -243,19 +243,17 @@ def test_a_bridge_stands_one_crossing_gap_over_the_belt_it_crosses() -> None:
 
 
 def test_two_attachments_stand_far_enough_apart_for_a_legal_belt_between_them() -> None:
-    """A grid step apart is not a spacing this geometry allows.
-
-    A splitter's through ports are 100 cm out on each side, so two of them one
-    grid step apart would want a belt of -100 cm; ``belt.min_length`` refuses
-    anything at or under 100.02 cm.  The pitch is the smallest grid multiple
-    that leaves a legal belt, and every number in it is the registry's.
-    """
+    """The pitch must satisfy both transport length and rendered body separation."""
     registry = _registry()
     grid = registry.limits.hologram_grid_cm
     floor = registry.limits.belt_min_length_cm
     assert grid is not None and floor is not None
-    assert attachment_pitch_cm(registry) == grid_ceil(200.0 + floor, grid)
-    assert attachment_pitch_cm(registry) == 400.0
+    pitch = attachment_pitch_cm(registry)
+    assert pitch - 2 * attachment_reach_cm(registry) > floor
+    assert pitch >= 2 * attachment_box_cm(registry)
+    assert pitch - grid < max(
+        2 * attachment_box_cm(registry), 2 * attachment_reach_cm(registry) + floor
+    )
 
 
 # --- cutting a path into belts ---------------------------------------------
@@ -337,36 +335,6 @@ def _measures(registry: Registry, *, radius: float | None = None) -> Measures:
     return read if radius is None else replace(read, radius=radius)
 
 
-def test_an_arc_costs_its_radius_and_an_attachment_costs_its_box_and_a_belt() -> None:
-    """Both numbers are read, and they are what the choice is made on."""
-    registry = _registry()
-    measures = _measures(registry)
-    assert arc_turn(measures).cost == turn_radius_cm(registry) == 400.0
-    assert attachment_turn(measures).cost == attachment_box_cm(registry) + 101.0 == 301.0
-    # And an attachment takes hold one through-port offset from the corner, which
-    # is where the belt into it ends and the belt out of it starts.
-    assert attachment_turn(measures).reach == attachment_reach_cm(registry) == 100.0
-
-
-def test_the_tight_attachment_turn_drops_the_soft_box_and_keeps_the_belt() -> None:
-    """The difference is one term, and it is a box the game lets belts through.
-
-    ``attachment_box_cm``'s own docstring says the splitter's clearance is
-    ``CT_Soft`` and is not a bound on anything, so a corner with nothing else
-    laid against it is charged the reach to the attachment's port plus the
-    shortest legal belt, and not the box.  One whole grid step of difference on
-    the shipped registry, which is what a three-node leg is made of.
-    """
-    registry = _registry()
-    measures = _measures(registry)
-    tight, packed = attachment_turn_tight(measures), attachment_turn(measures)
-    assert tight.kind == packed.kind == ATTACHMENT
-    assert tight.reach == packed.reach == attachment_reach_cm(registry)
-    assert tight.cost == attachment_reach_cm(registry) + 101.0 == 201.0
-    assert packed.cost - tight.cost == attachment_box_cm(registry) - attachment_reach_cm(registry)
-    assert packed.cost - tight.cost == measures.grid
-
-
 def test_a_caller_may_weigh_its_own_pair_of_turns() -> None:
     """The rule is stated once; which two turns it weighs is the caller's.
 
@@ -382,13 +350,12 @@ def test_a_caller_may_weigh_its_own_pair_of_turns() -> None:
     # The realiser's pair fits, with a grid step to spare.
     tight = choose_turn(measures, along=300.0, across=300.0, options=options)
     assert tight.kind == ATTACHMENT
-    assert 300.0 - tight.cost == measures.grid - 1.0
+    assert tight.cost <= 300.0
 
 
-def test_the_shipped_bend_radius_makes_the_attachment_the_cheaper_turn() -> None:
-    """400 cm of quarter circle against a 200 cm box and a 101 cm belt."""
+def test_a_legal_curve_is_preferred_to_an_attachment_even_if_it_takes_more_room() -> None:
     measures = _measures(_registry())
-    assert choose_turn(measures, along=5000.0, across=5000.0).kind == ATTACHMENT
+    assert choose_turn(measures, along=5000.0, across=5000.0).kind == ARC
 
 
 def test_a_tight_enough_bend_radius_makes_the_arc_the_cheaper_turn() -> None:

@@ -51,7 +51,7 @@ from flab2bp.sfy.layout.model import (
     lift_geometry,
 )
 from flab2bp.sfy.layout.splines import spline_length
-from flab2bp.sfy.layout.validate import beam_box, passthrough_box, pipe_chain
+from flab2bp.sfy.layout.validate import attachment_boxes, beam_box, passthrough_box, pipe_chain
 from flab2bp.sfy.registry import Registry
 
 __all__ = ["Measure", "measure", "race_key"]
@@ -132,6 +132,9 @@ def _corners(placement: SfyPlacement, registry: Registry) -> list[Vector]:
     ]
     for obj in standing:
         corners += _extent(registry, obj.class_name, obj.pose)
+    for attachment in placement.attachments:
+        for body in attachment_boxes(attachment, registry):
+            corners.extend(body.corners())
     for lift in placement.lifts:
         corners += _extent(registry, lift.class_name, lift.pose)
         corners.append(lift.top_end(lift_geometry(registry, lift.class_name))[0])
@@ -144,6 +147,9 @@ def _corners(placement: SfyPlacement, registry: Registry) -> list[Vector]:
         corners.extend(beam_box(beam, registry).corners())
     for hole in placement.passthroughs:
         corners.extend(passthrough_box(hole, registry).corners())
+    for sign in placement.signs:
+        for clearance in registry.buildables[sign.class_name].clearance:
+            corners.extend(box_bounds(clearance, sign.pose.transform()))
     if not corners:
         raise ValueError("this placement holds no machine, attachment, lift or belt to measure")
     return corners

@@ -31,7 +31,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import cast
 
-from flab2bp.sfy.archive import ObjectRef
+from flab2bp.sfy.archive import ObjectRef, Reader, Writer
 from flab2bp.sfy.codec import Blueprint, read_sbp_file
 from flab2bp.sfy.header import BlueprintHeader, ItemAmount, SaveObjectVersionData
 from flab2bp.sfy.objects import ACTOR, ObjectData, ObjectHeader, Transform
@@ -40,9 +40,12 @@ from flab2bp.sfy.properties import (
     Array,
     Float,
     Int,
+    LinearColor,
     Object,
     Property,
     PropertyList,
+    SoftObject,
+    Str,
     Struct,
     Tag,
     Value,
@@ -162,6 +165,8 @@ class TemplateLibrary:
                     continue  # an actor whose components are not all in the file
                 templates[h.class_name] = Template(h, d, tuple(index[r.path] for r in refs))
         _add_modern_pump(templates)
+        _add_modern_small_wide_sign(templates)
+        _add_modern_painted_beam(templates)
         return cls(templates)
 
     def instantiate(
@@ -219,6 +224,252 @@ class TemplateLibrary:
                 )
             )
         return tuple(out)
+
+
+_SIGN_LAYOUT_DIRECTORY = "/Game/FactoryGame/Interface/UI/InGame/Signs/SignLayouts/"
+_SIGN_LAYOUTS = frozenset({"BPW_Sign4x1_3", "BPW_Sign4x1_5"})
+_SIGN_TEXT = "mPrefabTextElementSaveData"
+_SIGN_PREFAB = "mSoftActivePrefabLayout"
+_SIGN_ICONS = ("mPrefabIconElementSaveData", "mGlobalPrefabIconElementSaveData")
+
+
+def _set_sign(data: ObjectData, text: str, label: str, layout: str) -> ObjectData:
+    """Replace all donor content using the game's native text-array envelopes.
+
+    The paired connection signs use the two text-only 4x1 layouts observed in
+    ``6xIron Plate + Storage.sbp``. Its soft asset path is three FStrings:
+    package path, generated class name, and an empty subobject path. Modern
+    corpus signs use exactly the same value encoding under a modern tag.
+    """
+    if layout not in _SIGN_LAYOUTS:
+        raise TemplateError(f"unsupported connection sign layout {layout!r}")
+    current = find(data.properties, _SIGN_TEXT)
+    if not isinstance(current, Array):
+        raise TemplateError("sign template has no native text element array")
+    elements = []
+    for name, text_value in (("Name", text), ("Label", label)):
+        source = next(
+            (
+                element
+                for element in current.items
+                if isinstance(element, Struct) and find(element.fields, "ElementName") == Str(name)
+            ),
+            None,
+        )
+        if source is None or not isinstance(find(source.fields, "Text"), Str):
+            raise TemplateError(f"sign template lacks the native {name!r} text element")
+        elements.append(
+            replace(
+                source,
+                fields=tuple(
+                    replace(prop, value=Str(text_value)) if prop.tag.name == "Text" else prop
+                    for prop in source.fields
+                ),
+            )
+        )
+    data = _set_property(data, _SIGN_TEXT, replace(current, items=tuple(elements)))
+    writer = Writer()
+    writer.fstring(_SIGN_LAYOUT_DIRECTORY + layout)
+    writer.fstring(layout + "_C")
+    writer.fstring("")
+    data = _set_property(data, _SIGN_PREFAB, SoftObject(writer.getvalue()))
+    for name in _SIGN_ICONS:
+        icons = find(data.properties, name)
+        if isinstance(icons, Array):
+            data = _set_property(data, name, replace(icons, items=()))
+    return data
+
+
+def _sign_content(data: ObjectData) -> tuple[str, str, str]:
+    """Read the authored text, label and native prefab short name."""
+    text = find(data.properties, _SIGN_TEXT)
+    prefab = find(data.properties, _SIGN_PREFAB)
+    if not isinstance(text, Array) or not isinstance(prefab, SoftObject):
+        raise TemplateError("sign has no native text array or prefab asset")
+    content = {}
+    for element in text.items:
+        if not isinstance(element, Struct):
+            raise TemplateError("sign text array contains a non-struct element")
+        name = find(element.fields, "ElementName")
+        value = find(element.fields, "Text")
+        if not isinstance(name, Str) or not isinstance(value, Str):
+            raise TemplateError("sign text element has no string name or text")
+        content[name.v] = value.v
+    if content.keys() != {"Name", "Label"}:
+        raise TemplateError("connection sign must contain only Name and Label text")
+    reader = Reader(prefab.raw)
+    package, asset, subobject = reader.fstring(), reader.fstring(), reader.fstring()
+    reader.expect_end()
+    layout = asset.removesuffix("_C")
+    if (
+        layout not in _SIGN_LAYOUTS
+        or asset != layout + "_C"
+        or package != _SIGN_LAYOUT_DIRECTORY + layout
+        or subobject
+    ):
+        raise TemplateError("sign uses an unsupported prefab asset")
+    return content["Name"], content["Label"], layout
+
+
+def _add_modern_small_wide_sign(templates: dict[str, Template]) -> None:
+    """Use a current widget-sign envelope for the reference's 3m label sign.
+
+    The modern corpus has SmallVeryWide signs but no SmallWide. Both are
+    FGBuildableWidgetSign with no components; the reference's class, recipe,
+    text-only layouts and orange/black colors are preserved, not its classic
+    property tags. The registry supplies the genuine SmallWide build cost.
+    """
+    class_name = "Build_StandaloneWidgetSign_SmallWide_C"
+    if class_name in templates:
+        return
+    donor = templates.get("Build_StandaloneWidgetSign_SmallVeryWide_C")
+    if donor is None:
+        return
+    path = f"{ACTOR_PATH_PREFIX}{class_name}_0"
+    header = replace(
+        donor.header,
+        path=path,
+        class_path=(
+            "/Game/FactoryGame/Buildable/Factory/SignDigital/"
+            "Build_StandaloneWidgetSign_SmallWide.Build_StandaloneWidgetSign_SmallWide_C"
+        ),
+    )
+    names = {
+        _SIGN_TEXT,
+        _SIGN_PREFAB,
+        *_SIGN_ICONS,
+        "mForegroundColor",
+        "mBackgroundColor",
+        "mCustomizationData",
+        BUILT_WITH_RECIPE,
+    }
+    data = replace(
+        donor.data,
+        components=(),
+        properties=tuple(prop for prop in donor.data.properties if prop.tag.name in names),
+        trailer=trailer_for_new(class_name, ACTOR),
+    )
+    data = _set_property(
+        data,
+        BUILT_WITH_RECIPE,
+        Object(
+            ObjectRef(
+                "",
+                "/Game/FactoryGame/Recipes/Buildings/"
+                "Recipe_StandaloneWidgetSign_SmallWide.Recipe_StandaloneWidgetSign_SmallWide_C",
+            )
+        ),
+    )
+    data = _set_property(
+        data,
+        "mForegroundColor",
+        LinearColor(0.7835379838943481, 0.2917709946632385, 0.057805001735687256, 1.0),
+    )
+    data = _set_property(data, "mBackgroundColor", LinearColor(0.0, 0.0, 0.0, 1.0))
+    foreground_tag = next(p.tag for p in data.properties if p.tag.name == "mForegroundColor")
+    data = _set_property(
+        data,
+        "mAuxilaryColor",
+        LinearColor(0.0, 0.0, 0.0, 1.0),
+        replace(foreground_tag, name="mAuxilaryColor"),
+    )
+    customization = find(data.properties, "mCustomizationData")
+    if not isinstance(customization, Struct):
+        raise TemplateError("modern sign template lacks native customization data")
+    swatch = next((prop for prop in customization.fields if prop.tag.name == "SwatchDesc"), None)
+    if swatch is None:
+        raise TemplateError("modern sign template lacks a native swatch property")
+    data = _set_property(
+        data,
+        "mCustomizationData",
+        replace(
+            customization,
+            fields=(
+                replace(
+                    swatch,
+                    value=Object(
+                        ObjectRef(
+                            "",
+                            "/Game/FactoryGame/Buildable/-Shared/Customization/Swatches/"
+                            "SwatchDesc_Slot0.SwatchDesc_Slot0_C",
+                        )
+                    ),
+                ),
+            ),
+        ),
+    )
+    data = _set_sign(data, "", "A", "BPW_Sign4x1_3")
+    templates[class_name] = Template(header, data, ())
+
+
+def _add_modern_painted_beam(templates: dict[str, Template]) -> None:
+    """Apply the reference's painted beam asset to a current native beam envelope.
+
+    The reference's save-46 actor has mLength, swatch 1 and its painted recipe.
+    Both beam assets are FGBuildableBeam, with no components; only modern typed
+    properties are copied from the corpus, never the reference's classic tags.
+    """
+    class_name = "Build_Beam_Painted_C"
+    if class_name in templates:
+        return
+    donor = templates.get("Build_Beam_C")
+    if donor is None:
+        return
+    path = f"{ACTOR_PATH_PREFIX}{class_name}_0"
+    header = replace(
+        donor.header,
+        path=path,
+        class_path=(
+            "/Game/FactoryGame/Prototype/Buildable/Beams/Build_Beam_Painted.Build_Beam_Painted_C"
+        ),
+    )
+    data = replace(
+        donor.data,
+        components=(),
+        properties=tuple(
+            prop
+            for prop in donor.data.properties
+            if prop.tag.name in {"mLength", "mCustomizationData", BUILT_WITH_RECIPE}
+        ),
+        trailer=trailer_for_new(class_name, ACTOR),
+    )
+    data = _set_property(
+        data,
+        BUILT_WITH_RECIPE,
+        Object(
+            ObjectRef(
+                "",
+                "/Game/FactoryGame/Prototype/Buildable/Beams/"
+                "Recipe_Beam_Painted.Recipe_Beam_Painted_C",
+            )
+        ),
+    )
+    customization = find(data.properties, "mCustomizationData")
+    if not isinstance(customization, Struct):
+        raise TemplateError("modern beam template lacks native customization data")
+    swatch = next((prop for prop in customization.fields if prop.tag.name == "SwatchDesc"), None)
+    if swatch is None:
+        raise TemplateError("modern beam template lacks a native swatch property")
+    data = _set_property(
+        data,
+        "mCustomizationData",
+        replace(
+            customization,
+            fields=(
+                replace(
+                    swatch,
+                    value=Object(
+                        ObjectRef(
+                            "",
+                            "/Game/FactoryGame/Buildable/-Shared/Customization/Swatches/"
+                            "SwatchDesc_Slot1.SwatchDesc_Slot1_C",
+                        )
+                    ),
+                ),
+            ),
+        ),
+    )
+    templates[class_name] = Template(header, data, ())
 
 
 def _add_modern_pump(templates: dict[str, Template]) -> None:

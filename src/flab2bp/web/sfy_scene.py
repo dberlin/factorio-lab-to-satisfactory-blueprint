@@ -492,6 +492,18 @@ def scene_from_blueprint(
             {"label": "Class", "value": header.class_path},
         ]
         details.append({"label": "Actor scale", "value": str(transform.scale)})
+        if buildable is not None and buildable.native_class == "FGBuildableWidgetSign":
+            elements = find(data.properties, "mPrefabTextElementSaveData")
+            if isinstance(elements, Array):
+                for element in elements.items:
+                    if not isinstance(element, Struct):
+                        continue
+                    element_name = find(element.fields, "ElementName")
+                    text = find(element.fields, "Text")
+                    if isinstance(element_name, Str) and isinstance(text, Str):
+                        details.append({"label": f"Sign {element_name.v}", "value": text.v})
+                        if element_name.v == "Name" and text.v:
+                            name = text.v
         recipe_value = find(data.properties, "mCurrentRecipe")
         recipe: str | None = None
         if isinstance(recipe_value, Object) and not recipe_value.ref.is_null:

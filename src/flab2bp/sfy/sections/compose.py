@@ -31,24 +31,18 @@ from flab2bp.sfy.layout.grid_nets import (
     facing_for,
     snapped,
 )
-from flab2bp.sfy.layout.grid_power import place_on_free_nodes
 from flab2bp.sfy.layout.lattice import Lattice, occupancy_for
 from flab2bp.sfy.layout.manifold import RowError, shortest_belt_cm
 from flab2bp.sfy.layout.model import (
-    BeltRun,
     FoundationObj,
-    LiftObj,
-    MachineObj,
-    PipeAttachmentObj,
     Pose,
     SfyPlacement,
-    WireObj,
 )
 from flab2bp.sfy.layout.power import PowerError
 from flab2bp.sfy.layout.realise import RealiseError, Terminal
 from flab2bp.sfy.layout.rrr import route_all
 from flab2bp.sfy.layout.strategy import _measure
-from flab2bp.sfy.layout.validate import BELT_CLEARANCE_HALF_WIDTH_CM, lift_box
+from flab2bp.sfy.layout.validate import BELT_CLEARANCE_HALF_WIDTH_CM
 from flab2bp.sfy.registry import LIFT_NATIVE_CLASS, Registry, load_registry
 from flab2bp.sfy.sections.construction import build_section
 from flab2bp.sfy.sections.fluids import build_fluid_section
@@ -57,6 +51,7 @@ from flab2bp.sfy.sections.model import (
     SectionError,
     SectionPort,
     endpoint,
+    interface_bounds,
     transform_placement,
 )
 from flab2bp.sfy.sections.pipe_routes import (
@@ -64,7 +59,14 @@ from flab2bp.sfy.sections.pipe_routes import (
     _turn_radius,
     connect_fluid_ports,
 )
-from flab2bp.sfy.sections.stacking import _approach_node, build_stack_boundaries
+from flab2bp.sfy.sections.power import add_wall_power
+from flab2bp.sfy.sections.signs import add_connection_signs
+from flab2bp.sfy.sections.stacking import (
+    _approach_node,
+    _overlap,
+    _physical_obstacles,
+    build_stack_boundaries,
+)
 from flab2bp.sfy.spec import FOUNDATION_CLASS, Designer, SfyBuildSpec, SfyMachineGroup
 
 __all__ = ["SectionLayout"]
@@ -196,7 +198,9 @@ def _section_frame(
     anchors = (anchor_x, anchor_y)
     low, high = map(list, section.bounds)
     measures = _measure(registry, section.placement.designer)
-    turning_half = max(measures.box, lift_half)
+    # Reserve the swept ribbon or lift shaft at the interface's lattice turn.
+    # A turning splitter is optional, not the minimum escape geometry.
+    turning_half = max(BELT_CLEARANCE_HALF_WIDTH_CM, lift_half)
     wall_space = (
         _ceil(max(measures.lead_in, 2 * grid), grid)
         + _ceil(measures.lead_in, grid)
@@ -225,7 +229,8 @@ def _section_frame(
             continue
         axis = 0 if abs(normal[0]) > abs(normal[1]) else 1
         sign = 1 if normal[axis] > 0 else -1
-        edge = section.bounds[1 if sign > 0 else 0][axis]
+        bounds = interface_bounds(section.placement, port.object_id, port.port, registry)
+        edge = bounds[1 if sign > 0 else 0][axis]
         lead = max(shortest_belt_cm(registry.limits), (edge - point[axis]) * sign + lift_half)
         # All eventual translations preserve this frame's lattice phase.
         target = point[axis] + sign * lead - anchors[axis]
@@ -395,7 +400,9 @@ def _arrange(
     for height in heights:
         _check_deadline(deadline)
         floor_z.append(floor)
-        floor = _ceil(floor + height + gap + thickness, grid)
+        # The measured height already includes physical transport envelopes.
+        # Separate floors by their actual slab thickness, not another aisle.
+        floor = _ceil(floor + height + thickness, grid)
     required_height = floor_z[-1] + heights[-1] if heights else 0.0
     if required_height > designer.height_cm + 1e-6:
         raise SectionError(
@@ -430,6 +437,7 @@ def _merge(designer: Designer, sections: Sequence[ProductionSection]) -> SfyPlac
             obj for section in sections for obj in section.placement.pipe_attachments
         ),
         links=tuple(link for section in sections for link in section.placement.links),
+        signs=tuple(obj for section in sections for obj in section.placement.signs),
     )
 
 
@@ -485,54 +493,51 @@ def _terminal(
     port: SectionPort,
     registry: Registry,
     lattice: Lattice,
-    bounds: tuple[Vector, Vector] | None = None,
+    obstacles: Sequence[tuple[Vector, Vector]],
 ) -> Terminal:
     world, normal = endpoint(placement, port.object_id, port.port, registry)
     facing = facing_for(normal, lattice, port.port)
     node = _node_on_ray(world, facing, lattice, port.port)
     first_node = node
+    low, high = interface_bounds(placement, port.object_id, port.port, registry)
     # A connected section owns a flat lead before any turn or lift. Choosing
     # the nearest lattice node can leave a 20 cm connector-to-lift belt,
     # although the realiser (correctly) requires a complete authored belt.
     axis = 0 if abs(facing[0]) > abs(facing[1]) else 1
     sign = 1 if facing[axis] > 0 else -1
-    node = _approach_node(world, facing, first_node, registry, lattice, bounds)
+    node = _approach_node(world, facing, first_node, registry, lattice, (low, high))
+    # Native ingredient bodies below and a support slab above can rule out
+    # both lift directions. Keep the small shaft lead where it works; only a
+    # trapped mouth needs the additional clearance for a turning attachment.
+    lift_half, lift_min = (
+        registry.limits.lift_clearance_half_extent_cm,
+        registry.limits.lift_min_cm,
+    )
+    thickness = registry.buildables[FOUNDATION_CLASS].height_cm
+    if lift_half is None or lift_min is None or thickness is None:
+        raise SectionError("the registry lacks interface escape geometry", cause="data")
+    x, y, z = lattice.world(node)
+    shafts = (
+        ((x - lift_half, y - lift_half, min(z, end)), (x + lift_half, y + lift_half, max(z, end)))
+        for end in (z - lift_min, z + lift_min)
+        if thickness <= end <= placement.designer.height_cm
+    )
+    if not any(not any(_overlap(shaft, obstacle) for obstacle in obstacles) for shaft in shafts):
+        turn_half = _measure(registry, placement.designer).box
+        edge = (high if sign > 0 else low)[axis]
+        lead = max(shortest_belt_cm(registry.limits), (edge - world[axis]) * sign + turn_half)
+        distance = (lattice.world(node)[axis] - world[axis]) * sign
+        extra = max(0, math.ceil((lead - distance) / lattice.grid_cm))
+        moved = list(node)
+        moved[axis] += sign * extra
+        candidate = (moved[0], moved[1], moved[2])
+        if lattice.holds(candidate):
+            node = candidate
     steps = abs(node[axis] - first_node[axis])
     if not lattice.holds(node):
         raise SectionError(
             f"{port.item_id}: the section interface has no room for its flat lead", cause="bounds"
         )
-    obj = placement.by_id(port.object_id)
-    if isinstance(obj, WireObj):
-        raise SectionError("a wire is not a material interface", cause="data")
-    low: Vector
-    high: Vector
-    if isinstance(obj, BeltRun):
-        # Occupancy expands the existing belt's swept box by the new belt's
-        # half-width. Open that contact apron, not just the centreline point.
-        half = BELT_CLEARANCE_HALF_WIDTH_CM
-        low = (world[0] - half, world[1] - half, world[2])
-        high = (world[0] + half, world[1] + half, world[2])
-    elif isinstance(obj, LiftObj):
-        corners = lift_box(obj, registry).corners()
-        low_values = [min(point[axis] for point in corners) for axis in range(3)]
-        high_values = [max(point[axis] for point in corners) for axis in range(3)]
-        low = (low_values[0], low_values[1], low_values[2])
-        high = (high_values[0], high_values[1], high_values[2])
-    else:
-        boxes = [
-            box_bounds(box, obj.pose.transform())
-            for box in registry.buildables[obj.class_name].clearance
-            if not box.soft
-        ]
-        low_values = [
-            min((box[0][axis] for box in boxes), default=world[axis]) for axis in range(3)
-        ]
-        high_values = [
-            max((box[1][axis] for box in boxes), default=world[axis]) for axis in range(3)
-        ]
-        low = (low_values[0], low_values[1], low_values[2])
-        high = (high_values[0], high_values[1], high_values[2])
     reach = set(_reach(first_node, facing, low, high, lattice))
     transverse = 1 - axis
     for step in range(steps + 1):
@@ -561,17 +566,19 @@ def _nets(
     lattice: Lattice,
 ) -> tuple[GridNet, ...]:
     by_item: dict[str, list[SectionPort]] = defaultdict(list)
-    bounds_by_id: dict[int, tuple[Vector, Vector]] = {}
     for section in sections:
         for port in (*section.inputs, *section.outputs):
             if port.kind == "belt":
                 by_item[port.item_id].append(port)
-                bounds_by_id[port.object_id] = section.bounds
     for port in boundaries:
         if port.kind == "belt":
             by_item[port.item_id].append(port)
-    nets = []
-    for index, (item, ports) in enumerate(sorted(by_item.items()), start=1):
+    thickness = registry.buildables[FOUNDATION_CLASS].height_cm
+    if thickness is None:
+        raise SectionError("the registry lacks interface escape geometry", cause="data")
+    obstacles = tuple(_physical_obstacles(placement, registry, thickness))
+    nets: list[GridNet] = []
+    for item, ports in sorted(by_item.items()):
         sources = [port for port in ports if port.direction == "output"]
         sinks = [port for port in ports if port.direction == "input"]
         supplied = sum((port.items_per_second for port in sources), Fraction())
@@ -583,12 +590,11 @@ def _nets(
                 cause="balance",
             )
         source_terminals = tuple(
-            _terminal(placement, port, registry, lattice, bounds_by_id.get(port.object_id))
-            for port in sources
+            _terminal(placement, port, registry, lattice, obstacles) for port in sources
         )
         sink_terminals = [
             (
-                _terminal(placement, port, registry, lattice, bounds_by_id.get(port.object_id)),
+                _terminal(placement, port, registry, lattice, obstacles),
                 port.items_per_second,
             )
             for port in sinks
@@ -603,25 +609,51 @@ def _nets(
             ),
             reverse=True,
         )
-        nets.append(
-            GridNet(
-                index,
-                item,
-                source_terminals,
-                tuple(terminal for terminal, _ in sink_terminals),
-                supplied,
-                tuple(rate for _, rate in sink_terminals),
-                tuple(port.items_per_second for port in sources),
-            )
+        remaining_sources = list(
+            zip(source_terminals, (port.items_per_second for port in sources), strict=True)
         )
+        remaining_sinks = []
+        # A native boundary body may already expose one side for each complete
+        # section flow. Join equal obligations directly instead of rebuilding
+        # that fan-out with extra taps in a narrow routing corridor.
+        for sink, rate in sink_terminals:
+            matches = [pair for pair in remaining_sources if pair[1] == rate]
+            if not matches:
+                remaining_sinks.append((sink, rate))
+                continue
+            source, _ = min(
+                matches,
+                key=lambda pair: sum(
+                    abs(a - b) for a, b in zip(pair[0].node, sink.node, strict=True)
+                ),
+            )
+            remaining_sources.remove((source, rate))
+            nets.append(GridNet(len(nets) + 1, item, (source,), (sink,), rate, (rate,), (rate,)))
+        if remaining_sinks:
+            nets.append(
+                GridNet(
+                    len(nets) + 1,
+                    item,
+                    tuple(terminal for terminal, _ in remaining_sources),
+                    tuple(terminal for terminal, _ in remaining_sinks),
+                    sum((rate for _, rate in remaining_sources), Fraction()),
+                    tuple(rate for _, rate in remaining_sinks),
+                    tuple(rate for _, rate in remaining_sources),
+                )
+            )
     return tuple(nets)
 
 
-def _lift_class(spec: SfyBuildSpec, registry: Registry, lab_map: LabMap) -> str:
-    # The allowed ceiling also bounds every internal joined stream. Actual belt
-    # pieces still pick their slowest funded tier independently.
-    ceiling = spec.belt_tiers[-1]
-    belt = machine_class(lab_map, ceiling.item_id)
+def _lift_class(spec: SfyBuildSpec, registry: Registry, lab_map: LabMap, required: Fraction) -> str:
+    # The shared routing profile must carry the busiest joined stream, not the
+    # maximum tier merely available to the factory.
+    tier = next((tier for tier in spec.belt_tiers if tier.items_per_second >= required), None)
+    if tier is None:
+        raise SectionError(
+            f"joined conveyor streams need {required}/s above available capacity",
+            cause="capacity",
+        )
+    belt = machine_class(lab_map, tier.item_id)
     speed = registry.buildables[belt].belt_speed_per_min
     choices = sorted(
         buildable.class_name
@@ -632,7 +664,7 @@ def _lift_class(spec: SfyBuildSpec, registry: Registry, lab_map: LabMap) -> str:
     )
     if not choices:
         raise SectionError(
-            f"no funded conveyor lift with capacity {ceiling.items_per_second}/s", cause="data"
+            f"no funded conveyor lift with capacity {tier.items_per_second}/s", cause="data"
         )
     return choices[0]
 
@@ -701,7 +733,9 @@ def _compose(
         deadline=deadline,
         ids=ids,
         belt_class_for=belt_class_for(spec, lab_map),
-        lift_class=_lift_class(spec, registry, lab_map),
+        lift_class=_lift_class(
+            spec, registry, lab_map, max((net.rate for net in nets), default=Fraction())
+        ),
     )
     _check_deadline(deadline)
     if routed.stranded:
@@ -712,15 +746,6 @@ def _compose(
         raise SectionError(
             f"the reserved section logistics could not connect {failures}", cause="routing"
         )
-    consumers: tuple[MachineObj | PipeAttachmentObj, ...] = (
-        *placement.machines,
-        *(
-            obj
-            for obj in placement.pipe_attachments
-            if any(port.kind == "power" for port in registry.buildables[obj.class_name].ports)
-        ),
-    )
-    power = place_on_free_nodes(consumers, occupancy, registry, ids=ids, designer=designer)
     result = replace(
         placement,
         attachments=(
@@ -730,8 +755,6 @@ def _compose(
         belts=(*placement.belts, *(obj for part in routed.realised for obj in part.belts)),
         lifts=(*placement.lifts, *(obj for part in routed.realised for obj in part.lifts)),
         links=(*placement.links, *(link for part in routed.realised for link in part.links)),
-        poles=power.poles,
-        wires=power.wires,
         description=(
             f"{spec.label or 'Satisfactory factory'}: {len(sections)} connected production "
             f"sections in {len(stages)} material stages; aligned vertical pass-through "
@@ -754,4 +777,5 @@ def _compose(
                 f"{item}: the rated stack boundary contract was not preserved", cause="routing"
             )
     _check_deadline(deadline)
-    return result
+    result = add_wall_power(result, registry, ids=ids, deadline=deadline)
+    return add_connection_signs(result, registry, ids=ids, deadline=deadline)

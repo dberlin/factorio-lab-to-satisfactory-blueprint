@@ -2,7 +2,7 @@
   "provenance": {
     "build_version": 502094,
     "cue4parse": "1.2.2.0",
-    "extracted": "2026-09-15",
+    "extracted": "2026-09-18",
     "game_enum": "GAME_UE5_6",
     "archives": [
       "FactoryGame-Windows.pak:13576",
@@ -3450,8 +3450,8 @@
         "direction_source": "asset-inherited",
         "translation": [
           0.0,
-          0.0,
-          0.0
+          800.0,
+          100.0
         ],
         "rotation": [
           0.0,
@@ -4461,7 +4461,7 @@
         "direction": "any",
         "direction_source": "native",
         "translation": [
-          0.0,
+          70.0,
           0.0,
           0.0
         ],
@@ -4480,7 +4480,7 @@
         "direction": "any",
         "direction_source": "native",
         "translation": [
-          0.0,
+          -70.0,
           0.0,
           0.0
         ],
@@ -4501,7 +4501,7 @@
         "direction": "any",
         "direction_source": "native",
         "translation": [
-          0.0,
+          70.0,
           0.0,
           0.0
         ],
@@ -4520,7 +4520,7 @@
         "direction": "any",
         "direction_source": "native",
         "translation": [
-          0.0,
+          -70.0,
           0.0,
           0.0
         ],
@@ -4562,7 +4562,7 @@
         "direction": "any",
         "direction_source": "native",
         "translation": [
-          0.0,
+          80.0,
           0.0,
           0.0
         ],
@@ -4583,7 +4583,7 @@
         "direction": "any",
         "direction_source": "native",
         "translation": [
-          0.0,
+          80.0,
           0.0,
           0.0
         ],
@@ -13710,6 +13710,70 @@
     }
   },
   "mesh_bounds": {
+    "Build_ConveyorAttachmentMergerLift_C": {
+      "property": "mInstanceDataCDO.Instances",
+      "mesh": "/Game/FactoryGame/Buildable/Factory/CA_MergerLift/Mesh/SM_ConveyorMergerLift_01.SM_ConveyorMergerLift_01",
+      "stated_on": "Build_ConveyorAttachmentMergerLift_C",
+      "origin": [
+        0.0,
+        -3.0517578125E-05,
+        47.72320556640625
+      ],
+      "box_extent": [
+        188.33114624023438,
+        210.080810546875,
+        177.53610229492188
+      ],
+      "sphere_radius": 333.349119126278
+    },
+    "Build_ConveyorAttachmentMerger_C": {
+      "property": "mInstanceDataCDO.Instances",
+      "mesh": "/Game/FactoryGame/Buildable/Factory/CA_Merger/Mesh/SM_Merger_01.SM_Merger_01",
+      "stated_on": "Build_ConveyorAttachmentMerger_C",
+      "origin": [
+        3.0517578125E-05,
+        -3.0517578125E-05,
+        45.38548278808594
+      ],
+      "box_extent": [
+        210.22894287109375,
+        210.22891235351562,
+        157.18019104003906
+      ],
+      "sphere_radius": 336.30048537791754
+    },
+    "Build_ConveyorAttachmentSplitterLift_C": {
+      "property": "mInstanceDataCDO.Instances",
+      "mesh": "/Game/FactoryGame/Buildable/Factory/CA_SplitterLift/Mesh/SM_ConveyorSplitterLift_01.SM_ConveyorSplitterLift_01",
+      "stated_on": "Build_ConveyorAttachmentSplitterLift_C",
+      "origin": [
+        0.0,
+        -6.103515625E-05,
+        47.63298034667969
+      ],
+      "box_extent": [
+        188.33114624023438,
+        210.080810546875,
+        177.63246154785156
+      ],
+      "sphere_radius": 333.4004484096287
+    },
+    "Build_ConveyorAttachmentSplitter_C": {
+      "property": "mInstanceDataCDO.Instances",
+      "mesh": "/Game/FactoryGame/Buildable/Factory/CA_Splitter/Mesh/SM_Splitter_01.SM_Splitter_01",
+      "stated_on": "Build_ConveyorAttachmentSplitter_C",
+      "origin": [
+        0.0,
+        -1.52587890625E-05,
+        45.214420318603516
+      ],
+      "box_extent": [
+        206.58399963378906,
+        206.58399963378906,
+        152.93810653686523
+      ],
+      "sphere_radius": 329.76349440237965
+    },
     "Build_ConveyorBeltMk1_C": {
       "property": "mMesh",
       "mesh": "/Game/FactoryGame/Buildable/Factory/ConveyorBeltMk1/Mesh/SM_ConveyorBelt_Mk1.SM_ConveyorBelt_Mk1",

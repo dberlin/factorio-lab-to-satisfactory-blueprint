@@ -90,6 +90,7 @@ from flab2bp.sfy.layout.model import (
     PoleObj,
     Pose,
     SfyPlacement,
+    SignObj,
     SplinePoint,
     Vector,
     WireObj,
@@ -119,6 +120,8 @@ from flab2bp.sfy.templates import (
     LEVEL,
     TemplateLibrary,
     _set_property,
+    _set_sign,
+    _sign_content,
     apply_recipe,
     assemble,
     connect,
@@ -212,6 +215,7 @@ _PIPE_NATIVE = frozenset({"FGBuildablePipeline"})
 _PIPE_ATTACHMENT_NATIVE = frozenset({"FGBuildablePipelineJunction", "FGBuildablePipelinePump"})
 _BEAM_NATIVE = frozenset({"FGBuildableBeam"})
 _PASSTHROUGH_NATIVE = frozenset({"FGBuildablePassthrough"})
+_SIGN_NATIVE = frozenset({"FGBuildableWidgetSign"})
 
 BEAM_LENGTH = "mLength"
 PASSTHROUGH_THICKNESS = "mSnappedBuildingThickness"
@@ -360,6 +364,11 @@ def emit(
         header, data = objects[start]
         objects[start] = (header, _float_property(data, PASSTHROUGH_THICKNESS, hole.thickness_cm))
 
+    for sign in placement.signs:
+        start, _ = place(sign.id, sign.class_name, sign.pose)
+        header, data = objects[start]
+        objects[start] = (header, _set_sign(data, sign.text, sign.label, sign.layout))
+
     _passthrough_references(placement, registry, objects, spans)
 
     for link in placement.links:
@@ -436,6 +445,7 @@ def decode(bp: Blueprint, registry: Registry) -> SfyPlacement:
     pipe_attachments: list[PipeAttachmentObj] = []
     beams: list[BeamObj] = []
     passthroughs: list[PassthroughObj] = []
+    signs: list[SignObj] = []
     spans: list[tuple[int, str, tuple[ObjectRef, ObjectRef]]] = []
     ids = {header.path: _object_id(header) for header, _ in bp.objects if header.kind == ACTOR}
 
@@ -502,6 +512,9 @@ def decode(bp: Blueprint, registry: Registry) -> SfyPlacement:
                     _optional_side(data, BOTTOM_CONNECTION, ids),
                 )
             )
+        elif native in _SIGN_NATIVE:
+            text, label, layout = _sign_content(data)
+            signs.append(SignObj(obj_id, header.class_name, pose, text, label, layout))
         elif native in _WIRE_NATIVE:
             if not isinstance(data.trailer, PowerLineTrailer):
                 raise EmitError(
@@ -531,6 +544,7 @@ def decode(bp: Blueprint, registry: Registry) -> SfyPlacement:
         pipe_attachments=tuple(pipe_attachments),
         beams=tuple(beams),
         passthroughs=tuple(passthroughs),
+        signs=tuple(signs),
         links=_links(bp, registry, ids),
     )
 

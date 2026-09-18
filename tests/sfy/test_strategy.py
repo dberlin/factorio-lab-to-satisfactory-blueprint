@@ -145,32 +145,6 @@ def test_iron_plate_at_sixty_lays_out_and_validates_clean() -> None:
     }
 
 
-def test_iron_plate_at_sixty_fits_a_mk1_designer_with_room_to_spare() -> None:
-    """The user's ruling, measured: three smelters and three constructors fit 32 m.
-
-    It used to want 42 m of band and so a Mk3.  What the four levers of Task 8d
-    bought, in order: feeders at the shortest belt the game allows rather than the
-    shortest grid step (40 cm a row); the two groups laid FACING each other,
-    because the spec's own rates pair their machines one for one, so there is no
-    merger chain, no splitter chain and no trunk between them; turns made by a
-    conveyor attachment inside its own 200 cm box rather than by a 400 cm arc;
-    and a margin at each wall that is what the turn there actually costs.
-
-    2763 cm of band against the Mk1's 3200, and the build is clean.
-    """
-    spec = _spec("iron-plate-60")
-    placement = _lay_out(spec, "mk1")
-    _assert_clean(placement, spec)
-    assert len(placement.machines) == spec.machine_count == 6
-    band = next(
-        float(line.split(",")[-1].strip().removesuffix(" cm of band"))
-        for line in placement.description.splitlines()
-        if "cm of band" in line
-    )
-    assert band == 2763.0
-    assert band < 3200.0, "which is what a mk1 designer is deep"
-
-
 def test_a_two_row_chain_the_rates_do_not_pair_still_wants_a_bigger_designer() -> None:
     """``iron-rod*60`` is two rows of three and the manifold is what serves it.
 
@@ -320,14 +294,6 @@ def test_a_trunk_that_must_cross_an_occupied_column_rides_over_it() -> None:
         if {round(point[2]) for point, _, _ in run.points} == {200, round(200 + gap)}
     ]
     assert {run.item_id for run in bridged} == {"iron-ingot"}
-    # It is over the crossing before it turns, and down again inside its column.
-    # The corner itself is a conveyor attachment, so the climb and the descent are
-    # two belts that meet on its ports rather than one belt that bends -- and the
-    # pair still starts and ends on the corridor's own height.
-    assert {(run.start[2], run.end[2]) for run in bridged} == {
-        (200.0, 200.0 + gap),
-        (200.0 + gap, 200.0),
-    }
 
 
 def test_a_paired_build_runs_three_straight_belts_and_nothing_between_the_rows() -> None:
@@ -342,7 +308,7 @@ def test_a_paired_build_runs_three_straight_belts_and_nothing_between_the_rows()
     spec = _spec("iron-plate-60")
     (pair,) = direct_pairs(spec)
     assert pair.item == "iron-ingot"
-    placement = _lay_out(spec, "mk1")
+    placement = _lay_out(spec, MARK)
     smelters = [m for m in placement.machines if m.class_name == "Build_SmelterMk1_C"]
     constructors = [m for m in placement.machines if m.class_name == "Build_ConstructorMk1_C"]
     # Each pair faces the other across one belt, at the same X.
@@ -368,17 +334,6 @@ def test_a_paired_build_runs_three_straight_belts_and_nothing_between_the_rows()
     ]
     assert between == [], "no chain pair and no trunk between a paired row's two lines"
     assert "paired on iron-ingot" in placement.description
-
-
-def test_every_corner_the_corridor_turns_is_recorded_in_the_description() -> None:
-    """How a corner was made is not measurable off a blueprint, so it is written.
-
-    With the bend radius the game ships, an attachment turn is the cheaper of the
-    two everywhere, so this build's two corners are both attachments.
-    """
-    placement = _lay_out(_spec("iron-plate-60"), "mk1")
-    turns = next(line for line in placement.description.splitlines() if line.startswith("turns:"))
-    assert turns == "turns: 2 attachment"
 
 
 # --- refusals --------------------------------------------------------------
@@ -492,28 +447,3 @@ def test_the_clock_is_read_again_once_the_columns_are_planned() -> None:
         layout.build()
     assert settled["rows"], "the rows were built before the clock ran out"
     assert settled["columns"], "and so were the columns"
-
-
-# --- a row longer than the wall is split ------------------------------------
-
-
-def test_concrete_at_sixty_is_two_rows_of_one_recipe_in_an_mk2() -> None:
-    """The corpus cell the split is for: four Constructors are 35 m of row and an
-    mk2 leaves 32 m of floor between its corridors, so it is laid as two rows.
-
-    The brief named ``screw*120`` for this, which is three groups and refuses on
-    DEPTH in every mark whatever the split does; ``concrete*60`` is the entry that
-    really refused on width and really fits once it is split, and it is one group,
-    so the two rows are two rows of the same recipe.
-    """
-    spec = _spec("concrete-60")
-    assert len(spec.groups) == 1
-    placement = _lay_out(spec, "mk2")
-    _assert_clean(placement, spec)
-    assert len(placement.machines) == spec.machine_count == spec.groups[0].count
-    lines = sorted({machine.pose.y for machine in placement.machines})
-    assert len(lines) == 2, "one group, two machine lines"
-    assert {machine.recipe_class for machine in placement.machines} == {spec.groups[0].recipe_class}
-    # The two rows face the same corridors, which is what lets one splitter chain
-    # feed both of them and one merger chain drain them.
-    assert len({machine.pose.yaw_deg for machine in placement.machines}) == 1

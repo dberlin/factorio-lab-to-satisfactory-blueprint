@@ -19,6 +19,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 from flab2bp.bench.sfy_corpus import entry  # noqa: E402
+from flab2bp.layout.geometric_motion import MotionStep, MotionWitness  # noqa: E402
 from flab2bp.sfy import pipeline  # noqa: E402
 from flab2bp.sfy.codec import read_pair, write_sbp, write_sbp_file, write_sbpcfg  # noqa: E402
 from flab2bp.sfy.header import BlueprintRecord  # noqa: E402
@@ -26,7 +27,7 @@ from flab2bp.sfy.layout.emit import decode, emit  # noqa: E402
 from flab2bp.sfy.layout.floor import foundations  # noqa: E402
 from flab2bp.sfy.layout.lattice import GROUND_LEVEL, Lattice  # noqa: E402
 from flab2bp.sfy.layout.model import SfyPlacement  # noqa: E402
-from flab2bp.sfy.layout.motion import lift_heights  # noqa: E402
+from flab2bp.sfy.layout.motion import lift_heights, motion_moves  # noqa: E402
 from flab2bp.sfy.layout.realise import Terminal, realise  # noqa: E402
 from flab2bp.sfy.layout.strategy import _measure  # noqa: E402
 from flab2bp.sfy.layout.validate import Report, validate  # noqa: E402
@@ -84,8 +85,8 @@ def build_witness(out_dir: Path) -> TransportWitness:
         raise CheckFailed("the registry/designer offers no legal conveyor lift")
     height = heights[1] if len(heights) > 1 else heights[0]
     top = GROUND_LEVEL + height
-    # Deliberate witness geometry, not a factory placement policy. Four grid
-    # steps fit the shipped arc radius; the realiser chooses the actual turn.
+    # This component deliberately demonstrates an attachment and a lift.
+    # Factory routes instead prefer a continuous curve wherever one fits.
     leg = math.ceil(measures.radius / lattice.grid_cm)
     x = lattice.n // 4
     y = lattice.n // 2 - leg
@@ -100,6 +101,22 @@ def build_witness(out_dir: Path) -> TransportWitness:
     source = Terminal(path[0], (start[0], -mark.half_cm, start[2]), (0, 1, 0), None, "wall")
     sink = Terminal(path[-1], (end[0], mark.half_cm, end[2]), (0, -1, 0), None, "wall")
     ids = count(1)
+    shapes = motion_moves(lattice, registry, LIFT_CLASS)
+    witness = MotionWitness(
+        initial_state=0,
+        final_state=0,
+        steps=tuple(
+            MotionStep(
+                path_index=index,
+                move=shapes.index((b[0] - a[0], b[1] - a[1], b[2] - a[2], False)),
+                source=0,
+                target=0,
+                action=1 if a == (x, y, GROUND_LEVEL) else -1,
+            )
+            for index, (a, b) in enumerate(zip(path, path[1:], strict=False))
+        ),
+        final_action=-1,
+    )
     built = realise(
         path,
         source=source,
@@ -112,6 +129,7 @@ def build_witness(out_dir: Path) -> TransportWitness:
         item_id=WITNESS_ITEM,
         rate=WITNESS_RATE,
         ids=ids,
+        motion=witness,
     )
     if not built.lifts or "attachment" not in built.turns:
         raise CheckFailed("the transport witness did not author both a lift and an attachment turn")

@@ -243,12 +243,18 @@ conveyor class's `mConnection0`/`mConnection1` points at, read off its class
 default object. That last one is what turns step 4's member order into two port
 names without anyone reading a name that ends in 0 as evidence.
 
-It also writes `mesh_bounds` and `subsystem_defaults`. `mesh_bounds` is the
-local-space box of the static mesh a spline buildable repeats along itself —
-`Origin ± BoxExtent` of the cooked `UStaticMesh`'s `RenderData.Bounds` — reached
-through the class default object's `mMesh` (a belt) or `mMidMesh` (a lift's
-repeated mid section), walking up the Blueprint chain because Mk2 to Mk6 restate
-only `mMidMesh`; each entry names the property and the asset path it read.
+Port translation and rotation are resolved independently through the component
+archetype chain. A Mk2 wall socket can override wire capacity while inheriting
+its Mk1 connection positions; omitted transform fields must not become zero.
+
+It also writes `mesh_bounds` and `subsystem_defaults`. Spline `mesh_bounds` are
+`Origin ± BoxExtent` of the repeating cooked `UStaticMesh`'s `RenderData.Bounds`,
+reached through the class default object's `mMesh` or `mMidMesh`, including
+inherited properties. Splitter/merger bodies instead come from
+`mInstanceDataCDO.Instances`: transform every mesh-bound corner by its
+`RelativeTransform`, then combine the bounds in actor space. Every record
+retains its property and asset paths. These render envelopes are distinct from
+native clearance rules; using them to prohibit body clipping is project policy.
 `subsystem_defaults` is the cooked `AFGBuildableSubsystem` Blueprint's shard slot
 counts, found by its super chain and not by its package's name: the shipped
 content overrides `mDefaultProductionShardSlotSize` to 1 and leaves

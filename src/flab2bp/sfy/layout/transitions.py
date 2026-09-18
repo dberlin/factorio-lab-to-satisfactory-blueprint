@@ -51,24 +51,14 @@ message.  Should the game's incline limit ever shallow out, the fix is a
 per-node admission (``GeometricQuery.extra_edges``, or a wider via concept in
 the kernel), not a wider ramp row here.
 
-**What a lift row does NOT say, and where the column IS enforced.**  The kernel
-tests the landing node of every move, and a ramp's midpoint via as well, but a
-lift row names no intermediate node at all.  A per-level movement table cannot
-say otherwise: a row is ``(dx, dy, dz, via, cost)`` and has exactly one via, so
-there is nowhere to put the four-to-forty-eight nodes a lift's column occupies.
-A lift of ``h`` is therefore admitted on the strength of its two ends alone,
-even with a machine standing between them, and no commit-side rule alone can
-stop the search from proposing it again next round.
-
-The column is enforced at realisation, with learning that cannot thrash: a lift
-through an occupied column is a realise-time refusal, which charges congestion
-history at the lift's two END nodes -- the nodes the kernel DOES check -- and
-re-queries the same net in the same round with those end nodes in
-:func:`~flab2bp.sfy.layout.router.route_net`'s ``closed`` set, bounded, before
-the net is stranded.  ``closed`` is the mirror of ``opened``: nodes made
-impassable in one query's private flags.  Pruning per node with ``extra_edges``
-is recorded as a lever, not built -- it would cost a Python dict entry per
-passable node, which global constraint 7 forbids.
+**Lift columns need query-local geometry in addition to this movement table.**
+The kernel tests each landing node and a ramp's midpoint, but a lift table row
+has no intermediate node. Motion-profile guards subtract static shaft collisions
+before the search selects a lift; the guards are specific to the query's physical
+obstacles. Realisation checks dynamic geometry and endpoint contacts afterward.
+Any remaining rejection charges congestion at its end nodes and closes them for
+the bounded same-round retry. This avoids a Python ``extra_edges`` entry for
+every passable node while preventing repeated static shaft collisions.
 
 **The toll** (R-M3-3).  A move that lands on level ``k`` pays
 ``0.01 * (k - GROUND_LEVEL)`` on top of its family price, so a belt prefers the

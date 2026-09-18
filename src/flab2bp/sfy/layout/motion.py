@@ -12,10 +12,12 @@ import math
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass, field
 from functools import lru_cache
+from itertools import product
 from typing import TYPE_CHECKING, final
 
 from flab2bp.layout.budget import BudgetExhausted, WorkBudget, expired
 from flab2bp.layout.geometric_motion import (
+    MotionBox,
     MotionEdge,
     MotionEndpoint,
     MotionGuard,
@@ -25,12 +27,18 @@ from flab2bp.layout.geometric_motion import (
     MotionWitness,
 )
 from flab2bp.sfy.layout.corridors import Measures, Turn
-from flab2bp.sfy.layout.lattice import GROUND_LEVEL, Lattice, Node
+from flab2bp.sfy.layout.lattice import GROUND_LEVEL, BoxBounds, Lattice, Node, _belt_boxes
 from flab2bp.sfy.layout.manifold import MERGER_CLASS, SPLITTER_CLASS, shortest_belt_cm
-from flab2bp.sfy.layout.model import lift_geometry
+from flab2bp.sfy.layout.model import AttachmentObj, BeltRun, Pose, Vector, lift_geometry
+from flab2bp.sfy.layout.splines import hermite, hermite_tangent, quarter_turn
 from flab2bp.sfy.layout.transitions import FLAT_STEPS, incline_run_nodes, sfy_transitions
 from flab2bp.sfy.layout.turns import eligible, fits_turn, free_run, options
-from flab2bp.sfy.layout.validate import BELT_CLEARANCE_HALF_WIDTH_CM, PORT_ANGLE_RAD, TOUCH_CM
+from flab2bp.sfy.layout.validate import (
+    BELT_CLEARANCE_HALF_WIDTH_CM,
+    PORT_ANGLE_RAD,
+    TOUCH_CM,
+    attachment_boxes,
+)
 
 if TYPE_CHECKING:
     from flab2bp.sfy.layout.realise import Terminal
@@ -106,6 +114,11 @@ class MotionProfile:
     stub_credits: tuple[float, ...]
     belt_min: float
     lift_lead: float
+    lift_half: float
+    port_lead: float
+    port_lift_lead: float
+    attachment_low: Vector
+    attachment_high: Vector
 
     def free(self, state: _State) -> float:
         return state.progress if state.slope == 0 else self.ramp_free[round(state.progress)]
@@ -113,8 +126,8 @@ class MotionProfile:
     def closed(self, state: _State) -> bool:
         return state.previous < 0 or self.turns[state.previous].cost <= self.free(state) + _EPS
 
-    def previous_reach(self, state: _State) -> float:
-        return 0.0 if state.previous < 0 else self.turns[state.previous].reach
+    def previous_turn(self, state: _State) -> Turn | None:
+        return None if state.previous < 0 else self.turns[state.previous]
 
     def mature(self, state: _State) -> _State:
         """Coalesce debt-free states only after every future turn fits."""
@@ -153,7 +166,7 @@ def motion_profile(
     for ax, ay in FLAT_STEPS:
         row: list[bool] = []
         for bx, by in FLAT_STEPS:
-            delta = math.degrees(math.atan2(ax * by - ay * bx, ax * bx + ay * by))
+            delta = math.degrees(math.atan2(-ax * by + ay * bx, -ax * bx - ay * by))
             step = geometry.top_yaw_step_deg
             snapped = 0.0 if step <= 0 else round(delta / step) * step
             row.append(
@@ -181,6 +194,20 @@ def motion_profile(
     if lift_half is None:
         raise ValueError("the registry states no lift shaft clearance")
     belt_min = shortest_belt_cm(registry.limits)
+    bodies = tuple(
+        box
+        for cls in (SPLITTER_CLASS, MERGER_CLASS)
+        for box in attachment_boxes(AttachmentObj(0, cls, Pose(0, 0, 0, 0)), registry)
+    )
+    half = max(turn.body_reach for turn in turns)
+    bottom = min(box.centre[2] - box.reach[2] for box in bodies)
+    top = max(box.centre[2] + box.reach[2] for box in bodies)
+    port_depth = max(
+        half - max(abs(port.translation[0]), abs(port.translation[1]))
+        for cls in (SPLITTER_CLASS, MERGER_CLASS)
+        for port in registry.buildables[cls].ports
+        if port.kind == "belt"
+    )
     return MotionProfile(
         lattice,
         lattice.grid_cm,
@@ -194,6 +221,11 @@ def motion_profile(
         tuple(sorted(stub_credits)),
         belt_min,
         max(belt_min, lift_half + BELT_CLEARANCE_HALF_WIDTH_CM),
+        lift_half,
+        port_depth + BELT_CLEARANCE_HALF_WIDTH_CM,
+        max(belt_min, port_depth + lift_half),
+        (-half, -half, bottom),
+        (half, half, top),
     )
 
 
@@ -247,8 +279,29 @@ def _end(terminal: Terminal, lattice: Lattice, *, source: bool) -> _End:
 
 def _initial(profile: MotionProfile, end: _End) -> _State:
     if end.stub > TOUCH_CM:
-        return profile.mature(_State(end.heading, 0, min(end.stub, profile.flat_cap), cut=_PORT))
+        return profile.mature(
+            _State(
+                end.heading, 0, min(end.stub, profile.flat_cap), cut=_PORT if end.port else _WALL
+            )
+        )
     return _State(end.heading, 0, 0.0, mode=_PORT if end.port else _WALL)
+
+
+def _cut_turn_lead(profile: MotionProfile, turn: Turn, cut: int) -> float:
+    """Keep bends and new bodies outside an embedded port or lift mouth."""
+    if cut == _PORT:
+        return (
+            turn.cost
+            + profile.port_lead
+            - (BELT_CLEARANCE_HALF_WIDTH_CM if turn.is_attachment else 0.0)
+        )
+    if cut == _LIFT:
+        return (
+            max(turn.cost, turn.body_reach + profile.lift_lead - BELT_CLEARANCE_HALF_WIDTH_CM)
+            if turn.is_attachment
+            else turn.reach + profile.lift_lead
+        )
+    return turn.cost
 
 
 def _advance(
@@ -259,13 +312,18 @@ def _advance(
         # A lift cuts the belt. Turn debt alone cannot certify the intervening
         # straight: a debt-free 100 cm leg is still shorter than a real belt,
         # and a ramp ending beside the shaft needs its swept clearance too.
-        lead = profile.belt_min if state.cut == _PORT else profile.lift_lead
-        if state.mode == _WALL or (
+        lead = profile.port_lift_lead if state.cut == _PORT else profile.lift_lead
+        if state.mode in (_WALL, _LIFT) or (
             state.mode == _RUN
             and (
                 state.slope
                 or not profile.closed(state)
                 or (state.previous < 0 and state.progress + _EPS < lead)
+                or (
+                    state.previous >= 0
+                    and profile.free(state) + _EPS
+                    < _cut_turn_lead(profile, profile.turns[state.previous], _LIFT)
+                )
             )
         ):
             return ()
@@ -280,7 +338,7 @@ def _advance(
     if state.mode in (_PORT, _WALL):
         if heading != state.heading or (state.mode == _PORT and slope):
             return ()
-        target = profile.mature(_State(heading, slope, progress, cut=_RUN if slope else _PORT))
+        target = profile.mature(_State(heading, slope, progress, cut=_RUN if slope else state.mode))
         return ((target, -1, -1),)
     if state.mode == _LIFT:
         return (
@@ -303,24 +361,36 @@ def _advance(
         # Ordinary slope changes retain their existing continuous-belt rules.
         if state.cut == _LIFT and state.progress + _EPS < profile.lift_lead:
             return ()
+        if state.cut == _PORT and state.progress + _EPS < profile.port_lead:
+            return ()
         return ((fresh, -1, -1),)  # Closing a slope leg discharges its debt, even without a turn.
     ax, ay = FLAT_STEPS[state.heading]
     bx, by = FLAT_STEPS[heading]
     if ax * bx + ay * by:
         return ()  # No half-circle primitive.
     out: list[tuple[_State, int, int]] = []
-    for action in sorted(range(len(profile.turns)), key=lambda index: profile.turns[index].cost):
+    for action in sorted(
+        range(len(profile.turns)),
+        key=lambda index: (profile.turns[index].is_attachment, profile.turns[index].cost),
+    ):
         turn = profile.turns[action]
         if turn.is_attachment and (state.slope or slope):
             continue
-        if not fits_turn(turn, profile.free(state), profile.previous_reach(state)):
+        if not fits_turn(turn, profile.free(state), profile.previous_turn(state)):
+            continue
+        if state.cut and profile.free(state) + _EPS < _cut_turn_lead(profile, turn, state.cut):
             continue
         target = profile.mature(_State(heading, slope, progress, action))
         out.append((target, 0 if turn.is_attachment else -1, action))
     return tuple(out)
 
 
-def _accept(profile: MotionProfile, state: _State, end: _End) -> int | None:
+def _accept(
+    profile: MotionProfile,
+    state: _State,
+    end: _End,
+    allowed: Collection[int] | None = None,
+) -> int | None:
     """The exact terminal action, or no accepting endpoint for this state."""
     if state.mode in (_PORT, _WALL):
         valid = state.heading == end.heading and (
@@ -332,6 +402,17 @@ def _accept(profile: MotionProfile, state: _State, end: _End) -> int | None:
             profile.lift_yaws[state.heading][end.heading]
         )
         return -1 if valid else None
+    if end.port and state.previous >= 0 and state.slope == 0:
+        previous = profile.turns[state.previous]
+        if state.progress + end.stub + _EPS < _cut_turn_lead(profile, previous, _PORT):
+            return None
+    if (
+        state.cut == _LIFT
+        and end.port
+        and state.slope == 0
+        and state.progress + end.stub + _EPS < profile.port_lift_lead
+    ):
+        return None
     if state.cut and state.slope == 0 and state.progress + end.stub + _EPS < profile.belt_min:
         return None
     if end.stub <= TOUCH_CM:
@@ -354,13 +435,18 @@ def _accept(profile: MotionProfile, state: _State, end: _End) -> int | None:
     bx, by = FLAT_STEPS[end.heading]
     if ax * bx + ay * by:
         return None
-    for action in sorted(range(len(profile.turns)), key=lambda index: profile.turns[index].cost):
+    for action in sorted(
+        range(len(profile.turns)),
+        key=lambda index: (profile.turns[index].is_attachment, profile.turns[index].cost),
+    ):
+        if allowed is not None and action not in allowed:
+            continue
         turn = profile.turns[action]
         if not eligible(turn, float(state.slope), 0.0, end.node, profile.lattice):
             continue
         if (
-            fits_turn(turn, profile.free(state), profile.previous_reach(state))
-            and turn.cost <= end.stub + _EPS
+            fits_turn(turn, profile.free(state), profile.previous_turn(state))
+            and _cut_turn_lead(profile, turn, _PORT if end.port else _RUN) <= end.stub + _EPS
         ):
             return action
     return None
@@ -403,12 +489,17 @@ def _topology(
             _ = number(_State(heading, 0, 0.0, mode=mode))
         for stub in stubs:
             _ = number(profile.mature(_State(heading, 0, min(stub, profile.flat_cap), cut=_PORT)))
+            _ = number(profile.mature(_State(heading, 0, min(stub, profile.flat_cap), cut=_WALL)))
     cursor = 0
     while cursor < len(states):
         _charge(budget, deadline)
         for move_id in profile.available:
             move = profile.moves[move_id]
             for target, guard, action in _advance(profile, states[cursor], move):
+                if not move[0] and not move[1]:
+                    guard = move_id + 1
+                elif action >= 0 and not profile.turns[action].is_attachment:
+                    guard = 1 + len(profile.moves) + 4 * states[cursor].heading + target.heading
                 edge = MotionEdge(cursor, move_id, number(target), guard, action)
                 edges.append(edge)
                 by_move[move_id].append(edge)
@@ -420,24 +511,143 @@ def _topology(
     return topology
 
 
-def _guard(profile: MotionProfile) -> MotionGuard:
-    lines = profile.lattice.object_lines
-    return (
-        MotionGuard(())
-        if not lines
-        else MotionGuard(
-            (
+@lru_cache(maxsize=128)
+def _arc_bounds(radius: float, incoming: int, outgoing: int) -> tuple[BoxBounds, ...]:
+    ax, ay = FLAT_STEPS[incoming]
+    bx, by = FLAT_STEPS[outgoing]
+    if ax * bx + ay * by:
+        return ()
+    first, last = quarter_turn(
+        (-ax * radius, -ay * radius, 0.0),
+        (float(ax), float(ay), 0.0),
+        ax * by - ay * bx > 0,
+        radius,
+    )
+    # Four exact cubic subsegments retain convex-hull containment without
+    # reserving the empty interior of a whole quarter-circle bounding box.
+    head, _, leave = first
+    tail, arrive, _ = last
+    points = []
+    for index in range(5):
+        fraction = index / 4
+        point = hermite(head, leave, tail, arrive, fraction)
+        tangent = hermite_tangent(head, leave, tail, arrive, fraction)
+        scaled = (tangent[0] / 4, tangent[1] / 4, tangent[2] / 4)
+        points.append((point, scaled, scaled))
+    return tuple(_belt_boxes(BeltRun(0, "", tuple(points))))
+
+
+def _free_boxes(domain: MotionBox, forbidden: Sequence[MotionBox]) -> tuple[MotionBox, ...]:
+    """Subtract on the bounded lattice, then coalesce identical free row spans.
+
+    Repeated geometric box splitting fragments badly around a factory's many
+    belts. Slice writes keep this exact subtraction linear in the small grid.
+    """
+    if not forbidden:
+        return (domain,)
+    x0, x1, y0, y1, z0, z1 = domain
+    nx, ny, nz = x1 - x0 + 1, y1 - y0 + 1, z1 - z0 + 1
+    if min(nx, ny, nz) <= 0:
+        return ()
+    flags = bytearray(b"\1") * (nx * ny * nz)
+    for a, b, c, d, e, f in forbidden:
+        denied = bytes(f - e + 1)
+        for x in range(a - x0, b - x0 + 1):
+            for y in range(c - y0, d - y0 + 1):
+                start = (x * ny + y) * nz + e - z0
+                flags[start : start + len(denied)] = denied
+    boxes: list[MotionBox] = []
+    previous: dict[tuple[int, int, int, int], int] = {}
+    for x in range(nx):
+        current: dict[tuple[int, int, int, int], int] = {}
+        y = 0
+        while y < ny:
+            start = (x * ny + y) * nz
+            row = flags[start : start + nz]
+            after = y + 1
+            while after < ny:
+                next_start = (x * ny + after) * nz
+                if flags[next_start : next_start + nz] != row:
+                    break
+                after += 1
+            z = row.find(b"\1")
+            while z >= 0:
+                stop = row.find(b"\0", z)
+                if stop < 0:
+                    stop = nz
+                key = (y0 + y, y0 + after - 1, z0 + z, z0 + stop - 1)
+                index = previous.get(key)
+                if index is None:
+                    index = len(boxes)
+                    boxes.append((x0 + x, x0 + x, *key))
+                else:
+                    boxes[index] = (boxes[index][0], x0 + x, *key)
+                current[key] = index
+                z = row.find(b"\1", stop)
+            y = after
+        previous = current
+    return tuple(boxes)
+
+
+def _guard(
+    profile: MotionProfile,
+    obstacles: Sequence[tuple[Vector, Vector]] = (),
+    *,
+    lift_height: int | None = None,
+    arc: tuple[int, int] | None = None,
+) -> MotionGuard:
+    """Subtract native body overlaps from allowed transition source positions."""
+    lattice = profile.lattice
+    if arc is not None:
+        bodies = _arc_bounds(profile.turns[0].reach, *arc)
+        if not bodies:
+            return MotionGuard(())
+        domain: MotionBox = (0, lattice.n, 0, lattice.n, 0, lattice.n)
+    elif lift_height is None:
+        lines = lattice.object_lines
+        if not lines:
+            return MotionGuard(())
+        bodies = ((profile.attachment_low, profile.attachment_high),)
+        domain = (lines.start, lines.stop - 1, lines.start, lines.stop - 1, 0, lattice.n)
+    else:
+        half = profile.lift_half
+        low_z, high_z = min(0, lift_height), max(0, lift_height)
+        low_body = (-half, -half, low_z * profile.grid)
+        high_body = (half, half, high_z * profile.grid)
+        bodies = ((low_body, high_body),)
+        margin = math.ceil((half - TOUCH_CM) / profile.grid)
+        domain = (
+            margin,
+            lattice.n - margin,
+            margin,
+            lattice.n - margin,
+            1 - low_z,
+            lattice.n - high_z,
+        )
+    forbidden_boxes: list[MotionBox] = []
+    for (low_body, high_body), (low, high) in product(bodies, obstacles):
+        forbidden: list[int] = []
+        for axis in range(3):
+            shift = lattice.designer.half_cm if axis < 2 else 0.0
+            forbidden.extend(
                 (
-                    lines.start,
-                    lines.stop - 1,
-                    lines.start,
-                    lines.stop - 1,
-                    0,
-                    profile.lattice.n,
-                ),
+                    math.floor((low[axis] - high_body[axis] + TOUCH_CM + shift) / profile.grid) + 1,
+                    math.ceil((high[axis] - low_body[axis] - TOUCH_CM + shift) / profile.grid) - 1,
+                )
+            )
+        overlap = tuple(
+            value
+            for axis in range(3)
+            for value in (
+                max(domain[2 * axis], forbidden[2 * axis]),
+                min(domain[2 * axis + 1], forbidden[2 * axis + 1]),
             )
         )
-    )
+        if all(overlap[2 * axis] <= overlap[2 * axis + 1] for axis in range(3)):
+            forbidden_boxes.append(
+                (overlap[0], overlap[1], overlap[2], overlap[3], overlap[4], overlap[5])
+            )
+    return MotionGuard(_free_boxes(domain, forbidden_boxes))
 
 
 def compile_policy(
@@ -447,6 +657,7 @@ def compile_policy(
     *,
     budget: WorkBudget,
     deadline: float | None,
+    obstacles: Sequence[tuple[Vector, Vector]] = (),
 ) -> MotionPolicy:
     """Compile actual connector directions/stubs inside the original query bound."""
     _charge(budget, deadline)
@@ -460,20 +671,44 @@ def compile_policy(
         for end in starts
     )
     accepting: list[MotionEndpoint] = []
+    guard = _guard(profile, obstacles)
+    guards = [guard]
+    for dx, dy, dz, _ in profile.moves:
+        _charge(budget, deadline)
+        guards.append(
+            _guard(profile, obstacles, lift_height=dz) if not dx and not dy else MotionGuard(())
+        )
+    for incoming in range(4):
+        for outgoing in range(4):
+            _charge(budget, deadline)
+            guards.append(_guard(profile, obstacles, arc=(incoming, outgoing)))
     for end in ends:
         _charge(budget, deadline)
         cell = profile.lattice.index(end.node)
+        admitted: list[set[int]] = []
+        for heading in range(4):
+            choices: set[int] = set()
+            for action, turn in enumerate(profile.turns):
+                selected_guard = guards[
+                    0 if turn.is_attachment else 1 + len(profile.moves) + 4 * heading + end.heading
+                ]
+                if any(
+                    all(box[2 * axis] <= end.node[axis] <= box[2 * axis + 1] for axis in range(3))
+                    for box in selected_guard.boxes
+                ):
+                    choices.add(action)
+            admitted.append(choices)
         for position, state in enumerate(topology.states):
-            action = _accept(profile, state, end)
-            if action is not None:
-                accepting.append(MotionEndpoint(cell, position, action))
+            accepted_action = _accept(profile, state, end, admitted[state.heading])
+            if accepted_action is not None:
+                accepting.append(MotionEndpoint(cell, position, accepted_action))
     return MotionPolicy(
         len(topology.states),
         profile.moves,
         topology.edges,
         initial,
         tuple(accepting),
-        (_guard(profile),),
+        tuple(guards),
     )
 
 
@@ -578,7 +813,7 @@ class FixedPathSummary:
     def _matches(self, edge: MotionEdge, primitive: _Primitive) -> bool:
         node = self.proof.path[primitive.index]
         return edge.move == primitive.move and (
-            edge.guard < 0
+            edge.guard != 0
             or (
                 node[0] in self.profile.lattice.object_lines
                 and node[1] in self.profile.lattice.object_lines

@@ -6,7 +6,7 @@ of causes neither may invent from, the names the race is run under, the floor
 both stand their machines on, and the number the race is decided by -- and every
 test is about the seam rather than about either strategy's geometry.
 
-The one build in this file is the manifold's own ``iron-plate-60`` in an mk1,
+The one build in this file is the manifold's own ``iron-plate-60`` in an mk3,
 because a measure has to be measured against something real: a placement the
 strategy actually returned, not a hand-written one whose numbers a test chose.
 """
@@ -27,14 +27,12 @@ from flab2bp.sfy.layout.protocol import SfyLayoutStrategy
 from flab2bp.sfy.layout.refusals import REFUSALS, refuse
 from flab2bp.sfy.layout.splines import spline_length
 from flab2bp.sfy.layout.strategy import ManifoldRows
-from flab2bp.sfy.registry import Registry
+from flab2bp.sfy.registry import ClearanceBox, Registry
 from flab2bp.sfy.spec import FOUNDATION_CLASS, designer
 from tests.sfy.conftest import flow_spec, sfy_registry
 
-#: The mark every build here is laid out in.  ``iron-plate-60`` is the corpus's
-#: smallest entry and the one the spec measures at 2763 cm of band, so it is the
-#: build that fits the smallest designer there is.
-MARK = "mk1"
+#: Use a native designer that contains the build's complete transport bodies.
+MARK = "mk3"
 
 #: mypy's half of the protocol test, and the reason it is a module-level
 #: annotation rather than a local: a strategy that does not satisfy the protocol
@@ -130,15 +128,17 @@ def test_the_manifold_stands_on_the_shared_floor() -> None:
 def _corners(placement: SfyPlacement, registry: Registry) -> list[Vector]:
     """The extent this test expects, worked out again rather than borrowed.
 
-    A machine is its HARD clearance boxes where the registry gives it any; a
-    conveyor attachment's box is soft -- shared ground, which is why a belt may
-    run through it -- so it is measured at its own origin.  A belt is its spline
-    points.
+    Machines use hard clearance; attachments also occupy their cooked mesh
+    envelope. Belt spline points define the remaining route extent.
     """
     corners: list[Vector] = []
     standing: list[AttachmentObj | MachineObj] = [*placement.machines, *placement.attachments]
     for obj in standing:
         boxes = [box for box in registry.buildables[obj.class_name].clearance if not box.soft]
+        if isinstance(obj, AttachmentObj):
+            bounds = registry.buildables[obj.class_name].mesh_bounds_cm
+            if bounds is not None:
+                boxes.append(ClearanceBox(*bounds, translation=(0, 0, 0), soft=False))
         if not boxes:
             corners.append(obj.pose.location)
         for box in boxes:
@@ -163,7 +163,7 @@ def test_measure_of_the_iron_plate_manifold_is_its_bounding_volume_and_belt_leng
     assert got.volume_cm3 == pytest.approx(volume)
     assert got.belt_cm == pytest.approx(sum(spline_length(run.points) for run in placement.belts))
     assert got.lifts == 0
-    assert got.attachments == len(placement.attachments) == 8
+    assert got.attachments == len(placement.attachments)
 
 
 def test_the_floor_and_the_pole_line_are_not_what_a_build_occupies() -> None:

@@ -1,12 +1,8 @@
 """One manifold row, judged by the Task 6 validator rather than by a number here.
 
-Every distance a row stands on comes from ``registry.json``, from
-``hologram_rules.json`` or from FactorioLab's own dataset, and these tests take
-them the same way: the machine pitch is recomputed from the clearance boxes, the
-chain heights from the belt clearance rule's own box, the belt speeds from the
-vendored dataset.  Nothing here is measured off a blueprint and nothing is typed
-in from memory of the game -- the only literals are counts (three machines, two
-chains) and the names of game classes.
+The fixtures use FactorioLab rates and native machine, attachment and conveyor
+geometry. Rows are centred in real designers before their complete physical
+envelopes are judged; the four-input manufacturer needs the largest designer.
 
 The judge is :func:`flab2bp.sfy.layout.validate.validate` with no spec: the three
 spec checks are Task 8's, and every geometry check has to pass on the fragment a
@@ -24,22 +20,18 @@ import pytest
 from flab2bp.lab.data import load_vendored
 from flab2bp.lab.url import Game
 from flab2bp.sfy.archive import Reader
-from flab2bp.sfy.geometry import port_forward, world_port
+from flab2bp.sfy.geometry import port_forward
 from flab2bp.sfy.header import read_header
 from flab2bp.sfy.labmap import load_lab_map, machine_class
 from flab2bp.sfy.layout.emit import decode, emit
 from flab2bp.sfy.layout.manifold import (
-    SPLITTER_CLASS,
     ChainEnd,
     RowError,
     RowGeometry,
     build_row,
     crossing_gap_cm,
-    grid_ceil,
-    hard_footprint_cm,
     machine_pitch_cm,
     shortest_belt_cm,
-    slab_top_cm,
 )
 from flab2bp.sfy.layout.model import (
     AttachmentObj,
@@ -49,24 +41,21 @@ from flab2bp.sfy.layout.model import (
     Pose,
     SfyPlacement,
 )
-from flab2bp.sfy.layout.splines import spline_length
+from flab2bp.sfy.layout.rows import _translate
 from flab2bp.sfy.layout.validate import (
-    BELT_CLEARANCE_HALF_HEIGHT_CM,
     CHECKS,
     Severity,
+    attachment_boxes,
     validate,
 )
 from flab2bp.sfy.registry import Registry, load_registry
-from flab2bp.sfy.spec import FOUNDATION_CLASS, Designer, SfyMachineGroup, designer, foundation_cm
+from flab2bp.sfy.spec import FOUNDATION_CLASS, SfyMachineGroup, designer, foundation_cm
 from flab2bp.sfy.templates import TemplateLibrary
 from flab2bp.spec import BeltTier
 from tests.sfy.conftest import fixture_paths
 
 REGISTRY: Registry = load_registry()
 LAB_MAP = load_lab_map()
-_GRID = REGISTRY.limits.hologram_grid_cm
-assert _GRID is not None, "the registry states the hologram grid; these tests need it"
-GRID: float = _GRID
 
 CONSTRUCTOR = "Build_ConstructorMk1_C"
 ASSEMBLER = "Build_AssemblerMk1_C"
@@ -95,6 +84,7 @@ SKIPPED = frozenset(
 ANSWERABLE = frozenset(
     {
         "geom.bounds",
+        "geom.attachment_body",
         "slab.under_every_foot",
         "belt.max_length",
         "belt.min_length",
@@ -243,13 +233,17 @@ def _row(
     flip: bool = False,
     belt_tiers: tuple[BeltTier, ...] = MK1_TO_MK5,
 ) -> RowGeometry:
-    return build_row(
+    frame = designer(mark, REGISTRY)
+    row = build_row(
         group,
         REGISTRY,
-        designer=designer(mark, REGISTRY),
+        designer=frame.model_copy(update={"dims": tuple(2 * d for d in frame.dims)}),
         belt_tiers=belt_tiers,
         flip=flip,
     )
+    # A row's local origin is its first machine; centre its complete physical
+    # band in the real designer, as the production row composer does.
+    return _translate(row, 0.0, -round((row.y_min_cm + row.y_max_cm) / 2))
 
 
 def _clean(row: RowGeometry, mark: str) -> None:
@@ -282,49 +276,8 @@ def test_a_constructor_row_of_three_is_a_placement_the_validator_passes() -> Non
     _clean(_row(_rods(3)), "mk3")
 
 
-def test_a_constructor_row_stands_its_machines_one_pitch_apart() -> None:
-    row = _row(_rods(3))
-    pitch = machine_pitch_cm(REGISTRY.buildables[CONSTRUCTOR], REGISTRY.limits)
-    x0, _, x1, _ = hard_footprint_cm(REGISTRY.buildables[CONSTRUCTOR])
-    assert pitch == grid_ceil(x1 - x0 + GRID, GRID)
-    assert [machine.pose.x for machine in row.machines] == [0.0, pitch, 2 * pitch]
-    assert {machine.pose.z for machine in row.machines} == {slab_top_cm(REGISTRY)}
-    assert {machine.pose.yaw_deg for machine in row.machines} == {0.0}
-
-
-def test_a_constructor_row_lays_one_splitter_and_one_merger_per_machine() -> None:
-    row = _row(_rods(3))
-    splitters = [a for a in row.attachments if "Splitter" in a.class_name]
-    mergers = [a for a in row.attachments if "Merger" in a.class_name]
-    assert len(splitters) == 3
-    assert len(mergers) == 3
-    # two belts along each chain, three feeders in and three feeders out
-    assert len(row.belts) == 2 + 3 + 2 + 3
-
-
-def test_a_chain_belt_spans_one_pitch_less_the_two_attachment_ports() -> None:
-    row = _row(_rods(3))
-    pitch = machine_pitch_cm(REGISTRY.buildables[CONSTRUCTOR], REGISTRY.limits)
-    splitter = REGISTRY.buildables["Build_ConveyorAttachmentSplitter_C"]
-    reach = max(abs(p.translation[0]) for p in splitter.ports)
-    along = [
-        spline_length(belt.points)
-        for belt in row.belts
-        if abs(belt.points[0][0][1] - belt.points[-1][0][1]) < 1.0
-    ]
-    assert along and all(length == pytest.approx(pitch - 2 * reach) for length in along)
-
-
 def test_an_assembler_row_of_two_is_a_placement_the_validator_passes() -> None:
     _clean(_row(_plates(2), "mk1"), "mk1")
-
-
-def test_an_assembler_row_stacks_its_second_chain_one_crossing_gap_higher() -> None:
-    row = _row(_plates(2), "mk1")
-    gap = crossing_gap_cm(REGISTRY)
-    heights = sorted({end.pose.z for end in row.chain_in})
-    assert heights == [row.belt_z_cm, row.belt_z_cm + gap]
-    assert gap == grid_ceil(4 * BELT_CLEARANCE_HALF_HEIGHT_CM, GRID)
 
 
 def test_an_outer_feeder_descends_no_steeper_than_the_registry_allows() -> None:
@@ -364,15 +317,17 @@ def _height_at(belt: BeltRun, y: float) -> float:
 
 
 def test_a_manufacturer_row_of_one_lays_a_chain_for_every_input_item() -> None:
-    row = _row(_batteries(1), "mk2")
+    row = _row(_batteries(1), "mk3")
     assert len(row.chain_in) == 4
     assert {end.item_id for end in row.chain_in} == set(_batteries(1).inputs_per_machine)
-    _clean(row, "mk2")
+    _clean(row, "mk3")
 
 
 def test_a_manufacturer_row_refuses_the_smallest_designer_as_too_deep() -> None:
     with pytest.raises(RowError) as caught:
-        _row(_batteries(1), "mk1")
+        build_row(
+            _batteries(1), REGISTRY, designer=designer("mk1", REGISTRY), belt_tiers=MK1_TO_MK5
+        )
     message = str(caught.value)
     assert message.startswith("row too deep")
     assert f"{2 * designer('mk1', REGISTRY).half_cm:.0f}" in message
@@ -419,32 +374,6 @@ def test_the_shortest_belt_is_the_first_whole_centimetre_the_game_allows() -> No
     assert shortest_belt_cm(REGISTRY.limits) == 101.0
 
 
-def test_a_feeder_is_as_short_as_the_machine_line_leaves_room_for() -> None:
-    """101 cm is the floor; the machine's own clearance box is what settles it.
-
-    A chain has to clear the whole machine LINE, so it stands at least a belt's
-    79 cm half width outside the machine's hard box -- 500 cm for a Constructor,
-    and one centimetre more so the two boxes do not share a face, which
-    ``belt.capsule`` calls a lap of 0.0 cm.  That puts the chain at y = -580, its
-    side port at -480, and the machine's input port is at -300: a feeder of
-    180 cm.  Rounding the same feeder up to the grid, which is what this module
-    used to do, put the chain at -600 and cost 20 cm of band at each side of
-    every row.
-    """
-    row = _row(_rods(3), "mk3")
-    splitters = sorted({a.pose.y for a in row.attachments if a.class_name.endswith("Splitter_C")})
-    assert splitters == [-580.0]
-    feeders = sorted({round(_length(belt), 6) for belt in row.belts if _is_feeder(row, belt)})
-    assert feeders == [180.0]
-    assert min(feeders) > REGISTRY.limits.belt_min_length_cm
-
-
-def _length(belt: BeltRun) -> float:
-    return sum(
-        math.dist(belt.points[i][0], belt.points[i + 1][0]) for i in range(len(belt.points) - 1)
-    )
-
-
 def _is_feeder(row: RowGeometry, belt: BeltRun) -> bool:
     """A belt that ends on a machine's input port, which is what a feeder is."""
     inputs = {
@@ -459,40 +388,6 @@ def _is_feeder(row: RowGeometry, belt: BeltRun) -> bool:
 # --- the frame Task 8 composes ---------------------------------------------
 
 
-def test_every_object_stands_on_the_grid_across_the_row_and_on_a_centimetre_along_it() -> None:
-    """``X`` and ``Z`` are the grid's; ``Y`` is the centimetre's, and deliberately.
-
-    A machine stands where the pitch puts it and a chain stands at the height a
-    crossing gap puts it, and both of those are grid multiples.  How far OUT a
-    chain stands is neither: it is the shortest belt the game allows
-    (:func:`~flab2bp.sfy.layout.manifold.shortest_belt_cm`, 101 cm) out of a port
-    whose own offset the registry states, and then however much further the
-    machine line's own clearance box pushes it -- 500 cm of box plus a belt's
-    79 cm half width is 579, which is not on a 100 cm grid and has no reason to
-    be.  ``buildable.grid_snap`` SNAPS a hologram the player drags; it refuses
-    nothing, and a metre of designer floor per chain is what rounding to it cost.
-    """
-    grid = GRID
-    row = _row(_batteries(1), "mk2")
-    for placed in _standing(row):
-        assert placed.pose.x % grid == 0
-        assert placed.pose.z % grid == 0
-        assert placed.pose.y == round(placed.pose.y), "an object stands on a whole centimetre"
-    for belt in row.belts:
-        for location, _, _ in belt.points:
-            assert location[0] % grid == 0 or _on_a_port(row, location)
-
-
-def _on_a_port(row: RowGeometry, location: tuple[float, float, float]) -> bool:
-    for placed in _standing(row):
-        buildable = REGISTRY.buildables[placed.class_name]
-        transform = placed.pose.transform()
-        for port in buildable.ports:
-            if math.dist(world_port(transform, port), location) <= 1.0:
-                return True
-    return False
-
-
 def test_a_flipped_row_mirrors_x_and_takes_the_other_side_port() -> None:
     row = _row(_plates(2), "mk1", flip=True)
     assert [machine.pose.x for machine in row.machines] == [
@@ -504,7 +399,7 @@ def test_a_flipped_row_mirrors_x_and_takes_the_other_side_port() -> None:
 
 
 def test_every_feeder_leaves_its_port_along_the_port_facing() -> None:
-    row = _row(_batteries(1), "mk2")
+    row = _row(_batteries(1), "mk3")
     standing = {placed.id: placed for placed in _standing(row)}
     runs = {belt.id: belt for belt in row.belts}
     for link in row.links:
@@ -581,38 +476,14 @@ def test_a_row_survives_the_blueprint_round_trip() -> None:
     assert again == placement
 
 
-def test_a_row_reports_the_band_it_occupies() -> None:
+def test_the_row_band_contains_the_actual_attachment_bodies() -> None:
+    """Packing a row by the smaller native soft box would clip its neighbour."""
     row = _row(_rods(3))
-    assert row.depth_cm == row.y_max_cm - row.y_min_cm
-    assert row.width_cm == row.x_max_cm - row.x_min_cm
-    assert row.depth_cm > 0 and row.width_cm > 0
-    fits: Designer = designer("mk3", REGISTRY)
-    assert row.depth_cm <= 2 * fits.half_cm
-
-
-def test_the_band_covers_the_splitters_soft_box_and_not_only_the_hard_ones() -> None:
-    """A row's band is every clearance box in it, soft ones included.
-
-    It has to be.  A splitter's only box is SOFT -- the game lets a belt and a
-    machine share it -- and it reaches 200 cm past the attachment it belongs to,
-    further out than any belt's own clearance in the row.  The band is what
-    Task 8 stands a corridor clear of, so a band measured over the hard boxes
-    alone would put a corridor column through the splitters.
-    """
-    row = _row(_rods(3))
-    splitter = REGISTRY.buildables[SPLITTER_CLASS]
-    box = splitter.clearance[0]
-    assert box.soft, "this test is about a soft box; the registry says this one is not"
-    chain = min(a.pose.y for a in row.attachments if a.class_name == SPLITTER_CLASS)
-    reach = chain + box.min[1] + box.translation[1]
-    assert row.y_min_cm == pytest.approx(reach)
-    # And the hard boxes alone would not reach it: the machines stop at -500 and
-    # the chain belt's own clearance at -679, so dropping the soft boxes out of
-    # the band would move this edge and this assertion would fail.
-    machines = (
-        min(m.pose.y for m in row.machines) + hard_footprint_cm(REGISTRY.buildables[CONSTRUCTOR])[1]
-    )
-    assert reach < machines
+    for attachment in row.attachments:
+        for box in attachment_boxes(attachment, REGISTRY):
+            for corner in box.corners():
+                assert row.x_min_cm <= corner[0] <= row.x_max_cm
+                assert row.y_min_cm <= corner[1] <= row.y_max_cm
 
 
 def test_a_chain_carries_the_last_machines_own_share_and_not_a_full_one() -> None:

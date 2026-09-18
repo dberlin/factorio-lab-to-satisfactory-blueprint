@@ -20,11 +20,12 @@ from flab2bp.sfy.layout.model import (
     belt_ends,
 )
 from flab2bp.sfy.layout.validate import validate
+from flab2bp.sfy.sections.compose import _arrange, _floors, _merge, _sections_for
 from flab2bp.sfy.sections.model import ProductionSection, SectionPort, endpoint
 from flab2bp.sfy.sections.pipe_routes import _Routes
 from flab2bp.sfy.sections.stacking import build_stack_boundaries
 from flab2bp.sfy.spec import PipeTier, SfyBuildSpec, SfyMachineGroup, designer
-from tests.sfy.conftest import sfy_registry
+from tests.sfy.conftest import flow_spec, sfy_registry
 
 
 def _stack():
@@ -138,20 +139,75 @@ def test_perimeter_rings_cover_all_four_slab_edges_with_legal_beams():
     y1 = max(high[1] for _, high in slab_boxes)
     rings = defaultdict(list)
     for beam in placement.beams:
+        assert beam.class_name == "Build_Beam_Painted_C"
         assert 0 < beam.length_cm <= 4000
         delta = quat_rotate(beam.pose.transform().rotation, (beam.length_cm, 0, 0))
         end = tuple(beam.pose.location[i] + delta[i] for i in range(3))
         if abs(delta[2]) < 0.001:
             rings[beam.pose.z].append((beam.pose.location, end))
     assert len(rings) == 2
+    footprints = []
     for segments in rings.values():
-        for axis, side in ((0, x0 + 50), (0, x1 - 50), (1, y0 + 50), (1, y1 - 50)):
-            coverage = sum(
-                abs(end[1 - axis] - start[1 - axis])
+        points = [point for segment in segments for point in segment]
+        left, right = min(p[0] for p in points), max(p[0] for p in points)
+        back, front = min(p[1] for p in points), max(p[1] for p in points)
+        assert x0 - 0.001 <= left - 50 < right + 50 <= x1 + 0.001
+        assert y0 - 0.001 <= back - 50 < front + 50 <= y1 + 0.001
+        footprints.append((left, right, back, front))
+        for axis, side in ((0, left), (0, right), (1, back), (1, front)):
+            intervals = sorted(
+                sorted((start[1 - axis], end[1 - axis]))
                 for start, end in segments
                 if abs(start[axis] - side) < 0.001 and abs(end[axis] - side) < 0.001
             )
-            assert coverage == pytest.approx((y1 - y0 if axis == 0 else x1 - x0) - 100)
+            low, high = (back, front) if axis == 0 else (left, right)
+            assert intervals[0][0] == pytest.approx(low)
+            assert intervals[-1][1] == pytest.approx(high)
+            assert all(a[1] == pytest.approx(b[0]) for a, b in itertools.pairwise(intervals))
+    assert footprints[0] == pytest.approx(footprints[1])
+
+
+def test_dense_refinery_stack_branch_clears_the_collector_belts():
+    registry = sfy_registry()
+    base = flow_spec("plastic-20")
+    spec = base.model_copy(
+        update={
+            "groups": tuple(group.model_copy(update={"count": 4}) for group in base.groups),
+            "external_inputs": {item: rate * 4 for item, rate in base.external_inputs.items()},
+            "outputs": {item: rate * 4 for item, rate in base.outputs.items()},
+            "surplus_outputs": {item: rate * 4 for item, rate in base.surplus_outputs.items()},
+        }
+    )
+    box = designer("mk2", registry)
+    mapping = load_lab_map()
+    ids = itertools.count(1)
+    deadline = time.monotonic() + 30
+    built = tuple(
+        section
+        for group in spec.groups
+        for section in _sections_for(group, spec, box, registry, mapping, ids, deadline)
+    )
+    sections = _arrange((built,), box, registry, deadline)
+    placement = _merge(box, sections)
+    placement = replace(placement, foundations=_floors(placement, registry, ids))
+    stacked, branches = build_stack_boundaries(
+        spec, placement, sections, registry, mapping, ids=ids, deadline=deadline
+    )
+    assert sum(machine.class_name == "Build_OilRefinery_C" for machine in stacked.machines) == 4
+    assert {lane.item_id for lane in stacked.stack_lanes} == {
+        "crude-oil",
+        "plastic",
+        "heavy-oil-residue",
+    }
+    report = validate(
+        stacked,
+        spec,
+        registry,
+        only=("geom.bounds", "geom.attachment_body", "belt.capsule"),
+    )
+    assert not report.errors, [finding.message for finding in report.errors]
+    product = next(port for port in branches if port.item_id == "plastic")
+    assert product.items_per_second == Fraction(4, 3)
 
 
 def test_long_residue_connection_keeps_pipe_actor_seams_clear_of_bends():

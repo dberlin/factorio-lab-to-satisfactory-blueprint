@@ -30,6 +30,12 @@ are not necessarily separate physical floors. Routes join section interfaces,
 preserving recipe counts, clocks and every material flow. Cyclic/recycled coupled
 dependencies are refused; this is not a general fluid-network solver.
 
+Solid sections use opposing rows when their complete physical depth fits, or
+a longer single row before partitioning the machine count. Interface frames
+reserve the minimum belt/lift escape, not a compulsory turning splitter.
+Physical transport envelopes and slab thickness determine floor separation;
+the roof clears the complete measured geometry without an extra empty aisle.
+
 `sections/fluids.py` builds separate side manifolds for supported mixed recipes.
 Pipes carry m³/s in the model (reports use m³/min); solid belts carry items/s.
 Recipe-order port assignment retains fluid byproducts, including heavy-oil
@@ -38,15 +44,18 @@ routing room and hydraulic constraints still bound support.
 
 Fluid rows reserve native hard footprints and actual transport connector spans,
 not an extra walking aisle between machines. Four refineries use 1000 cm pitch
-within Mk2. Pipe interfaces terminate at native junction ports; the final solid
-collector turns into the side logistics band instead of demanding space beyond
-the machine row. Composition reserves pipe-specific bends and mesh envelopes,
+within Mk2. Pipe interfaces terminate at native junction ports; a single-row
+solid collector exposes its final merger directly instead of adding a turning
+splitter. Composition reserves pipe-specific bends and mesh envelopes,
 not conveyor-lift approaches, for those fluid interfaces.
 
 `sections/pipe_routes.py` keeps pipe-actor joins on straight interiors, away
 from curved mesh envelopes. Curved wall approaches reserve the cross-section's
 diagonal extent; straight obstacle checks retain their transverse extent.
-Neither change relaxes the final collision validator.
+Near an obstacle, curved turns use the validator's sampled native mesh envelope
+instead of treating the inflated virtual elbow's empty corners as solid.
+Terminal candidates include one-radius legs as well as two-radius interiors.
+Final collision validation is unchanged.
 
 Routing prefers native four-way junctions for U-turns and bent elevation changes,
 and tries them when rounded-pipe search cannot find a route. Junctions rotate
@@ -56,12 +65,67 @@ descents that cannot fit two junctions retain legal curved pipes. This search
 does not yet explore arbitrary-angle junction orientations, although the
 blueprint model and binary round-trip support them.
 
-`sections/stacking.py` adds actual base/roof slabs, beam outlines and corner
-posts, with aligned conveyor/pipe floor holes. Each external material has a
-bottom feed, a local branch and an upward continuation; outputs collect into
-their upward trunk. `StackLane` records local demand/export, trunk capacity and
+Conveyor routing prefers a continuous native-radius bend over a turning
+splitter wherever it fits. Splitter/merger bodies use the cooked mesh-instance
+envelope, not just their soft native clearance; `geom.attachment_body` is an
+explicit project collision policy. Search and final admission reserve those
+bodies and permit connected belts to enter only along the actual mouth's
+straight approach. Lift entry normals are outward, like the known-good native
+references: an incoming belt's flow tangent points opposite the entry normal.
+Section approaches clear the connected actor's actual body, rather than the
+entire section rectangle. Other machines and transport remain independent
+obstacles: swept bend and full lift-shaft guards reject collisions before
+search commits a route, and realised geometry is checked again before admission.
+Stack lanes preserve each section interface's lift-width escape column.
+Where both lift directions are blocked, the terminal lead instead clears a
+native turning attachment; ordinary interfaces retain the shorter lift lead.
+
+`sections/stacking.py` adds actual base/roof slabs, painted-beam outlines and corner
+posts, with aligned conveyor/pipe floor holes. Stack search reserves the actual
+lane parts and full-height shafts rather than their empty enclosing corners,
+and can move solid branches above or below an obstructing collector.
+Fluid bays likewise reserve the actual junction and pump bodies, with lateral
+approaches only at branch height rather than extruded up the whole pump.
+Each external material has a bottom feed, local branches and an upward
+continuation; outputs collect into their upward trunk. Complete section flows
+use both genuine side ports before adding inline boundary bodies for more peers.
+Equal-rate obligations route directly; partial external contributions retain
+aggregate routing. `StackLane` records local demand/export, trunk capacity and
 any required external input head. These authoring obligations are not saved
 transport properties and cannot be recovered just by decoding a `.sbp`.
+
+Conveyor trunks select the slowest allowed tier meeting each lane's local
+demand/export. The shared inter-section lift profile uses the slowest allowed
+tier meeting the busiest routed solid stream. Availability of a higher tier
+does not itself justify using it. Repeat counts remain bounded by the reported
+lane capacities; a higher explicit FactorioLab belt floor increases that budget.
+
+`sections/signs.py` adds native SmallWide sign pairs after routing, using the
+reference blueprints' orange-on-black INPUT/OUTPUT header and material-row style.
+Each lane has the same alphabetical identifier at both ends. Numeric labels use
+local consumption or production, not trunk capacity or an assumed stacked flow;
+unused ends explicitly say PASS THROUGH. Fluids use m³/min. Rates retain exact
+terminating decimals up to six places, otherwise exact fractions.
+
+Each pair has a native short painted beam mounted on the front (+X) base/roof
+rail. All signs face +X; upper pairs hang beneath the roof and lower pairs stand
+above the base. Placement checks both native body clearance and an unobstructed
+view from the complete text face toward the designer's front edge. It keeps
+signs and supports inside the designer and outside the manual seam. Missing
+mounting space is an explicit refusal, not omitted labels or a clearance
+exemption. `SignObj` preserves text, lane identifier and prefab layout through
+binary round-trips; construction costs include Iron Plates, Quartz Crystals
+and the mounts' Steel Beams. The viewer exposes native text in labels and details.
+Corrected iron-plate Mk1 and plastic/rubber 80/min Mk2 smoke artifacts are in
+`/home/dannyb/satisfactory-tests/paste-corrections/`; these are offline geometry,
+connectivity, binary and schematic-viewer checks, not an in-game paste proof.
+
+`sections/power.py` mounts double Wall Outlets Mk.2 on the painted corner posts.
+The inside faces form a ring and supply all machines and powered pumps, respecting
+seven wires per face and native wire lengths. Reciprocal hidden connections join
+each outlet's two faces; outside faces remain unused for external hookups.
+Socket poses and inherited ±70 cm connection offsets follow the native references.
+Only each socket's own mounting post is exempt from its body collision check.
 
 Repeat a module at its reported vertical pitch with the same XY/orientation.
 **Manually bridge corresponding endpoints with one lift for solids**, or a pipe

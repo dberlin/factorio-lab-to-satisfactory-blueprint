@@ -13,8 +13,9 @@ from dataclasses import replace
 from fractions import Fraction
 from typing import Literal
 
-from flab2bp.sfy.geometry import Vector, box_bounds, port_forward, world_port
+from flab2bp.sfy.geometry import Vector, port_forward, world_port
 from flab2bp.sfy.labmap import LabMap, item_class, machine_class
+from flab2bp.sfy.layout.corridors import attachment_box_cm
 from flab2bp.sfy.layout.manifold import (
     MERGER_CLASS,
     SPLITTER_CLASS,
@@ -37,6 +38,7 @@ from flab2bp.sfy.layout.splines import (
     spline_length,
     straight,
 )
+from flab2bp.sfy.layout.validate import attachment_boxes
 from flab2bp.sfy.registry import Buildable, Port, Registry
 from flab2bp.sfy.sections.construction import _attachment_port, _Construction
 from flab2bp.sfy.sections.model import (
@@ -252,11 +254,11 @@ def build_fluid_section(
     pipe_lead = max(minimum_lengths.values()) + 1
     bend = max(limits.pipe_bend_radius_2d_cm, limits.pipe_min_bend_radius_cm * 1.05 + 1)
     attachment_height = max(
-        high[2] - low[2]
+        2 * box.reach[2]
         for cls in (SPLITTER_CLASS, MERGER_CLASS)
-        for box in registry.buildables[cls].clearance
-        for low, high in (box_bounds(box, Pose(0, 0, 0, 0).transform()),)
+        for box in attachment_boxes(AttachmentObj(0, cls, Pose(0, 0, 0, 0)), registry)
     )
+    attachment_half = attachment_box_cm(registry)
     layer = grid_ceil(max(lift_min, 2 * bend, attachment_height + 2 * pipe_radius), grid)
     stand = slab_top_cm(registry)
     # A factory outlet has no established pump head. Raise the production
@@ -460,6 +462,7 @@ def build_fluid_section(
             belt_y = side * max(
                 abs(manifold_y),
                 abs(lift_y) + abs(branch.translation[1]) + build.lead,
+                abs(lift_y) + lift_width + attachment_half,
             )
             for index, actor in enumerate(build.machines):
                 position, _ = build.at((actor, port.name))

@@ -345,6 +345,50 @@ return 0;
     return (resolved, ambiguous);
 }
 
+/// Actor-local envelope of the cooked splitter/merger mesh instances.
+/// Transform all eight mesh-bound corners before combining their bounds.
+Dictionary<string, object?>? AttachmentInstanceBounds(UObject cdo, string className)
+{
+    var data = cdo.GetOrDefault<UObject?>("mInstanceDataCDO", null);
+    var instances = data?.GetOrDefault<CUE4Parse.UE4.Assets.Objects.FStructFallback[]>("Instances", []);
+    if (instances is null || instances.Length == 0) return null;
+    var low = new[] { double.PositiveInfinity, double.PositiveInfinity, double.PositiveInfinity };
+    var high = new[] { double.NegativeInfinity, double.NegativeInfinity, double.NegativeInfinity };
+    var meshes = new List<string>();
+    foreach (var instance in instances)
+    {
+        var mesh = instance.GetOrDefault<UStaticMesh?>("StaticMesh", null);
+        var transform = instance.GetOrDefault<FTransform?>("RelativeTransform", null);
+        var bounds = mesh?.RenderData?.Bounds;
+        if (mesh is null || transform is null || bounds is null)
+            throw new InvalidDataException($"{className}: attachment instance lacks mesh, transform or render bounds");
+        meshes.Add($"{mesh.Owner?.Name}.{mesh.Name}");
+        foreach (var x in new[] { -1f, 1f })
+        foreach (var y in new[] { -1f, 1f })
+        foreach (var z in new[] { -1f, 1f })
+        {
+            var point = transform.Value.TransformPosition(bounds.Origin + bounds.BoxExtent * new FVector(x, y, z));
+            var values = new[] { (double)point.X, point.Y, point.Z };
+            for (var axis = 0; axis < 3; axis++)
+            {
+                low[axis] = Math.Min(low[axis], values[axis]);
+                high[axis] = Math.Max(high[axis], values[axis]);
+            }
+        }
+    }
+    var origin = Enumerable.Range(0, 3).Select(i => (low[i] + high[i]) / 2).ToArray();
+    var extent = Enumerable.Range(0, 3).Select(i => (high[i] - low[i]) / 2).ToArray();
+    return new Dictionary<string, object?>
+    {
+        ["property"] = "mInstanceDataCDO.Instances",
+        ["mesh"] = string.Join(";", meshes),
+        ["stated_on"] = className,
+        ["origin"] = origin,
+        ["box_extent"] = extent,
+        ["sphere_radius"] = Math.Sqrt(extent.Sum(v => v * v)),
+    };
+}
+
 /// The local-space box of the static mesh a spline buildable repeats along itself.
 ///
 /// A conveyor belt carries `mMesh` (`Buildables/FGBuildableConveyorBelt.h:146`)
@@ -363,11 +407,20 @@ return 0;
 /// can be checked against the install.
 Dictionary<string, object?>? MeshBounds(UObject generatedClass, List<UObject> exports)
 {
+    // Splitter/merger bodies use lightweight mesh instances, not mMesh.
+    // Keep their actor-local envelope separate from spline-piece bounds.
+    var ancestor = generatedClass;
+    while (ancestor is not null
+        && ancestor.Name is not ("FGBuildableAttachmentSplitter" or "FGBuildableAttachmentMerger"))
+        ancestor = SuperClass(ancestor);
+    var attachment = ancestor is not null;
     var current = generatedClass;
     var currentExports = exports;
     for (var depth = 0; depth < 16 && current is not null; depth++)
     {
         var cdo = currentExports.FirstOrDefault(e => e.Name == "Default__" + current.Name);
+        if (attachment && cdo is not null && AttachmentInstanceBounds(cdo, current.Name) is { } body)
+            return body;
         // `mMesh` before `mMidMesh` is an ASSUMPTION about today's classes, not a
         // rule the game states: no buildable in this build carries both, so the
         // order has never had to decide anything. A class that did carry both
@@ -509,8 +562,12 @@ static string? NativeSuperName(UObject generatedClass)
 object Port(string name, List<UObject> chain, string? nativeSuper)
 {
     var template = chain[0];
-    var location = template.GetOrDefault("RelativeLocation", FVector.ZeroVector);
-    var rotation = template.GetOrDefault("RelativeRotation", FRotator.ZeroRotator);
+    // An omitted transform inherits the parent component, just like direction
+    // and connection count. Mk2/Mk3 wall outlets override capacity, not position.
+    var location = chain.FirstOrDefault(t => t.Properties.Any(p => p.Name.Text == "RelativeLocation"))
+        ?.GetOrDefault("RelativeLocation", FVector.ZeroVector) ?? FVector.ZeroVector;
+    var rotation = chain.FirstOrDefault(t => t.Properties.Any(p => p.Name.Text == "RelativeRotation"))
+        ?.GetOrDefault("RelativeRotation", FRotator.ZeroRotator) ?? FRotator.ZeroRotator;
     var kind = KindOf(template)!;
     var (direction, source) = DirectionOf(chain, kind, nativeSuper);
     var (links, linksSource) = MaxConnectionsOf(chain, kind);

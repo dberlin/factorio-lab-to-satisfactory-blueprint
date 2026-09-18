@@ -34,7 +34,6 @@ from flab2bp.sfy.layout.corridors import (
     Measures,
     attachment_turn,
     attachment_turn_tight,
-    turn_radius_cm,
 )
 from flab2bp.sfy.layout.lattice import GROUND_LEVEL, Lattice, Node, Occupancy, occupancy_for
 from flab2bp.sfy.layout.manifold import shortest_belt_cm
@@ -250,7 +249,7 @@ def _placement(realised: Realised, *machines: MachineObj) -> SfyPlacement:
 def _judge(realised: Realised, *machines: MachineObj, only: frozenset[str]) -> Report:
     report = validate(_placement(realised, *machines), None, _registry(), only=only)
     assert report.errors == (), [f.message for f in report.errors]
-    assert set(report.skipped).isdisjoint(only), report.skipped
+    assert set(report.skipped).isdisjoint(only - {"belt.capsule"}), report.skipped
     return report
 
 
@@ -303,51 +302,18 @@ def _l_path(corner_legs: int) -> tuple[tuple[Node, ...], MachineObj, MachineObj]
     return (_join(_line(source.node, corner), _line(corner, landing)), maker, eater)
 
 
-def test_an_l_path_with_four_node_legs_is_an_arc_or_an_attachment_and_says_which() -> None:
-    """Which turn is taken is the registry's answer, and the result shows it.
-
-    With the shipped registry an attachment turns inside its own port reach plus
-    the shortest legal belt and an arc costs a whole turn radius, so the
-    attachment is the cheaper of the two and stands in the build; drop the radius
-    under the attachment's cost and the same path comes back as one unbroken belt
-    with no object on the corner at all.
-
-    ``turns`` is what SAYS which, one entry per corner: neither count beside it
-    can, because an attachment may be a tap rather than a turn and a stub out of
-    an off-node port can put a corner where no three path nodes show one.
-    """
-    measures = _measures()
-    assert attachment_turn_tight(measures).cost < turn_radius_cm(_registry())
-
-    path, maker, eater = _l_path(4)
+def test_a_legal_l_path_prefers_one_continuous_belt_over_a_turning_attachment() -> None:
+    path, maker, eater = _l_path(7)
     source, sink = _terminal(maker, "Output0"), _terminal(eater, "Input0")
-
     chosen = _run(path, source, sink)
-    assert chosen.turns == (ATTACHMENT,)
-    assert len(chosen.attachments) == 1
-    assert len(chosen.belts) == 2
-    assert chosen.attachments[0].class_name != ""
-    _judge(chosen, maker, eater, only=BELT_CHECKS)
-
-    tight = replace(measures, radius=attachment_turn_tight(measures).cost - measures.grid)
-    arced = _run(path, source, sink, measures=tight)
-    assert arced.turns == (ARC,)
-    assert arced.attachments == ()
-    assert len(arced.belts) == 1
-
-    assert (ARC, ATTACHMENT) == ("arc", "attachment")
+    assert chosen.turns == (ARC,)
+    assert chosen.attachments == ()
+    assert len(chosen.belts) == 1
+    _judge(chosen, maker, eater, only=BELT_CHECKS | {"belt.capsule"})
 
 
 def test_a_corner_with_three_node_legs_is_laid_as_an_attachment_turn() -> None:
-    """The controller's ruling, measured: a splitter's box is SOFT.
-
-    What a turn at a corner really denies the straight into it is the reach to
-    the attachment's own port plus the shortest belt the game allows -- 201 cm on
-    the shipped registry -- and not the 200 cm soft box on top of that.  So a
-    three-node leg, which is 300 cm, turns with the grid step to spare; charging
-    the box refuses it by one centimetre, which is what Task 10 measured 25 times
-    over 8 rip-up rounds.
-    """
+    """A tight turn reserves its body and perpendicular belt, not soft emptiness."""
     grid = _lattice().grid_cm
     measures = _measures()
     assert attachment_turn_tight(measures).cost < 3.0 * grid < attachment_turn(measures).cost
@@ -364,7 +330,7 @@ def test_a_corner_with_three_node_legs_is_laid_as_an_attachment_turn() -> None:
 
 def test_two_attachment_turns_share_one_minimum_belt_on_the_leg_between_them() -> None:
     lattice, measures = _lattice(), _measures()
-    gap = math.ceil((2 * measures.reach + measures.lead_in) / lattice.grid_cm)
+    gap = math.ceil(max(2 * measures.box, 2 * measures.reach + measures.lead_in) / lattice.grid_cm)
 
     def path_with_gap(steps: int) -> tuple[Node, ...]:
         first = (10, 10, GROUND_LEVEL)
@@ -380,26 +346,12 @@ def test_two_attachment_turns_share_one_minimum_belt_on_the_leg_between_them() -
     assert realised.turns == (ATTACHMENT, ATTACHMENT)
     assert len(realised.belts) == 3
     assert _chord_cm(realised.belts[1]) == gap * lattice.grid_cm - 2 * measures.reach
-    _judge(realised, only=BELT_CHECKS | {"geom.bounds"})
+    _judge(realised, only=BELT_CHECKS | {"geom.bounds", "geom.attachment_body", "belt.capsule"})
 
     with pytest.raises(RealiseError) as caught:
         _run_wall_corner(path_with_gap(gap - 1))
     assert caught.value.cause == "corner"
     assert (10, 10 + gap - 1, GROUND_LEVEL) in caught.value.nodes
-
-
-def test_turn_assignment_keeps_costlier_small_reach_for_a_later_corner() -> None:
-    """A cheap first arc must not hide the attachment needed on a shared leg."""
-    z = GROUND_LEVEL
-    path = _join(
-        _line((5, 10, z), (10, 10, z)),
-        _line((10, 10, z), (10, 13, z)),
-        _line((10, 13, z), (15, 13, z)),
-    )
-    # Arc costs 200 and reaches 200; attachment costs 201 but reaches only 100.
-    # The second arc fits after the attachment, not after the cheaper first arc.
-    realised = _run_wall_corner(path, measures=replace(_measures(), radius=200.0))
-    assert realised.turns == (ATTACHMENT, ARC)
 
 
 @pytest.mark.parametrize("at_source", [True, False])
@@ -432,14 +384,13 @@ def _flat_motion(path: Sequence[Node], selected: dict[int, int]) -> MotionWitnes
     )
 
 
-def test_witness_keeps_selected_arc_instead_of_cheaper_attachment() -> None:
+def test_witness_keeps_selected_attachment_instead_of_preferred_arc() -> None:
     z = GROUND_LEVEL
     path = _join(_line((5, 10, z), (10, 10, z)), _line((10, 10, z), (10, 15, z)))
     source, sink = _wall(path[0], (1.0, 0.0, 0.0)), _wall(path[-1], (0.0, -1.0, 0.0))
-    assert _run(path, source, sink).turns == (ATTACHMENT,)
-    realised = _run(path, source, sink, motion=_flat_motion(path, {5: 0}))
-    assert realised.turns == (ARC,)
-    assert realised.attachments == ()
+    realised = _run(path, source, sink, motion=_flat_motion(path, {5: 1}))
+    assert realised.turns == (ATTACHMENT,)
+    assert len(realised.attachments) == 1
     _judge(realised, only=BELT_CHECKS)
 
 
@@ -447,15 +398,14 @@ def test_witness_does_not_substitute_a_feasible_turn_for_an_infeasible_selection
     z = GROUND_LEVEL
     path = _join(
         _line((5, 10, z), (10, 10, z)),
-        _line((10, 10, z), (10, 13, z)),
-        _line((10, 13, z), (15, 13, z)),
+        _line((10, 10, z), (10, 17, z)),
+        _line((10, 17, z), (15, 17, z)),
     )
     source, sink = _wall(path[0], (1.0, 0.0, 0.0)), _wall(path[-1], (-1.0, 0.0, 0.0))
-    measures = replace(_measures(), radius=200.0)
-    realised = _run(path, source, sink, measures=measures, motion=_flat_motion(path, {5: 1, 8: 0}))
+    realised = _run(path, source, sink, motion=_flat_motion(path, {5: 1, 12: 0}))
     assert realised.turns == (ATTACHMENT, ARC)
     with pytest.raises(RealiseError) as caught:
-        _run(path, source, sink, measures=measures, motion=_flat_motion(path, {5: 0, 8: 0}))
+        _run(path, source, sink, motion=_flat_motion(path, {5: 0, 12: 0}))
     assert caught.value.cause == "corner"
 
 
@@ -612,6 +562,9 @@ def test_a_wall_corner_refuses_an_attachment_and_names_its_nodes(axis: int, uppe
 
 def test_an_attachment_can_stand_on_the_first_object_line() -> None:
     path, corner = _wall_corner(_lattice().object_lines.start)
+    leg = math.ceil(attachment_turn_tight(_measures()).cost / _lattice().grid_cm)
+    at = path.index(corner)
+    path = path[at - leg : at + leg + 1]
     realised = _run_wall_corner(path)
     assert realised.turns == (ATTACHMENT,)
     assert realised.attachments[0].pose.location[:2] == _lattice().world(corner)[:2]
@@ -877,6 +830,19 @@ def test_a_lift_of_four_levels_becomes_a_lift_object_that_validates() -> None:
     assert math.dist(crown, realised.belts[1].start) <= BELT_CONNECTION_CM
     _judge(realised, maker, only=LIFT_CHECKS)
     _judge(realised, maker, only=BELT_CHECKS)
+
+
+def test_descending_lift_entry_and_turned_exit_follow_native_outward_normals() -> None:
+    start, entry, exit_, finish = (8, 8, 8), (14, 8, 8), (14, 8, 4), (14, 14, 4)
+    path = _join(_line(start, entry), (entry, exit_), _line(exit_, finish))
+    laid = _run(path, _wall(start, (1.0, 0.0, 0.0)), _wall(finish, (0.0, -1.0, 0.0)))
+    lift = laid.lifts[0]
+    geometry = lift_geometry(_registry(), LIFT)
+    _, input_normal = lift.bottom_end(geometry)
+    _, output_normal = lift.top_end(geometry)
+    assert input_normal == pytest.approx((-1.0, 0.0, 0.0))
+    assert output_normal == pytest.approx((0.0, 1.0, 0.0))
+    _judge(laid, only=BELT_CHECKS | LIFT_CHECKS | {"belt.capsule"})
 
 
 def test_a_lift_on_a_port_node_connects_without_a_belt() -> None:

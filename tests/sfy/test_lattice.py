@@ -469,18 +469,14 @@ def test_flags_agree_with_free_on_every_node() -> None:
         assert (occupancy.flags[lattice.index(node)] == 1) is occupancy.free(node), node
 
 
-def test_an_attachment_denies_a_belt_nothing() -> None:
-    """A splitter's only clearance box is SOFT, so it blocks no belt.
-
-    The hologram's own marking decides this: ``CT_Soft`` is a box that may be
-    shared, and ``geom.hard_clearance`` tests only the hard ones.  The lattice
-    takes an attachment's boxes through exactly the same filter as a machine's,
-    so a class that ever gains a hard one is blocked without a change here.
-    """
+def test_attachment_body_denies_unconnected_routes_even_with_soft_clearance() -> None:
     lattice = _lattice()
     splitter = AttachmentObj(4, SPLITTER, Pose(0.0, 0.0, PORT_Z_CM, 0.0))
     with_it = occupancy_for(lattice, (), (splitter,), (), (), _registry())
-    assert with_it.flags == _empty().flags
+    centre = lattice.n // 2
+    assert not with_it.free((centre, centre, GROUND_LEVEL))
+    assert not with_it.free((centre + 2, centre, GROUND_LEVEL))
+    assert with_it.free((centre + 3, centre, GROUND_LEVEL))
 
 
 def test_importing_the_lattice_loads_none_of_the_dsp_placer() -> None:

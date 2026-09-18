@@ -8,25 +8,34 @@ from itertools import count
 import pytest
 
 from flab2bp.layout.budget import WorkBudget
-from flab2bp.sfy.layout.lattice import Node
-from flab2bp.sfy.layout.model import Vector
+from flab2bp.sfy.layout.lattice import Node, occupancy_for
+from flab2bp.sfy.layout.manifold import SPLITTER_CLASS
+from flab2bp.sfy.layout.model import AttachmentObj, Pose, SfyPlacement, Vector
 from flab2bp.sfy.layout.motion import motion_profile
 from flab2bp.sfy.layout.realise import Terminal, realise
 from flab2bp.sfy.layout.router import Routed, RouteFailureKind, route_net
-from flab2bp.sfy.layout.rrr import _overlap, _physical
 from flab2bp.sfy.layout.transitions import incline_run_nodes, sfy_transitions
-from tests.sfy.test_rrr import BELT, ITEM, LIFT, _lattice, _measures, _occupancy, _registry
+from flab2bp.sfy.layout.validate import validate
+from tests.sfy.test_rrr import BELT, ITEM, LIFT, _lattice, _measures, _registry
 
 
 def _fixed(
     path: tuple[Node, ...],
     *,
     sink_facing: Vector = (0.0, -1.0, 0.0),
+    sink_world: Vector | None = None,
     lift_heights: range = range(0),
+    obstacles: tuple[AttachmentObj, ...] = (),
 ) -> tuple[Routed, Terminal, Terminal]:
     lattice = _lattice()
     source = Terminal(path[0], lattice.world(path[0]), (1.0, 0.0, 0.0), None, "wall")
-    sink = Terminal(path[-1], lattice.world(path[-1]), sink_facing, None, "wall")
+    sink = Terminal(
+        path[-1],
+        lattice.world(path[-1]) if sink_world is None else sink_world,
+        sink_facing,
+        None,
+        "wall",
+    )
     allowed = frozenset(path)
     closed = tuple(
         (x, y, z)
@@ -39,7 +48,7 @@ def _fixed(
         lattice.n + 1, lift_heights, incline_run_nodes(_registry().limits, lattice.grid_cm)
     )
     routed = route_net(
-        _occupancy(),
+        occupancy_for(lattice, (), obstacles, (), (), _registry()),
         starts=(source.node,),
         goals=(sink.node,),
         closed=closed,
@@ -107,8 +116,8 @@ def test_merged_ramp_reserve_and_same_heading_slope_closure(
     assert built.turns == ("arc",)
 
 
-@pytest.mark.parametrize("shared,legal", ((3, False), (4, True)))
-def test_consecutive_attachment_turns_share_previous_reach_not_previous_cost(
+@pytest.mark.parametrize("shared,legal", ((4, False), (5, True)))
+def test_consecutive_attachment_turns_reserve_their_rendered_bodies(
     shared: int,
     legal: bool,
 ) -> None:
@@ -175,12 +184,174 @@ def test_lift_connector_requires_a_real_belt_and_clear_shaft_approach(
         ids=count(1000),
         motion=routed.motion,
     )
-    geometry = _physical((built,), _registry())
-    lift_ids = {lift.id for lift in built.lifts}
-    for shaft in geometry:
-        if shaft.object_id in lift_ids:
-            assert not any(
-                _overlap(shaft.bounds, part.bounds)
-                for part in geometry
-                if part.object_id != shaft.object_id and shaft.object_id not in part.contacts
-            )
+    placement = SfyPlacement(
+        designer=_lattice().designer,
+        belts=built.belts,
+        lifts=built.lifts,
+        attachments=built.attachments,
+        links=built.links,
+    )
+    report = validate(placement, None, _registry(), only={"belt.capsule"})
+    assert report.ok, report.errors
+
+
+@pytest.mark.parametrize("separation,legal", ((300.0, False), (500.0, True)))
+def test_tight_turn_body_is_admitted_before_the_route_is_selected(
+    separation: float, legal: bool
+) -> None:
+    """A clear belt centreline does not imply room for the required splitter."""
+    path = (*((x, 4, 2) for x in range(4, 8)), *((7, y, 2) for y in range(5, 8)))
+    x, y, z = _lattice().world((7, 4, 2))
+    obstacle = AttachmentObj(1, SPLITTER_CLASS, Pose(x + separation, y + 300, z, 0))
+    routed, source, sink = _fixed(path, obstacles=(obstacle,))
+    if not legal:
+        assert routed.path is None
+        assert routed.kind is RouteFailureKind.MOTION_EXHAUSTED
+        return
+    assert routed.path == path
+    assert routed.motion is not None
+    built = realise(
+        path,
+        source=source,
+        sink=sink,
+        lattice=_lattice(),
+        measures=_measures(),
+        registry=_registry(),
+        belt_class=BELT,
+        lift_class=LIFT,
+        item_id=ITEM,
+        rate=Fraction(1, 8),
+        ids=count(1000),
+        motion=routed.motion,
+    )
+    report = validate(
+        SfyPlacement(
+            designer=_lattice().designer,
+            attachments=(obstacle, *built.attachments),
+            belts=built.belts,
+            links=built.links,
+        ),
+        None,
+        _registry(),
+        only={"geom.attachment_body", "belt.capsule"},
+    )
+    assert report.ok, report.errors
+
+
+@pytest.mark.parametrize("separation,legal", ((300.0, False), (400.0, True)))
+def test_a_lift_route_checks_the_native_shaft_between_clear_endpoints(
+    separation: float, legal: bool
+) -> None:
+    path = (
+        *((x, 4, 2) for x in range(4, 9)),
+        *((x, 4, 10) for x in range(8, 13)),
+    )
+    x, y, _ = _lattice().world((8, 4, 2))
+    obstacle = AttachmentObj(1, SPLITTER_CLASS, Pose(x + separation, y, 600.0, 0))
+    routed, source, sink = _fixed(
+        path,
+        sink_facing=(-1.0, 0.0, 0.0),
+        lift_heights=range(8, 9),
+        obstacles=(obstacle,),
+    )
+    if not legal:
+        assert routed.path is None
+        assert routed.kind is RouteFailureKind.MOTION_EXHAUSTED
+        return
+    assert routed.path == path
+    assert routed.motion is not None
+    built = realise(
+        path,
+        source=source,
+        sink=sink,
+        lattice=_lattice(),
+        measures=_measures(),
+        registry=_registry(),
+        belt_class=BELT,
+        lift_class=LIFT,
+        item_id=ITEM,
+        rate=Fraction(1, 8),
+        ids=count(1000),
+        motion=routed.motion,
+    )
+    report = validate(
+        SfyPlacement(
+            designer=_lattice().designer,
+            attachments=(obstacle,),
+            belts=built.belts,
+            lifts=built.lifts,
+            links=built.links,
+        ),
+        None,
+        _registry(),
+        only={"geom.attachment_body", "belt.capsule"},
+    )
+    assert report.ok, report.errors
+
+
+@pytest.mark.parametrize("separation,legal", ((300.0, False), (500.0, True)))
+def test_an_arc_cannot_cut_through_a_body_inside_clear_lattice_legs(
+    separation: float, legal: bool
+) -> None:
+    path = (*((x, 8, 2) for x in range(4, 9)), *((8, y, 2) for y in range(9, 13)))
+    x, y, z = _lattice().world((8, 8, 2))
+    obstacle = AttachmentObj(1, SPLITTER_CLASS, Pose(x - separation, y + separation, z, 0))
+    occupancy = occupancy_for(_lattice(), (), (obstacle,), (), (), _registry())
+    assert all(occupancy.free(node) for node in path)
+    routed, _, _ = _fixed(path, obstacles=(obstacle,))
+    if legal:
+        assert routed.path == path
+    else:
+        assert routed.path is None
+        assert routed.kind is RouteFailureKind.MOTION_EXHAUSTED
+
+
+def test_a_lift_cannot_reverse_in_place_to_evade_a_tight_turn() -> None:
+    path = (
+        (4, 4, 2),
+        (5, 4, 2),
+        (6, 4, 2),
+        (6, 4, 6),
+        (6, 4, 2),
+        (6, 5, 2),
+        (6, 6, 2),
+    )
+    routed, _, _ = _fixed(path, lift_heights=range(4, 5))
+    assert routed.path is None
+    assert routed.kind is RouteFailureKind.MOTION_EXHAUSTED
+
+
+def test_a_blocked_terminal_arc_keeps_the_clear_attachment_alternative() -> None:
+    path = tuple((x, 8, 2) for x in range(4, 9))
+    x, y, z = _lattice().world(path[-1])
+    obstacle = AttachmentObj(1, SPLITTER_CLASS, Pose(x - 450, y + 300, z, 0))
+    routed, source, sink = _fixed(path, sink_world=(x, y + 700, z), obstacles=(obstacle,))
+    assert routed.path == path
+    assert routed.motion is not None
+    built = realise(
+        path,
+        source=source,
+        sink=sink,
+        lattice=_lattice(),
+        measures=_measures(),
+        registry=_registry(),
+        belt_class=BELT,
+        lift_class=LIFT,
+        item_id=ITEM,
+        rate=Fraction(1, 8),
+        ids=count(1000),
+        motion=routed.motion,
+    )
+    assert built.turns == ("attachment",)
+    report = validate(
+        SfyPlacement(
+            designer=_lattice().designer,
+            attachments=(obstacle, *built.attachments),
+            belts=built.belts,
+            links=built.links,
+        ),
+        None,
+        _registry(),
+        only={"geom.attachment_body", "belt.capsule"},
+    )
+    assert report.ok, report.errors

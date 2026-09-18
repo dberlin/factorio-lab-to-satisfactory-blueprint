@@ -22,6 +22,7 @@ from flab2bp.sfy.layout.model import (
     PoleObj,
     Pose,
     SfyPlacement,
+    SignObj,
     WireObj,
     belt_ends,
     lift_geometry,
@@ -31,6 +32,7 @@ from flab2bp.sfy.layout.splines import yaw_quaternion
 from flab2bp.sfy.layout.validate import (
     BELT_CLEARANCE_HALF_HEIGHT_CM,
     BELT_CLEARANCE_HALF_WIDTH_CM,
+    attachment_boxes,
     beam_box,
     lift_box,
     passthrough_box,
@@ -110,6 +112,40 @@ def endpoint(
     return world_port(transform, definition), port_forward(transform, definition)
 
 
+def interface_bounds(
+    placement: SfyPlacement, object_id: int, port: str, registry: Registry
+) -> tuple[Vector, Vector]:
+    """Bound the connected mouth's body, not unrelated geometry in its section."""
+    obj = placement.by_id(object_id)
+    world, _ = endpoint(placement, object_id, port, registry)
+    if isinstance(obj, BeltRun):
+        half = BELT_CLEARANCE_HALF_WIDTH_CM
+        return (
+            (world[0] - half, world[1] - half, world[2]),
+            (world[0] + half, world[1] + half, world[2]),
+        )
+    if isinstance(obj, (LiftObj, AttachmentObj)):
+        dynamic = (
+            (lift_box(obj, registry),)
+            if isinstance(obj, LiftObj)
+            else attachment_boxes(obj, registry)
+        )
+        corners = [point for box in dynamic for point in box.corners()]
+        low = [min(point[axis] for point in corners) for axis in range(3)]
+        high = [max(point[axis] for point in corners) for axis in range(3)]
+        return (low[0], low[1], low[2]), (high[0], high[1], high[2])
+    if isinstance(obj, (WireObj, PipeRun)):
+        raise SectionError("a conveyor interface requires a conveyor mouth", cause="data")
+    boxes = [
+        box_bounds(box, obj.pose.transform())
+        for box in registry.buildables[obj.class_name].clearance
+        if not box.soft
+    ]
+    low = [min((box[0][axis] for box in boxes), default=world[axis]) for axis in range(3)]
+    high = [max((box[1][axis] for box in boxes), default=world[axis]) for axis in range(3)]
+    return (low[0], low[1], low[2]), (high[0], high[1], high[2])
+
+
 def transform_placement(
     placement: SfyPlacement, offset: Vector, yaw_deg: float = 0.0
 ) -> SfyPlacement:
@@ -130,6 +166,7 @@ def transform_placement(
             PipeAttachmentObj,
             BeamObj,
             PassthroughObj,
+            SignObj,
         )
     ](obj: T) -> T:
         x, y, z, w = obj.pose.transform().rotation
@@ -150,6 +187,7 @@ def transform_placement(
         pipe_attachments=tuple(actor(obj) for obj in placement.pipe_attachments),
         beams=tuple(actor(obj) for obj in placement.beams),
         passthroughs=tuple(actor(obj) for obj in placement.passthroughs),
+        signs=tuple(actor(obj) for obj in placement.signs),
         pipes=tuple(
             replace(
                 run,
@@ -177,12 +215,15 @@ def placement_bounds(placement: SfyPlacement, registry: Registry) -> tuple[Vecto
     """Bound machines, attachments, belts and lifts, including soft clearance."""
     lows: list[Vector] = []
     highs: list[Vector] = []
-    for obj in chain[MachineObj | AttachmentObj | PoleObj | FoundationObj | PipeAttachmentObj](
+    for obj in chain[
+        MachineObj | AttachmentObj | PoleObj | FoundationObj | PipeAttachmentObj | SignObj
+    ](
         placement.machines,
         placement.attachments,
         placement.poles,
         placement.foundations,
         placement.pipe_attachments,
+        placement.signs,
     ):
         for box in registry.buildables[obj.class_name].clearance:
             low, high = box_bounds(box, obj.pose.transform())
@@ -208,6 +249,7 @@ def placement_bounds(placement: SfyPlacement, registry: Registry) -> tuple[Vecto
             (max(p[0] for p in corners), max(p[1] for p in corners), max(p[2] for p in corners))
         )
     dynamic_boxes = chain(
+        chain.from_iterable(attachment_boxes(obj, registry) for obj in placement.attachments),
         (beam_box(beam, registry) for beam in placement.beams),
         (passthrough_box(hole, registry) for hole in placement.passthroughs),
         chain.from_iterable(pipe_chain(run, registry) for run in placement.pipes),

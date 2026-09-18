@@ -58,6 +58,7 @@ from flab2bp.sfy.header import BlueprintHeader, read_header
 from flab2bp.sfy.labmap import LabMap, load_lab_map
 from flab2bp.sfy.layout.emit import EmitError, decode, emit
 from flab2bp.sfy.layout.model import (
+    AttachmentObj,
     BeamObj,
     BeltRun,
     LiftObj,
@@ -91,6 +92,7 @@ __all__ = [
     "Severity",
     "WorldBox",
     "lift_box",
+    "attachment_boxes",
     "beam_box",
     "passthrough_box",
     "pipe_chain",
@@ -212,9 +214,9 @@ _CAPSULE_UNREAD = (
     "and the tolerance arithmetic inside "
     "UFGSplineMeshGenerationLibrary::GetNextDistanceExceedingTolerance, so the "
     "game's own segment lengths cannot be reproduced and the chain is cut at "
-    "this project's own 50 cm instead. The exclusion of the box a wired port "
-    "sits inside rests on the same unread AFGHologram::TestClearanceOverlap "
-    "that keeps buildable.clearance partial. {lift}"
+    "this project's own 50 cm instead. Connected-mouth corridors are project "
+    "policy informed by embedded native ports, not a full extraction of "
+    "AFGHologram::TestClearanceOverlap, which keeps buildable.clearance partial. {lift}"
 )
 _LIFT_BOX_UNREAD = (
     "A conveyor lift's box is here too, and lift.clearance is partial for a "
@@ -519,6 +521,25 @@ def _belt_chain(run: BeltRun) -> tuple[WorldBox, ...]:
             )
         )
     return tuple(chain)
+
+
+def attachment_boxes(obj: AttachmentObj, registry: Registry) -> tuple[WorldBox, ...]:
+    """Attachment body envelopes, independent of native CT_Soft clearance.
+
+    Use extracted component mesh bounds when present. Older registries lack
+    them; for those the sourced clearance is a conservative project envelope,
+    not proof of mesh geometry or a native placement disqualifier.
+    """
+    buildable = registry.buildables[obj.class_name]
+    boxes = (
+        (ClearanceBox(*buildable.mesh_bounds_cm, translation=(0, 0, 0), soft=False),)
+        if buildable.mesh_bounds_cm is not None
+        else buildable.clearance
+    )
+    return tuple(
+        _place_box(box, obj.pose.transform(), obj.id, f"attachment {obj.id} body {index}")
+        for index, box in enumerate(boxes)
+    )
 
 
 def beam_box(beam: BeamObj, registry: Registry) -> WorldBox:
@@ -1000,6 +1021,10 @@ def _bounds(ctx: Context) -> Iterable[Finding]:
             points += [ctx.lift_end(obj, name)[0] for name in ends]
         else:
             points.append(obj.pose.location)
+        if isinstance(obj, AttachmentObj):
+            points.extend(
+                point for box in attachment_boxes(obj, ctx.registry) for point in box.corners()
+            )
         for box in chains.get(obj.id, ()):
             points += list(box.corners())
         for box in ctx.boxes:
@@ -1064,6 +1089,68 @@ def _hard_clearance(ctx: Context) -> Iterable[Finding]:
                 )
 
 
+@check("geom.attachment_body")
+def _attachment_body(ctx: Context) -> Iterable[Finding]:
+    """Keep attachment project envelopes apart from other standing bodies."""
+    attachments = {obj.id for obj in ctx.placement.attachments}
+    boxes = [box for box in ctx.boxes if not box.soft and box.owner not in attachments]
+    boxes.extend(
+        box for obj in ctx.placement.attachments for box in attachment_boxes(obj, ctx.registry)
+    )
+    for index, first in enumerate(boxes):
+        for second in boxes[index + 1 :]:
+            if first.owner == second.owner or not attachments.intersection(
+                (first.owner, second.owner)
+            ):
+                continue
+            if _apart(first, second):
+                continue
+            depth = _penetration(first, second)
+            if depth > TOUCH_CM:
+                yield ctx.finding(
+                    "geom.attachment_body",
+                    f"{first.label} and {second.label} overlap the project's attachment "
+                    f"body envelope by {depth:.1f} cm",
+                    first.owner,
+                    second.owner,
+                    depth_cm=round(depth, 3),
+                )
+
+
+def _mouth_contact(ctx: Context, run: BeltRun | LiftObj, segment: WorldBox, body: WorldBox) -> bool:
+    """Only the actual connected port's outward straight may enter its envelope."""
+    if body.owner not in ctx.partners.get(run.id, frozenset()):
+        return False
+    for link in ctx.placement.links:
+        for own, other in ((link.a, link.b), (link.b, link.a)):
+            if own[0] != run.id or other[0] != body.owner:
+                continue
+            point, end = ctx.world_port(*other), ctx.world_port(*own)
+            normal = ctx.port_facing(*other)
+            if point is None or end is None or normal is None or math.dist(point, end) > PORT_CM:
+                continue
+            if not body.holds(point):
+                continue
+            if isinstance(run, LiftObj):
+                # A genuinely snapped lift occupies its narrow vertical shaft
+                # above/below the mouth, never another box of the same machine.
+                return math.hypot(run.pose.x - point[0], run.pose.y - point[1]) <= PORT_CM
+            delta = (
+                segment.centre[0] - point[0],
+                segment.centre[1] - point[1],
+                segment.centre[2] - point[2],
+            )
+            along = _dot(delta, normal)
+            lateral = math.sqrt(max(0.0, _dot(delta, delta) - along * along))
+            if (
+                along >= -PORT_CM
+                and lateral <= PORT_CM
+                and abs(_dot(segment.axes[0], normal)) >= math.cos(PORT_ANGLE_RAD)
+            ):
+                return True
+    return False
+
+
 @check("belt.capsule")
 def _capsule(ctx: Context) -> Iterable[Finding]:
     """A conveyor's clearance may not lap another conveyor's, or a hard box.
@@ -1084,42 +1171,32 @@ def _capsule(ctx: Context) -> Iterable[Finding]:
     unread, so the game's own segment LENGTHS cannot be reproduced and the chain
     is cut at :data:`CAPSULE_SEGMENT_CM`, which is ours.
 
-    A belt is not tested against **the one box a port it is wired to sits
-    inside**.  That exclusion is forced by the game's own numbers: a
-    Constructor's ``Output0`` sits at ``(0, 300, 100)`` inside a hard box that
-    runs to ``y = 500``, so a belt that starts at its own port starts 200 cm
-    inside the machine feeding it, and the game must be excluding something in
-    the unread ``TestClearanceOverlap``.  Every OTHER box of the same buildable
-    stays under test -- an Assembler's upper box is not forgiven because its
-    lower one holds the port.
-
-    Where two belts meet, the lap is forgiven up to :data:`BELT_CONNECTION_CM`,
-    and only for segment pairs within one box length of the shared connection
-    point: two runs joined end to end lap by a sliver where their tangents
-    differ, and that is the only place they are entitled to.
-
-    A LIFT is judged here too, with one box rather than a chain -- see
-    :func:`lift_box`, and :func:`_capsule_unread`, which names the width each
-    lift here actually got and where it was read.  Two conveyors WIRED to
-    each other are
-    not tested against each other at all when one of them is a lift's neighbour:
-    a lift's box spans the lift itself, so whatever meets it meets it inside its
-    own box, and the centimetre-level forgiveness two belts get end to end
-    cannot express that.  The exclusion rests on the same unread
-    ``TestClearanceOverlap`` as the wired-port one above, and it is this
-    project's, not the game's.
+    A connected mouth admits only a straight belt on its facing ray. No whole
+    partner actor, machine box or lift is exempted: a returning belt, a turn
+    inside a body, and another part of the connected actor remain obstacles.
+    Attachment mesh bounds are independent of native CT_Soft classification;
+    older registries fall back to conservative sourced clearance envelopes.
     """
     yield ctx.skip("belt.capsule", _capsule_unread(ctx))
     chains = ctx.conveyor_boxes
-    hard = [(i, box) for i, box in enumerate(ctx.boxes) if not box.soft]
-    runs = [obj for obj in ctx.placement.objects if obj.id in chains]
+    hard = [box for box in ctx.boxes if not box.soft]
+    hard.extend(
+        box for obj in ctx.placement.attachments for box in attachment_boxes(obj, ctx.registry)
+    )
+    runs = [
+        obj
+        for obj in chain[BeltRun | LiftObj](ctx.placement.belts, ctx.placement.lifts)
+        if obj.id in chains
+    ]
     for i, run in enumerate(runs):
         for other in runs[i + 1 :]:
-            lifting = isinstance(run, LiftObj) or isinstance(other, LiftObj)
-            if lifting and other.id in ctx.partners.get(run.id, frozenset()):
-                continue  # see the docstring: a lift and a conveyor wired to it
             near = ctx.connection_points.get(frozenset((run.id, other.id)), ())
-            clash = _worst(chains[run.id], chains[other.id], near)
+            left, right = chains[run.id], chains[other.id]
+            if isinstance(other, LiftObj) and isinstance(run, BeltRun):
+                left = tuple(box for box in left if not _mouth_contact(ctx, run, box, right[0]))
+            if isinstance(run, LiftObj) and isinstance(other, BeltRun):
+                right = tuple(box for box in right if not _mouth_contact(ctx, other, box, left[0]))
+            clash = _worst(left, right, near)
             if clash is not None:
                 depth, first, second = clash
                 yield ctx.finding(
@@ -1130,11 +1207,11 @@ def _capsule(ctx: Context) -> Iterable[Finding]:
                     other.id,
                     depth_cm=round(depth, 3),
                 )
-        excluded = ctx.wired_port_boxes.get(run.id, frozenset())
-        for index, box in hard:
-            if index in excluded:
-                continue
-            clash = _worst(chains[run.id], (box,), ())
+        for box in hard:
+            tested = tuple(
+                segment for segment in chains[run.id] if not _mouth_contact(ctx, run, segment, box)
+            )
+            clash = _worst(tested, (box,), ())
             if clash is not None:
                 depth, first, _ = clash
                 yield ctx.finding(
@@ -1630,6 +1707,16 @@ def _pipe_capsule(ctx: Context) -> Iterable[Finding]:
                     box.owner,
                     depth_cm=clash[0],
                 )
+        for obj in ctx.placement.attachments:
+            clash = _worst(ctx.pipe_chains[run.id], attachment_boxes(obj, ctx.registry))
+            if clash is not None:
+                yield ctx.finding(
+                    "pipe.capsule",
+                    f"pipe {run.id} intersects attachment {obj.id}'s body by {clash[0]:.2f} cm",
+                    run.id,
+                    obj.id,
+                    depth_cm=clash[0],
+                )
 
 
 def _fluid_capacity(ctx: Context) -> Iterable[Finding]:
@@ -1941,19 +2028,17 @@ def _position(ctx: Context) -> Iterable[Finding]:
     the paste will not be the build we costed.
 
     The slack is :data:`PORT_CM` and :data:`PORT_ANGLE_RAD`, both ours.  The
-    facing is only checked where the upstream side is a buildable's port: two
+    facing is checked at buildable output ports and conveyor-lift inputs. Two
     belts joined to each other share a point, and their tangents are
     :func:`~flab2bp.sfy.layout.splines.concat`'s business.
 
     A LIFT's two ends are held to the same centimetre, and where they are is
     the game's answer rather than the registry's: ``SetupConnections`` moves
     them to the actor and to ``mTopTransform`` (``lift.connectors``), which is
-    what :meth:`Context.lift_end` works out.  A belt leaving a lift's TOP is
-    held to that end's own facing -- the top yaw turns the connector with it --
-    on exactly the assumption the paragraph above states, and nothing here
-    checks which way a lift's end faces the port it stands ON: what the game
-    does with a lift's own yaw when it snaps to a connection was not read, so
-    there is no rule to hold it to and none is invented.
+    what :meth:`Context.lift_end` works out. Native placed blueprints confirm
+    that both lift normals point outward: an entering belt opposes the entry
+    normal and a leaving belt follows the exit normal. Snapped lift-to-machine
+    normal handling remains unread and is not inferred from belt contacts.
     """
     for link in ctx.placement.links:
         for side, other in ((link.a, link.b), (link.b, link.a)):
@@ -1992,6 +2077,22 @@ def _position(ctx: Context) -> Iterable[Finding]:
                         f"pipe connection normals do not oppose ({angle:.3f} rad)",
                         link.a[0],
                         link.b[0],
+                        angle_rad=round(angle, 5),
+                    )
+        incoming = ctx.placed.get(link.a[0])
+        target = ctx.placed.get(link.b[0])
+        if isinstance(incoming, BeltRun) and isinstance(target, LiftObj):
+            normal = ctx.port_facing(*link.b)
+            tangent = incoming.points[-1][1]
+            if normal is not None and _dot(tangent, tangent) > 1e-12:
+                angle = math.acos(min(1.0, max(-1.0, -_dot(_unit(tangent), normal))))
+                if angle > PORT_ANGLE_RAD:
+                    yield ctx.finding(
+                        "ports.position",
+                        f"belt {incoming.id} enters lift {target.id} {angle:.3f} rad "
+                        "off its outward connector normal",
+                        incoming.id,
+                        target.id,
                         angle_rad=round(angle, 5),
                     )
         upstream = ctx.placed.get(link.a[0])
@@ -3354,6 +3455,7 @@ def _first_difference(want: SfyPlacement, got: SfyPlacement) -> str:
         "pipe_attachments",
         "beams",
         "passthroughs",
+        "signs",
     ):
         mine, theirs = getattr(want, name), getattr(got, name)
         if mine != theirs:

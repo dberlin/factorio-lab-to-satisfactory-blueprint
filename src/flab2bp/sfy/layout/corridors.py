@@ -34,7 +34,7 @@ from fractions import Fraction
 
 from flab2bp.layout.budget import WorkBudget
 from flab2bp.sfy.geometry import port_forward
-from flab2bp.sfy.layout.manifold import SPLITTER_CLASS, crossing_gap_cm, grid_ceil
+from flab2bp.sfy.layout.manifold import MERGER_CLASS, SPLITTER_CLASS, crossing_gap_cm, grid_ceil
 from flab2bp.sfy.layout.model import (
     AttachmentObj,
     BeltRun,
@@ -45,7 +45,7 @@ from flab2bp.sfy.layout.model import (
     belt_ends,
 )
 from flab2bp.sfy.layout.splines import concat, incline, quarter_turn, spline_length, straight
-from flab2bp.sfy.layout.validate import BELT_CLEARANCE_HALF_WIDTH_CM
+from flab2bp.sfy.layout.validate import BELT_CLEARANCE_HALF_WIDTH_CM, attachment_boxes
 from flab2bp.sfy.registry import Port, Registry
 
 __all__ = [
@@ -178,13 +178,16 @@ def attachment_pitch_cm(registry: Registry) -> float:
     it: a splitter's two through ports are 100 cm out on either side, so two of
     them one grid step apart would want a belt of minus one metre between them,
     and ``belt.min_length`` refuses anything at or under ``belt_min_length_cm``.
-    This is the smallest grid multiple that leaves a legal belt between two
-    attachments, and both numbers in it are read.
+    This is the smallest grid multiple that leaves both a legal belt and
+    non-intersecting attachment bodies.
     """
     floor = registry.limits.belt_min_length_cm
     if floor is None:
         raise CorridorError("limits", "the registry states no minimum belt length")
-    return grid_ceil(2.0 * _through_port_offset(registry) + floor, _grid(registry))
+    return grid_ceil(
+        max(2.0 * _through_port_offset(registry) + floor, 2.0 * attachment_box_cm(registry)),
+        _grid(registry),
+    )
 
 
 def _through_port_offset(registry: Registry) -> float:
@@ -229,17 +232,13 @@ def attachment_reach_cm(registry: Registry) -> float:
 
 
 def attachment_box_cm(registry: Registry) -> float:
-    """How far a conveyor attachment's own clearance box reaches from its centre.
-
-    The box is SOFT -- belts and other attachments may pass through it -- so this
-    is not a bound on anything.  It is what a turn made by an attachment is
-    charged for when it is weighed against an arc: the attachment is a thing
-    standing on the floor and the arc is not.
-    """
-    boxes = registry.buildables[SPLITTER_CLASS].clearance
-    if not boxes:
-        raise CorridorError("data", f"{SPLITTER_CLASS} has no clearance box")
-    return max(max(abs(box.min[axis]), abs(box.max[axis])) for box in boxes for axis in (0, 1))
+    """Horizontal attachment body extent, separate from native soft clearance."""
+    return max(
+        abs(box.centre[axis]) + box.reach[axis]
+        for cls in (SPLITTER_CLASS, MERGER_CLASS)
+        for box in attachment_boxes(AttachmentObj(0, cls, Pose(0, 0, 0, 0)), registry)
+        for axis in (0, 1)
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -307,6 +306,7 @@ class Turn:
     kind: str
     reach: float
     cost: float
+    body_reach: float = 0.0
 
     @property
     def is_attachment(self) -> bool:
@@ -320,32 +320,27 @@ def arc_turn(measures: Measures) -> Turn:
 
 def attachment_turn(measures: Measures) -> Turn:
     """The turn a conveyor attachment makes by standing on the corner."""
-    return Turn(kind=ATTACHMENT, reach=measures.reach, cost=measures.box + measures.lead_in)
+    return Turn(
+        kind=ATTACHMENT,
+        reach=measures.reach,
+        cost=measures.box + measures.lead_in,
+        body_reach=measures.box,
+    )
 
 
 def attachment_turn_tight(measures: Measures) -> Turn:
-    """The same turn, charged for what a belt may not share rather than for the box.
+    """A port-connected turn's leg requirement, separate from body reservation.
 
-    The difference from :func:`attachment_turn` is one term and it is the soft
-    box.  A splitter's clearance is ``CT_Soft`` -- :func:`attachment_box_cm`'s
-    own docstring says so, and says in as many words that it is not a bound on
-    anything -- so the game lets a belt run straight through it.  What a turn at
-    a corner really denies the straight into it is therefore the ``reach`` to the
-    attachment's own port, plus the shortest belt the game allows between that
-    port and whatever cut comes before it: ``reach + lead_in``, 100 + 101 = 201 cm
-    with the shipped registry, where :func:`attachment_turn` charges
-    ``box + lead_in`` = 301.
-
-    Both are honest and they answer different questions.  A MANIFOLD corridor
-    packs attachments into columns a belt pitch apart and wants the box kept
-    clear, so it prices the box and :mod:`~flab2bp.sfy.layout.laying` keeps
-    using :func:`attachment_turn`.  A GRID-ROUTED path is a single belt through
-    open floor: nothing else is laid against this corner, and charging it for a
-    box the game shares costs a whole grid step -- which is the difference
-    between a three-node leg fitting and not, and
-    :mod:`~flab2bp.sfy.layout.realise` measured that refusal.
+    The embedded port still needs a minimum belt. A following perpendicular
+    belt must also clear the body's outside face with its swept half-width;
+    native soft clearance does not waive that physical requirement.
     """
-    return Turn(kind=ATTACHMENT, reach=measures.reach, cost=measures.reach + measures.lead_in)
+    return Turn(
+        kind=ATTACHMENT,
+        reach=measures.reach,
+        cost=max(measures.reach + measures.lead_in, measures.box + BELT_CLEARANCE_HALF_WIDTH_CM),
+        body_reach=measures.box,
+    )
 
 
 def choose_turn(
@@ -357,28 +352,10 @@ def choose_turn(
 ) -> Turn:
     """Which way to turn a belt that has ``along`` cm coming in and ``across`` out.
 
-    The two ways are not better or worse in the abstract and this does not treat
-    them as if they were: an arc is one belt and no object, an attachment is an
-    object and two belts, and a build made of either is a build a player would
-    recognise.  What separates them is space, and only space.
-
-    A turn that fits is preferred to one that does not, and where both fit the
-    cheaper one wins -- with the registry the game ships that is the attachment,
-    because a 400 cm bend radius buys a 400 cm quarter circle where an attachment
-    turns inside its own 200 cm box plus one 101 cm belt.  With a tighter radius
-    the arc wins, which is what makes this worth asking rather than deciding
-    once: nothing here knows what the next game version's bend radius is.
-
-    Where NEITHER fits, the cheaper is returned rather than a refusal.  This
-    function is about which turn to try; whether the belt it makes can actually
-    be drawn is the drawing's business, and it refuses with the centimetres.
-
-    ``options`` is the two turns to weigh, and it is here so that the RULE above
-    -- one that fits beats one that does not, and the cheaper of two that fit
-    wins -- is stated once for every caller.  The default is the manifold's pair;
-    :mod:`~flab2bp.sfy.layout.realise` passes :func:`attachment_turn_tight` in
-    place of :func:`attachment_turn` because a grid-routed corner stands in open
-    floor rather than in a packed column, and that function says why.
+    Prefer a continuous curve whenever it fits. An attachment is the fallback
+    for a geometrically tight corner, not a cheaper replacement for a legal
+    belt. If neither fits return the smaller requirement for the caller to
+    diagnose; this helper does not make an impossible corner legal.
     """
     weighed = (
         tuple(options) if options is not None else (arc_turn(measures), attachment_turn(measures))
@@ -386,7 +363,11 @@ def choose_turn(
     if not weighed:
         raise CorridorError("path", "a corner has to be turned somehow; no turn was offered")
     fits = [turn for turn in weighed if turn.cost <= along + _EPS and turn.cost <= across + _EPS]
-    return min(fits or weighed, key=lambda turn: turn.cost)
+    return (
+        min(fits, key=lambda turn: (turn.is_attachment, turn.cost))
+        if fits
+        else min(weighed, key=lambda turn: turn.cost)
+    )
 
 
 @dataclass(frozen=True, slots=True)

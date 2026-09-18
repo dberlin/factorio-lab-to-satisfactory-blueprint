@@ -125,9 +125,10 @@ MAX_CONNECTIONS_SOURCES = ("asset", "asset-inherited", "native", "unknown")
 # Where a buildable's ``mesh_bounds_cm`` came from. There is one entry, and it is
 # the cooked ``UStaticMesh``'s own ``RenderData.Bounds``:
 #
-# ``assets``  the mesh the class's ``mMesh`` (belt) or ``mMidMesh`` (lift)
-#             UPROPERTY points at, read through CUE4Parse;
-#             ``provenance["mesh_bounds"]`` names the property and the asset path
+# ``assets``  the class's ``mMesh`` (belt), ``mMidMesh`` (lift), or the
+#             actor-local union of transformed ``mInstanceDataCDO.Instances``
+#             (splitter/merger), read through CUE4Parse;
+#             ``provenance["mesh_bounds"]`` names the property and asset paths
 #
 # A box measured off a blueprint is not a mesh bound, and Docs.json states no
 # mesh geometry at all -- only ``mMeshLength``/``mMeshHeight``, which are the
@@ -404,15 +405,12 @@ class Buildable:
     # ``powf`` both feed.
     power_exponent: float | None
     production_boost_power_exponent: float | None
-    # The local-space axis-aligned box of the static mesh a spline buildable
-    # repeats along itself, as ``(min, max)`` in centimetres:
-    # ``Origin - BoxExtent`` and ``Origin + BoxExtent`` of the cooked
-    # ``UStaticMesh``'s ``RenderData.Bounds``. ``None`` on every class whose
-    # class default object names no such mesh, which is everything but the belt
-    # and lift marks, the pipelines, the hypertube, the railway and the three
-    # foundation passthroughs. ``mesh_bounds_property`` names the UPROPERTY that
-    # was read (``mMesh`` on a belt, ``mMidMesh`` on a lift) and
-    # ``provenance["mesh_bounds"]`` carries the asset path per class.
+    # Local-space static-mesh bounds as ``(min, max)`` in centimetres.
+    # Splines use their repeating mesh's cooked ``RenderData.Bounds``;
+    # splitter/merger actors use the union of mesh-instance bounds transformed
+    # into actor space. ``None`` means no mesh was extracted for this class.
+    # ``mesh_bounds_property`` identifies ``mMesh``, ``mMidMesh`` or
+    # ``mInstanceDataCDO.Instances``; provenance retains the asset paths.
     #
     # **This is the mesh, not the clearance.** What the game refuses a placement
     # over is the box ``AFGBuildableConveyorBelt::CreateClearanceData`` lays

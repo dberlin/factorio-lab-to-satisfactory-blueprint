@@ -110,7 +110,7 @@ from fractions import Fraction
 
 from flab2bp.layout.budget import WorkBudget, expired
 from flab2bp.layout.geometric_motion import MotionWitness
-from flab2bp.sfy.geometry import box_bounds, port_forward, world_port
+from flab2bp.sfy.geometry import port_forward, world_port
 from flab2bp.sfy.layout.corridors import Measures
 from flab2bp.sfy.layout.grid_nets import (
     LATTICE_TOUCH_CM,
@@ -132,7 +132,7 @@ from flab2bp.sfy.layout.lattice import (
     belt_levels,
 )
 from flab2bp.sfy.layout.manifold import MERGER_CLASS, SPLITTER_CLASS
-from flab2bp.sfy.layout.model import AttachmentObj, Pose, Vector, belt_ends
+from flab2bp.sfy.layout.model import AttachmentObj, Pose, SfyPlacement, Vector
 from flab2bp.sfy.layout.motion import (
     CutProof,
     FixedPathSummary,
@@ -157,9 +157,12 @@ from flab2bp.sfy.layout.router import (
 )
 from flab2bp.sfy.layout.transitions import FLAT_STEPS, incline_run_nodes, sfy_transitions
 from flab2bp.sfy.layout.validate import (
+    BELT_CLEARANCE_HALF_HEIGHT_CM,
     BELT_CLEARANCE_HALF_WIDTH_CM,
     TOUCH_CM,
+    attachment_boxes,
     lift_box,
+    validate,
 )
 from flab2bp.sfy.registry import Port, Registry
 
@@ -389,15 +392,11 @@ class _Try:
 
 @dataclass(frozen=True, slots=True)
 class _Physical:
-    """One hard-object box or conservative belt-segment hull, not a node shadow.
-
-    Only a belt's directly linked END segment gets a lift-contact exemption;
-    later segments of that same belt can still collide with the shaft.
-    """
+    """One native body box or conservative belt-segment hull, not a node shadow."""
 
     object_id: int
     bounds: BoxBounds
-    contacts: tuple[int, ...] = ()
+    attachment: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -454,6 +453,8 @@ class _Run:
     proofs: dict[int, tuple[tuple[PathProof, ...], ...]] = field(default_factory=dict)
     #: Fixed interface approaches cannot be consumed by another net's shaft.
     interfaces: dict[Node, set[int]] = field(default_factory=dict)
+    #: The query's net owns its interface reservations, but not another net's.
+    current_net: int | None = None
 
     # -- the search ---------------------------------------------------------
 
@@ -483,8 +484,18 @@ class _Run:
             self.profile = motion_profile(
                 self.lattice, self.measures, self.registry, self.lift_class, self.transitions
             )
+        obstacles = list(self.occupancy.static_bounds)
+        obstacles.extend(part.bounds for parts in self.physical.values() for part in parts)
+        for node, owners in self.interfaces.items():
+            if not any(owner != self.current_net for owner in owners):
+                continue
+            x, y, z = self.lattice.world(node)
+            width, height = BELT_CLEARANCE_HALF_WIDTH_CM, BELT_CLEARANCE_HALF_HEIGHT_CM
+            obstacles.append(
+                ((x - width, y - width, z - height), (x + width, y + width, z + height))
+            )
         routed = route_net(
-            self.occupancy,
+            replace(self.occupancy, static_bounds=obstacles),
             starts=tuple(terminal.node for terminal in starts),
             goals=tuple(terminal.node for terminal in goals),
             opened=tuple(opened),
@@ -889,32 +900,6 @@ def _in_the_doorway(run: _Run, net: GridNet) -> tuple[Node, ...]:
     return tuple(named)
 
 
-def _shut_shafts(run: _Run, net: GridNet) -> tuple[Node, ...]:
-    """Every node over a machine port that a lift could land on, shut in advance.
-
-    A port terminal's node and its reach lie INSIDE the machine's hard box
-    (R-M3-2 (d)), so a lift with either end on one of them has its column inside
-    that box and can never be built: the column check refuses it, every time, at
-    every height.  The kernel cannot know that -- a lift row names no
-    intermediate node, which is the whole reason the column is checked here --
-    so left to itself it offers the move, the builder refuses it, and the net
-    spends its round's whole allowance proving the same thing one level higher.
-
-    Saying it once, per query, costs this net only the right to fly over its own
-    port's column, and the nodes it gives up there are inside the machine for
-    most of their height anyway.  Wall terminals stand in open floor and keep
-    their shafts.
-    """
-    lattice = run.lattice
-    out: list[Node] = []
-    for terminal in (*net.sources, *net.sinks):
-        if terminal.kind != "port":
-            continue
-        for node in (terminal.node, *terminal.reach):
-            out.extend((node[0], node[1], level) for level in range(node[2] + 1, lattice.n + 1))
-    return tuple(out)
-
-
 def _wall_end(endpoint: _Endpoint | None, node: Node) -> Terminal:
     """The wall terminal a branch that took its own exit really ends on.
 
@@ -964,15 +949,11 @@ def _route_one(run: _Run, net: GridNet) -> _Try:
     that same retry allowance: optional taps with a corresponding wall entry
     or exit are omitted. Geometry and history still apply; only the topology
     changes, so the rejected tap's nodes need not be closed for that retry.
-
-    The first query already has :func:`_shut_shafts` closed against it, so none
-    of those tries is spent on a lift out of the net's own port -- a move the
-    movement table offers and the column check can only ever refuse.
     """
     own = {
         node for terminal in (*net.sources, *net.sinks) for node in (terminal.node, *terminal.reach)
     }
-    closed: set[Node] = set(_shut_shafts(run, net))
+    closed: set[Node] = set()
     # Reach opens an interface's own body, not another net's committed geometry.
     # Nor may a route cross the straight connector stub it will emit at its end.
     closed.update(node for node in own if run.blocker(node) not in (None, net.id))
@@ -1051,6 +1032,7 @@ def _attempt(run: _Run, net: GridNet, closed: Collection[Node], *, allow_taps: b
     above a tap carries its own sink's draw plus everything the tap feeds, and a
     belt laid before that is a belt laid on a guess at its tier (R-M3-7).
     """
+    run.current_net = net.id
     sources = _endpoints(net.sources, net.per_source)
     sinks = _endpoints(net.sinks, net.per_sink)
     branches: list[_Branch] = []
@@ -1377,8 +1359,12 @@ def _build(run: _Run, net: GridNet, branches: Sequence[_Branch], routed: Routed 
             shut=_shut_column(run.lattice, blocked),
             routed=routed,
         )
+    blocked = _blocked_attachments(run, net, realised, physical)
+    if blocked:
+        return _Try(failure="realise", nodes=blocked, shut=blocked, routed=routed)
     for low, high in columns:
         _stake_column(run, net.id, low, high)
+    _stake_attachments(run, net.id, physical)
     run.physical[net.id] = physical
     run.proofs[net.id] = tuple(branch.proofs for branch in branches)
     return _Try(
@@ -1700,28 +1686,19 @@ def _pieces(path: Sequence[Node], cuts: Sequence[int]) -> list[tuple[Node, ...]]
 
 def _physical(realised: Sequence[Realised], registry: Registry) -> tuple[_Physical, ...]:
     """Cache physical bounds once; curved belt hulls remain conservative AABBs."""
-    links: dict[tuple[int, str], int] = {}
-    for laid in realised:
-        for link in laid.links:
-            links[link.a] = link.b[0]
-            links[link.b] = link.a[0]
     boxes: list[_Physical] = []
     for laid in realised:
         for belt in laid.belts:
-            entry, exit_end = belt_ends(registry, belt.class_name)
-            last = len(belt.points) - 2
-            for index, bounds in enumerate(_belt_boxes(belt)):
-                contacts: list[int] = []
-                for at_end, port in ((index == 0, entry), (index == last, exit_end)):
-                    other = links.get((belt.id, port))
-                    if at_end and other is not None:
-                        contacts.append(other)
-                boxes.append(_Physical(belt.id, bounds, tuple(contacts)))
+            for bounds in _belt_boxes(belt):
+                boxes.append(_Physical(belt.id, bounds))
         for obj in laid.attachments:
-            transform = obj.pose.transform()
-            for box in registry.buildables[obj.class_name].clearance:
-                if not box.soft:
-                    boxes.append(_Physical(obj.id, box_bounds(box, transform)))
+            for box in attachment_boxes(obj, registry):
+                centre, reach = box.centre, box.reach
+                body_bounds: BoxBounds = (
+                    (centre[0] - reach[0], centre[1] - reach[1], centre[2] - reach[2]),
+                    (centre[0] + reach[0], centre[1] + reach[1], centre[2] + reach[2]),
+                )
+                boxes.append(_Physical(obj.id, body_bounds, attachment=True))
         for lift in laid.lifts:
             column_box = lift_box(lift, registry)
             centre, reach = column_box.centre, column_box.reach
@@ -1738,6 +1715,55 @@ def _overlap(left: BoxBounds, right: BoxBounds) -> bool:
         min(left[1][axis], right[1][axis]) - max(left[0][axis], right[0][axis]) > TOUCH_CM
         for axis in range(3)
     )
+
+
+def _blocked_attachments(
+    run: _Run, net: GridNet, realised: Sequence[Realised], physical: tuple[_Physical, ...]
+) -> tuple[Node, ...]:
+    """Admit rendered turn/tap bodies, not just the route's centreline shadow."""
+    attachments = tuple(obj for laid in realised for obj in laid.attachments)
+    blocked: set[int] = set()
+    for part in physical:
+        if not part.attachment:
+            continue
+        if any(_overlap(part.bounds, bounds) for bounds in run.occupancy.static_bounds) or any(
+            _overlap(part.bounds, other.bounds)
+            for owner, parts in run.physical.items()
+            if owner != net.id
+            for other in parts
+        ):
+            blocked.add(part.object_id)
+    fragment = SfyPlacement(
+        designer=run.lattice.designer,
+        machines=run.occupancy.machines,
+        attachments=(*run.occupancy.attachments, *attachments),
+        belts=tuple(obj for laid in realised for obj in laid.belts),
+        lifts=tuple(obj for laid in realised for obj in laid.lifts),
+        links=tuple(link for laid in realised for link in laid.links),
+    )
+    report = validate(fragment, None, run.registry, only={"geom.attachment_body", "belt.capsule"})
+    for finding in report.errors:
+        blocked.update(finding.objects)
+    half, grid = run.lattice.designer.half_cm, run.lattice.grid_cm
+    points = [obj.pose.location for obj in attachments if obj.id in blocked]
+    points.extend(lift.pose.location for lift in fragment.lifts if lift.id in blocked)
+    points.extend(
+        point for obj in fragment.belts if obj.id in blocked for point in (obj.start, obj.end)
+    )
+    return tuple(
+        dict.fromkeys(
+            (round((x + half) / grid), round((y + half) / grid), round(z / grid))
+            for x, y, z in points
+        )
+    )
+
+
+def _stake_attachments(run: _Run, net_id: int, physical: Sequence[_Physical]) -> None:
+    """Reserve each body expanded once for a passing belt, with reversible claims."""
+    for part in physical:
+        if part.attachment:
+            for node in _box_nodes(run.lattice, *part.bounds):
+                run.stake(net_id, (node,), claim_blocked=True, centreline=False)
 
 
 def _blocked_column(
@@ -1781,12 +1807,6 @@ def _blocked_column(
                 for owner, parts in run.physical.items()
                 if owner != net.id
                 for part in parts
-            ):
-                return (low, high)
-            if any(
-                _overlap(bounds, part.bounds)
-                for part in physical
-                if part.object_id != lift.id and lift.id not in part.contacts
             ):
                 return (low, high)
             for node in _box_nodes(run.lattice, *bounds):
@@ -1975,3 +1995,5 @@ def _restore(run: _Run, best: _Played) -> None:
     for net_id, low, high in best.columns:
         _stake_column(run, net_id, low, high)
     run.physical.update(best.physical)
+    for net_id, physical in best.physical:
+        _stake_attachments(run, net_id, physical)

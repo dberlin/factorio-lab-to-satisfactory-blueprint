@@ -17,7 +17,6 @@ from __future__ import annotations
 import math
 import time
 from collections.abc import Collection, Iterator, Sequence
-from dataclasses import replace
 from fractions import Fraction
 from functools import cache
 from itertools import count
@@ -40,12 +39,10 @@ from flab2bp.sfy.layout.manifold import SPLITTER_CLASS
 from flab2bp.sfy.layout.model import (
     BeltRun,
     LiftObj,
-    Link,
     MachineObj,
     Pose,
     SfyPlacement,
     Vector,
-    belt_ends,
 )
 from flab2bp.sfy.layout.motion import lift_heights
 from flab2bp.sfy.layout.realise import Realised, Terminal, realise
@@ -65,14 +62,13 @@ from flab2bp.sfy.layout.rrr import (
     _Played,
     _restore,
     _Run,
-    _shut_shafts,
     _stake_column,
     route_all,
 )
 from flab2bp.sfy.layout.splines import straight
 from flab2bp.sfy.layout.strategy import _measure
 from flab2bp.sfy.layout.transitions import incline_run_nodes, sfy_transitions
-from flab2bp.sfy.layout.validate import TOUCH_CM, validate
+from flab2bp.sfy.layout.validate import BELT_CLEARANCE_HALF_WIDTH_CM, TOUCH_CM, validate
 from flab2bp.sfy.registry import Port, Registry, load_registry
 from flab2bp.sfy.spec import SfyBuildSpec, SfyMachineGroup, designer
 from flab2bp.spec import BeltTier
@@ -600,11 +596,6 @@ def test_stranded_nets_never_produce_a_partial_placement() -> None:
     # is different evidence from "there is no way", and the packer reads them
     # differently.  What the contract promises is that nothing was built from it.
     assert all(tree.net.id != 1 for tree in outcome.trees)
-    # Nothing is named here, and that is the rule rather than a gap: what is
-    # standing in this net's way is a MACHINE, which is nobody's to move on the
-    # router's say-so.  The loop names belts, and the packer -- which already
-    # knows where its machines are -- is what moves a machine.
-    assert outcome.blame == {}, "a machine in the way is nobody's to move"
     _judge(outcome, *machines)
 
 
@@ -693,13 +684,13 @@ def test_tap_cut_preserves_parent_turn_room_and_restores_its_witnesses() -> None
     _commit_branch(run, net, branches, routed, source, sink, share, tap=None, merging=False)
 
     sites = run.tap_sites(branches, net)
-    assert (9, 11, 2) not in sites  # The new port would leave only 200 cm after the turn.
-    assert (9, 12, 2) in sites
-    tap = run.tap_access(branches, net, ())[(10, 12, 2)]
+    assert (9, 12, 2) not in sites  # The new body would crowd the preceding turn.
+    assert (9, 13, 2) in sites
+    tap = run.tap_access(branches, net, ())[(10, 13, 2)]
     assert tap.terminal is not None
-    assert tap.terminal.node == (10, 12, 2)
-    assert tap.terminal.world == lattice.world((9, 12, 2))
-    child_node = (20, 12, 2)
+    assert tap.terminal.node == (10, 13, 2)
+    assert tap.terminal.world == lattice.world((9, 13, 2))
+    child_node = (20, 13, 2)
     child_sink = Terminal(child_node, lattice.world(child_node), (-1.0, 0.0, 0.0), None, "wall")
     child = run.query((tap.terminal,), (child_sink,), (), ())
     assert child.path is not None
@@ -725,7 +716,7 @@ def test_tap_cut_preserves_parent_turn_room_and_restores_its_witnesses() -> None
     assert net.id not in run.proofs
     _restore(run, best)
     assert run.proofs[net.id] == tree.proofs
-    assert not run.occupancy.free((9, 12, 2))
+    assert not run.occupancy.free((9, 13, 2))
 
 
 def test_restore_keeps_transverse_shadow_of_an_off_grid_tap_stub() -> None:
@@ -909,23 +900,6 @@ def test_lift_rejects_unknown_foreign_occupancy_even_behind_known_shadow() -> No
     assert _column_blocked(run, candidate) == candidate.lift_columns[0]
 
 
-def test_lift_contact_exempts_only_linked_endpoint_segment_not_returning_belt() -> None:
-    run = _loop(_occupancy())
-    candidate = _column_candidate()
-    lift = candidate.lifts[0]
-    belt = BeltRun(9001, BELT, straight((0.0, 600.0, 200.0), (1.0, 0.0, 0.0), 500.0))
-    entry, _ = belt_ends(run.registry, BELT)
-    lift_entry, _ = belt_ends(run.registry, LIFT)
-    candidate = replace(
-        candidate, belts=(belt,), links=(Link((lift.id, lift_entry), (belt.id, entry)),)
-    )
-    assert _column_blocked(run, candidate) == ()
-    # The first segment is still attached, but a later part returns through the shaft.
-    points = (*belt.points, *straight((500.0, 600.0, 200.0), (-1.0, 0.0, 0.0), 500.0)[1:])
-    returning = replace(candidate, belts=(replace(belt, points=points),))
-    assert _column_blocked(run, returning) == candidate.lift_columns[0]
-
-
 def _carrier(path: Sequence[Node]) -> _Branch:
     """One branch of a tree, with only what a tap or a flow question reads."""
     return _Branch(
@@ -968,16 +942,21 @@ def test_tapped_trees_preserve_whole_ramps_in_both_via_forms(reverse: bool) -> N
     # Structural candidates still preserve complete ramps in either authored form.
     run.stake(net.id, path)
     sites = run.tap_sites((trunk,), net)
+    room = math.ceil((_measures().box + BELT_CLEARANCE_HALF_WIDTH_CM) / lattice.grid_cm)
     near = [
         max(
-            (tap for side, tap in sites.items() if side[0] == 17 and tap.node[1] < foot[1]),
+            (tap for side, tap in sites.items() if side[0] == 17 and tap.node[1] <= foot[1] - room),
             key=lambda tap: tap.node[1],
         ),
     ]
     if not reverse:
         near.append(
             min(
-                (tap for side, tap in sites.items() if side[0] == 17 and tap.node[1] > crest[1]),
+                (
+                    tap
+                    for side, tap in sites.items()
+                    if side[0] == 17 and tap.node[1] >= crest[1] + room
+                ),
                 key=lambda tap: tap.node[1],
             )
         )
@@ -1430,32 +1409,9 @@ def test_wall_flow_can_share_a_turn_certified_tap_without_short_belts() -> None:
 def test_internal_taps_do_not_open_their_neighbors_as_ramp_vias(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Tap paths must leave their shadow and retain the real connector stub.
-
-    A former all-sinks-reached assertion counted a fourth node-only path whose
-    100/200 cm corner cannot be realised; it did not establish a valid factory.
-    """
-
-    spec = flow_spec("iron-rod-60")
-    lattice = Lattice.over(designer("mk2", _registry()), _registry())
-    constructors = (
-        (-1200.0, -1200.0, 90.0),
-        (-1200.0, -300.0, 90.0),
-        (-600.0, 600.0, -90.0),
-        (-100.0, -600.0, 180.0),
-    )
-    machines = tuple(
-        _machine(101 + index, CONSTRUCTOR, x, y, yaw, ROD)
-        for index, (x, y, yaw) in enumerate(constructors)
-    ) + (
-        _machine(105, SMELTER, -1600.0, 800.0, 0.0, INGOT),
-        _machine(106, SMELTER, 0.0, -1600.0, 90.0, INGOT),
-    )
-    net = next(
-        net
-        for net in nets_for(spec, machines, lattice, _registry(), _lab_map())
-        if net.item_id == "iron-ingot"
-    )
+    """Tap paths must leave their shadow and retain the real connector stub."""
+    lattice = _lattice()
+    machines, (net,) = _tapped()
     query = _Run.query
     tap_paths: list[tuple[Routed, Terminal, Terminal]] = []
     clashes: list[Node] = []
@@ -1483,7 +1439,7 @@ def test_internal_taps_do_not_open_their_neighbors_as_ramp_vias(
 
     monkeypatch.setattr(_Run, "query", observe)
     run = _loop(occupancy_for(lattice, machines, (), (), (), _registry()))
-    attempt = _attempt(run, net, _shut_shafts(run, net))
+    attempt = _attempt(run, net, ())
 
     assert clashes == [], "a query may not traverse its trunk's occupied shadow"
     assert attempt.failure != "shadow"

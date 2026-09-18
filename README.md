@@ -303,23 +303,43 @@ Designer. `--designer` picks `mk1`, `mk2` or `mk3`, sized from the game's own
 designer buildable, and defaults to `mk1`.
 
 `--strategy` accepts only `sections` (the default). Solid recipe groups use
-opposing machine rows; supported mixed-material groups add separate pipe
-manifolds and retain every ingredient and product, including fluid byproducts.
+opposing machine rows, or one longer row when opposing bodies are too deep for
+the designer. Supported mixed-material groups add separate pipe manifolds and
+retain every ingredient and product, including fluid byproducts.
 Exact machine clocks, fractional last machines and transport-tier ceilings
 are preserved. Each external material has a rated vertical pass-through lane,
 with a bottom feed, a local consumption/collection branch and a top continuation.
+Conveyor stack lanes use the slowest allowed tier that carries this module's
+local demand/export, not the available upgrade ceiling. Inter-section lifts
+are sized for the busiest routed stream. For more stacked copies, explicitly
+select a higher belt floor in FactorioLab or stay within the reported lane limits.
 
 Whole sections are composed by material dependency, keeping consumers above
 their producers while allowing independent recipe sections to share a floor.
 The local routers connect section interfaces, not arbitrarily packed individual
-machines. Full base/roof slabs and beam outlines define the repeatable module;
+machines. Full base/roof slabs and painted-beam outlines define the repeatable module;
 matching floor/ceiling holes align its material trunks. The selected designer
 contains one complete blueprint, not a silently truncated partial factory.
+
+Each material lane gets native paired signs at its bottom/input and top/output
+ends: an INPUT/OUTPUT header, a stable lane letter, and the material's local
+per-module rate (items/min or m³/min). Continuation-only ends say PASS THROUGH
+instead of claiming an unknown stacked rate. Orange-on-black SmallWide signs
+mount on short painted beams along the front (+X) frame, above the base or hanging
+beneath the roof. Placement checks the whole text face's view toward the front,
+so lifts cannot hide the words. Signs add Iron Plates and Quartz Crystals to the
+construction cost; their supports add Steel Beams. Missing clear mounting space
+is an explicit refusal.
+
+Frame-mounted double Wall Outlets Mk.2 replace floor power poles. Their inside
+faces form one connected circuit and power every machine and pump; the outside
+faces stay free for external hookups. Native seven-wire limits apply per face,
+and additional sockets are added when needed.
 
 **Stacking:** keep the same XY position and orientation and raise each copy by
 the stack pitch printed in its `.sbpcfg`. Manually bridge the matching holes
 across the **400 cm (4 m) seam** with lifts or pipes; automatic joining is not
-promised. Feed the bottom inputs, connect power (including pumps), and drain
+promised. Feed the bottom inputs, connect an outside wall outlet to power, and drain
 the top outputs, including byproducts. Supply all copies' combined demand and
 keep accumulated flow within each reported trunk capacity. For liquids, also
 provide the reported inlet head above the bottom port: it is calculated from

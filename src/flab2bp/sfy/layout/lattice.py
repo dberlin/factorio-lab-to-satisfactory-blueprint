@@ -103,6 +103,7 @@ from flab2bp.sfy.layout.validate import (
     BELT_CLEARANCE_HALF_HEIGHT_CM,
     BELT_CLEARANCE_HALF_WIDTH_CM,
     TOUCH_CM,
+    attachment_boxes,
     beam_box,
     lift_box,
     passthrough_box,
@@ -342,6 +343,9 @@ class Occupancy:
     history: array[float]
     #: Physical world boxes BEFORE expansion by a hypothetical belt centreline.
     static_bounds: list[BoxBounds]
+    #: Fixed attachment identities for exact connected-mouth collision admission.
+    attachments: tuple[AttachmentObj, ...] = ()
+    machines: tuple[MachineObj, ...] = ()
     _paths: dict[int, tuple[Node, ...]] = field(default_factory=dict, repr=False)
     _claims: dict[int, list[int]] = field(default_factory=dict, repr=False)
 
@@ -480,11 +484,10 @@ def occupancy_for(
     """Flatten a placement onto ``lattice``: what a belt may pass, and where not.
 
     The world in the order it is laid down: the designer itself (R-M3-1 and
-    R-M3-3), then every hard clearance box a machine, attachment or floor carries,
-    then every lift's column box, then every belt already in the placement.
-    Machine and attachment soft clearances may be shared. Foundations instead
-    reserve their slab volume even when the registry calls it soft: the composer
-    supplies these as floors without passthroughs, not as empty routing space.
+    R-M3-3), then hard machine clearance and project attachment/floor envelopes,
+    then lift columns and existing transport. CT_Soft still describes native
+    clearance; it does not establish an empty attachment body. In the absence
+    of extracted component meshes we conservatively reserve its sourced box.
     """
     size = lattice.size()
     occupancy = Occupancy(
@@ -494,9 +497,11 @@ def occupancy_for(
         owner={},
         history=array("d", bytes(8 * size)),
         static_bounds=[],
+        attachments=tuple(attachments),
+        machines=tuple(machines),
     )
-    for obj in chain[MachineObj | AttachmentObj | PipeAttachmentObj | FoundationObj](
-        machines, attachments, pipe_attachments, foundations
+    for obj in chain[MachineObj | PipeAttachmentObj | FoundationObj](
+        machines, pipe_attachments, foundations
     ):
         buildable = registry.buildables.get(obj.class_name)
         if buildable is None:
@@ -507,6 +512,14 @@ def occupancy_for(
                 continue
             low, high = box_bounds(box, transform)
             _mark_box(occupancy, low, high)
+    for attachment in attachments:
+        for body in attachment_boxes(attachment, registry):
+            centre, reach = body.centre, body.reach
+            _mark_box(
+                occupancy,
+                (centre[0] - reach[0], centre[1] - reach[1], centre[2] - reach[2]),
+                (centre[0] + reach[0], centre[1] + reach[1], centre[2] + reach[2]),
+            )
     for lift in lifts:
         if abs(lift.height_cm) <= 0.0:
             continue  # a lift of no height has no axis, and so no box

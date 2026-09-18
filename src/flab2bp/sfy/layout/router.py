@@ -170,10 +170,10 @@ def route_net(
     hard box, its taps, its goals on a wall line -- made passable for this query
     alone.  ``closed`` is its mirror: nodes made IMPASSABLE for this query alone,
     which is how the rip-up loop refuses a move the movement table cannot judge.
-    A lift is the case that needs it -- the kernel admits one on its two end
-    nodes alone, having nowhere in a per-level row to name the column between
-    them -- so a lift that realisation finds runs through a machine comes back
-    as history charged at those two ends plus a re-query with them ``closed``.
+    Plain movement rows check lift endpoints only. With a motion ``profile``,
+    query-local guards also reject shafts crossing static physical obstacles.
+    Realisation still checks dynamic geometry and native mouth contacts; a
+    rejected move returns its end nodes for the next query's ``closed`` set.
     A node in both sets is closed: ``closed`` is a correction and corrections
     win.  ``pressure`` scales the per-node congestion price the kernel reads
     out of ``occupancy.history``.  ``transitions`` is
@@ -235,6 +235,7 @@ def route_net(
                 tuple(terminal for terminal in sinks if terminal.node in goal_nodes),
                 budget=preparation,
                 deadline=deadline,
+                obstacles=occupancy.static_bounds,
             )
         except MotionPreparationExhausted as failure:
             work = allowance - (preparation.left or 0)

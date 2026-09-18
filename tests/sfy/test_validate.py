@@ -42,6 +42,7 @@ from flab2bp.sfy.layout.validate import (
     _first_difference,
     _place_box,
     _round_to_int,
+    attachment_boxes,
     lift_box,
     lift_half_width,
     validate,
@@ -289,6 +290,66 @@ def test_belt_capsule_refuses_a_belt_driven_through_another_belt() -> None:
         50, BELT, straight((-500.0, 0.0, 200.0), (1.0, 0.0, 0.0), 1000.0), "screw", Fraction(1, 4)
     )
     assert _findings(replace(placement, belts=(*placement.belts, crossing)), "belt.capsule") == [
+        "belt.capsule"
+    ]
+
+
+def test_soft_attachment_body_blocks_an_unconnected_belt() -> None:
+    placement = SfyPlacement(
+        designer=designer("mk1", _registry()),
+        attachments=(AttachmentObj(1, SPLITTER, Pose(0, 0, 200, 0)),),
+        belts=(BeltRun(2, BELT, straight((-500, 0, 200), (1, 0, 0), 1000)),),
+    )
+    assert _findings(placement, "geom.hard_clearance") == []
+    assert _findings(placement, "belt.capsule") == ["belt.capsule"]
+
+
+def test_attachment_envelopes_may_touch_but_must_not_intersect() -> None:
+    first = AttachmentObj(1, SPLITTER, Pose(0, 0, 200, 0))
+    second = AttachmentObj(2, MERGER, Pose(0, 0, 200, 90))
+    a, b = attachment_boxes(first, _registry())[0], attachment_boxes(second, _registry())[0]
+    touching = a.centre[0] + a.reach[0] - b.centre[0] + b.reach[0]
+    placement = SfyPlacement(
+        designer=designer("mk1", _registry()),
+        attachments=(
+            first,
+            replace(second, pose=Pose(touching, 0, 200, 90)),
+        ),
+    )
+    assert _findings(placement, "geom.attachment_body") == []
+    crowded = replace(
+        placement,
+        attachments=(
+            placement.attachments[0],
+            replace(placement.attachments[1], pose=Pose(330, 0, 200, 90)),
+        ),
+    )
+    assert _findings(crowded, "geom.attachment_body") == ["geom.attachment_body"]
+
+
+def test_separate_belt_elevations_do_not_make_attachment_bodies_disjoint() -> None:
+    placement = SfyPlacement(
+        designer=designer("mk1", _registry()),
+        attachments=(
+            AttachmentObj(1, SPLITTER, Pose(0, 0, 300, 0)),
+            AttachmentObj(2, MERGER, Pose(0, 0, 500, 0)),
+        ),
+    )
+    assert _findings(placement, "geom.attachment_body") == ["geom.attachment_body"]
+
+
+def test_connected_attachment_mouth_does_not_excuse_a_return_through_its_body() -> None:
+    entry, _ = belt_ends(_registry(), BELT)
+    outgoing = straight((100, 0, 200), (1, 0, 0), 500)
+    placement = SfyPlacement(
+        designer=designer("mk1", _registry()),
+        attachments=(AttachmentObj(1, SPLITTER, Pose(0, 0, 200, 0)),),
+        belts=(BeltRun(2, BELT, outgoing),),
+        links=(Link((1, "Output1"), (2, entry)),),
+    )
+    assert _findings(placement, "belt.capsule") == []
+    returning = concat(outgoing, straight((600, 0, 200), (-1, 0, 0), 1000))
+    assert _findings(replace(placement, belts=(BeltRun(2, BELT, returning),)), "belt.capsule") == [
         "belt.capsule"
     ]
 
@@ -651,9 +712,9 @@ def test_belt_capsule_says_which_parts_of_the_clearance_rule_were_never_read() -
 def _assembler_with_a_belt_over_it() -> SfyPlacement:
     """An Assembler whose own belt climbs back across its upper clearance box.
 
-    ``Output0`` sits at ``(0, 500, 100)``, inside box 0 (``y`` to 750, ``z`` to
-    300) and outside box 1 (``y`` to 350, ``z`` from 300).  So the belt wired to
-    that port is forgiven box 0 and not box 1.
+    ``Output0`` sits at ``(0, 500, 100)`` in box 0. The belt doubles back
+    through that box and climbs into box 1: the linked port cannot exempt
+    either remote segment.
     """
     registry = _registry()
     pose = Pose(0.0, 0.0, 0.0, 0.0)
@@ -669,13 +730,11 @@ def _assembler_with_a_belt_over_it() -> SfyPlacement:
     )
 
 
-def test_belt_capsule_forgives_only_the_box_the_wired_port_sits_inside() -> None:
+def test_a_linked_port_does_not_forgive_a_belt_doubling_back_through_the_machine() -> None:
     placement = _assembler_with_a_belt_over_it()
     report = validate(placement, None, _registry(), only={"belt.capsule"})
-    assert [f.check for f in report.errors] == ["belt.capsule"]
-    # Box 0 holds Output0 and is forgiven; box 1 is a different box.
-    assert "box 1" in report.errors[0].message
-    assert "box 0" not in report.errors[0].message
+    assert {finding.check for finding in report.errors} == {"belt.capsule"}
+    assert {finding.objects for finding in report.errors} == {(BELT_ID, 1)}
 
 
 def _two_runs_end_to_end(second_start: Vector, heading: Vector) -> SfyPlacement:
@@ -1072,6 +1131,18 @@ def _lift_out_of_a_machine(height_cm: float = LIFT_HEIGHT_CM) -> SfyPlacement:
     )
 
 
+def test_linked_belt_may_leave_lift_mouth_but_not_return_through_its_shaft() -> None:
+    placement = _lift_out_of_a_machine()
+    assert _findings(placement, "belt.capsule") == []
+    belt = placement.belts[0]
+    returning = concat(
+        belt.points,
+        straight(belt.end, (0, -1, 0), math.dist(belt.start, belt.end) + 200),
+    )
+    clipped = replace(placement, belts=(replace(belt, points=returning),))
+    assert _findings(clipped, "belt.capsule") == ["belt.capsule"]
+
+
 def _lift_into_a_machine(height_cm: float = LIFT_HEIGHT_CM) -> SfyPlacement:
     """A belt along the top, down a lift, into the screw machine's input.
 
@@ -1083,7 +1154,9 @@ def _lift_into_a_machine(height_cm: float = LIFT_HEIGHT_CM) -> SfyPlacement:
     registry = _registry()
     screw_pose = Pose(0.0, SCREW_Y_CM, SLAB_TOP_CM, 0.0)
     mouth = world_port(screw_pose.transform(), _port(CONSTRUCTOR, "Input0"))
-    lift = LiftObj(LIFT_ID, LIFT, Pose(mouth[0], mouth[1], mouth[2] + height_cm, 90.0), -height_cm)
+    lift = LiftObj(
+        LIFT_ID, LIFT, Pose(mouth[0], mouth[1], mouth[2] + height_cm, -90.0), -height_cm, 180.0
+    )
     head, _ = lift.bottom_end(lift_geometry(registry, LIFT))
     entry, exit_end = belt_ends(registry, LIFT)
     _, belt_exit = belt_ends(registry, BELT)

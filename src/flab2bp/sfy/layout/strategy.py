@@ -41,7 +41,7 @@ import itertools
 import time
 from collections import Counter
 from collections.abc import Iterator, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import cache, partial
 from typing import Any
 
@@ -73,6 +73,7 @@ from flab2bp.sfy.layout.power import PowerError, PowerPlan, PowerRow
 from flab2bp.sfy.layout.power import place as place_power
 from flab2bp.sfy.layout.refusals import GAME_DATA, GAME_LIMITS, refuse
 from flab2bp.sfy.layout.rows import RowPlan, RowPlanner
+from flab2bp.sfy.layout.validate import BELT_CLEARANCE_HALF_WIDTH_CM
 from flab2bp.sfy.registry import Registry, load_registry
 from flab2bp.sfy.spec import Designer, SfyBuildSpec
 
@@ -231,6 +232,13 @@ class _Layout:
         """
         self._refuse_fluids()
         measures = _measure(self.registry, self.designer)
+        # Legacy corridor curves must leave the attachment's cooked body before
+        # turning. Lattice routing reserves its own approach geometry separately.
+        lead_in = max(
+            measures.lead_in,
+            measures.box - measures.reach + BELT_CLEARANCE_HALF_WIDTH_CM + 1,
+        )
+        measures = replace(measures, lead=measures.reach + lead_in, lead_in=lead_in)
         refusal = partial(refuse, self.spec)
         planner = RowPlanner(
             spec=self.spec,

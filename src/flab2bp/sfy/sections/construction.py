@@ -15,7 +15,7 @@ from fractions import Fraction
 
 from flab2bp.sfy.geometry import Vector, box_bounds, port_forward, world_port
 from flab2bp.sfy.labmap import LabMap, machine_class
-from flab2bp.sfy.layout.corridors import Route, lay_path
+from flab2bp.sfy.layout.corridors import Route, attachment_box_cm, lay_path
 from flab2bp.sfy.layout.manifold import (
     MERGER_CLASS,
     SPLITTER_CLASS,
@@ -36,7 +36,11 @@ from flab2bp.sfy.layout.model import (
     belt_ends,
     lift_geometry,
 )
-from flab2bp.sfy.layout.validate import BELT_CLEARANCE_HALF_HEIGHT_CM, BELT_CLEARANCE_HALF_WIDTH_CM
+from flab2bp.sfy.layout.validate import (
+    BELT_CLEARANCE_HALF_HEIGHT_CM,
+    BELT_CLEARANCE_HALF_WIDTH_CM,
+    attachment_boxes,
+)
 from flab2bp.sfy.registry import Buildable, Port, Registry
 from flab2bp.sfy.sections.model import (
     ProductionSection,
@@ -324,11 +328,13 @@ def build_section(
     if any(abs(port.translation[2] - input_z) > 0.01 for port in in_ports):
         raise SectionError("opposing input ports must share a conveyor height", cause="unsupported")
     attachment_height = max(
-        high[2] - low[2]
+        2 * box.reach[2]
         for attachment in (splitter, merger)
-        for box in attachment.clearance
-        for low, high in (box_bounds(box, Pose(0, 0, 0, 0).transform()),)
+        for box in attachment_boxes(
+            AttachmentObj(0, attachment.class_name, Pose(0, 0, 0, 0)), registry
+        )
     )
+    body_half = attachment_box_cm(registry)
     layer = grid_ceil(max(lift_min, attachment_height + 2 * BELT_CLEARANCE_HALF_HEIGHT_CM), grid)
     snapped = [
         index == 0
@@ -342,17 +348,39 @@ def build_section(
     # Leave one whole centimetre beyond the swept clearance, not an arbitrary
     # foundation cell. Every number otherwise follows actual connector geometry.
     aisle = max(
-        -foot_y0 + BELT_CLEARANCE_HALF_WIDTH_CM + 1,
+        -foot_y0 + max(BELT_CLEARANCE_HALF_WIDTH_CM, body_half) + 1,
         max(-port.translation[1] + side_reach + build.lead for port in in_ports),
     )
     if not all(snapped):
-        aisle = max(aisle, -foot_y0 + lift_width + side_reach + build.lead + 1)
+        aisle = max(
+            aisle,
+            -foot_y0 + lift_width + max(side_reach + build.lead, body_half + lift_width) + 1,
+        )
     aisle = float(math.ceil(aisle))
     pitch = max(
         machine_pitch_cm(machine, limits),
         abs(sin.translation[0]) + abs(sout.translation[0]) + build.lead,
+        2 * body_half,
     )
-    upper_count = (group.count + 1) // 2
+    raised_outputs = len(products) > 1
+    output_reach = max(abs(side.translation[1]) for side in merge_sides)
+    out_distances = []
+    for port in out_ports:
+        distance = max(
+            foot_y1 + max(BELT_CLEARANCE_HALF_WIDTH_CM, body_half) + 1,
+            port.translation[1] + output_reach + build.lead,
+        )
+        if raised_outputs:
+            distance = max(
+                distance,
+                foot_y1 + lift_width + 1 + max(output_reach + build.lead, body_half + lift_width),
+            )
+        # Exposed X-facing interfaces retain the input spine's lattice phase.
+        out_distances.append(grid_ceil(aisle + math.ceil(distance), grid) - aisle)
+    opposing_depth = 2 * (aisle + max(out_distances) + body_half)
+    # A shallow designer can still hold one longer row. Splitting an oversized
+    # opposing pair into isolated machines needlessly repeats its interfaces.
+    upper_count = group.count if opposing_depth > 2 * designer.half_cm else (group.count + 1) // 2
     row_counts = (upper_count, group.count - upper_count)
     rows: list[list[MachineObj]] = [[], []]
     for row, size in enumerate(row_counts):
@@ -413,7 +441,6 @@ def build_section(
             previous = node
 
     outputs: list[SectionPort] = []
-    raised_outputs = len(products) > 1
     for product, item in enumerate(products):
         port = out_ports[product]
         chain_z = (
@@ -422,19 +449,7 @@ def build_section(
             else stand + port.translation[2]
         )
         last_nodes: list[tuple[AttachmentObj, Fraction, int]] = []
-        output_reach = max(abs(side.translation[1]) for side in merge_sides)
-        out_distance = float(
-            math.ceil(
-                max(
-                    foot_y1 + BELT_CLEARANCE_HALF_WIDTH_CM + 1,
-                    port.translation[1] + output_reach + build.lead,
-                )
-            )
-        )
-        if raised_outputs:
-            # Raise every product chain, including the first: a later product's
-            # ground-level machine feeder must not cross an earlier collector.
-            out_distance = max(out_distance, foot_y1 + lift_width + 1 + output_reach + build.lead)
+        out_distance = out_distances[product]
         for row, side in enumerate((1, -1)):
             last: AttachmentObj | None = None
             running = Fraction(0)
@@ -459,6 +474,10 @@ def build_section(
                 last = node
             if last is not None:
                 last_nodes.append((last, running, side))
+        if len(last_nodes) == 1:
+            last, amount, _ = last_nodes[0]
+            outputs.append(SectionPort(item, amount, last.id, mout.name, "output"))
+            continue
         # The single product collector is outside every machine, so its two
         # transverse runs never cross input spines or production footprints.
         collector_x = float(
@@ -466,12 +485,13 @@ def build_section(
                 max(
                     (upper_count - 1) * pitch
                     + max(foot_x1, -foot_x0)
-                    + BELT_CLEARANCE_HALF_WIDTH_CM
+                    + max(BELT_CLEARANCE_HALF_WIDTH_CM, body_half)
                     + 1,
                     max(
                         node.pose.x + mout.translation[0] + build.lead - sin.translation[0]
                         for node, _, _ in last_nodes
                     ),
+                    max(node.pose.x + 2 * body_half for node, _, _ in last_nodes),
                 )
             )
         )

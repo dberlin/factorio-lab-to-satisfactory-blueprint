@@ -24,17 +24,12 @@ node in between.  Consecutive pieces that point the same way and climb at the
 same rate are one straight, so a corner is a change of DIRECTION and nothing
 else.
 
-**What a corner costs, and where the space comes from.** Global constraint 8:
-an authored path prefers cheaper turns among globally feasible assignments.
-A witnessed path replays its selected turn identities without reselection.
-The attachment it weighs is
-:func:`~flab2bp.sfy.layout.corridors.attachment_turn_tight`, not the manifold's
-:func:`~flab2bp.sfy.layout.corridors.attachment_turn`: a splitter's clearance is
-``CT_Soft`` and a grid-routed corner stands in open floor, so what the turn
-really denies the straight is the reach to its own port plus the shortest legal
-belt (201 cm with the shipped registry) rather than the whole box (301).  That
-is a grid step of difference and it is the difference between a three-node leg
-turning and not.
+**What a corner costs, and where the space comes from.** An authored path
+prefers a continuous curve whenever the complete route can fit it; a splitter
+is a tight-space alternative, not a cheaper default. A witnessed path replays
+its selected turn identities without reselection. The tight attachment turn
+reserves both its embedded connector lead and its actual body envelope, which
+is independent of the native ``CT_Soft`` clearance classification.
 
 The space a corner is offered is the FREE length of the straight either side --
 the leg's own length, less the previous corner's geometric reach, less what
@@ -413,13 +408,13 @@ def resolve_turns(
     lattice: Lattice,
     selected: Mapping[int, int] | None = None,
 ) -> tuple[list[Turn | None], list[float], list[float]]:
-    """Resolve a fixed run exactly, preserving cheaper feasible prefixes.
+    """Resolve a fixed run exactly, preferring feasible continuous curves.
 
     Each boundary has at most two options. Backward feasibility retains both
     reaches until the following leg discharges their obligations, then forward
-    replay chooses the cheapest option with a feasible suffix. Thus a cheap arc
-    cannot discard a costlier attachment whose smaller reach is needed later.
-    Selection cost and geometric reach stay distinct on a shared leg.
+    replay chooses an arc when its suffix remains feasible. An attachment's
+    smaller reach remains available where the continuous curve will not fit.
+    Connector reach, physical body extent and legal belt lead stay distinct.
 
     ``selected`` keys are original path indices, not merged-leg indices. When
     supplied every corner is specified, including a sink-stub turn recorded by
@@ -451,13 +446,13 @@ def resolve_turns(
                 choices = [(action, offered[action])]
             else:
                 raise RealiseError("corner", _blame(path, at), "missing selected turn action")
-        choices.sort(key=lambda choice: (choice[1].cost, choice[0]))
+        choices.sort(key=lambda choice: (choice[1].is_attachment, choice[1].cost, choice[0]))
         legal: list[Turn | None] = [
             turn
             for _, turn in choices
             if eligible(turn, here.rise, there.rise, path[at], lattice)
-            and fits_turn(turn, free[index], 0.0)
-            and fits_turn(turn, free[index + 1], 0.0)
+            and fits_turn(turn, free[index], None)
+            and fits_turn(turn, free[index + 1], None)
         ]
         if not legal:
             raise RealiseError(
@@ -474,9 +469,7 @@ def resolve_turns(
             raise RealiseError("corner", _blame(path, at), "turn action where no corner exists")
 
     def compatible(previous: Turn | None, following: Turn | None, run: float) -> bool:
-        return following is None or fits_turn(
-            following, run, previous.reach if previous is not None else 0.0
-        )
+        return following is None or fits_turn(following, run, previous)
 
     for index in range(len(candidates) - 2, -1, -1):
         candidates[index] = [
@@ -554,10 +547,9 @@ def _lift(
     bottom with a positive height and one that carries them DOWN stands at the
     top with a negative one.  Both ends' connector normals are the actor's own
     forward turned by a yaw -- the bottom by the pose's, the top by the pose's
-    plus ``top_yaw_deg`` -- so the pose's yaw is chosen to put the entry normal
-    along the belt that arrives and the top yaw to put the exit normal along the
-    belt that leaves, which is what ``ports.position`` holds a belt off a lift's
-    top to.
+    plus ``top_yaw_deg``. Native placed lifts expose outward normals: the entry
+    faces AGAINST the incoming belt's flow, while the exit faces along the
+    outgoing belt. The top yaw compensates for the entry's half-turn.
 
     The height is the lattice's, and it is then held to the game's own window
     and step rather than trusted: the movement table only offers legal heights,
@@ -590,8 +582,9 @@ def _lift(
             "hologram snaps a height to",
         )
     actor = lattice.world(edge.low if edge.up else edge.high)
-    yaw = _yaw_of(arrive) - _yaw_of(geometry.bottom_facing)
-    top_yaw = _snap(_yaw_of(leave) - _yaw_of(arrive), geometry.top_yaw_step_deg, edge)
+    entry_yaw = _yaw_of(arrive) + 180.0
+    yaw = entry_yaw - _yaw_of(geometry.bottom_facing)
+    top_yaw = _snap(_yaw_of(leave) - entry_yaw, geometry.top_yaw_step_deg, edge)
     if not geometry.top_yaw_free and abs(top_yaw) > TOUCH_CM:
         raise RealiseError(
             "lift",

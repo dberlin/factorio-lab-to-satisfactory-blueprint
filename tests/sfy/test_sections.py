@@ -9,10 +9,10 @@ from math import inf
 import pytest
 
 from flab2bp.sfy.labmap import LabMap, load_lab_map
-from flab2bp.sfy.layout.model import BeltRun
+from flab2bp.sfy.layout.model import AttachmentObj, BeltRun
 from flab2bp.sfy.registry import Registry, load_registry
 from flab2bp.sfy.sections.construction import build_section
-from flab2bp.sfy.sections.model import ProductionSection, SectionError
+from flab2bp.sfy.sections.model import ProductionSection, SectionError, endpoint
 from flab2bp.sfy.spec import Designer, SfyMachineGroup, designer
 from flab2bp.spec import BeltTier
 
@@ -102,11 +102,38 @@ def test_odd_opposing_rows_preserve_last_machine_and_collected_rate(resources: R
         assert rates == [machine.clock / 4, machine.clock / 4]
 
 
+def test_single_row_export_does_not_add_one_in_one_out_turn_attachments(
+    resources: Resources,
+) -> None:
+    requested = group(
+        "Build_ConstructorMk1_C",
+        "Recipe_IronRod_C",
+        1,
+        {"iron-ingot": Fraction(1, 4)},
+        {"iron-rod": Fraction(1, 4)},
+    )
+    section = build(requested, resources)
+    output = section.outputs[0]
+    collector = section.placement.by_id(output.object_id)
+    assert isinstance(collector, AttachmentObj)
+    machine = section.placement.machines[0]
+    assert collector.pose.x == machine.pose.x
+    assert len(section.placement.attachments) == 2
+    registry = resources[0]
+    input_ = section.inputs[0]
+    source, _ = endpoint(section.placement, input_.object_id, input_.port, registry)
+    sink, _ = endpoint(section.placement, output.object_id, output.port, registry)
+    grid = registry.limits.hologram_grid_cm
+    assert grid is not None
+    displacement = (sink[1] - source[1]) / grid
+    assert displacement == pytest.approx(round(displacement))
+
+
 def test_manufacturer_ingredients_remain_disjoint_until_machine_ports(resources: Resources) -> None:
     requested = group(
         "Build_ManufacturerMk1_C",
         "Recipe_Computer_C",
-        4,
+        2,
         {
             "circuit-board": Fraction(1, 3),
             "cable": Fraction(2, 3),

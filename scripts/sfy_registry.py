@@ -740,14 +740,13 @@ def _attach_grid_snap(
 def _attach_mesh_bounds(
     mesh_bounds: Mapping[str, Mapping[str, Any]], buildables: dict[str, Any]
 ) -> dict[str, Any]:
-    """Put each spline buildable's own static-mesh box on it, and return the provenance.
+    """Attach cooked mesh bounds and retain their extraction provenance.
 
-    The box is ``Origin -+ BoxExtent`` of the cooked ``UStaticMesh``'s render
-    bounds, which is the game's own axis-aligned box for that mesh; the
-    extractor followed the class's ``mMesh`` (a belt) or ``mMidMesh`` (a lift)
-    to get there and says which. A class the extractor found no such mesh for
-    keeps ``None``: nothing here falls back to ``mMeshLength``, which is the
-    repeat pitch along one axis and says nothing about the other two.
+    Spline bounds come from their repeating ``mMesh`` or ``mMidMesh``.
+    Splitter/merger bounds combine ``mInstanceDataCDO.Instances`` after applying
+    each instance's actor-local transform. Both originate in cooked static-mesh
+    ``RenderData.Bounds``, not native clearance boxes. Classes without an
+    extracted mesh keep ``None``; ``mMeshLength`` is never a cross-section fallback.
     """
     applied: dict[str, Any] = {}
     for class_name, entry in sorted(buildables.items()):
@@ -777,8 +776,15 @@ def _attach_mesh_bounds(
         )
     return {
         "source": "assets",
-        "read_from": "the cooked UStaticMesh's RenderData.Bounds (Origin -+ BoxExtent)",
-        "properties": {"belt": "mMesh", "lift": "mMidMesh"},
+        "read_from": (
+            "cooked UStaticMesh RenderData.Bounds (Origin -+ BoxExtent); "
+            "attachment instances transformed and combined in actor space"
+        ),
+        "properties": {
+            "belt": "mMesh",
+            "lift": "mMidMesh",
+            "attachment": "mInstanceDataCDO.Instances",
+        },
         "applied_to": applied,
     }
 
