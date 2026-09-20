@@ -20,7 +20,7 @@ import pytest
 
 from flab2bp.lab.data import load_vendored
 from flab2bp.lab.flow import FlowRow, FlowSelection, load_flow
-from flab2bp.lab.url import Game, parse_url
+from flab2bp.lab.url import Game, Objective, ObjectiveType, ObjectiveUnit, parse_url
 from flab2bp.sfy.labmap import load_lab_map
 from flab2bp.sfy.rates import RatesRefusal, max_clock, spec_from_flow
 from flab2bp.sfy.registry import load_registry
@@ -132,6 +132,63 @@ def test_external_inputs_are_the_flows_mined_items() -> None:
     assert [g.recipe_id for g in spec.groups] == ["iron-plate", "iron-ingot"]
     assert spec.outputs == {"iron-plate": Fraction(1)}
     assert spec.surplus_outputs == {}
+
+
+def test_input_objectives_do_not_replace_flow_inputs_or_selected_recipes() -> None:
+    name = "copper-ingot-alloy-480"
+    request = parse_url(_url(name))
+    request = replace(
+        request,
+        objectives=(
+            Objective(
+                id="supplied-ore",
+                target_id="iron-ore",
+                value=Fraction(10),
+                unit=ObjectiveUnit.Belts,
+                type=ObjectiveType.Input,
+            ),
+            *request.objectives,
+            Objective(
+                id="unused-supply",
+                target_id="iron-plate",
+                value=Fraction(100),
+                type=ObjectiveType.Input,
+            ),
+        ),
+    )
+    spec = spec_from_flow(
+        load_vendored(Game.SFY),
+        request,
+        load_flow(FLOWS / f"{name}.csv", url=_url(name)),
+        load_registry(),
+        load_lab_map(),
+    )
+
+    assert spec.outputs == {"copper-ingot": Fraction(8)}
+    assert spec.external_inputs == {"copper-ore": Fraction(4), "iron-ore": Fraction(4)}
+    assert [group.recipe_id for group in spec.groups] == ["copper-ingot-alloy"]
+    group = spec.groups[0]
+    assert group.count == 5
+    assert group.clock == 1
+    assert group.last_clock == Fraction(4, 5)
+
+
+@pytest.mark.parametrize("objective_type", [ObjectiveType.Maximize, ObjectiveType.Limit])
+def test_other_non_output_objectives_remain_unsupported(objective_type: ObjectiveType) -> None:
+    name = "iron-plate-60"
+    request = parse_url(_url(name))
+    request = replace(
+        request,
+        objectives=(replace(request.objectives[0], type=objective_type),),
+    )
+    with pytest.raises(RatesRefusal):
+        spec_from_flow(
+            load_vendored(Game.SFY),
+            request,
+            load_flow(FLOWS / f"{name}.csv", url=_url(name)),
+            load_registry(),
+            load_lab_map(),
+        )
 
 
 def test_objective_used_by_another_recipe_exports_only_its_net_flow() -> None:

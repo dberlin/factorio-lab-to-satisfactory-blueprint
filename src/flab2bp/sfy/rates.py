@@ -462,6 +462,10 @@ def spec_from_flow(
 
     outputs: dict[str, Fraction] = {}
     for objective in request.objectives:
+        # Inputs constrain FactorioLab's solve, not the blueprint's exports.
+        # Physical input rates still come from the solved flow above.
+        if objective.type is ObjectiveType.Input:
+            continue
         if objective.type is not ObjectiveType.Output:
             raise RatesRefusal(
                 "only output objectives are supported",

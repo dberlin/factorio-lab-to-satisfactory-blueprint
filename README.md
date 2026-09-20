@@ -358,6 +358,12 @@ written, `2` a bad URL, spec or missing flow, and `3` no validator-clean layout 
 no encodable blueprint. `--allow-invalid` remains DSP-only; it cannot override
 the Satisfactory strategy's validation contract.
 
+FactorioLab **Input** objectives are accepted and skipped when identifying blueprint
+outputs. They remain in the URL, so FactorioLab can use them to constrain its recipe
+selection. Required input connections and rates still come from the solved flow,
+not the Input objective amounts; recipes and machine counts are not re-solved.
+Other non-output objective types (`Maximize` and `Limit`) remain unsupported.
+
 Supported solid-production families include constructors, assemblers,
 manufacturers, smelters and foundries; supported mixed recipes include refinery
 plastic production with heavy-oil residue retained as an output. This is not
