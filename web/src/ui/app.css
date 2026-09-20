@@ -44,11 +44,16 @@ body {
 .sfy-toolbar select {
   max-width: 14rem;
 }
-.sfy-info {
+.info.sfy-info {
+  box-sizing: border-box;
   top: 7rem;
-  max-height: calc(100vh - 10rem);
+  width: min(20rem, calc(100vw - 2rem));
+  max-height: calc(100dvh - 8rem);
   overflow: auto;
   overflow-wrap: anywhere;
+}
+.info.sfy-info dl {
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
 }
 .info-close {
   float: right;

@@ -15,7 +15,7 @@ import {
   BuildRequestError,
   DEFAULT_OPTIONS,
   type Job,
-  isSatisfactoryUrl,
+  gameFromUrl,
   MachineRank,
   PowerTower,
   ProliferatorTier,
@@ -32,6 +32,8 @@ import { TracePanel } from './TracePanel';
 export function BuildPanel() {
   const {
     document,
+    game,
+    selectGame,
     beginPublication,
     publishArtifact,
     publishSatisfactory,
@@ -58,7 +60,17 @@ export function BuildPanel() {
   const powerTowerId = useId();
   const flowId = useId();
   const designerId = useId();
-  const satisfactory = isSatisfactoryUrl(options.url);
+  const urlGame = gameFromUrl(options.url);
+  const satisfactory = (urlGame ?? game) === 'sfy';
+  const requestOptions: BuildOptions = {
+    ...options,
+    strategy: satisfactory
+      ? 'sections'
+      : options.strategy === 'sections'
+        ? 'best'
+        : options.strategy,
+    trace: satisfactory ? false : options.trace,
+  };
   const sfyResult = job?.result && 'game' in job.result ? job.result : null;
   const dspResult = job?.result && !('game' in job.result) ? job.result : null;
 
@@ -79,6 +91,7 @@ export function BuildPanel() {
     }));
 
   const start = async (overrides: Partial<BuildOptions> = {}) => {
+    if (!urlGame) return;
     const generation = beginPublication();
     setBuildGeneration(generation);
     copyGeneration.current += 1;
@@ -92,7 +105,11 @@ export function BuildPanel() {
     setJob(null);
     setSelectedAttemptKey(null);
     try {
-      const settled = await runBuild({ ...options, ...overrides }, setJob, controller.signal);
+      const settled = await runBuild(
+        { ...requestOptions, ...overrides },
+        setJob,
+        controller.signal,
+      );
       if (controller.signal.aborted) return;
       if (settled.result && 'game' in settled.result && settled.result.artifacts.length > 0) {
         try {
@@ -167,7 +184,7 @@ export function BuildPanel() {
     setCopyError(null);
     publishArtifact(attempt.blueprint, beginPublication(), { kind: 'build', jobId: job.id });
   };
-  const projected = projectSolve(options);
+  const projected = projectSolve(requestOptions);
   const showSatisfactory = async () => {
     if (!job) return;
     const generation = beginPublication();
@@ -227,7 +244,9 @@ export function BuildPanel() {
           placeholder="https://factoriolab.github.io/sfy/flow?o=…"
           onChange={(e) => {
             const url = e.target.value;
-            const sfy = isSatisfactoryUrl(url);
+            const nextGame = gameFromUrl(url);
+            if (nextGame) selectGame(nextGame);
+            const sfy = (nextGame ?? game) === 'sfy';
             setOptions((previous) => ({
               ...previous,
               url,
@@ -241,20 +260,20 @@ export function BuildPanel() {
                 : previous.candidate_policies,
               trace: sfy ? false : previous.trace,
               fetch_flow:
-                sfy && !isSatisfactoryUrl(previous.url) && !previous.flow.trim()
-                  ? true
-                  : previous.fetch_flow,
+                nextGame &&
+                nextGame !== (gameFromUrl(previous.url) ?? game) &&
+                !previous.flow.trim()
+                  ? sfy
+                  : sfy && !previous.url.trim() && !previous.flow.trim()
+                    ? true
+                    : previous.fetch_flow,
             }));
           }}
         />
         <button
           type="button"
           onClick={() => void start()}
-          disabled={
-            !options.url.trim() ||
-            (!satisfactory && options.candidate_policies.length === 0) ||
-            busy
-          }
+          disabled={!urlGame || (!satisfactory && options.candidate_policies.length === 0) || busy}
         >
           {busy ? 'Building…' : 'Build'}
         </button>
@@ -269,7 +288,7 @@ export function BuildPanel() {
         <label htmlFor={strategyId}>Strategy</label>
         <select
           id={strategyId}
-          value={options.strategy}
+          value={requestOptions.strategy}
           onChange={(event) => {
             const strategy = RequestStrategy.safeParse(event.target.value);
             if (strategy.success) set('strategy', strategy.data);
@@ -498,7 +517,7 @@ export function BuildPanel() {
       </div>
 
       <p className="note">
-        Budget is per layout. <code>{options.strategy}</code> runs {projected.strategies}{' '}
+        Budget is per layout. <code>{requestOptions.strategy}</code> runs {projected.strategies}{' '}
         {projected.strategies === 1 ? 'layout' : 'layouts'} per candidate, so {projected.candidates}{' '}
         candidate{projected.candidates === 1 ? '' : 's'} × {projected.strategies} strategies ×{' '}
         {options.budget_s}s is up to {projected.searchS}s of solving, plus rates, validation and

@@ -765,14 +765,15 @@ def _compose(
     exports = defaultdict(Fraction, spec.outputs)
     for item, rate in spec.surplus_outputs.items():
         exports[item] += rate
-    lanes = {lane.item_id: lane for lane in result.stack_lanes}
-    for item in spec.external_inputs.keys() | exports.keys():
-        lane = lanes.get(item)
-        if (
-            lane is None
-            or lane.input_per_second != spec.external_inputs.get(item, Fraction())
-            or lane.output_per_second != exports.get(item, Fraction())
-        ):
+    inputs: defaultdict[str, Fraction] = defaultdict(Fraction)
+    outputs: defaultdict[str, Fraction] = defaultdict(Fraction)
+    for lane in result.stack_lanes:
+        inputs[lane.item_id] += lane.input_per_second
+        outputs[lane.item_id] += lane.output_per_second
+    for item in spec.external_inputs.keys() | exports.keys() | inputs.keys() | outputs.keys():
+        if inputs[item] != spec.external_inputs.get(item, Fraction()) or outputs[
+            item
+        ] != exports.get(item, Fraction()):
             raise SectionError(
                 f"{item}: the rated stack boundary contract was not preserved", cause="routing"
             )

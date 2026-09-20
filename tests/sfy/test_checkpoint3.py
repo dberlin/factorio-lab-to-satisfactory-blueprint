@@ -38,7 +38,7 @@ def test_factory_boundary_instructions_preserve_one_full_rate_per_item(tmp_path:
     placement = written.build.placement
     registry = pipeline.registry()
     lines = sfy_checkpoint2._pair_section(written, registry)
-    inlet, outlet = "\n".join(lines).split("Material outputs, at the top", maxsplit=1)
+    inlet, outlet = "\n".join(lines).split("Material outputs,", maxsplit=1)
     exports = dict(written.build.spec.outputs)
     for item, rate in written.build.spec.surplus_outputs.items():
         exports[item] = exports.get(item, Fraction()) + rate
@@ -60,9 +60,9 @@ def test_factory_boundary_instructions_preserve_one_full_rate_per_item(tmp_path:
         assert advertised == {item: rate * 60 for item, rate in totals.items()}
         assert positions.keys() == totals.keys()
         for lane in placement.stack_lanes:
-            if lane.item_id not in totals:
+            if (lane.input_per_second if incoming else lane.output_per_second) <= 0:
                 continue
-            node = lane.bottom if incoming else lane.top
+            node = lane.bottom
             point, normal = endpoint(placement, *node, registry)
             assert positions[lane.item_id] == pytest.approx(point, abs=0.01)
-            assert normal == pytest.approx((0, 0, -1 if incoming else 1), abs=1e-6)
+            assert normal == pytest.approx((0, 0, -1), abs=1e-6)

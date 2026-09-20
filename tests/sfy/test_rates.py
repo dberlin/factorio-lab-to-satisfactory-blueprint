@@ -263,12 +263,12 @@ def test_an_item_the_dataset_does_not_carry_is_refused() -> None:
     assert caught.value.cause == "unknown item"
 
 
-def test_the_belt_floor_and_ceiling_come_from_the_url_or_the_defaults() -> None:
+def test_url_belt_does_not_exclude_slower_available_tiers() -> None:
     default = _spec("iron-plate-60")
     assert default.belt_item_id == "conveyor-belt-mk1"
     assert default.belt_items_per_second == Fraction(1)
     # Mk6 exists in the dataset but defaults.maxBelt stops at Mk5.
-    assert [t.item_id for t in default.belt_upgrades] == [
+    assert [t.item_id for t in default.belt_alternatives] == [
         "conveyor-belt-mk2",
         "conveyor-belt-mk3",
         "conveyor-belt-mk4",
@@ -278,10 +278,13 @@ def test_the_belt_floor_and_ceiling_come_from_the_url_or_the_defaults() -> None:
     chosen = _spec("iron-plate-60-belt-mk3")
     assert chosen.belt_item_id == "conveyor-belt-mk3"
     assert chosen.belt_items_per_second == Fraction(9, 2)
-    assert [t.item_id for t in chosen.belt_upgrades] == [
+    assert [t.item_id for t in chosen.belt_alternatives] == [
+        "conveyor-belt-mk1",
+        "conveyor-belt-mk2",
         "conveyor-belt-mk4",
         "conveyor-belt-mk5",
     ]
+    assert chosen.belt_tiers == default.belt_tiers
 
 
 def test_overclock_above_one_is_carried_and_shards_are_counted() -> None:

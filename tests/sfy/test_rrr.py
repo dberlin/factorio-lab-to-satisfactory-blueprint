@@ -181,7 +181,7 @@ def _spec(*, slow: BeltTier = SLOW, fast: BeltTier | None = FAST) -> SfyBuildSpe
         groups=(group,),
         belt_item_id=slow.item_id,
         belt_items_per_second=slow.items_per_second,
-        belt_upgrades=() if fast is None else (fast,),
+        belt_alternatives=() if fast is None else (fast,),
         label="test",
     )
 

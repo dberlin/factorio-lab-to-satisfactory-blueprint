@@ -3,6 +3,15 @@
  "generated": "2026-09-14",
  "flows": [
   {
+   "file": "copper-ingot-alloy-480.csv",
+   "requested_url": "https://factoriolab.github.io/sfy/list?o=copper-ingot*480&ibe=conveyor-belt-mk4&rex=0*Du~Dv&v=11",
+   "exported_url": "https://factoriolab.github.io/sfy/list?o=copper-ingot*480&ibe=conveyor-belt-mk4&rex=0*Du~Dv&v=11",
+   "captured": "2026-09-18",
+   "note": "five foundries at 100/100/100/100/80 percent; lower-rate ore routing starvation regression",
+   "sha256": "5a1d397fb4d4c851be5449246204b5585517043a1bb92043b892dce76f96347b",
+   "bytes": 618
+  },
+  {
    "file": "iron-plate-60.csv",
    "requested_url": "https://factoriolab.github.io/sfy/list?v=11&o=iron-plate*60",
    "exported_url": "https://factoriolab.github.io/sfy/list?o=iron-plate*60&v=11",

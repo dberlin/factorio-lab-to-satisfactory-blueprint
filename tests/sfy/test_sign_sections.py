@@ -47,9 +47,24 @@ def boundary(
             BeamObj(30 + i, "Build_Beam_Painted_C", Pose(750, -750, z, 90), 1500)
             for i, z in enumerate((50, 1050))
         ),
-        lifts=(LiftObj(1, lift_class, Pose(0, 0, 50, 0), 1000),),
+        lifts=(
+            LiftObj(
+                1,
+                lift_class,
+                Pose(0, 0, 50 if consumed else 1050, 0),
+                1000 if consumed else -1000,
+            ),
+        ),
         stack_lanes=(
-            StackLane(item, kind, (1, entry), (1, exit_), consumed, produced, Fraction(20)),
+            StackLane(
+                item,
+                kind,
+                (1, entry if consumed else exit_),
+                (1, exit_ if consumed else entry),
+                consumed,
+                produced,
+                Fraction(20),
+            ),
         ),
         stack_height_cm=1200,
         stack_connection_gap_cm=150,
@@ -68,6 +83,20 @@ def test_local_rates_are_not_trunk_capacity_and_unused_ends_are_honest() -> None
     assert placement.signs[0].pose.z < placement.signs[2].pose.z
     assert placement.signs[0].pose.z - placement.signs[1].pose.z == 50
     assert placement.signs[2].pose.z - placement.signs[3].pose.z == 50
+
+
+def test_output_labels_put_local_extraction_below_the_incoming_pass_through() -> None:
+    placement = add_connection_signs(
+        boundary(item="iron-rod", consumed=Fraction(), produced=Fraction(1, 2)),
+        sfy_registry(),
+        ids=count(100),
+        deadline=inf,
+    )
+    headers = {sign.text: sign for sign in placement.signs if sign.text in {"INPUT", "OUTPUT"}}
+    details = {sign.text: sign for sign in placement.signs if sign.text not in {"INPUT", "OUTPUT"}}
+    assert headers["OUTPUT"].pose.z < headers["INPUT"].pose.z
+    assert details["Iron Rod 30/min"].pose.z == headers["OUTPUT"].pose.z - 50
+    assert details["Iron Rod PASS THROUGH"].pose.z == headers["INPUT"].pose.z - 50
 
 
 @pytest.mark.parametrize(

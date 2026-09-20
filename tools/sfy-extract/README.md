@@ -59,6 +59,28 @@ hologram class. `props` over a whole subtree (say
 `FactoryGame/Content/FactoryGame/Buildable/`) is how to find out whether a value
 exists in the assets at all.
 
+## Viewer component geometry
+
+The viewer's `viewer_geometry.json` is separate from placement clearance and
+the routing registry. Regenerate its current Foundry component coverage with:
+
+```bash
+dotnet run -- "$HOME/Satisfactory" geometry \
+    ../../src/flab2bp/sfy/data/viewer_geometry.json \
+    FoundryMk1/Build_FoundryMk1.
+```
+
+`geometry <out.json> [package-filter]` reads each static-mesh component's cooked
+`RenderData.Bounds`, transforms its eight corners through the Blueprint's SCS
+parent chain, and retains a separate actor-local envelope per component. The
+output includes mesh asset paths, original bounds, component transforms, game
+build, archive names and usmap hash. It does not export triangles or animate
+vertex meshes. Native root attachments are supported; an external non-root
+parent is rejected rather than assigned an invented transform. The current
+extract covers the Foundry's static body and vertex-animated component, including
+the latter's inherited body rotation. Other buildables continue to use available
+registry mesh bounds or clearance envelopes.
+
 ## The `structs` mode: struct schemas from the usmap
 
 ```bash

@@ -8,6 +8,7 @@ import {
   type BlueprintState,
 } from '../../src/state/BlueprintProvider';
 import { InputPanel } from '../../src/ui/InputPanel';
+import { BuildPanel } from '../../src/ui/BuildPanel';
 import { Toolbar } from '../../src/ui/Toolbar';
 import { A_BLUEPRINT, restoreFetch } from '../support/build';
 import { realCatalog } from '../support/catalog';
@@ -77,4 +78,49 @@ test('a Satisfactory document replaces DSP geometry and rejects an earlier build
   expect(state.blueprint).toBeNull();
   expect(state.sceneModel).toBeNull();
   expect(state.selectedIndex).toBeNull();
+});
+
+test('game controls follow explicit URLs and imports without needing an initial blueprint', () => {
+  render(
+    <BlueprintProvider catalog={realCatalog}>
+      <BuildPanel />
+      <InputPanel />
+      <Toolbar />
+      <Probe />
+    </BlueprintProvider>,
+  );
+  const url = screen.getByLabelText('FactorioLab URL');
+  expect(screen.getByLabelText('Blueprint Designer')).toBeVisible();
+  expect(screen.getByLabelText('Satisfactory machine display')).toBeVisible();
+  expect(screen.queryByLabelText('Latitude band')).toBeNull();
+
+  fireEvent.change(url, {
+    target: { value: 'https://factoriolab.github.io/dsp/flow?o=graphene*60&v=11' },
+  });
+  expect(screen.getByLabelText('Latitude band')).toBeVisible();
+  expect(screen.queryByLabelText('Satisfactory machine display')).toBeNull();
+  expect(screen.getByLabelText('Strategy')).toHaveValue('best');
+
+  fireEvent.change(url, {
+    target: { value: 'https://factoriolab.github.io/sfy/flow?o=copper-ingot*480&v=11' },
+  });
+  expect(screen.getByLabelText('Blueprint Designer')).toBeVisible();
+  expect(screen.getByLabelText('Satisfactory machine display')).toBeVisible();
+  expect(screen.getByLabelText('Strategy')).toHaveValue('sections');
+  expect(screen.getByRole('button', { name: 'Build' })).toBeEnabled();
+
+  fireEvent.change(url, { target: { value: 'https://factoriolab.github.io/factorio/flow' } });
+  expect(screen.getByRole('button', { name: 'Build' })).toBeDisabled();
+  expect(screen.queryByLabelText('Latitude band')).toBeNull();
+
+  fireEvent.change(url, { target: { value: '' } });
+  const importer = within(screen.getByTestId('dropzone'));
+  fireEvent.change(importer.getByLabelText('Blueprint string'), { target: { value: A_BLUEPRINT } });
+  fireEvent.click(importer.getByRole('button', { name: 'Load' }));
+  expect(screen.getByLabelText('Latitude band')).toBeVisible();
+  expect(screen.getByLabelText('sorter ties')).toBeVisible();
+  act(() => state.publishSatisfactory(scene, state.beginPublication()));
+  expect(screen.getByLabelText('Blueprint Designer')).toBeVisible();
+  expect(screen.getByLabelText('Satisfactory machine display')).toBeVisible();
+  expect(screen.queryByLabelText('sorter ties')).toBeNull();
 });

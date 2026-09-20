@@ -1,11 +1,12 @@
 """Schematic scenes from raw Satisfactory actors, never generated placement IDs.
 
-Coordinates are Y-up metres: (UE.x, UE.z, -UE.y) / 100. Clearance boxes
-are schematic envelopes, not game meshes. Unavailable geometry stays unavailable.
+Coordinates are Y-up metres: (UE.x, UE.z, -UE.y) / 100. Cooked component
+mesh bounds take precedence over clearance envelopes; neither is a triangle mesh.
 """
 
 from __future__ import annotations
 
+import json
 import math
 import re
 import struct
@@ -13,6 +14,7 @@ import zlib
 from collections import defaultdict
 from dataclasses import replace
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal, TypedDict
 
 from flab2bp.sfy.archive import ArchiveError, Reader
@@ -178,6 +180,38 @@ def _registry() -> Registry:
     return load_registry()
 
 
+@lru_cache(maxsize=1)
+def _viewer_geometry() -> dict[str, tuple[ClearanceBox, ...]]:
+    """Load extracted actor-local component envelopes, separate from placement rules."""
+    path = Path(__file__).parents[1] / "sfy" / "data" / "viewer_geometry.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return {
+        name: tuple(
+            ClearanceBox(
+                (part["min"][0], part["min"][1], part["min"][2]),
+                (part["max"][0], part["max"][1], part["max"][2]),
+                False,
+                _ZERO,
+            )
+            for part in parts
+        )
+        for name, parts in data["buildables"].items()
+    }
+
+
+def _body_boxes(buildable: Buildable) -> tuple[ClearanceBox, ...]:
+    physical = _viewer_geometry().get(buildable.class_name)
+    if physical is not None:
+        return physical
+    # A spline's mMesh/mMidMesh is only one repeated segment, not its body.
+    if (
+        buildable.mesh_bounds_property == "mInstanceDataCDO.Instances"
+        and buildable.mesh_bounds_cm is not None
+    ):
+        return (ClearanceBox(*buildable.mesh_bounds_cm, False, _ZERO),)
+    return buildable.clearance
+
+
 def scene_from_sbp(data: bytes, *, title: str = "Satisfactory blueprint") -> SatisfactoryScene:
     """Decode a bounded raw upload or a retained build artifact."""
     try:
@@ -292,7 +326,7 @@ def _box(box: ClearanceBox, transform: Transform, warnings: list[str], label: st
     ):
         if normalized is not None:
             warnings.append(
-                f"{label}: nonuniform scale shears its clearance; "
+                f"{label}: nonuniform scale shears its geometry; "
                 "showing a conservative world-aligned envelope"
             )
         reach = [sum(abs(scaled[k][i]) * half[k] / 100 for k in range(3)) for i in range(3)]
@@ -520,7 +554,7 @@ def scene_from_blueprint(
             if scalar is not None:
                 details.append({"label": prop.tag.name, "value": scalar})
         boxes = (
-            [_box(box, transform, warnings, header.path) for box in buildable.clearance]
+            [_box(box, transform, warnings, header.path) for box in _body_boxes(buildable)]
             if buildable is not None
             else []
         )

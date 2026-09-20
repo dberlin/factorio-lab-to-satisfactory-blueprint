@@ -113,13 +113,16 @@ function Probe() {
   );
 }
 
-const mount = () =>
-  render(
+const mount = (url = 'https://factoriolab.github.io/dsp/flow?o=graphene*60&v=11') => {
+  const rendered = render(
     <BlueprintProvider catalog={realCatalog}>
       <BuildPanel />
       <Probe />
     </BlueprintProvider>,
   );
+  if (url) fireEvent.change(screen.getByLabelText('FactorioLab URL'), { target: { value: url } });
+  return rendered;
+};
 
 function build(url = 'https://factoriolab.github.io/dsp/flow?o=graphene*60&v=11') {
   fireEvent.change(screen.getByLabelText('FactorioLab URL'), { target: { value: url } });
@@ -164,7 +167,7 @@ function candidateResult(chosenBlueprint = A_BLUEPRINT, alternativeBlueprint = B
 }
 
 test('build is disabled until there is a URL', () => {
-  mount();
+  mount('');
   expect(screen.getByRole('button', { name: 'Build' })).toBeDisabled();
 });
 
@@ -594,13 +597,13 @@ test('a refusal preserves nested attempts and distinguishes unobserved statistic
   expect(screen.queryByRole('alert')).toBeNull();
 });
 
-test('a bad URL is an error, and is distinct from a refusal', async () => {
+test('a server-rejected URL is an error, and is distinct from a refusal', async () => {
   serving({
     status: 202,
     body: aJob({ state: 'error', result: null, error: 'that is not a FactorioLab URL' }),
   });
   mount();
-  build('nonsense');
+  build('https://factoriolab.github.io/dsp/flow?o=invalid-output&v=11');
 
   expect(await screen.findByRole('alert')).toHaveTextContent('that is not a FactorioLab URL');
   expect(screen.queryByTestId('refusal')).toBeNull();

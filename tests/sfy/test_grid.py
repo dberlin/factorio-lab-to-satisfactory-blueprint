@@ -107,7 +107,7 @@ def _chain() -> SfyBuildSpec:
         groups=groups,
         belt_item_id=MK1_BELT.item_id,
         belt_items_per_second=MK1_BELT.items_per_second,
-        belt_upgrades=(MK2_BELT,),
+        belt_alternatives=(MK2_BELT,),
         external_inputs={_STAGES[0][2]: Fraction(1)},
         outputs={_STAGES[-1][3]: Fraction(1)},
         label="iron rod",

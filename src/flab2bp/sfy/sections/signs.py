@@ -237,8 +237,8 @@ def add_connection_signs(
                 f"{lane.item_id}: no native sign display name", cause="data"
             ) from exc
         for upper, ref, header, rate in (
-            (False, lane.bottom, "INPUT", lane.input_per_second),
-            (True, lane.top, "OUTPUT", lane.output_per_second),
+            (not lane.upward, lane.flow_start, "INPUT", lane.input_per_second),
+            (lane.upward, lane.flow_end, "OUTPUT", lane.output_per_second),
         ):
             point, _ = endpoint(placement, *ref, registry)
             unit = " m³/min" if lane.kind == "pipe" else "/min"

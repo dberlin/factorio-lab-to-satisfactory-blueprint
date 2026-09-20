@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { Catalog } from '../model/catalog';
 import { BlueprintCanvas } from '../scene/BlueprintCanvas';
 import { isAbortError, loadCatalog } from '../state/assets';
-import { BlueprintProvider } from '../state/BlueprintProvider';
+import { BlueprintProvider, useBlueprint } from '../state/BlueprintProvider';
 import { BomPanel } from './BomPanel';
 import { BuildPanel } from './BuildPanel';
 import { InfoPanel } from './InfoPanel';
@@ -10,32 +10,41 @@ import { InputPanel } from './InputPanel';
 import { Toolbar } from './Toolbar';
 import './app.css';
 
-export function App() {
-  const [catalog, setCatalog] = useState<Catalog | null>(null);
-  const [error, setError] = useState<string | null>(null);
+function DspAssets({ onCatalog }: { onCatalog(catalog: Catalog): void }) {
+  const { game, catalog } = useBlueprint();
+  return game === 'dsp' && !catalog ? <DspCatalogLoader onCatalog={onCatalog} /> : null;
+}
 
+function DspCatalogLoader({ onCatalog }: { onCatalog(catalog: Catalog): void }) {
+  const [error, setError] = useState<string | null>(null);
   useEffect(() => {
-    // The cancelled flag alone stops the state update but leaves the request
-    // itself running; aborting it is what keeps an unmounted tree from holding
-    // a live fetch open (and what stops happy-dom >=20 reporting the pending
-    // task as an unhandled abort at teardown).
     const controller = new AbortController();
     let cancelled = false;
     loadCatalog(controller.signal).then(
-      (c) => {
-        if (!cancelled) setCatalog(c);
+      (loaded) => {
+        if (!cancelled) onCatalog(loaded);
       },
-      (e: unknown) => {
-        if (cancelled || isAbortError(e)) return;
-        setError(e instanceof Error ? e.message : String(e));
+      (cause: unknown) => {
+        if (cancelled || isAbortError(cause)) return;
+        setError(cause instanceof Error ? cause.message : String(cause));
       },
     );
     return () => {
       cancelled = true;
       controller.abort();
     };
-  }, []);
+  }, [onCatalog]);
+  if (!error) return null;
+  return (
+    <p role="alert" className="note warn">
+      DSP viewer assets unavailable: {error}. Satisfactory builds and visualization remain
+      available.
+    </p>
+  );
+}
 
+export function App() {
+  const [catalog, setCatalog] = useState<Catalog | null>(null);
   return (
     <BlueprintProvider catalog={catalog}>
       <div className="layout">
@@ -45,12 +54,7 @@ export function App() {
             have -- so they share a scrolling column beside the canvas rather
             than stacking on top of it and squeezing the 3D view. */}
         <div className="sidebar">
-          {error && (
-            <p role="alert" className="note warn">
-              DSP viewer assets unavailable: {error}. Satisfactory builds and visualization remain
-              available.
-            </p>
-          )}
+          <DspAssets onCatalog={setCatalog} />
           <BuildPanel />
           <InputPanel />
         </div>

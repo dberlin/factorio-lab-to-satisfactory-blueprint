@@ -582,7 +582,7 @@ Placed = (
 
 @dataclass(frozen=True, slots=True)
 class StackLane:
-    """Paired boundary endpoints, local rates and repeat-limiting transport capacity."""
+    """Physical bottom/top ends of an upward input or downward output trunk."""
 
     item_id: str
     kind: Literal["belt", "pipe"]
@@ -592,6 +592,18 @@ class StackLane:
     output_per_second: Fraction
     capacity_per_second: Fraction
     required_input_head_m: float = 0.0
+
+    @property
+    def upward(self) -> bool:
+        return self.input_per_second > 0
+
+    @property
+    def flow_start(self) -> tuple[int, str]:
+        return self.bottom if self.upward else self.top
+
+    @property
+    def flow_end(self) -> tuple[int, str]:
+        return self.top if self.upward else self.bottom
 
 
 @dataclass(frozen=True, slots=True)

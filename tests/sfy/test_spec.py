@@ -148,17 +148,29 @@ def test_a_spec_whose_groups_consume_something_nobody_supplies_is_refused() -> N
         )
 
 
-def test_belt_upgrades_must_be_strictly_faster_than_the_floor_and_ordered() -> None:
+@pytest.mark.parametrize(
+    "alternatives",
+    [
+        (("conveyor-belt-mk3", Fraction(9, 2)), ("conveyor-belt-mk1", Fraction(1))),
+        (("conveyor-belt-mk2", Fraction(2)),),
+        (("conveyor-belt-mk1", Fraction(1)), ("conveyor-belt-mk1", Fraction(3))),
+    ],
+)
+def test_belt_alternatives_must_have_distinct_ordered_capacities(
+    alternatives: tuple[tuple[str, Fraction], ...],
+) -> None:
     from flab2bp.spec import BeltTier
 
-    with pytest.raises(ValidationError, match="conveyor-belt-mk1"):
+    with pytest.raises(ValidationError):
         SfyBuildSpec(
             groups=(_group(),),
             external_inputs={"iron-ingot": Fraction(3, 2)},
             outputs={"iron-plate": Fraction(1)},
             belt_item_id="conveyor-belt-mk2",
             belt_items_per_second=Fraction(2),
-            belt_upgrades=(BeltTier(item_id="conveyor-belt-mk1", items_per_second=Fraction(1)),),
+            belt_alternatives=tuple(
+                BeltTier(item_id=item, items_per_second=capacity) for item, capacity in alternatives
+            ),
         )
 
 
@@ -190,7 +202,7 @@ def test_a_spec_totals_its_machines_belt_tiers_and_power() -> None:
         outputs={"iron-plate": Fraction(1)},
         belt_item_id="conveyor-belt-mk1",
         belt_items_per_second=Fraction(1),
-        belt_upgrades=(BeltTier(item_id="conveyor-belt-mk2", items_per_second=Fraction(2)),),
+        belt_alternatives=(BeltTier(item_id="conveyor-belt-mk2", items_per_second=Fraction(2)),),
     )
     assert spec.machine_count == 5
     assert [t.item_id for t in spec.belt_tiers] == ["conveyor-belt-mk1", "conveyor-belt-mk2"]

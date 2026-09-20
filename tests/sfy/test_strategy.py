@@ -126,7 +126,7 @@ def _fragment(
         surplus_outputs=surplus or {},
         belt_item_id=source.belt_item_id,
         belt_items_per_second=source.belt_items_per_second,
-        belt_upgrades=source.belt_upgrades,
+        belt_alternatives=source.belt_alternatives,
         label=label,
     )
 
@@ -341,7 +341,7 @@ def test_a_paired_build_runs_three_straight_belts_and_nothing_between_the_rows()
 
 def test_a_belt_the_spec_cannot_fund_is_refused_by_the_ceiling() -> None:
     spec = _spec("iron-plate-60")
-    slow = spec.model_copy(update={"belt_upgrades": ()})
+    slow = spec.model_copy(update={"belt_alternatives": ()})
     assert _refusal(slow, MARK) == "run exceeds the belt ceiling"
 
 

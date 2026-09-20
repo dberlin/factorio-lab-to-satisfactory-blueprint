@@ -15,18 +15,28 @@ import { TraceOverlay } from './TraceOverlay';
 import { SatisfactoryCanvas } from './SatisfactoryCanvas';
 
 export function BlueprintCanvas() {
-  const {
-    blueprint,
-    sceneModel,
-    selectedIndex,
-    select,
-    catalog,
-    traceFrame,
-    traceShow,
-    view,
-    satisfactoryScene,
-    satisfactoryView,
-  } = useBlueprint();
+  const { game, satisfactoryScene, satisfactoryView, selectedIndex, select } = useBlueprint();
+  if (satisfactoryScene)
+    return (
+      <SatisfactoryCanvas
+        scene={satisfactoryScene}
+        selectedIndex={selectedIndex}
+        onSelect={select}
+        view={satisfactoryView}
+      />
+    );
+  if (game === 'sfy')
+    return (
+      <div className="canvas-empty">
+        Build from a Satisfactory FactorioLab URL or open an .sbp blueprint to see it.
+      </div>
+    );
+  return <DspCanvas />;
+}
+
+function DspCanvas() {
+  const { blueprint, sceneModel, selectedIndex, select, catalog, traceFrame, traceShow, view } =
+    useBlueprint();
   const [atlas, setAtlas] = useState<Atlas | null>(null);
   const [atlasTexture, setAtlasTexture] = useState<Texture | null>(null);
   useEffect(() => {
@@ -53,7 +63,7 @@ export function BlueprintCanvas() {
     // <Canvas>'s own resize machinery (see IconInstances.tsx for the full
     // mechanism). Loading once here and passing the resolved texture down
     // as a prop avoids that entirely.
-    new TextureLoader().load(
+    const texture = new TextureLoader().load(
       assetPath('icons/atlas.png'),
       (texture) => {
         // Nobody will render it, so release the GPU handle rather than leak it.
@@ -69,23 +79,15 @@ export function BlueprintCanvas() {
     return () => {
       cancelled = true;
       controller.abort();
+      texture.dispose();
     };
   }, []);
-  if (satisfactoryScene)
-    return (
-      <SatisfactoryCanvas
-        scene={satisfactoryScene}
-        selectedIndex={selectedIndex}
-        onSelect={select}
-        view={satisfactoryView}
-      />
-    );
   if (!sceneModel)
     return (
       <div className="canvas-empty">
         {blueprint
           ? 'DSP geometry requires the DSP viewer assets.'
-          : 'Build from a FactorioLab URL or open a blueprint to see it.'}
+          : 'Build from a DSP FactorioLab URL or open a blueprint to see it.'}
       </div>
     );
 

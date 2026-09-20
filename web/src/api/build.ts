@@ -375,12 +375,13 @@ export interface ProjectedSolve {
   totalS: number;
 }
 
-/** Match the game path, not an arbitrary substring in a URL's query. */
-export function isSatisfactoryUrl(url: string): boolean {
+/** Recognized FactorioLab game routes; absent or unsupported input is not DSP. */
+export function gameFromUrl(url: string): 'sfy' | 'dsp' | null {
   try {
-    return new URL(url).pathname.split('/')[1] === 'sfy';
+    const path = new URL(url).pathname.split('/')[1];
+    return path === 'sfy' || path === 'dsp' ? path : null;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -392,7 +393,7 @@ export function isSatisfactoryUrl(url: string): boolean {
  * so the panel does the multiplication rather than leaving it to be discovered.
  */
 export function projectSolve(options: BuildOptions): ProjectedSolve {
-  if (isSatisfactoryUrl(options.url)) {
+  if (options.strategy === 'sections') {
     return {
       candidates: 1,
       strategies: 1,

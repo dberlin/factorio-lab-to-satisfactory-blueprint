@@ -188,7 +188,7 @@ def test_four_refinery_factory_retains_legal_routes_inside_mk2(
         surplus_outputs={"heavy-oil-residue": group.row_outputs["heavy-oil-residue"]},
         belt_item_id="conveyor-belt-mk1",
         belt_items_per_second=Fraction(1),
-        belt_upgrades=(BeltTier(item_id="conveyor-belt-mk2", items_per_second=Fraction(2)),),
+        belt_alternatives=(BeltTier(item_id="conveyor-belt-mk2", items_per_second=Fraction(2)),),
         fluid_items=frozenset({"crude-oil", "heavy-oil-residue"}),
         pipe_tiers=(PipeTier(item_id="pipeline-mk1", cubic_metres_per_second=Fraction(5)),),
     )

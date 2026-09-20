@@ -80,25 +80,40 @@ Stack lanes preserve each section interface's lift-width escape column.
 Where both lift directions are blocked, the terminal lead instead clears a
 native turning attachment; ordinary interfaces retain the shorter lift lead.
 
+Rip-up routing starts with descending flow priority. After an incomplete round,
+stranded nets move ahead of successful nets, preserving their relative order.
+This prevents a lower-rate stream from repeatedly hitting its search work cap
+behind the same reservations when there is no proven obstruction to penalize.
+Round limits, the layout deadline, collision guards and best-round restoration
+still apply.
+
 `sections/stacking.py` adds actual base/roof slabs, painted-beam outlines and corner
 posts, with aligned conveyor/pipe floor holes. Stack search reserves the actual
 lane parts and full-height shafts rather than their empty enclosing corners,
 and can move solid branches above or below an obstructing collector.
+Corner posts end at the next module's base, above this module's roof slab,
+so their height preserves the manual connection seam rather than a flush roof.
 Fluid bays likewise reserve the actual junction and pump bodies, with lateral
 approaches only at branch height rather than extruded up the whole pump.
-Each external material has a bottom feed, local branches and an upward
-continuation; outputs collect into their upward trunk. Complete section flows
+Each external input has a bottom feed, local branches and an upward continuation.
+Exports have a top inlet for production from higher modules, local collectors,
+and a bottom outlet. Importing and exporting the same material uses separate
+shafts, never a bidirectional belt. Complete section flows
 use both genuine side ports before adding inline boundary bodies for more peers.
 Equal-rate obligations route directly; partial external contributions retain
 aggregate routing. `StackLane` records local demand/export, trunk capacity and
 any required external input head. These authoring obligations are not saved
 transport properties and cannot be recovered just by decoding a `.sbp`.
 
-Conveyor trunks select the slowest allowed tier meeting each lane's local
-demand/export. The shared inter-section lift profile uses the slowest allowed
-tier meeting the busiest routed solid stream. Availability of a higher tier
-does not itself justify using it. Repeat counts remain bounded by the reported
-lane capacities; a higher explicit FactorioLab belt floor increases that budget.
+Conveyors select the lowest available tier meeting their assigned flow, before
+geometry routing. The FactorioLab `ibe` selection is retained as provenance,
+not a minimum conveyor tier; all dataset tiers through `maxBelt` are available,
+along with the explicitly selected tier. There is no belt-tier routing retry loop.
+Trunks use each lane's local demand/export. The shared inter-section lift profile
+uses the lowest tier meeting the busiest routed solid stream. Availability of a
+higher tier does not itself justify using it. Repeat counts remain bounded by
+the reported trunk capacities; selecting a higher `ibe` does not reserve extra
+stacking throughput. Pipe selection retains its separate chosen-floor policy.
 
 `sections/signs.py` adds native SmallWide sign pairs after routing, using the
 reference blueprints' orange-on-black INPUT/OUTPUT header and material-row style.
@@ -136,15 +151,19 @@ lift joins are promised. Size supply for all copies and keep accumulated flow
 within each trunk's capacity; connect power and drain every output, including
 byproducts.
 
-The upward pipe trunks contain powered Mk2 pumps and real junction actors,
-not decorative proxies. External liquid supply must reach the highest connected
-pipe endpoint before the next pump inlet. Interior spline humps and unused
+Upward input pipe trunks contain powered Mk2 pumps and real junction actors.
+Output pipe trunks drain through their collectors to the bottom without an upward
+pump. Gravity certification must reach every connected consumer, first pump inlet
+and bottom export without exceeding the producer's endpoint head. Only dead-end
+upper continuation arms may remain unprimed; an elevated parallel path cannot
+hide behind a smaller gravity drain. External liquid supply must reach the highest
+connected pipe endpoint before the next pump inlet. Interior spline humps and unused
 junction mouths do not add head; splitting a run or connecting a junction at a
 crest creates an elevated endpoint and changes that requirement. `pipe.head`
 checks pump design head per forward region; ratings do not add together. This is
 a project design envelope, not a runtime pressure/priming simulation or a
 guarantee about world supply.
-Automatic pumps are confined to the vertical stack lanes, not internal
+Automatic pumps are confined to the upward input stack lanes, not internal
 manifold turns. A lower input is a pressurized supply contract with the module
 below or an external pump; an unpowered or unprimed supply does not satisfy it.
 

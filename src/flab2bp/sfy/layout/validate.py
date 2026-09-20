@@ -2523,9 +2523,9 @@ def _fluid_network_capacity(ctx: Context) -> Iterable[Finding]:
         for lane in ctx.placement.stack_lanes:
             if lane.kind == "pipe" and lane.item_id == item:
                 if lane.input_per_second:
-                    sources.append((lane.bottom, lane.input_per_second))
+                    sources.append((lane.flow_start, lane.input_per_second))
                 if lane.output_per_second:
-                    sinks.append((lane.top, lane.output_per_second))
+                    sinks.append((lane.flow_end, lane.output_per_second))
         demand = sum((rate for _, rate in sinks), Fraction())
         if demand == 0:
             continue
@@ -2751,6 +2751,23 @@ def _stack_boundary(ctx: Context) -> Iterable[Finding]:
                     "reciprocal, slab-aligned passthrough",
                     node[0],
                 )
+        for node, is_start in ((lane.flow_start, True), (lane.flow_end, False)):
+            obj = ctx.placed[node[0]]
+            if not isinstance(obj, LiftObj | PipeRun):
+                continue
+            entry, exit_ = (pipe_ends if isinstance(obj, PipeRun) else belt_ends)(
+                ctx.registry, obj.class_name
+            )
+            if node[1] != (entry if is_start else exit_) or not (
+                obj.boundary_start if is_start else obj.boundary_end
+            ):
+                yield ctx.finding(
+                    "flow.boundary",
+                    f"{lane.item_id!r} lane's {'entry' if is_start else 'exit'} "
+                    "does not match its transport flow and open boundary flag",
+                    node[0],
+                    port=node[1],
+                )
         if lane.kind == "belt" and gap:
             limits = ctx.registry.limits
             if (
@@ -2778,21 +2795,29 @@ def _stack_boundary(ctx: Context) -> Iterable[Finding]:
                 )
         if lane.input_per_second < 0 or lane.output_per_second < 0 or lane.capacity_per_second <= 0:
             yield ctx.finding("flow.boundary", f"{lane.item_id!r} lane has invalid rates")
+        if (lane.input_per_second > 0) == (lane.output_per_second > 0):
+            yield ctx.finding(
+                "flow.boundary",
+                f"{lane.item_id!r} lane must have exactly one positive local input or output role",
+                lane.bottom[0],
+                lane.top[0],
+            )
         if max(lane.input_per_second, lane.output_per_second) > lane.capacity_per_second:
             yield ctx.finding(
                 "flow.boundary", f"{lane.item_id!r} local demand/export exceeds lane capacity"
             )
         graph = graphs[lane.kind]
-        reachable = _component(lane.bottom, graph)
-        if lane.top not in reachable:
+        reachable = _component(lane.flow_start, graph)
+        if lane.flow_end not in reachable:
             yield ctx.finding(
                 "flow.boundary",
-                f"{lane.item_id!r} lane lacks a complete bottom-to-top path",
+                f"{lane.item_id!r} lane lacks a complete "
+                f"{'bottom-to-top' if lane.upward else 'top-to-bottom'} path",
                 lane.bottom[0],
                 lane.top[0],
             )
         capacity = _lane_capacity(
-            ctx, graph, lane.bottom, lane.top, lane.item_id, lane.capacity_per_second
+            ctx, graph, lane.flow_start, lane.flow_end, lane.item_id, lane.capacity_per_second
         )
         if capacity < lane.capacity_per_second:
             yield ctx.finding(
@@ -2823,7 +2848,7 @@ def _stack_boundary(ctx: Context) -> Iterable[Finding]:
                     ):
                         continue
                     node = (machine.id, port.name)
-                    if node in reachable if incoming else lane.top in _component(node, graph):
+                    if node in reachable if incoming else lane.flow_end in _component(node, graph):
                         served = True
             if not served:
                 yield ctx.finding(
@@ -3046,6 +3071,67 @@ def _required_head(ctx: Context, node: tuple[int, str]) -> float:
     return max(0.0, (peak - start[2]) / 100)
 
 
+def _gravity_drain(
+    ctx: Context,
+    start: tuple[int, str],
+    sinks: set[tuple[int, str]],
+    continuations: set[tuple[int, str]],
+) -> bool:
+    """Certify gravity supply, excluding only unneeded upper continuation arms."""
+    source = ctx.world_port(*start)
+    if source is None or not sinks:
+        return False
+    graph = ctx.hydraulic_graph
+    region = _component(start, graph, stop=ctx.pump_inlets)
+    targets = region & sinks
+    if not targets:
+        return False
+    targets.update(region & ctx.pump_inlets)
+    for node in region:
+        if isinstance(ctx.placed.get(node[0]), MachineObj):
+            port = ctx.port(*node)
+            if port is not None and port.kind == "pipe" and port.direction == "input":
+                targets.add(node)
+    pending = [start]
+    visited = {start}
+    for node in pending:
+        if node in ctx.pump_inlets:
+            continue
+        for other in graph.get(node, ()):
+            if other in visited:
+                continue
+            point = ctx.world_port(*other)
+            if point is not None and point[2] <= source[2] + PORT_CM:
+                visited.add(other)
+                pending.append(other)
+    if not targets <= visited:
+        return False
+    # A low-capacity drain must not hide a parallel elevated route needed for
+    # throughput. Only dead-end arms ending at upper stack inlets may stay dry.
+    unprimed = region - visited
+    while unprimed:
+        arm = {unprimed.pop()}
+        pending = list(arm)
+        mouths: set[tuple[int, str]] = set()
+        for node in pending:
+            for other in graph.get(node, ()):
+                if other in unprimed:
+                    unprimed.remove(other)
+                    arm.add(other)
+                    pending.append(other)
+                elif other in visited:
+                    # Junction mouths share one hydraulic connection; their
+                    # internal port clique is not several independent routes.
+                    mouths.add(
+                        (other[0], "")
+                        if isinstance(ctx.placed.get(other[0]), PipeAttachmentObj)
+                        else other
+                    )
+        if not arm & continuations or len(mouths) != 1:
+            return False
+    return True
+
+
 @check("pipe.head")
 def _pipe_head(ctx: Context) -> Iterable[Finding]:
     """Project hydraulic design envelope; not a simulation of runtime pressure.
@@ -3057,6 +3143,16 @@ def _pipe_head(ctx: Context) -> Iterable[Finding]:
     if not ctx.placement.pipes:
         return
     graph = ctx.hydraulic_graph
+    gravity_sinks = {
+        lane.flow_end
+        for lane in ctx.placement.stack_lanes
+        if lane.kind == "pipe" and lane.output_per_second > 0
+    }
+    gravity_continuations = {
+        lane.flow_start
+        for lane in ctx.placement.stack_lanes
+        if lane.kind == "pipe" and lane.output_per_second > 0
+    }
     pumps = {
         obj.id: obj
         for obj in ctx.placement.pipe_attachments
@@ -3098,6 +3194,8 @@ def _pipe_head(ctx: Context) -> Iterable[Finding]:
             node = (machine.id, port.name)
             if node not in graph:
                 continue
+            if _gravity_drain(ctx, node, gravity_sinks, gravity_continuations):
+                continue
             required = _required_head(ctx, node)
             if required > PORT_CM / 100:
                 yield ctx.skip(
@@ -3110,14 +3208,14 @@ def _pipe_head(ctx: Context) -> Iterable[Finding]:
     for lane in ctx.placement.stack_lanes:
         if lane.kind != "pipe" or lane.input_per_second <= 0:
             continue
-        required = _required_head(ctx, lane.bottom)
+        required = _required_head(ctx, lane.flow_start)
         declared = lane.required_input_head_m
         if not math.isfinite(declared) or declared < 0 or declared + PORT_CM / 100 < required:
             yield ctx.finding(
                 "pipe.head",
                 f"{lane.item_id!r} external input requires at least "
                 f"{required:.2f} m priming head, not the declared {declared:.2f} m",
-                lane.bottom[0],
+                lane.flow_start[0],
                 required_head_m=required,
                 declared_head_m=declared,
             )
@@ -3127,7 +3225,7 @@ def _pipe_head(ctx: Context) -> Iterable[Finding]:
             f"External supply obligation: {lane.item_id!r} "
             f"must arrive with at least {declared:.2f} m head above its boundary port; "
             "the blueprint cannot measure or guarantee world supply.",
-            (lane.bottom[0],),
+            (lane.flow_start[0],),
             {"required_input_head_m": declared},
         )
 

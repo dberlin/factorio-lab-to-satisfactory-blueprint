@@ -241,7 +241,7 @@ class SfyBuildSpec(_Frozen):
 
     * every rate is an exact positive ``Fraction`` -- no float reaches geometry;
     * every item a group consumes is produced by another group or brought in;
-    * belt upgrades are strictly faster than the floor and listed slowest first;
+    * belt alternatives have distinct capacities and are listed slowest first;
     * pipe tiers are listed in strictly increasing rated capacity.
 
     The dangling-demand check runs only when the spec claims to be complete,
@@ -257,11 +257,11 @@ class SfyBuildSpec(_Frozen):
     #: Unavoidable non-objective production that must also leave the boundary.
     surplus_outputs: dict[str, Fraction] = Field(default_factory=dict)
     #: The belt FactorioLab chose (``ibe``), else the dataset's ``minBelt``.
-    #: The FLOOR: no emitted belt is ever slower.
+    #: Retained as flow provenance, not a minimum tier for emitted conveyors.
     belt_item_id: str
     belt_items_per_second: Fraction = Field(gt=0)
-    #: Faster belts the build may use, slowest first, up to ``maxBelt``.
-    belt_upgrades: tuple[BeltTier, ...] = ()
+    #: Other available belts, slowest first, up to ``maxBelt``.
+    belt_alternatives: tuple[BeltTier, ...] = ()
     #: Flow items without a dataset stack size; their rates are cubic metres/s.
     fluid_items: frozenset[str] = frozenset()
     #: Allowed pipelines, chosen/default floor first, through ``maxPipe``.
@@ -287,16 +287,20 @@ class SfyBuildSpec(_Frozen):
 
     @model_validator(mode="after")
     def _tiers_are_ordered(self) -> SfyBuildSpec:
-        previous = self.belt_items_per_second
-        for tier in self.belt_upgrades:
-            if tier.items_per_second <= previous:
+        previous = Fraction()
+        seen = {self.belt_item_id}
+        for tier in self.belt_alternatives:
+            if (
+                tier.items_per_second <= previous
+                or tier.items_per_second == self.belt_items_per_second
+                or tier.item_id in seen
+            ):
                 raise ValueError(
-                    f"{self.label or 'spec'}: belt upgrade {tier.item_id!r} at "
-                    f"{tier.items_per_second}/s is not faster than the tier before it "
-                    f"({previous}/s); upgrades must be strictly faster than the floor "
-                    "and listed slowest first"
+                    f"{self.label or 'spec'}: belt alternative {tier.item_id!r} must have "
+                    "a distinct capacity and id; alternatives must be listed slowest first"
                 )
             previous = tier.items_per_second
+            seen.add(tier.item_id)
         previous = Fraction()
         for pipe in self.pipe_tiers:
             if pipe.cubic_metres_per_second <= previous:
@@ -312,9 +316,11 @@ class SfyBuildSpec(_Frozen):
 
     @property
     def belt_tiers(self) -> tuple[BeltTier, ...]:
-        """Every belt the build may use, floor first."""
-        floor = BeltTier(item_id=self.belt_item_id, items_per_second=self.belt_items_per_second)
-        return (floor, *self.belt_upgrades)
+        """Every available belt, slowest first for direct capacity selection."""
+        selected = BeltTier(item_id=self.belt_item_id, items_per_second=self.belt_items_per_second)
+        return tuple(
+            sorted((selected, *self.belt_alternatives), key=lambda tier: tier.items_per_second)
+        )
 
     @property
     def power_mw(self) -> float:

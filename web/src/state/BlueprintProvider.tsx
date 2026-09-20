@@ -63,6 +63,9 @@ interface DisplayState {
 }
 
 export interface BlueprintState {
+  /** Empty viewers follow the requested game; loaded documents keep their provenance. */
+  game: 'sfy' | 'dsp';
+  selectGame(game: 'sfy' | 'dsp'): void;
   document: DisplayedDocument | null;
   blueprint: Blueprint | null;
   sceneModel: SceneModel | null;
@@ -110,6 +113,7 @@ export function BlueprintProvider({
   catalog: Catalog | null;
   children: ReactNode;
 }) {
+  const [requestedGame, selectGame] = useState<'sfy' | 'dsp'>('sfy');
   const [display, setDisplay] = useState<DisplayState>({
     document: null,
     error: null,
@@ -231,6 +235,8 @@ export function BlueprintProvider({
   const sceneModel = blueprint && catalog ? buildSceneModel(blueprint, catalog) : null;
 
   const value: BlueprintState = {
+    game: document ? (document.kind === 'satisfactory' ? 'sfy' : 'dsp') : requestedGame,
+    selectGame,
     document,
     blueprint,
     sceneModel,

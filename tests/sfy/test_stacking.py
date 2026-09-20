@@ -5,6 +5,7 @@ import time
 from collections import defaultdict
 from dataclasses import replace
 from fractions import Fraction
+from typing import Literal
 
 import pytest
 
@@ -14,22 +15,37 @@ from flab2bp.sfy.layout.model import (
     AttachmentObj,
     BeltRun,
     LiftObj,
+    Link,
     PipeAttachmentObj,
+    PipeRun,
     Pose,
     SfyPlacement,
     belt_ends,
+    pipe_ends,
 )
+from flab2bp.sfy.layout.splines import straight
 from flab2bp.sfy.layout.validate import validate
+from flab2bp.sfy.registry import Registry
 from flab2bp.sfy.sections.compose import _arrange, _floors, _merge, _sections_for
-from flab2bp.sfy.sections.model import ProductionSection, SectionPort, endpoint
+from flab2bp.sfy.sections.model import (
+    ProductionSection,
+    SectionPort,
+    endpoint,
+    transform_placement,
+)
 from flab2bp.sfy.sections.pipe_routes import _Routes
 from flab2bp.sfy.sections.stacking import build_stack_boundaries
 from flab2bp.sfy.spec import PipeTier, SfyBuildSpec, SfyMachineGroup, designer
 from tests.sfy.conftest import flow_spec, sfy_registry
 
 
-def _stack():
+def _stack(
+    *, kind: Literal["belt", "pipe"] = "belt", same_item: bool = False, start_id: int = 1
+) -> tuple[Registry, SfyPlacement, tuple[SectionPort, ...]]:
     registry = sfy_registry()
+    ids = itertools.count(start_id)
+    ingredient = "water" if kind == "pipe" else "iron-ingot"
+    product = ingredient if same_item else ("heavy-oil-residue" if kind == "pipe" else "iron-plate")
     group = SfyMachineGroup(
         recipe_id="iron-plate",
         recipe_class="Recipe_IronPlate_C",
@@ -42,27 +58,38 @@ def _stack():
         somersloops=0,
         power_shards_per_machine=0,
         last_power_shards=0,
-        inputs_per_machine={"iron-ingot": Fraction(1, 2)},
-        outputs_per_machine={"iron-plate": Fraction(1, 3)},
+        inputs_per_machine={ingredient: Fraction(1, 2)},
+        outputs_per_machine={product: Fraction(1, 3)},
         power_mw_per_machine=4,
         last_power_mw=4,
     )
     box = designer("mk3", registry)
-    source = AttachmentObj(1, "Build_ConveyorAttachmentSplitter_C", Pose(0, 0, 600, 0))
-    placement = SfyPlacement(designer=box, attachments=(source,))
+    source: PipeAttachmentObj | AttachmentObj
+    if kind == "pipe":
+        source = PipeAttachmentObj(next(ids), "Build_PipelineJunction_Cross_C", Pose(0, 0, 600, 0))
+        placement = SfyPlacement(designer=box, pipe_attachments=(source,))
+        input_port, output_port = "Connection0", "Connection1"
+    else:
+        source = AttachmentObj(next(ids), "Build_ConveyorAttachmentSplitter_C", Pose(0, 0, 600, 0))
+        placement = SfyPlacement(designer=box, attachments=(source,))
+        input_port, output_port = "Input1", "Output1"
     section = ProductionSection(
         group,
         placement,
-        (SectionPort("iron-ingot", Fraction(1, 2), source.id, "Input1", "input"),),
-        (SectionPort("iron-plate", Fraction(1, 3), source.id, "Output1", "output"),),
+        (SectionPort(ingredient, Fraction(1, 2), source.id, input_port, "input", kind),),
+        (SectionPort(product, Fraction(1, 3), source.id, output_port, "output", kind),),
         ((-250, -250, 100), (250, 250, 900)),
     )
     spec = SfyBuildSpec(
         groups=(group,),
-        external_inputs={"iron-ingot": Fraction(1, 2)},
-        outputs={"iron-plate": Fraction(1, 3)},
+        external_inputs={ingredient: Fraction(1, 2)},
+        outputs={product: Fraction(1, 3)},
         belt_item_id="conveyor-belt-mk1",
         belt_items_per_second=Fraction(1),
+        fluid_items=frozenset({ingredient, product}) if kind == "pipe" else frozenset(),
+        pipe_tiers=(PipeTier(item_id="pipeline-mk1", cubic_metres_per_second=Fraction(5)),)
+        if kind == "pipe"
+        else (),
     )
     result, branches = build_stack_boundaries(
         spec,
@@ -70,14 +97,16 @@ def _stack():
         (section,),
         registry,
         load_lab_map(),
-        ids=itertools.count(2),
+        ids=ids,
         deadline=time.monotonic() + 30,
     )
     return registry, result, branches
 
 
-def test_repeated_lanes_have_matching_xy_and_one_manual_seam_gap():
+def test_repeated_lanes_have_matching_xy_and_one_manual_seam_gap() -> None:
     registry, placement, _ = _stack()
+    assert registry.limits.lift_min_cm is not None
+    assert registry.limits.lift_max_cm is not None
     gaps = []
     linked = {end for link in placement.links for end in (link.a, link.b)}
     for lane in placement.stack_lanes:
@@ -99,15 +128,15 @@ def test_repeated_lanes_have_matching_xy_and_one_manual_seam_gap():
             assert high[2] <= other_low[2] + placement.stack_height_cm
 
 
-def test_ingredient_feed_reaches_local_branch_and_continuing_trunk():
+def test_ingredient_feed_reaches_local_branch_and_continuing_trunk() -> None:
     registry, placement, branches = _stack()
     graph = defaultdict(set)
     for link in placement.links:
         graph[link.a].add(link.b)
     for actor in placement.objects:
         if isinstance(actor, (BeltRun, LiftObj)):
-            entry, exit_ = belt_ends(registry, actor.class_name)
-            graph[(actor.id, entry)].add((actor.id, exit_))
+            entry_name, exit_name = belt_ends(registry, actor.class_name)
+            graph[(actor.id, entry_name)].add((actor.id, exit_name))
         elif isinstance(actor, AttachmentObj):
             ports = registry.buildables[actor.class_name].ports
             for entry in (port for port in ports if port.direction == "input"):
@@ -127,7 +156,179 @@ def test_ingredient_feed_reaches_local_branch_and_continuing_trunk():
     assert branch.items_per_second == lane.input_per_second == Fraction(1, 2)
 
 
-def test_perimeter_rings_cover_all_four_slab_edges_with_legal_beams():
+def _reachable(
+    placement: SfyPlacement, registry: Registry, start: tuple[int, str]
+) -> set[tuple[int, str]]:
+    graph: defaultdict[tuple[int, str], set[tuple[int, str]]] = defaultdict(set)
+    for link in placement.links:
+        graph[link.a].add(link.b)
+    for actor in placement.objects:
+        if isinstance(actor, (BeltRun, LiftObj, PipeRun)):
+            entry_name, exit_name = (pipe_ends if isinstance(actor, PipeRun) else belt_ends)(
+                registry, actor.class_name
+            )
+            graph[(actor.id, entry_name)].add((actor.id, exit_name))
+        elif isinstance(actor, (AttachmentObj, PipeAttachmentObj)):
+            ports = registry.buildables[actor.class_name].ports
+            for entry in ports:
+                if entry.kind in ("belt", "pipe") and entry.direction != "output":
+                    graph[(actor.id, entry.name)].update(
+                        (actor.id, port.name)
+                        for port in ports
+                        if port.kind == entry.kind and port.direction != "input"
+                    )
+    pending, visited = [start], set()
+    while pending:
+        node = pending.pop()
+        if node not in visited:
+            visited.add(node)
+            pending.extend(graph[node] - visited)
+    return visited
+
+
+def _join_stack_pair(lower: SfyPlacement, upper: SfyPlacement, registry: Registry) -> SfyPlacement:
+    """Place the second module and author the user's actual, reciprocal seams."""
+    upper = transform_placement(upper, (0, 0, lower.stack_height_cm))
+    placement = replace(
+        lower,
+        attachments=(*lower.attachments, *upper.attachments),
+        belts=(*lower.belts, *upper.belts),
+        lifts=(*lower.lifts, *upper.lifts),
+        pipes=(*lower.pipes, *upper.pipes),
+        pipe_attachments=(*lower.pipe_attachments, *upper.pipe_attachments),
+        foundations=(*lower.foundations, *upper.foundations),
+        beams=(*lower.beams, *upper.beams),
+        passthroughs=(*lower.passthroughs, *upper.passthroughs),
+        links=(*lower.links, *upper.links),
+        stack_lanes=(),
+        stack_height_cm=0,
+        stack_connection_gap_cm=0,
+    )
+    ids = itertools.count(max(actor.id for actor in placement.objects) + 1)
+    holes = {hole.id: hole for hole in placement.passthroughs}
+    lifts, pipes, links = list(placement.lifts), list(placement.pipes), list(placement.links)
+    connected: set[tuple[int, str]] = set()
+    for low, high in zip(lower.stack_lanes, upper.stack_lanes, strict=True):
+        source, target = (low.top, high.bottom) if low.upward else (high.bottom, low.top)
+        start, _ = endpoint(placement, *source, registry)
+        finish, _ = endpoint(placement, *target, registry)
+        run = placement.by_id(source[0])
+        assert isinstance(run, LiftObj | PipeRun)
+        ends = (pipe_ends if low.kind == "pipe" else belt_ends)(registry, run.class_name)
+        source_hole = run.snapped_passthroughs[ends.index(source[1])]
+        target_run = placement.by_id(target[0])
+        assert isinstance(target_run, LiftObj | PipeRun)
+        target_hole = target_run.snapped_passthroughs[ends.index(target[1])]
+        assert source_hole is not None and target_hole is not None
+        height = finish[2] - start[2]
+        seam: LiftObj | PipeRun
+        if low.kind == "belt":
+            seam = LiftObj(
+                next(ids),
+                run.class_name,
+                Pose(*start, 0),
+                height,
+                snapped_passthroughs=(source_hole, target_hole),
+            )
+            lifts.append(seam)
+        else:
+            seam = PipeRun(
+                next(ids),
+                run.class_name,
+                straight(start, (0, 0, 1 if height > 0 else -1), abs(height)),
+                low.item_id,
+                low.capacity_per_second,
+                snapped_passthroughs=(source_hole, target_hole),
+            )
+            pipes.append(seam)
+        entry, exit_ = (seam.id, ends[0]), (seam.id, ends[1])
+        if low.upward:
+            holes[source_hole] = replace(holes[source_hole], top_connection=entry)
+            holes[target_hole] = replace(holes[target_hole], bottom_connection=exit_)
+        else:
+            holes[source_hole] = replace(holes[source_hole], bottom_connection=entry)
+            holes[target_hole] = replace(holes[target_hole], top_connection=exit_)
+        links.extend((Link(source, entry), Link(exit_, target)))
+        connected.update((source, target))
+
+    def close_boundaries[T: (LiftObj, PipeRun)](run: T) -> T:
+        entry, exit_ = (pipe_ends if isinstance(run, PipeRun) else belt_ends)(
+            registry, run.class_name
+        )
+        return replace(
+            run,
+            boundary_start=run.boundary_start and (run.id, entry) not in connected,
+            boundary_end=run.boundary_end and (run.id, exit_) not in connected,
+        )
+
+    return replace(
+        placement,
+        lifts=tuple(close_boundaries(run) for run in lifts),
+        pipes=tuple(close_boundaries(run) for run in pipes),
+        passthroughs=tuple(holes.values()),
+        links=tuple(links),
+    )
+
+
+@pytest.mark.parametrize("kind", ("belt", "pipe"))
+@pytest.mark.parametrize("same_item", (False, True))
+def test_manual_stack_seams_feed_both_modules_and_drain_both_to_ground(
+    kind: Literal["belt", "pipe"], same_item: bool
+) -> None:
+    registry, lower, lower_branches = _stack(kind=kind, same_item=same_item)
+    _, upper, upper_branches = _stack(kind=kind, same_item=same_item, start_id=10000)
+    assert len(lower.stack_lanes) == 2
+    incoming = next(lane for lane in lower.stack_lanes if lane.input_per_second)
+    outgoing = next(lane for lane in lower.stack_lanes if lane.output_per_second)
+    assert incoming.output_per_second == outgoing.input_per_second == 0
+    assert incoming.capacity_per_second >= 2 * incoming.input_per_second
+    assert outgoing.capacity_per_second >= 2 * outgoing.output_per_second
+    in_xy = endpoint(lower, *incoming.bottom, registry)[0][:2]
+    out_xy = endpoint(lower, *outgoing.bottom, registry)[0][:2]
+    assert in_xy != out_xy
+    joined = _join_stack_pair(lower, upper, registry)
+    report = validate(
+        joined,
+        None,
+        registry,
+        only=(
+            "ports.position",
+            "ports.direction",
+            "ports.connected_once",
+            "ports.passthrough",
+            "lift.height",
+            "lift.step",
+            "pipe.min_length",
+            "pipe.max_length",
+        ),
+    )
+    assert not report.errors, [finding.message for finding in report.errors]
+    fed = _reachable(joined, registry, incoming.bottom)
+    for branch in (*lower_branches, *upper_branches):
+        local = branch.object_id, branch.port
+        if branch.direction == "output":
+            assert branch.items_per_second == incoming.input_per_second == Fraction(1, 2)
+            assert local in fed
+            assert outgoing.bottom not in _reachable(joined, registry, local)
+        else:
+            assert branch.items_per_second == outgoing.output_per_second == Fraction(1, 3)
+            assert outgoing.bottom in _reachable(joined, registry, local)
+            assert incoming.bottom not in _reachable(joined, registry, local)
+    upper_output = next(lane for lane in upper.stack_lanes if lane.output_per_second)
+    assert outgoing.bottom in _reachable(joined, registry, upper_output.top)
+    assert outgoing.top not in _reachable(joined, registry, outgoing.bottom)
+    if kind == "pipe":
+        output_path = _reachable(joined, registry, upper_output.top)
+        assert not any(
+            registry.buildables[actor.class_name].pump_design_head_m is not None
+            and any(node[0] == actor.id for node in output_path)
+            for actor in joined.pipe_attachments
+        )
+        assert incoming.required_input_head_m > 0
+        assert outgoing.required_input_head_m == 0
+
+
+def test_perimeter_rings_cover_all_four_slab_edges_with_legal_beams() -> None:
     registry, placement, _ = _stack()
     slab_boxes = [
         box_bounds(registry.buildables[obj.class_name].clearance[0], obj.pose.transform())
@@ -167,7 +368,7 @@ def test_perimeter_rings_cover_all_four_slab_edges_with_legal_beams():
     assert footprints[0] == pytest.approx(footprints[1])
 
 
-def test_dense_refinery_stack_branch_clears_the_collector_belts():
+def test_dense_refinery_stack_branch_clears_the_collector_belts() -> None:
     registry = sfy_registry()
     base = flow_spec("plastic-20")
     spec = base.model_copy(
@@ -210,7 +411,7 @@ def test_dense_refinery_stack_branch_clears_the_collector_belts():
     assert product.items_per_second == Fraction(4, 3)
 
 
-def test_long_residue_connection_keeps_pipe_actor_seams_clear_of_bends():
+def test_long_residue_connection_keeps_pipe_actor_seams_clear_of_bends() -> None:
     registry = sfy_registry()
     source = PipeAttachmentObj(1, "Build_PipelineJunction_Cross_C", Pose(-1501, -1800, 475, 0))
     collector = PipeAttachmentObj(2, "Build_PipelineJunction_Cross_C", Pose(1700, -1000, 300, 0))

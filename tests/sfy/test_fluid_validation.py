@@ -461,3 +461,133 @@ def test_unused_upper_junction_port_does_not_add_head() -> None:
     )
     assert not validate(connected, None, registry, only={"ports.position"}).errors
     assert required_input_head_m(connected, (2, start), registry) == 4
+
+
+def test_fluid_export_capacity_must_reach_the_bottom_not_just_the_top() -> None:
+    registry, spec, placement = _plastic()
+    start, end = pipe_ends(registry, PIPE)
+    drain = replace(placement.pipes[1], boundary_end=False)
+    bottom = PipeRun(
+        4,
+        PIPE,
+        straight(drain.end, (-200, -1400, 50)),
+        "heavy-oil-residue",
+        Fraction(1, 3),
+        boundary_end=True,
+    )
+    placement = replace(
+        placement,
+        pipes=(placement.pipes[0], drain, bottom),
+        links=(*placement.links, Link((3, end), (4, start))),
+        stack_lanes=(
+            StackLane(
+                "crude-oil",
+                "pipe",
+                (2, start),
+                (2, end),
+                Fraction(1, 2),
+                Fraction(),
+                Fraction(1, 2),
+            ),
+            StackLane(
+                "heavy-oil-residue",
+                "pipe",
+                (4, end),
+                (3, start),
+                Fraction(),
+                Fraction(1, 3),
+                Fraction(1, 3),
+            ),
+        ),
+    )
+    assert not validate(placement, spec, registry, only={"flow.capacity"}).errors
+    restricted = replace(bottom, cubic_metres_per_second=Fraction(1, 6))
+    report = validate(
+        replace(placement, pipes=(*placement.pipes[:2], restricted)),
+        spec,
+        registry,
+        only={"flow.capacity"},
+    )
+    assert any(
+        finding.detail.get("item") == "heavy-oil-residue"
+        and finding.detail.get("supplied") == "1/6"
+        and finding.detail.get("needed") == "1/3"
+        for finding in report.errors
+    )
+
+
+def test_output_gravity_drain_does_not_need_head_to_fill_the_roof_pass_through() -> None:
+    registry, spec, placement = _plastic()
+    start, end = pipe_ends(registry, PIPE)
+    junction = PipeAttachmentObj(
+        6, "Build_PipelineJunction_Cross_C", Pose(-200, -1400, 275, 0, 0, 90)
+    )
+    collector = replace(
+        placement.pipes[1],
+        points=straight(placement.pipes[1].start, (-300, -1400, 275)),
+        boundary_end=False,
+    )
+    upper = PipeRun(
+        4,
+        PIPE,
+        straight((-200, -1400, 1000), (-200, -1400, 375)),
+        "heavy-oil-residue",
+        Fraction(1, 3),
+        boundary_start=True,
+    )
+    # The lower elbow may rise again, provided it stays below the producer.
+    lower = PipeRun(
+        5,
+        PIPE,
+        straight((-200, -1400, 175), (-400, -1400, 200)),
+        "heavy-oil-residue",
+        Fraction(1, 3),
+    )
+    bottom = PipeRun(
+        7,
+        PIPE,
+        straight((-400, -1400, 200), (-400, -1400, 50)),
+        "heavy-oil-residue",
+        Fraction(1, 3),
+        boundary_end=True,
+    )
+    placement = replace(
+        placement,
+        pipes=(placement.pipes[0], collector, upper, lower, bottom),
+        pipe_attachments=(junction,),
+        links=(
+            *placement.links,
+            Link((3, end), (6, "Connection0")),
+            Link((4, end), (6, "Connection3")),
+            Link((6, "Connection2"), (5, start)),
+            Link((5, end), (7, start)),
+        ),
+        stack_lanes=(
+            StackLane(
+                "heavy-oil-residue",
+                "pipe",
+                (7, end),
+                (4, start),
+                Fraction(),
+                Fraction(1, 3),
+                Fraction(1, 3),
+            ),
+        ),
+    )
+    assert not validate(placement, spec, registry, only={"pipe.head"}).skipped
+    disconnected = replace(placement, links=placement.links[:-1])
+    assert "pipe.head" in validate(disconnected, spec, registry, only={"pipe.head"}).skipped
+
+    # A gravity export must not certify a second, elevated first-pump inlet.
+    pump = PipeAttachmentObj(8, "Build_PipelinePumpMk2_C", Pose(0, 0, 1000, 0))
+    inlet = next(
+        port
+        for port in registry.buildables[pump.class_name].ports
+        if port.kind == "pipe" and port.direction == "input"
+    )
+    elevated = replace(
+        placement,
+        pipe_attachments=(*placement.pipe_attachments, pump),
+        links=(*placement.links, Link((4, start), (pump.id, inlet.name))),
+    )
+    assert "pipe.head" in validate(elevated, spec, registry, only={"pipe.head"}).skipped

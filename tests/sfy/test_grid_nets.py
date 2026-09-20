@@ -114,7 +114,7 @@ def _spec(*groups: SfyMachineGroup, **fields: object) -> SfyBuildSpec:
         "groups": groups,
         "belt_item_id": MK1.item_id,
         "belt_items_per_second": MK1.items_per_second,
-        "belt_upgrades": (MK2,),
+        "belt_alternatives": (MK2,),
         "label": "test",
     }
     base.update(fields)

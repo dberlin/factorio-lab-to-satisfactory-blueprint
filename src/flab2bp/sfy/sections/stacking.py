@@ -10,9 +10,9 @@ placing the next module; the native belt-only blueprint source gate does not
 promise automatic lift joining.
 
 Fluid supply must provide head to the local junction and pump inlet, whose
-actual elevation is recorded by the geometry. Each upward pipe trunk includes
-an upright Mk2 pump after its collector. The compositor must wire those pumps
-to its real power network; placing a pump alone is not a claim of powered flow.
+actual elevation is recorded by the geometry. Each upward input trunk includes
+an upright Mk2 pump; the compositor must wire it to its real power network.
+Separate output trunks collect local production and gravity-drain downward.
 """
 
 from __future__ import annotations
@@ -245,7 +245,7 @@ class _Builder:
         boundary_end: bool = False,
     ) -> tuple[tuple[int, str], tuple[int, str]]:
         low, high = self.registry.limits.lift_min_cm, self.registry.limits.lift_max_cm
-        if low is None or high is None or not low <= height <= high:
+        if low is None or high is None or not low <= abs(height) <= high:
             raise SectionError(
                 f"stack lift height {height:g}cm is outside native {low}..{high}cm", cause="height"
             )
@@ -451,8 +451,19 @@ def _choose_lanes(
         max(2 * measures.box, abs(split_in.translation[0]) + abs(split_out.translation[0]) + lead),
         grid,
     )
-    for item in sorted(set(spec.external_inputs) | set(exports)):
+    roles = (
+        (item, direction, rate)
+        for item in sorted(set(spec.external_inputs) | set(exports))
+        for direction, rate in (
+            ("input", spec.external_inputs.get(item, Fraction())),
+            ("output", exports.get(item, Fraction())),
+        )
+        if rate > 0
+    )
+    for item, direction, rate in roles:
         _check(deadline)
+        consumed = rate if direction == "input" else Fraction()
+        produced = rate if direction == "output" else Fraction()
         kind: Literal["belt", "pipe"] = "pipe" if item in spec.fluid_items else "belt"
         clearance = max(measures.box, lift_half) if kind == "belt" else pipe_half
         route_half = turning_half if kind == "belt" else pipe_turn
@@ -462,7 +473,7 @@ def _choose_lanes(
             port
             for section in sections
             for port in (*section.inputs, *section.outputs)
-            if port.item_id == item
+            if port.item_id == item and port.direction == direction
         ]
         points = [endpoint(placement, port.object_id, port.port, registry)[0] for port in peers]
         target = tuple(
@@ -477,7 +488,7 @@ def _choose_lanes(
         level = _ceil(max(thickness / 2 + lift_min, min((p[2] for p in points), default=500)), grid)
         if kind == "pipe":
             level = max(level, 600.0)
-            if item in exports:
+            if produced:
                 if lowest_output is None:
                     raise SectionError(
                         f"{item}: no local fluid producer reaches the stack collector",
@@ -485,19 +496,15 @@ def _choose_lanes(
                     )
                 junction_rise = _port(registry, _JUNCTION, (1, 0, 0)).translation[0]
                 level = math.floor((lowest_output - junction_rise) / grid) * grid
-        consumed_branches = _branch_rates(
-            spec.external_inputs.get(item, Fraction()), peers, "input"
-        )
-        produced_branches = _branch_rates(exports.get(item, Fraction()), peers, "output")
+        consumed_branches = _branch_rates(consumed, peers, "input")
+        produced_branches = _branch_rates(produced, peers, "output")
         branch_count = max(len(consumed_branches), len(produced_branches))
         branch_centres = tuple(
             centre + index * branch_pitch for index in range((branch_count + 1) // 2)
         )
         local_span = branch_centres[-1] + centre if kind == "belt" else 0.0
         branch_class = (
-            _JUNCTION
-            if kind == "pipe"
-            else (SPLITTER_CLASS if item in spec.external_inputs else MERGER_CLASS)
+            _JUNCTION if kind == "pipe" else (SPLITTER_CLASS if consumed else MERGER_CLASS)
         )
         side_offset = _port(registry, branch_class, (0, 1, 0)).translation[1]
         outward = max(clearance, side_offset + route_lead + route_half)
@@ -522,9 +529,14 @@ def _choose_lanes(
                         ),
                     )
                 )
-            branch_rows = [(branch_class, level, consumed_branches or produced_branches, 0.0)]
-            if consumed_branches and produced_branches:
-                branch_rows.append((MERGER_CLASS, level + lift_min, produced_branches, 180.0))
+            branch_rows = [
+                (
+                    branch_class,
+                    level,
+                    consumed_branches or produced_branches,
+                    0.0 if consumed else 180.0,
+                )
+            ]
             body_poses = [
                 (body_class, Pose(at, 0, branch_z, yaw))
                 for body_class, branch_z, rates, yaw in branch_rows
@@ -558,15 +570,15 @@ def _choose_lanes(
                         )
                     )
         else:
-            pump_z = (
-                level
-                + _port(registry, _JUNCTION, (1, 0, 0)).translation[0]
-                - _port(registry, _PUMP, (-1, 0, 0), "input").translation[0]
-            )
-            for body_class, body_pose in (
-                (_JUNCTION, Pose(0, 0, level, 0, 90)),
-                (_PUMP, Pose(0, 0, pump_z, 0, 90)),
-            ):
+            body_poses = [(_JUNCTION, Pose(0, 0, level, 0, 90))]
+            if consumed:
+                pump_z = (
+                    level
+                    + _port(registry, _JUNCTION, (1, 0, 0)).translation[0]
+                    - _port(registry, _PUMP, (-1, 0, 0), "input").translation[0]
+                )
+                body_poses.append((_PUMP, Pose(0, 0, pump_z, 0, 90)))
+            for body_class, body_pose in body_poses:
                 local_parts.extend(
                     box_bounds(body, body_pose.transform())
                     for body in registry.buildables[body_class].clearance
@@ -580,13 +592,6 @@ def _choose_lanes(
                     (route_half, outward, level + route_half),
                 )
             )
-            if item in spec.external_inputs and item in exports:
-                local_parts.append(
-                    (
-                        (-route_half, -outward, level - route_half),
-                        (route_half, -side_offset, level + route_half),
-                    )
-                )
         rotated_parts = {
             yaw: [_box(Pose(0, 0, 0, yaw), low, high) for low, high in local_parts]
             for yaw in (0.0, 90.0, 180.0, 270.0)
@@ -726,8 +731,8 @@ def _choose_lanes(
             _Lane(
                 item,
                 kind,
-                spec.external_inputs.get(item, Fraction()),
-                exports.get(item, Fraction()),
+                consumed,
+                produced,
                 pose,
                 level,
                 local_span,
@@ -772,27 +777,48 @@ def _belt_lane(
     low_hole, high_hole = next(builder.ids), next(builder.ids)
     start = _point(lane.pose, (0, 0, bottom))
     finish = _point(lane.pose, (0, 0, top))
-    bottom_in, lower_out = builder.lift(
-        lift_cls,
-        Pose(*start, lane.pose.yaw_deg),
-        lane.level - bottom,
-        holes=(low_hole, None),
-        boundary_start=True,
-    )
     rise = registry.limits.lift_min_cm
     assert rise is not None
-    upper_in, top_out = builder.lift(
-        lift_cls,
-        Pose(*_point(lane.pose, (0, 0, lane.level + rise)), lane.pose.yaw_deg),
-        top - lane.level - rise,
-        holes=(None, high_hole),
-        boundary_end=True,
-    )
-    turn_in, turn_out = builder.lift(
-        lift_cls,
-        Pose(*_point(lane.pose, (lane.span, 0, lane.level)), lane.pose.yaw_deg + 180),
-        rise,
-    )
+    if lane.consumed:
+        bottom_end, lower_out = builder.lift(
+            lift_cls,
+            Pose(*start, lane.pose.yaw_deg),
+            lane.level - bottom,
+            holes=(low_hole, None),
+            boundary_start=True,
+        )
+        upper_in, top_end = builder.lift(
+            lift_cls,
+            Pose(*_point(lane.pose, (0, 0, lane.level + rise)), lane.pose.yaw_deg),
+            top - lane.level - rise,
+            holes=(None, high_hole),
+            boundary_end=True,
+        )
+        turn_in, turn_out = builder.lift(
+            lift_cls,
+            Pose(*_point(lane.pose, (lane.span, 0, lane.level)), lane.pose.yaw_deg + 180),
+            rise,
+        )
+    else:
+        lower_in, bottom_end = builder.lift(
+            lift_cls,
+            Pose(*_point(lane.pose, (0, 0, lane.level)), lane.pose.yaw_deg),
+            bottom - lane.level,
+            holes=(None, low_hole),
+            boundary_end=True,
+        )
+        top_end, upper_out = builder.lift(
+            lift_cls,
+            Pose(*finish, lane.pose.yaw_deg),
+            lane.level + rise - top,
+            holes=(high_hole, None),
+            boundary_start=True,
+        )
+        turn_in, turn_out = builder.lift(
+            lift_cls,
+            Pose(*_point(lane.pose, (lane.span, 0, lane.level + rise)), lane.pose.yaw_deg + 180),
+            -rise,
+        )
 
     def row(
         cls: str,
@@ -826,31 +852,26 @@ def _belt_lane(
                 )
         builder.belt(previous, target, belt_cls, lane, tier.items_per_second)
 
-    row(
-        SPLITTER_CLASS if lane.consumed else MERGER_CLASS,
-        lane.consumed_branches or lane.produced_branches,
-        lane.level,
-        lower_out,
-        turn_in,
-    )
-    if lane.consumed and lane.produced:
+    if lane.consumed:
+        row(SPLITTER_CLASS, lane.consumed_branches, lane.level, lower_out, turn_in)
+        builder.belt(turn_out, upper_in, belt_cls, lane, tier.items_per_second)
+    else:
+        builder.belt(upper_out, turn_in, belt_cls, lane, tier.items_per_second)
         row(
             MERGER_CLASS,
             lane.produced_branches,
-            lane.level + rise,
+            lane.level,
             turn_out,
-            upper_in,
+            lower_in,
             reverse=True,
         )
-    else:
-        builder.belt(turn_out, upper_in, belt_cls, lane, tier.items_per_second)
     builder.holes.extend(
         (
             PassthroughObj(
-                low_hole, _LIFT_HOLE, Pose(*start, 0), thickness, top_connection=bottom_in
+                low_hole, _LIFT_HOLE, Pose(*start, 0), thickness, top_connection=bottom_end
             ),
             PassthroughObj(
-                high_hole, _LIFT_HOLE, Pose(*finish, 0), thickness, bottom_connection=top_out
+                high_hole, _LIFT_HOLE, Pose(*finish, 0), thickness, bottom_connection=top_end
             ),
         )
     )
@@ -858,8 +879,8 @@ def _belt_lane(
         StackLane(
             lane.item,
             "belt",
-            bottom_in,
-            top_out,
+            bottom_end,
+            top_end,
             lane.consumed,
             lane.produced,
             tier.items_per_second,
@@ -901,39 +922,6 @@ def _pipe_lane(
     down = _port(registry, _JUNCTION, (-1, 0, 0))
     up = _port(registry, _JUNCTION, (1, 0, 0))
     side = _port(registry, _JUNCTION, (0, 1, 0))
-    other_side = _port(registry, _JUNCTION, (0, -1, 0))
-    pump_def = registry.buildables.get(_PUMP)
-    if pump_def is None or pump_def.pump_design_head_m is None:
-        raise SectionError(
-            f"{lane.item}: lifting output requires a Mk2 pump with source-backed design head",
-            cause="hydraulic",
-        )
-    pump_in = _port(registry, _PUMP, (-1, 0, 0), "input")
-    pump_out = _port(registry, _PUMP, (1, 0, 0), "output")
-    # Snap the pump directly onto the junction: an actual component connection,
-    # not a fabricated zero-length pipeline. This avoids imposing an unsourced
-    # priming rise between a byproduct collector and its first pump inlet.
-    pump_z = lane.level + up.translation[0] - pump_in.translation[0]
-    pump = PipeAttachmentObj(
-        next(builder.ids), _PUMP, Pose(*_point(lane.pose, (0, 0, pump_z)), lane.pose.yaw_deg, 90)
-    )
-    builder.pipe_attachments.append(pump)
-    inlet = builder.at((pump.id, pump_in.name))[0]
-    if lane.produced and (
-        lane.lowest_local_output_cm is None or inlet[2] > lane.lowest_local_output_cm + _EPS
-    ):
-        raise SectionError(
-            f"{lane.item}: collector pump inlet at {inlet[2]:g}cm is above "
-            f"the lowest producer at {lane.lowest_local_output_cm}cm; "
-            "no producer head lift has been established",
-            cause="hydraulic",
-        )
-    if top - inlet[2] > pump_def.pump_design_head_m * 100 + _EPS:
-        raise SectionError(
-            f"{lane.item}: roof rise {top - inlet[2]:g}cm exceeds Mk2 pump "
-            f"design head {pump_def.pump_design_head_m * 100:g}cm",
-            cause="hydraulic",
-        )
     low_hole, high_hole = next(builder.ids), next(builder.ids)
     lower = _point(lane.pose, (0, 0, bottom))
     upper = _point(lane.pose, (0, 0, top))
@@ -972,8 +960,10 @@ def _pipe_lane(
                 boundary_start=first and index == 0,
                 boundary_end=last and index == count - 1,
                 snapped_passthroughs=(
-                    low_hole if first and index == 0 else None,
-                    high_hole if last and index == count - 1 else None,
+                    (low_hole if lane.consumed else high_hole) if first and index == 0 else None,
+                    (high_hole if lane.consumed else low_hole)
+                    if last and index == count - 1
+                    else None,
                 ),
             )
             builder.pipes.append(run)
@@ -988,24 +978,74 @@ def _pipe_lane(
             builder.links.append(Link(previous, target))
         return first_end, previous
 
-    bottom_end, _ = pipe(
-        lower, builder.at((junction.id, down.name))[0], target=(junction.id, down.name), first=True
-    )
-    builder.links.append(Link((junction.id, up.name), (pump.id, pump_in.name)))
-    _, top_end = pipe(
-        builder.at((pump.id, pump_out.name))[0], upper, source=(pump.id, pump_out.name), last=True
-    )
+    required_head = 0.0
     if lane.consumed:
+        pump_def = registry.buildables.get(_PUMP)
+        if pump_def is None or pump_def.pump_design_head_m is None:
+            raise SectionError(
+                f"{lane.item}: upward supply requires a Mk2 pump with source-backed design head",
+                cause="hydraulic",
+            )
+        pump_in = _port(registry, _PUMP, (-1, 0, 0), "input")
+        pump_out = _port(registry, _PUMP, (1, 0, 0), "output")
+        # This real component snap avoids inventing a zero-length pipeline.
+        pump_z = lane.level + up.translation[0] - pump_in.translation[0]
+        pump = PipeAttachmentObj(
+            next(builder.ids),
+            _PUMP,
+            Pose(*_point(lane.pose, (0, 0, pump_z)), lane.pose.yaw_deg, 90),
+        )
+        builder.pipe_attachments.append(pump)
+        inlet = builder.at((pump.id, pump_in.name))[0]
+        if top - inlet[2] > pump_def.pump_design_head_m * 100 + _EPS:
+            raise SectionError(
+                f"{lane.item}: roof rise {top - inlet[2]:g}cm exceeds Mk2 pump "
+                f"design head {pump_def.pump_design_head_m * 100:g}cm",
+                cause="hydraulic",
+            )
+        bottom_end, _ = pipe(
+            lower,
+            builder.at((junction.id, down.name))[0],
+            target=(junction.id, down.name),
+            first=True,
+        )
+        builder.links.append(Link((junction.id, up.name), (pump.id, pump_in.name)))
+        _, top_end = pipe(
+            builder.at((pump.id, pump_out.name))[0],
+            upper,
+            source=(pump.id, pump_out.name),
+            last=True,
+        )
+        required_head = max(0.0, max(inlet[2], lane.highest_local_input_cm) - bottom) / 100
         builder.branches.append(
             SectionPort(lane.item, lane.consumed, junction.id, side.name, "output", "pipe")
         )
-    if lane.produced:
+    else:
+        collector = builder.at((junction.id, side.name))[0]
+        if lane.lowest_local_output_cm is None or collector[2] > lane.lowest_local_output_cm + _EPS:
+            raise SectionError(
+                f"{lane.item}: collector at {collector[2]:g}cm is above "
+                f"the lowest producer at {lane.lowest_local_output_cm}cm",
+                cause="hydraulic",
+            )
+        top_end, _ = pipe(
+            upper,
+            builder.at((junction.id, up.name))[0],
+            target=(junction.id, up.name),
+            first=True,
+        )
+        _, bottom_end = pipe(
+            builder.at((junction.id, down.name))[0],
+            lower,
+            source=(junction.id, down.name),
+            last=True,
+        )
         builder.branches.append(
             SectionPort(
                 lane.item,
                 lane.produced,
                 junction.id,
-                other_side.name if lane.consumed else side.name,
+                side.name,
                 "input",
                 "pipe",
             )
@@ -1020,7 +1060,6 @@ def _pipe_lane(
             ),
         )
     )
-    required_head = max(0.0, max(inlet[2], lane.highest_local_input_cm) - bottom) / 100
     builder.lanes.append(
         StackLane(
             lane.item,
@@ -1030,7 +1069,7 @@ def _pipe_lane(
             lane.consumed,
             lane.produced,
             rate,
-            required_input_head_m=required_head if lane.consumed else 0.0,
+            required_input_head_m=required_head,
         )
     )
 

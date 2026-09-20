@@ -1,0 +1,126 @@
+{
+  "provenance": {
+    "build_version": 502094,
+    "cue4parse": "1.2.2.0",
+    "usmap_sha256": "b0e9179d1af4663cc06e54d6cbfe2ce834f3960d50891ef28a90e936978e4b35",
+    "archives": [
+      "FactoryGame-Windows.pak:13576",
+      "FactoryGame-Windows.utoc:34997"
+    ],
+    "package_filter": "FoundryMk1/Build_FoundryMk1.",
+    "source": "UStaticMesh.RenderData.Bounds with SCS component hierarchy transforms"
+  },
+  "buildables": {
+    "Build_FoundryMk1_C": [
+      {
+        "component": "FGColoredInstanceMeshProxy_GEN_VARIABLE",
+        "mesh": "/Game/FactoryGame/Buildable/Factory/FoundryMk1/Mesh/FoundryMk1_static.FoundryMk1_static",
+        "min": [
+          -418.15081787109375,
+          -573.3955688476562,
+          0.0594482421875
+        ],
+        "max": [
+          453.9006042480469,
+          395.3235168457031,
+          878.8374633789062
+        ],
+        "mesh_origin": [
+          -17.874916,
+          49.03601,
+          439.44846
+        ],
+        "mesh_extent": [
+          436.02567,
+          484.3595,
+          439.389
+        ],
+        "transforms": [
+          {
+            "component": "FGColoredInstanceMeshProxy_GEN_VARIABLE",
+            "translation": [
+              2.384186E-06,
+              -40.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              -1.0,
+              -4.371139E-08
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        ]
+      },
+      {
+        "component": "AnimatedMesh_GEN_VARIABLE",
+        "mesh": "/Game/FactoryGame/Buildable/Factory/FoundryMk1/Mesh/SM_VAT_Foundry.SM_VAT_Foundry",
+        "min": [
+          -338.8965148925781,
+          -345.9267883300781,
+          89.1995849609375
+        ],
+        "max": [
+          383.9772033691406,
+          354.4679260253906,
+          858.6856079101562
+        ],
+        "mesh_origin": [
+          -22.540337,
+          -44.270554,
+          436.4426
+        ],
+        "mesh_extent": [
+          361.43683,
+          350.19733,
+          384.743
+        ],
+        "transforms": [
+          {
+            "component": "FGColoredInstanceMeshProxy_GEN_VARIABLE",
+            "translation": [
+              2.384186E-06,
+              -40.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              -1.0,
+              -4.371139E-08
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          },
+          {
+            "component": "AnimatedMesh_GEN_VARIABLE",
+            "translation": [
+              0.0,
+              2.9197858E-22,
+              37.5
+            ],
+            "rotation": [
+              0.0,
+              -0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -96,7 +96,7 @@ def test_producer_is_not_above_consumer_with_one_real_boundary_per_item() -> Non
         outputs={"iron-rod": Fraction(1, 2)},
         belt_item_id="conveyor-belt-mk1",
         belt_items_per_second=Fraction(1),
-        belt_upgrades=(BeltTier(item_id="conveyor-belt-mk2", items_per_second=Fraction(2)),),
+        belt_alternatives=(BeltTier(item_id="conveyor-belt-mk2", items_per_second=Fraction(2)),),
     )
     placement = SectionLayout().lay_out(
         spec, designer("mk3", registry), registry=registry, lab_map=load_lab_map()

@@ -16,6 +16,7 @@ using SfyExtract;
 //   props   [filter]              : the same, plus every property of every export (discovery)
 //   extract <out> <directions>    : write assets.json, resolving directions with
 //                                   data/native_directions.json
+//   geometry <out> [filter]       : per-component cooked mesh bounds for the viewer
 //   structs <names> <out>         : write struct_schemas.json for the names in <names>
 //
 // `filter` is a case-insensitive substring of the package path. With a filter,
@@ -23,7 +24,7 @@ using SfyExtract;
 // a Holo_* hologram class.
 if (args.Length < 2)
 {
-    Console.Error.WriteLine("usage: dotnet run -- <SatisfactoryDir> <list|props|extract|structs> [filter|<out> <directions>|<names> <out>]");
+    Console.Error.WriteLine("usage: dotnet run -- <SatisfactoryDir> <list|props|extract|geometry|structs> [filter|<out> <directions>|<out> <filter>|<names> <out>]");
     return 2;
 }
 
@@ -34,11 +35,11 @@ var arg3 = args.Length > 3 ? args[3] : "";
 // A mode this tool does not have used to fall through into `extract`, which
 // then wrote assets.json under whatever name arg2 happened to be. Every mode is
 // named here, and anything else is a usage error before any work is done.
-if (mode is not ("list" or "props" or "extract" or "structs"))
+if (mode is not ("list" or "props" or "extract" or "geometry" or "structs"))
 {
     Console.Error.WriteLine(
         $"unknown mode {mode.Replace("\n", " ")}\n" +
-        "usage: dotnet run -- <SatisfactoryDir> <list|props|extract|structs> [filter|<out> <directions>|<names> <out>]");
+        "usage: dotnet run -- <SatisfactoryDir> <list|props|extract|geometry|structs> [filter|<out> <directions>|<out> <filter>|<names> <out>]");
     return 2;
 }
 // `extract` needs both of its file arguments, and the check belongs here rather
@@ -52,7 +53,12 @@ if (mode == "extract" && arg3.Length == 0)
         "  port whose asset omits its direction could be resolved from the game at all.");
     return 2;
 }
-var filter = mode is "extract" or "structs" ? "" : arg2;
+if (mode == "geometry" && arg2.Length == 0)
+{
+    Console.Error.WriteLine("usage: dotnet run -- <SatisfactoryDir> geometry <out.json> [package-filter]");
+    return 2;
+}
+var filter = mode == "geometry" ? arg3 : mode is "extract" or "structs" ? "" : arg2;
 var paks = Path.Combine(gameDir, "FactoryGame", "Content", "Paks");
 var usmap = Path.Combine(gameDir, "CommunityResources", "FactoryGame.usmap");
 
@@ -104,6 +110,37 @@ if (mode is "list" or "props")
                 Console.WriteLine($"      .{property.Name.Text} = {property.Tag?.GenericValue}");
         }
     }
+    return 0;
+}
+
+if (mode == "geometry")
+{
+    var geometry = new SortedDictionary<string, List<object>>(StringComparer.Ordinal);
+    foreach (var pkg in buildPackages)
+    {
+        var exports = Exports(pkg).ToList();
+        foreach (var cls in exports.Where(e => e.Class?.Name.Text == "BlueprintGeneratedClass"
+                     && e.Name.StartsWith("Build_", StringComparison.Ordinal)))
+        {
+            var parts = ComponentMeshBounds(exports);
+            if (parts.Count > 0) geometry[cls.Name] = parts;
+        }
+    }
+    var result = new
+    {
+        provenance = new
+        {
+            build_version = BuildVersion(gameDir),
+            cue4parse = typeof(DefaultFileProvider).Assembly.GetName().Version?.ToString(),
+            usmap_sha256 = Sha256(usmap),
+            archives,
+            package_filter = filter,
+            source = "UStaticMesh.RenderData.Bounds with SCS component hierarchy transforms",
+        },
+        buildables = geometry,
+    };
+    File.WriteAllText(arg2, JsonConvert.SerializeObject(result, Formatting.Indented) + "\n");
+    Console.Error.WriteLine($"wrote {arg2}: {geometry.Count} classes with component mesh bounds");
     return 0;
 }
 
@@ -343,6 +380,81 @@ return 0;
         };
     }
     return (resolved, ambiguous);
+}
+
+/// Per-component actor-local render envelopes, never reserved placement space.
+/// Keep the component chain as evidence and transform all eight mesh-bound corners.
+List<object> ComponentMeshBounds(List<UObject> exports)
+{
+    var nodes = exports.Where(e => e.Class?.Name.Text == "SCS_Node").ToList();
+    var children = nodes.ToDictionary(
+        n => n,
+        n => n.GetOrDefault<FPackageIndex[]>("ChildNodes", [])
+            .Select(index => index.Load()).OfType<UObject>().ToArray());
+    var nested = children.Values.SelectMany(value => value).ToHashSet();
+    var parts = new List<object>();
+    foreach (var root in nodes.Where(node => !nested.Contains(node)))
+    {
+        // External non-root attachment transforms cannot be inferred from this
+        // package. Refuse them rather than draw the mesh in the wrong location.
+        var parent = root.GetOrDefault<FName?>("ParentComponentOrVariableName", null)?.Text ?? "None";
+        if (parent is not ("" or "None" or "RootComponent"))
+            throw new InvalidDataException($"{root.Name}: unsupported external parent {parent}");
+        Visit(root, [], new HashSet<UObject>());
+    }
+    return parts;
+
+    void Visit(UObject node, List<(string Name, FTransform Transform)> ancestors, HashSet<UObject> seen)
+    {
+        if (!seen.Add(node)) throw new InvalidDataException($"{node.Name}: cyclic component hierarchy");
+        var component = node.GetOrDefault<UObject?>("ComponentTemplate", null)
+            ?? throw new InvalidDataException($"{node.Name}: missing component template");
+        var local = new FTransform(
+            component.GetOrDefault("RelativeRotation", FRotator.ZeroRotator),
+            component.GetOrDefault("RelativeLocation", FVector.ZeroVector),
+            component.GetOrDefault("RelativeScale3D", FVector.OneVector));
+        var chain = new List<(string Name, FTransform Transform)>(ancestors) { (component.Name, local) };
+        var mesh = component.GetOrDefault<UStaticMesh?>("StaticMesh", null);
+        if (mesh is not null)
+        {
+            var bounds = mesh.RenderData?.Bounds
+                ?? throw new InvalidDataException($"{component.Name}: mesh has no render bounds");
+            var low = new[] { double.PositiveInfinity, double.PositiveInfinity, double.PositiveInfinity };
+            var high = new[] { double.NegativeInfinity, double.NegativeInfinity, double.NegativeInfinity };
+            foreach (var x in new[] { -1f, 1f })
+            foreach (var y in new[] { -1f, 1f })
+            foreach (var z in new[] { -1f, 1f })
+            {
+                var point = bounds.Origin + bounds.BoxExtent * new FVector(x, y, z);
+                for (var i = chain.Count - 1; i >= 0; i--)
+                    point = chain[i].Transform.TransformPosition(point);
+                var values = new[] { (double)point.X, point.Y, point.Z };
+                for (var axis = 0; axis < 3; axis++)
+                {
+                    low[axis] = Math.Min(low[axis], values[axis]);
+                    high[axis] = Math.Max(high[axis], values[axis]);
+                }
+            }
+            parts.Add(new
+            {
+                component = component.Name,
+                mesh = $"{mesh.Owner?.Name}.{mesh.Name}",
+                min = low,
+                max = high,
+                mesh_origin = new[] { bounds.Origin.X, bounds.Origin.Y, bounds.Origin.Z },
+                mesh_extent = new[] { bounds.BoxExtent.X, bounds.BoxExtent.Y, bounds.BoxExtent.Z },
+                transforms = chain.Select(item => new
+                {
+                    component = item.Name,
+                    translation = new[] { item.Transform.Translation.X, item.Transform.Translation.Y, item.Transform.Translation.Z },
+                    rotation = new[] { item.Transform.Rotation.X, item.Transform.Rotation.Y, item.Transform.Rotation.Z, item.Transform.Rotation.W },
+                    scale = new[] { item.Transform.Scale3D.X, item.Transform.Scale3D.Y, item.Transform.Scale3D.Z },
+                }).ToArray(),
+            });
+        }
+        foreach (var child in children[node]) Visit(child, chain, seen);
+        seen.Remove(node);
+    }
 }
 
 /// Actor-local envelope of the cooked splitter/merger mesh instances.

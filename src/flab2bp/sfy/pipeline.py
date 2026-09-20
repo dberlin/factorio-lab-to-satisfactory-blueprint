@@ -471,7 +471,7 @@ def _description(
         f"{spec.machine_count} production machines.",
     ]
     boundary_labels = (
-        ("Outputs (top)", "Inputs (bottom)")
+        ("Outputs (bottom)", "Inputs (bottom)")
         if placement.stack_lanes
         else ("Outputs (+Y)", "Inputs (-Y)")
     )
@@ -490,8 +490,10 @@ def _description(
                 "Keep matching XY outlines and orientation. Connect corresponding floor/ceiling "
                 f"holes manually across the {placement.stack_connection_gap_cm / 100:g} m gap; "
                 "automatic lift joining is not promised.",
-                "Inputs branch into this module and continue upward. Boundary rates are local "
-                "net demand/export; size upstream supply for all stacked modules.",
+                "Inputs rise from the bottom, branch into this module and continue upward. "
+                "Outputs descend from the top, collect this module's production and drain "
+                "to bottom extraction. Boundary rates are local net demand/export; size "
+                "supply and extraction for all stacked modules.",
             )
         )
         for lane in placement.stack_lanes:

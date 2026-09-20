@@ -4,9 +4,9 @@ import { SatisfactoryToolbar } from './SatisfactoryPanels';
 const MACHINE_LOOKS: MachineLook[] = ['ghosted', 'solid', 'hidden'];
 
 export function Toolbar() {
-  const { document, blueprint, sceneModel, stale, view, setView, satisfactoryScene } =
+  const { game, document, blueprint, sceneModel, stale, view, setView, satisfactoryScene } =
     useBlueprint();
-  if (satisfactoryScene) return <SatisfactoryToolbar scene={satisfactoryScene} />;
+  if (game === 'sfy') return <SatisfactoryToolbar scene={satisfactoryScene} />;
   if (!blueprint) return <header className="toolbar">No blueprint loaded</header>;
 
   const title = blueprint.header.shortDesc || '(untitled)';

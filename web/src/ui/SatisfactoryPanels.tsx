@@ -12,7 +12,7 @@ const LAYERS: { key: Exclude<keyof SatisfactoryViewOptions, 'machines'>; label: 
 ];
 const round = (value: number) => Math.round(value * 100) / 100;
 
-export function SatisfactoryToolbar({ scene }: { scene: SatisfactoryScene }) {
+export function SatisfactoryToolbar({ scene }: { scene: SatisfactoryScene | null }) {
   const {
     stale,
     satisfactoryView: view,
@@ -22,8 +22,10 @@ export function SatisfactoryToolbar({ scene }: { scene: SatisfactoryScene }) {
   } = useBlueprint();
   return (
     <header className="toolbar sfy-toolbar">
-      <strong>{scene.title || 'Satisfactory blueprint'}</strong>
-      <span>{scene.objects.length} objects · Satisfactory</span>
+      <strong>{scene?.title || 'Satisfactory blueprint'}</strong>
+      <span>
+        {scene ? `${scene.objects.length} objects · Satisfactory` : 'No blueprint loaded'}
+      </span>
       {stale && (
         <span className="warn" data-testid="stale-blueprint">
           previous build — the last one produced no blueprint
@@ -64,7 +66,7 @@ export function SatisfactoryToolbar({ scene }: { scene: SatisfactoryScene }) {
           }
         >
           <option value="">None</option>
-          {scene.objects.map((object, index) => (
+          {scene?.objects.map((object, index) => (
             <option key={object.id} value={index}>
               {index + 1}: {object.name}
             </option>
@@ -203,7 +205,6 @@ export function SatisfactoryBom({ scene }: { scene: SatisfactoryScene }) {
           </>
         )}
       </details>
-      <p className="note">Schematic geometry · not in-game paste verification</p>
       {scene.warnings.length > 0 && (
         <details className="warn">
           <summary>{scene.warnings.length} geometry notice(s)</summary>

@@ -19,14 +19,17 @@ import pytest
 from flab2bp.sfy.geometry import port_forward, world_port
 from flab2bp.sfy.layout.model import (
     AttachmentObj,
+    BeamObj,
     BeltRun,
     FoundationObj,
     LiftObj,
     Link,
     MachineObj,
+    PassthroughObj,
     PoleObj,
     Pose,
     SfyPlacement,
+    StackLane,
     Vector,
     WireObj,
     belt_ends,
@@ -1385,3 +1388,89 @@ def test_lift_top_yaw_refuses_a_turn_the_build_gun_cannot_make() -> None:
     into = _lift_into_a_machine()
     assert _findings(into, "lift.top_yaw") == []
     assert _findings(_lift(into, top_yaw_deg=37.0), "lift.top_yaw") == ["lift.top_yaw"]
+
+
+def _stacked_lift(*, upward: bool) -> SfyPlacement:
+    registry = _registry()
+    entry, exit_ = belt_ends(registry, LIFT)
+    bottom, top = ((1, entry), (1, exit_)) if upward else ((1, exit_), (1, entry))
+    return SfyPlacement(
+        designer("mk1", registry),
+        lifts=(
+            LiftObj(
+                1,
+                LIFT,
+                Pose(0, 0, 50 if upward else 1050, 0),
+                1000 if upward else -1000,
+                boundary_start=True,
+                boundary_end=True,
+                snapped_passthroughs=(2, 3) if upward else (3, 2),
+            ),
+        ),
+        passthroughs=(
+            PassthroughObj(
+                2,
+                "Build_FoundationPassthrough_Lift_C",
+                Pose(0, 0, 50, 0),
+                100,
+                top_connection=bottom,
+            ),
+            PassthroughObj(
+                3,
+                "Build_FoundationPassthrough_Lift_C",
+                Pose(0, 0, 1050, 0),
+                100,
+                bottom_connection=top,
+            ),
+        ),
+        foundations=(
+            FoundationObj(4, FOUNDATION, Pose(0, 0, 50, 0)),
+            FoundationObj(5, FOUNDATION, Pose(0, 0, 1050, 0)),
+        ),
+        beams=(BeamObj(6, "Build_Beam_Painted_C", Pose(600, 600, 50, 0), 100),),
+        stack_lanes=(
+            StackLane(
+                "iron-rod",
+                "belt",
+                bottom,
+                top,
+                Fraction(1) if upward else Fraction(),
+                Fraction() if upward else Fraction(1),
+                Fraction(1),
+            ),
+        ),
+        stack_height_cm=1400,
+        stack_connection_gap_cm=400,
+    )
+
+
+@pytest.mark.parametrize("upward", [True, False])
+def test_stack_lane_role_must_follow_the_actual_lift_flow(upward: bool) -> None:
+    placement = _stacked_lift(upward=upward)
+    assert not validate(placement, None, _registry(), only={"flow.boundary"}).errors
+    lane = placement.stack_lanes[0]
+    reversed_role = replace(
+        lane,
+        input_per_second=lane.output_per_second,
+        output_per_second=lane.input_per_second,
+    )
+    report = validate(
+        replace(placement, stack_lanes=(reversed_role,)),
+        None,
+        _registry(),
+        only={"flow.boundary"},
+    )
+    assert report.errors
+
+
+@pytest.mark.parametrize("rate", [Fraction(), Fraction(1)])
+def test_stack_lane_cannot_be_bidirectional_or_have_no_local_role(rate: Fraction) -> None:
+    placement = _stacked_lift(upward=True)
+    lane = replace(placement.stack_lanes[0], input_per_second=rate, output_per_second=rate)
+    report = validate(
+        replace(placement, stack_lanes=(lane,)),
+        None,
+        _registry(),
+        only={"flow.boundary"},
+    )
+    assert report.errors

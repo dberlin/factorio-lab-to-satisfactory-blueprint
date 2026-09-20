@@ -1,9 +1,9 @@
 """Every net, negotiated across rip-up-and-reroute rounds.
 
 This is the DSP router's loop (``m3-router-reference.md`` §1.7) with the
-Satisfactory pieces in it.  Nets are offered the floor in order of what they
-carry; every round rips up ALL of them and routes them again against a higher
-congestion pressure; each net's whole tree is searched, then built into belts,
+Satisfactory pieces in it. Nets initially get the floor in order of what they
+carry; every round rips up ALL of them, promotes stranded nets, and routes again
+against higher congestion pressure. Each whole tree is searched, then built into belts,
 attachment turns and lifts and committed together with the columns its lifts
 stand in; the best round -- fewest stranded, then least belt -- is the one the
 occupancy is left holding.  Searching the whole tree before building any of it
@@ -754,12 +754,12 @@ def route_all(
 ) -> RoutingOutcome:
     """Route every net, negotiating congestion across rip-up rounds.
 
-    The nets are offered the floor by what they carry, heaviest first, because a
-    belt that carries the build's main product is the one whose detour costs
-    most.  Every round rips ALL of them up and routes them again -- nothing is
-    kept from the round before but the congestion history -- and the best round
-    is the one the occupancy is left holding, so that Task 9's poles stand on
-    what the returned paths really left free.
+    The first round offers the floor to the heaviest streams. Later rounds
+    give stranded nets first choice, retaining the relative order within each
+    group. Otherwise a budget-limited query with no proven wall repeats behind
+    the same successful geometry forever: increasing pressure alone has no
+    evidence to price. Every round still rips ALL nets up, retains congestion
+    history, and leaves occupancy holding the best completed round.
 
     The clock is read between rounds and between nets.  A net the clock never
     reached is stranded with a ``BUDGET``/``DEADLINE`` :class:`Routed`, which
@@ -802,6 +802,10 @@ def route_all(
             best = played
         if not played.stranded:
             break
+        stranded_ids = {net.id for net, _ in played.stranded}
+        order = tuple(net for net in order if net.id in stranded_ids) + tuple(
+            net for net in order if net.id not in stranded_ids
+        )
     if best is None:
         run.release_all()
         return RoutingOutcome(

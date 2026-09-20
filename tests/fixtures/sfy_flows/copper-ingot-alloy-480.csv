@@ -1,0 +1,5 @@
+"https://factoriolab.github.io/sfy/list?o=copper-ingot*480&ibe=conveyor-belt-mk4&rex=0*Du~Dv&v=11"
+Item,Items,Inputs,Outputs,Targets,Belts,Belt,Wagons,Wagon,Recipe,Machines,Machine,Modules,Power
+copper-ingot,=480,"copper-ore:1,iron-ore:1","copper-ingot:1","",=1,conveyor-belt-mk4,=0.15,freight-car,copper-ingot-alloy,=4.8,foundry,"2 ",=80000
+copper-ore,=240,,"copper-ore:1","copper-ingot-alloy:1",=0.5,conveyor-belt-mk4,=0.075,freight-car,copper-ore,=4,miner-mk1,"1 purity-1",=20000
+iron-ore,=240,,"iron-ore:1","copper-ingot-alloy:1",=0.5,conveyor-belt-mk4,=0.075,freight-car,iron-ore,=4,miner-mk1,"1 purity-1",=20000

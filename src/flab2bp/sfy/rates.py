@@ -294,36 +294,36 @@ def _fluids(data: Dataset, item_ids: Mapping[str, Fraction]) -> frozenset[str]:
 
 
 def _belts(data: Dataset, request: LabRequest) -> tuple[str, Fraction, tuple[BeltTier, ...]]:
-    """The belt floor and every faster belt the build may use, slowest first.
+    """The URL's selected belt and all other available tiers, slowest first.
 
-    ``LabRequest`` carries no maximum-belt channel -- FactorioLab's URL has one
-    only for the floor (``ibe``) -- so the ceiling is always the dataset's
-    ``defaults.maxBelt``, which for sfy is Mk5 even though Mk6 exists.
+    ``ibe`` describes FactorioLab's displayed belt count, not a minimum tier
+    for the generated layout. The ceiling remains ``defaults.maxBelt``,
+    which for sfy is Mk5 even though Mk6 exists.
     """
-    floor_id = request.belt_id or data.defaults.min_belt
-    if floor_id is None:
+    selected_id = request.belt_id or data.defaults.min_belt
+    if selected_id is None:
         raise RatesRefusal("the dataset names no belt", "neither the URL nor defaults.minBelt")
-    floor_speed = data.belt_speed(floor_id)
+    selected_speed = data.belt_speed(selected_id)
 
     ceiling_id = data.defaults.max_belt
-    ceiling_speed = data.belt_speed(ceiling_id) if ceiling_id else floor_speed
+    ceiling_speed = data.belt_speed(ceiling_id) if ceiling_id else selected_speed
 
     tiers = []
     for item in data.items:
-        if item.belt is None or item.id == floor_id:
+        if item.belt is None or item.id == selected_id:
             continue
         speed = data.belt_speed(item.id)
-        if floor_speed < speed <= ceiling_speed:
+        if speed <= ceiling_speed:
             tiers.append(BeltTier(item_id=item.id, items_per_second=speed))
     tiers.sort(key=lambda t: t.items_per_second)
-    return floor_id, floor_speed, tuple(tiers)
+    return selected_id, selected_speed, tuple(tiers)
 
 
 def _pipes(data: Dataset, request: LabRequest) -> tuple[PipeTier, ...]:
     """Allowed pipelines, floor first, at their dataset-rated cubic metres/s.
 
-    Like belts, the URL selects a floor and the dataset supplies the ceiling.
-    Unlike belts, ``pipe_tiers`` includes the floor itself.
+    The URL selects a pipe floor and the dataset supplies the ceiling.
+    ``pipe_tiers`` includes the floor itself.
     """
     floor_id = request.pipe_id or data.defaults.min_pipe
     if floor_id is None:
@@ -505,7 +505,7 @@ def spec_from_flow(
         crossing |= group.outputs_per_machine
     fluids = _fluids(data, crossing)
 
-    belt_item_id, belt_speed, upgrades = _belts(data, request)
+    belt_item_id, belt_speed, alternatives = _belts(data, request)
     return SfyBuildSpec(
         groups=tuple(groups),
         external_inputs=external_inputs,
@@ -513,7 +513,7 @@ def spec_from_flow(
         surplus_outputs=surplus_outputs,
         belt_item_id=belt_item_id,
         belt_items_per_second=belt_speed,
-        belt_upgrades=upgrades,
+        belt_alternatives=alternatives,
         fluid_items=fluids,
         pipe_tiers=_pipes(data, request),
         label=label,

@@ -40,6 +40,12 @@ uv run flab2bp-web
 Open <http://127.0.0.1:8000>. The command builds the front end when necessary and serves both
 the page and the Python API.
 
+Fresh pages default to Satisfactory, including designer and 3D-view controls;
+no blueprint import is needed to select it. An explicit DSP FactorioLab URL or
+DSP blueprint still enables the inherited DSP path. Loaded blueprints retain
+their own renderer while another game's URL is edited. DSP catalog and atlas
+assets load only when the DSP viewer is active.
+
 Paste a `/sfy/` FactorioLab URL, choose Mk.1/Mk.2/Mk.3 and press **Build**.
 Without a supplied CSV, entering the URL enables automatic flow capture.
 Successful builds appear automatically; both binary downloads and validation

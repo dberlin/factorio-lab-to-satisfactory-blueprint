@@ -117,6 +117,33 @@ def test_nonuniform_scale_shear_is_an_explicit_conservative_envelope() -> None:
     assert any("shears" in warning for warning in scene["warnings"])
 
 
+def test_foundry_uses_physical_mesh_extents_with_saved_rotation_and_scale() -> None:
+    registry = load_registry()
+    class_name = "Build_FoundryMk1_C"
+    registry = replace(
+        registry,
+        buildables={class_name: replace(registry.buildables[class_name], ports=())},
+    )
+    q = math.sqrt(0.5)
+    transform = Transform((0, 0, q, q), (1000, 2000, 3000), (-2, 3, 4))
+    scene = scene_from_blueprint(blueprint(actor(class_name, transform)), registry=registry)
+    # Cooked FoundryMk1_static bounds after its native -180-degree component
+    # rotation and -40 cm Y offset, then the saved actor transform above.
+    # Clearance instead reaches x=-500..500, y=-550..450 and z=0..900 cm.
+    assert scene["bounds"]["min"] == pytest.approx(
+        (-1.859705505371094, 30.0023779296875, -28.363016357421876)
+    )
+    assert scene["bounds"]["max"] == pytest.approx(
+        (27.20186706542969, 65.15349853515625, -10.921987915039062)
+    )
+    # The vertex-animated component keeps its own envelope and inherited parent
+    # transform; collapsing everything into clearance loses this placement.
+    animated = scene["objects"][0]["boxes"][1]
+    assert animated["center"] == pytest.approx(
+        (9.871882934570312, 48.95770385742188, -19.549193115234374)
+    )
+
+
 def test_unknown_actor_is_retained_without_invented_geometry() -> None:
     scene = scene_from_blueprint(blueprint(actor("Modded_Garden_C")))
     obj = scene["objects"][0]

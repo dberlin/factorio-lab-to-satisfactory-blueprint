@@ -518,15 +518,17 @@ def _pair_section(entry: Written, registry: Registry) -> list[str]:
     if placement.stack_lanes:
         out += ["Material inputs, at the bottom:"]
         out += _lane_lines(placement, registry, incoming=True)
-        out += ["", "Material outputs, at the top (including surplus):"]
+        out += ["", "Material outputs, at the bottom (including surplus):"]
         out += _lane_lines(placement, registry, incoming=False)
         out += [
             "",
             f"Stack pitch: {placement.stack_height_cm:g} cm. Match XY outlines and orientation; "
             f"manually bridge corresponding holes across the "
             f"{placement.stack_connection_gap_cm:g} cm gap.",
-            "Inputs branch into this module and continue upward. Rates below are local net "
-            "demand/export; supply all repeated modules and respect each trunk's capacity.",
+            "Inputs rise from the bottom, branch into this module and continue upward. "
+            "Outputs descend from the top and collect local production for bottom extraction. "
+            "Rates above are local net demand/export; supply and drain all repeated modules "
+            "and respect each trunk's capacity.",
         ]
     else:
         entries, exits = _open_ends(placement)
@@ -592,7 +594,7 @@ def _lane_lines(placement: SfyPlacement, registry: Registry, *, incoming: bool) 
         rate = lane.input_per_second if incoming else lane.output_per_second
         if not rate:
             continue
-        node = lane.bottom if incoming else lane.top
+        node = lane.flow_start if incoming else lane.flow_end
         point, _normal = endpoint(placement, *node, registry)
         unit = "m³/min" if lane.kind == "pipe" else "items/min"
         lines.append(

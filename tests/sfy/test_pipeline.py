@@ -15,6 +15,7 @@ will not, and the exit code the CLI turns each one into is the subject of
 from __future__ import annotations
 
 from dataclasses import replace
+from fractions import Fraction
 from pathlib import Path
 
 import pytest
@@ -146,6 +147,56 @@ def test_reinforced_plates_keep_the_complete_mixed_floor_factory_connected() -> 
     assert len({machine.pose.z for machine in build.placement.machines}) == 3
     assert build.placement.stack_height_cm <= build.designer.height_cm
     assert decode(build.blueprint, pipeline.registry()) == build.placement
+
+
+def test_copper_alloy_keeps_full_flow_when_a_later_net_needs_routing_priority(
+    tmp_path: Path,
+) -> None:
+    """A lower-rate ore branch must not starve behind the same earlier routes."""
+    build = pipeline.build(
+        flow_url("copper-ingot-alloy-480"),
+        designer="mk2",
+        flow=FLOWS / "copper-ingot-alloy-480.csv",
+        time_budget_s=30,
+    )
+    assert build.report.ok
+    assert build.spec.belt_item_id == "conveyor-belt-mk4"
+    assert len(build.placement.machines) == build.spec.machine_count == 5
+    assert {machine.recipe_class for machine in build.placement.machines} == {
+        "Recipe_Alternate_CopperAlloyIngot_C"
+    }
+    assert sorted(machine.clock for machine in build.placement.machines) == [
+        Fraction(4, 5),
+        Fraction(1),
+        Fraction(1),
+        Fraction(1),
+        Fraction(1),
+    ]
+    lanes = {lane.item_id: lane for lane in build.placement.stack_lanes}
+    assert lanes["copper-ore"].input_per_second == Fraction(4)
+    assert lanes["iron-ore"].input_per_second == Fraction(4)
+    assert lanes["copper-ingot"].output_per_second == Fraction(8)
+    registry = pipeline.registry()
+    capacities = [
+        registry.buildables[f"Build_ConveyorBeltMk{mark}_C"].belt_speed_per_min
+        for mark in range(1, 6)
+    ]
+    for belt in build.placement.belts:
+        required = belt.items_per_second * 120  # Native mSpeed is twice items/min.
+        sufficient = [
+            capacity for capacity in capacities if capacity is not None and capacity >= required
+        ]
+        assert registry.buildables[belt.class_name].belt_speed_per_min == min(sufficient)
+    for item, lane in lanes.items():
+        expected = (
+            "Build_ConveyorLiftMk4_C" if item == "copper-ingot" else "Build_ConveyorLiftMk3_C"
+        )
+        for object_id, _ in (lane.bottom, lane.top):
+            terminal = build.placement.by_id(object_id)
+            assert terminal.class_name == expected
+    sbp, cfg = pipeline.write(build, tmp_path)
+    assert decode(read_sbp_file(sbp), pipeline.registry()) == build.placement
+    assert read_sbpcfg(cfg.read_bytes()).description == build.placement.description
 
 
 def test_a_build_without_a_flow_refuses_and_names_both_ways_to_supply_one() -> None:
