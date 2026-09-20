@@ -15,6 +15,7 @@ from functools import lru_cache
 from itertools import product
 from typing import TYPE_CHECKING, final
 
+from flab2bp.layout._geometric_kernel import free_motion_boxes
 from flab2bp.layout.budget import BudgetExhausted, WorkBudget, expired
 from flab2bp.layout.geometric_motion import (
     MotionBox,
@@ -537,58 +538,6 @@ def _arc_bounds(radius: float, incoming: int, outgoing: int) -> tuple[BoxBounds,
     return tuple(_belt_boxes(BeltRun(0, "", tuple(points))))
 
 
-def _free_boxes(domain: MotionBox, forbidden: Sequence[MotionBox]) -> tuple[MotionBox, ...]:
-    """Subtract on the bounded lattice, then coalesce identical free row spans.
-
-    Repeated geometric box splitting fragments badly around a factory's many
-    belts. Slice writes keep this exact subtraction linear in the small grid.
-    """
-    if not forbidden:
-        return (domain,)
-    x0, x1, y0, y1, z0, z1 = domain
-    nx, ny, nz = x1 - x0 + 1, y1 - y0 + 1, z1 - z0 + 1
-    if min(nx, ny, nz) <= 0:
-        return ()
-    flags = bytearray(b"\1") * (nx * ny * nz)
-    for a, b, c, d, e, f in forbidden:
-        denied = bytes(f - e + 1)
-        for x in range(a - x0, b - x0 + 1):
-            for y in range(c - y0, d - y0 + 1):
-                start = (x * ny + y) * nz + e - z0
-                flags[start : start + len(denied)] = denied
-    boxes: list[MotionBox] = []
-    previous: dict[tuple[int, int, int, int], int] = {}
-    for x in range(nx):
-        current: dict[tuple[int, int, int, int], int] = {}
-        y = 0
-        while y < ny:
-            start = (x * ny + y) * nz
-            row = flags[start : start + nz]
-            after = y + 1
-            while after < ny:
-                next_start = (x * ny + after) * nz
-                if flags[next_start : next_start + nz] != row:
-                    break
-                after += 1
-            z = row.find(b"\1")
-            while z >= 0:
-                stop = row.find(b"\0", z)
-                if stop < 0:
-                    stop = nz
-                key = (y0 + y, y0 + after - 1, z0 + z, z0 + stop - 1)
-                index = previous.get(key)
-                if index is None:
-                    index = len(boxes)
-                    boxes.append((x0 + x, x0 + x, *key))
-                else:
-                    boxes[index] = (boxes[index][0], x0 + x, *key)
-                current[key] = index
-                z = row.find(b"\1", stop)
-            y = after
-        previous = current
-    return tuple(boxes)
-
-
 def _guard(
     profile: MotionProfile,
     obstacles: Sequence[tuple[Vector, Vector]] = (),
@@ -647,7 +596,7 @@ def _guard(
             forbidden_boxes.append(
                 (overlap[0], overlap[1], overlap[2], overlap[3], overlap[4], overlap[5])
             )
-    return MotionGuard(_free_boxes(domain, forbidden_boxes))
+    return MotionGuard(free_motion_boxes(domain, forbidden_boxes))
 
 
 def compile_policy(

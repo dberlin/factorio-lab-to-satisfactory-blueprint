@@ -409,6 +409,7 @@ class _Played:
     columns: tuple[tuple[int, Node, Node], ...]
     physical: tuple[tuple[int, tuple[_Physical, ...]], ...]
     length_cm: float
+    admitted: tuple[tuple[int, tuple[Realised, ...]], ...]
 
     @property
     def key(self) -> tuple[int, float]:
@@ -449,6 +450,8 @@ class _Run:
     held: dict[Node, int] = field(default_factory=dict)
     #: Actual realised objects, cached once per admitted net, released with its stakes.
     physical: dict[int, tuple[_Physical, ...]] = field(default_factory=dict)
+    #: Keep complete geometry for cross-net admission, including crossing ramps.
+    admitted: dict[int, tuple[Realised, ...]] = field(default_factory=dict)
     profile: MotionProfile | None = None
     proofs: dict[int, tuple[tuple[PathProof, ...], ...]] = field(default_factory=dict)
     #: Fixed interface approaches cannot be consumed by another net's shaft.
@@ -568,6 +571,7 @@ class _Run:
     def release(self, net_id: int) -> None:
         self.proofs.pop(net_id, None)
         self.physical.pop(net_id, None)
+        self.admitted.pop(net_id, None)
         for stake in self.staked.pop(net_id, []):
             self.occupancy.rip_up(stake)
             self.owners.pop(stake, None)
@@ -740,6 +744,30 @@ class _Run:
 # --- the loop --------------------------------------------------------------
 
 
+def _vertical_demand(net: GridNet) -> int:
+    """Largest unavoidable level gap, with wall terminals treated as alternatives.
+
+    Vertical connections need clear columns through intervening production
+    floors. Offer them space before flat traffic; equal demands retain the
+    throughput ordering. This is a priority, never a reachability decision.
+    """
+    if not net.sources or not net.sinks:
+        return 0
+    sources = {terminal.node[2] for terminal in net.sources}
+    sinks = {terminal.node[2] for terminal in net.sinks}
+    required_sources = {terminal.node[2] for terminal in net.sources if terminal.kind != "wall"}
+    required_sinks = {terminal.node[2] for terminal in net.sinks if terminal.kind != "wall"}
+    outgoing = max(
+        (min(abs(level - other) for other in sinks) for level in required_sources),
+        default=0,
+    )
+    incoming = max(
+        (min(abs(level - other) for other in sources) for level in required_sinks),
+        default=0,
+    )
+    return max(outgoing, incoming)
+
+
 def route_all(
     nets: Sequence[GridNet],
     occupancy: Occupancy,
@@ -754,9 +782,11 @@ def route_all(
 ) -> RoutingOutcome:
     """Route every net, negotiating congestion across rip-up rounds.
 
-    The first round offers the floor to the heaviest streams. Later rounds
-    give stranded nets first choice, retaining the relative order within each
-    group. Otherwise a budget-limited query with no proven wall repeats behind
+    The first round promotes the net with the largest unavoidable level gap,
+    breaking ties by throughput, and keeps the remaining throughput order.
+    Reordering every net by height can strand shorter, high-rate connections.
+    Later rounds give stranded nets first choice, preserving relative order.
+    Otherwise a budget-limited query with no proven wall repeats behind
     the same successful geometry forever: increasing pressure alone has no
     evidence to price. Every round still rips ALL nets up, retains congestion
     history, and leaves occupancy holding the best completed round.
@@ -790,6 +820,9 @@ def route_all(
                 for node in (terminal.node, *terminal.reach):
                     run.interfaces.setdefault(node, set()).add(net.id)
     order = tuple(sorted(nets, key=lambda net: (-net.rate, net.id)))
+    if order:
+        first = max(order, key=_vertical_demand)
+        order = (first, *(net for net in order if net is not first))
     best: _Played | None = None
     rounds = 0
     for index in range(RRR_MAX):
@@ -869,6 +902,7 @@ def _play(run: _Run, order: Sequence[GridNet]) -> _Played:
         columns=tuple(columns),
         physical=tuple(run.physical.items()),
         length_cm=_belt_length_cm(realised),
+        admitted=tuple(run.admitted.items()),
     )
 
 
@@ -1363,13 +1397,14 @@ def _build(run: _Run, net: GridNet, branches: Sequence[_Branch], routed: Routed 
             shut=_shut_column(run.lattice, blocked),
             routed=routed,
         )
-    blocked = _blocked_attachments(run, net, realised, physical)
+    blocked = _blocked_geometry(run, net, realised, physical)
     if blocked:
         return _Try(failure="realise", nodes=blocked, shut=blocked, routed=routed)
     for low, high in columns:
         _stake_column(run, net.id, low, high)
     _stake_attachments(run, net.id, physical)
     run.physical[net.id] = physical
+    run.admitted[net.id] = realised
     run.proofs[net.id] = tuple(branch.proofs for branch in branches)
     return _Try(
         tree=RoutedTree(
@@ -1721,10 +1756,10 @@ def _overlap(left: BoxBounds, right: BoxBounds) -> bool:
     )
 
 
-def _blocked_attachments(
+def _blocked_geometry(
     run: _Run, net: GridNet, realised: Sequence[Realised], physical: tuple[_Physical, ...]
 ) -> tuple[Node, ...]:
-    """Admit rendered turn/tap bodies, not just the route's centreline shadow."""
+    """Admit complete geometry against earlier nets, not just centreline shadows."""
     attachments = tuple(obj for laid in realised for obj in laid.attachments)
     blocked: set[int] = set()
     for part in physical:
@@ -1737,17 +1772,29 @@ def _blocked_attachments(
             for other in parts
         ):
             blocked.add(part.object_id)
+    neighbours = tuple(
+        laid for owner, parts in run.admitted.items() if owner != net.id for laid in parts
+    )
+    geometry = (*neighbours, *realised)
+    candidate_ids: set[int] = set()
+    for laid in realised:
+        candidate_ids.update(obj.id for obj in laid.belts)
+        candidate_ids.update(obj.id for obj in laid.attachments)
+        candidate_ids.update(obj.id for obj in laid.lifts)
     fragment = SfyPlacement(
         designer=run.lattice.designer,
         machines=run.occupancy.machines,
-        attachments=(*run.occupancy.attachments, *attachments),
-        belts=tuple(obj for laid in realised for obj in laid.belts),
-        lifts=tuple(obj for laid in realised for obj in laid.lifts),
-        links=tuple(link for laid in realised for link in laid.links),
+        attachments=(
+            *run.occupancy.attachments,
+            *(obj for laid in geometry for obj in laid.attachments),
+        ),
+        belts=tuple(obj for laid in geometry for obj in laid.belts),
+        lifts=tuple(obj for laid in geometry for obj in laid.lifts),
+        links=tuple(link for laid in geometry for link in laid.links),
     )
     report = validate(fragment, None, run.registry, only={"geom.attachment_body", "belt.capsule"})
     for finding in report.errors:
-        blocked.update(finding.objects)
+        blocked.update(candidate_ids.intersection(finding.objects))
     half, grid = run.lattice.designer.half_cm, run.lattice.grid_cm
     points = [obj.pose.location for obj in attachments if obj.id in blocked]
     points.extend(lift.pose.location for lift in fragment.lifts if lift.id in blocked)
@@ -1999,5 +2046,6 @@ def _restore(run: _Run, best: _Played) -> None:
     for net_id, low, high in best.columns:
         _stake_column(run, net_id, low, high)
     run.physical.update(best.physical)
+    run.admitted.update(best.admitted)
     for net_id, physical in best.physical:
         _stake_attachments(run, net_id, physical)

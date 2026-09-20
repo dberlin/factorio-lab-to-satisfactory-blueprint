@@ -49,7 +49,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from fractions import Fraction
 from functools import cache, cached_property
-from itertools import chain
+from itertools import chain, pairwise
 from pathlib import Path
 
 from flab2bp.sfy.archive import Reader
@@ -74,7 +74,7 @@ from flab2bp.sfy.layout.model import (
     lift_geometry,
     pipe_ends,
 )
-from flab2bp.sfy.layout.splines import hermite, spline_length, tangent_at_distance
+from flab2bp.sfy.layout.splines import hermite, spline_length, tangents_at_distances
 from flab2bp.sfy.objects import Transform
 from flab2bp.sfy.registry import ClearanceBox, Port, Registry
 from flab2bp.sfy.rules import HologramRule, load_rules
@@ -1503,11 +1503,13 @@ def _curvature(ctx: Context) -> Iterable[Finding]:
         step = length / count
         tightest = math.inf
         where = 0
-        for i in range(count):
-            first = _flat(tangent_at_distance(run.points, i * step, samples=CURVATURE_SAMPLES))
-            second = _flat(
-                tangent_at_distance(run.points, (i + 1) * step, samples=CURVATURE_SAMPLES)
+        tangents = (
+            _flat(tangent)
+            for tangent in tangents_at_distances(
+                run.points, (i * step for i in range(count + 1)), samples=CURVATURE_SAMPLES
             )
+        )
+        for i, (first, second) in enumerate(pairwise(tangents)):
             theta = math.acos(min(1.0, max(-1.0, _dot(first, second))))
             radius = math.inf if theta == 0.0 else step / theta
             if radius < tightest:
@@ -1574,11 +1576,13 @@ def _pipe_curvature(ctx: Context) -> Iterable[Finding]:
         if count <= 0:
             continue
         step = length / count
-        for index in range(count):
-            a = tangent_at_distance(run.points, index * step, samples=CURVATURE_SAMPLES)
-            b = tangent_at_distance(run.points, (index + 1) * step, samples=CURVATURE_SAMPLES)
-            a = (0.0, 0.0, 0.0) if _dot(a, a) < ZERO_NORMAL else _unit(a)
-            b = (0.0, 0.0, 0.0) if _dot(b, b) < ZERO_NORMAL else _unit(b)
+        tangents = (
+            (0.0, 0.0, 0.0) if _dot(tangent, tangent) < ZERO_NORMAL else _unit(tangent)
+            for tangent in tangents_at_distances(
+                run.points, (i * step for i in range(count + 1)), samples=CURVATURE_SAMPLES
+            )
+        )
+        for index, (a, b) in enumerate(pairwise(tangents)):
             angle = math.acos(min(1.0, max(-1.0, _dot(a, b))))
             radius = math.inf if angle == 0 else step / angle
             if radius < bend * 1.05:
@@ -3489,8 +3493,10 @@ def _roundtrip(ctx: Context) -> Iterable[Finding]:
     A class the library has no template for is a gap in the library rather than
     a fault in the placement, so it goes to ``skipped`` with the reason.
     """
-    fallback, header = _corpus()
-    library = ctx.library if ctx.library is not None else fallback
+    if ctx.library is None:
+        library, header = _corpus()
+    else:
+        library, header = ctx.library, _corpus_header()
     if library is None or header is None:
         yield ctx.skip(
             "roundtrip",
@@ -3528,15 +3534,23 @@ def _roundtrip(ctx: Context) -> Iterable[Finding]:
 
 @cache
 def _corpus() -> tuple[TemplateLibrary | None, BlueprintHeader | None]:
-    """The fixture library and newest header, built once: scanning costs seconds."""
+    """Load fallback templates only when no library was supplied."""
+    header = _corpus_header()
+    if header is None:
+        return (None, None)
+    return (TemplateLibrary.from_fixtures(sorted(_FIXTURE_DIR.glob("*.sbp"))), header)
+
+
+@cache
+def _corpus_header() -> BlueprintHeader | None:
+    """The newest format header, without decompressing the template corpus."""
     if not _FIXTURE_DIR.is_dir():
-        return (None, None)
-    paths = sorted(_FIXTURE_DIR.glob("*.sbp"))
-    if not paths:
-        return (None, None)
-    headers = [read_header(Reader(path.read_bytes())) for path in paths]
-    newest = max(headers, key=lambda h: (h.save_version, h.build_version))
-    return (TemplateLibrary.from_fixtures(paths), newest)
+        return None
+    return max(
+        (read_header(Reader(path.read_bytes())) for path in sorted(_FIXTURE_DIR.glob("*.sbp"))),
+        key=lambda header: (header.save_version, header.build_version),
+        default=None,
+    )
 
 
 def _first_difference(want: SfyPlacement, got: SfyPlacement) -> str:

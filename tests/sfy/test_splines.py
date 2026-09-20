@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import math
 
+import pytest
+
 from flab2bp.sfy.geometry import port_forward, quat_rotate, snap_zeros
 from flab2bp.sfy.layout.splines import (
     QUARTER_TURN_TANGENT,
@@ -24,6 +26,7 @@ from flab2bp.sfy.layout.splines import (
     spline_length,
     straight,
     tangent_at_distance,
+    tangents_at_distances,
     yaw_quaternion,
 )
 from flab2bp.sfy.objects import Transform
@@ -181,6 +184,57 @@ def test_concat_refuses_two_runs_that_do_not_meet() -> None:
         assert "1.0" in str(exc) or "gap" in str(exc).lower()
     else:  # pragma: no cover - the call above must raise
         raise AssertionError("concat joined two runs that do not share a point")
+
+
+@pytest.mark.parametrize("samples", [2, 7, 2048])
+def test_batched_tangents_preserve_segment_boundaries_and_clamping(samples: int) -> None:
+    """A chord-table lookup must not replace quadrature segment selection.
+
+    Arrive/leave discontinuities expose picking the next segment at equality;
+    zero-length segments and unsorted requests expose cursor-only shortcuts.
+    The independent scalar walk is deliberately retained as the oracle.
+    """
+    zero = (0.0, 0.0, 0.0)
+    points: tuple[SplinePoint, ...] = (
+        (zero, zero, zero),
+        (zero, zero, (300.0, 150.0, 20.0)),
+        ((200.0, 100.0, 50.0), (50.0, -200.0, 80.0), zero),
+        ((200.0, 100.0, 50.0), zero, (-90.0, 150.0, -30.0)),
+        ((100.0, 250.0, 10.0), (-150.0, 30.0, 60.0), zero),
+        ((100.0, 250.0, 10.0), zero, zero),
+    )
+    boundaries = [0.0]
+    for first, second in zip(points, points[1:], strict=False):
+        boundaries.append(boundaries[-1] + segment_length(first[0], first[2], second[0], second[1]))
+    distances = [-math.inf, -1.0, 0.0, math.inf, boundaries[-1] + 100.0]
+    for boundary in boundaries:
+        distances.extend(
+            (math.nextafter(boundary, -math.inf), boundary, math.nextafter(boundary, math.inf))
+        )
+    distances.extend(boundaries[-1] * i / 31 for i in reversed(range(32)))
+    distances.extend(distances[:10])
+    expected = tuple(tangent_at_distance(points, d, samples=samples) for d in distances)
+    assert tangents_at_distances(points, iter(distances), samples=samples) == expected
+
+
+def test_batched_tangents_preserve_zero_chords_and_chord_boundary_interpolation() -> None:
+    """Repeated cumulative distances must choose the first containing chord."""
+    zero = (0.0, 0.0, 0.0)
+    tangent = (12.0, -4.0, 8.0)
+    points = ((zero, tangent, tangent), (zero, tangent, tangent))
+    for samples in (2, 3, 8):
+        walked = 0.0
+        previous = zero
+        distances = [0.0, 1e-12, 100.0]
+        for index in range(1, samples + 1):
+            current = hermite(zero, tangent, zero, tangent, index / samples)
+            walked += math.dist(previous, current)
+            distances.extend(
+                (math.nextafter(walked, -math.inf), walked, math.nextafter(walked, math.inf))
+            )
+            previous = current
+        expected = tuple(tangent_at_distance(points, d, samples=samples) for d in distances)
+        assert tangents_at_distances(points, distances, samples=samples) == expected
 
 
 def _minimum_radius(points: tuple[SplinePoint, ...]) -> float:

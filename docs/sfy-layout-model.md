@@ -75,17 +75,31 @@ references: an incoming belt's flow tangent points opposite the entry normal.
 Section approaches clear the connected actor's actual body, rather than the
 entire section rectangle. Other machines and transport remain independent
 obstacles: swept bend and full lift-shaft guards reject collisions before
-search commits a route, and realised geometry is checked again before admission.
+search commits a route. Admission also compares complete realised geometry with
+already admitted nets: opposing ramps can intersect between lattice nodes
+without sharing a centreline cell. These geometry records follow net ownership
+through rejection, rip-up and best-round restoration.
 Stack lanes preserve each section interface's lift-width escape column.
 Where both lift directions are blocked, the terminal lead instead clears a
 native turning attachment; ordinary interfaces retain the shorter lift lead.
 
-Rip-up routing starts with descending flow priority. After an incomplete round,
-stranded nets move ahead of successful nets, preserving their relative order.
+Rip-up routing promotes the net with the largest unavoidable terminal-level gap
+ahead of the normal descending-flow order, breaking ties by flow and then net id.
+Only that first choice changes: reordering every net by height can starve short,
+high-rate connections. Each required terminal is compared with the nearest
+opposite-side level; wall terminals are alternatives, not separate demands.
+This offers the most vertically constrained net clear columns without making
+any reachability decision or selecting priorities by material name.
+After an incomplete round, stranded nets move ahead of successful nets,
+preserving their relative order.
 This prevents a lower-rate stream from repeatedly hitting its search work cap
 behind the same reservations when there is no proven obstruction to penalize.
 Round limits, the layout deadline, collision guards and best-round restoration
 still apply.
+
+Motion guards subtract occupied boxes and coalesce free lattice spans in the
+existing native geometric extension. The admitted cells and deterministic box
+order are unchanged; no occupancy-dependent cache survives a rip-up.
 
 `sections/stacking.py` adds actual base/roof slabs, painted-beam outlines and corner
 posts, with aligned conveyor/pipe floor holes. Stack search reserves the actual
@@ -450,10 +464,18 @@ Three details the instructions settle and prose would not:
   `step / (π/2)` — about 32 cm at the game's 50 cm sampling, far inside the
   floor. A belt going straight up is **refused** here, not passed over.
 
-The sampling is by **arc length**, which a Hermite parameter is not, so
-`splines.tangent_at_distance` inverts the length with a dense walk.
+The sampling is by **arc length**, which a Hermite parameter is not.
+`splines.tangents_at_distances` builds a per-call chord table once for each used
+segment, at the same dense-walk resolution as scalar `tangent_at_distance`.
+Belt and pipe curvature reuse adjacent tangents without changing segment
+selection, interpolation, thresholds or sample positions.
 `GetTangentAtDistanceAlongSpline` is the engine function the rule's `calls` list
 names.
+
+Round-trip validation still emits and decodes the complete placement. A supplied
+template library is reused directly; selecting the newest corpus header does
+not decompress a second fallback library. Standalone validation loads fallback
+templates only when the caller supplies none.
 
 ### What the validator states itself
 

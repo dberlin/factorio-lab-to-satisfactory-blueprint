@@ -671,7 +671,9 @@ def test_flow_capacity_follows_snapped_lifts_and_still_rejects_starvation(
 
 def test_roundtrip_refuses_a_placement_the_emitter_cannot_write() -> None:
     placement = _placement()
-    assert _findings(placement, "roundtrip") == []
+    report = validate(placement, None, _registry(), only={"roundtrip"})
+    assert report.errors == ()
+    assert report.skipped == ()
     twinned = replace(
         placement,
         poles=(PoleObj(ROD_ID, POLE, Pose(600.0, 0.0, SLAB_TOP_CM, 0.0)),),
@@ -958,6 +960,7 @@ def test_validate_writes_the_round_trip_with_the_library_it_is_given() -> None:
     report = validate(_placement(), None, _registry(), only={"roundtrip"}, library=_library())
     assert report.checks_run == ("roundtrip",)
     assert not report.errors
+    assert report.skipped == ()
     bare = validate(
         _placement(), None, _registry(), only={"roundtrip"}, library=TemplateLibrary({})
     )

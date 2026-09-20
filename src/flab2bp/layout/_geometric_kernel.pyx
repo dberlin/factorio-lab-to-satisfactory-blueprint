@@ -53,10 +53,13 @@ cdef extern from *:
     r"""
     #include <Python.h>
     #include <algorithm>
+    #include <array>
     #include <chrono>
     #include <cmath>
     #include <cstdint>
+    #include <cstring>
     #include <limits>
+    #include <map>
     #include <memory>
     #include <mutex>
     #include <queue>
@@ -70,6 +73,77 @@ cdef extern from *:
     constexpr double infinity = std::numeric_limits<double>::infinity();
     struct Move { int dx, dy, dz; bool via; double cost; int motion = -1; };
     struct MotionBox { int xlo, xhi, ylo, yhi, zlo, zhi; };
+
+    std::vector<MotionBox> free_motion_boxes(
+            const MotionBox& domain, const std::vector<MotionBox>& forbidden) {
+        if (forbidden.empty()) return {domain};
+        const Index nx = Index(domain.xhi) - domain.xlo + 1;
+        const Index ny = Index(domain.yhi) - domain.ylo + 1;
+        const Index nz = Index(domain.zhi) - domain.zlo + 1;
+        if (nx <= 0 || ny <= 0 || nz <= 0) return {};
+        std::vector<unsigned char> flags;
+        if (std::size_t(nx) > flags.max_size() / std::size_t(ny) / std::size_t(nz))
+            throw std::length_error("motion guard domain is too large");
+        flags.assign(std::size_t(nx) * ny * nz, 1);
+        for (const MotionBox& box : forbidden) {
+            const Index xlo = std::max(domain.xlo, box.xlo);
+            const Index xhi = std::min(domain.xhi, box.xhi);
+            const Index ylo = std::max(domain.ylo, box.ylo);
+            const Index yhi = std::min(domain.yhi, box.yhi);
+            const Index zlo = std::max(domain.zlo, box.zlo);
+            const Index zhi = std::min(domain.zhi, box.zhi);
+            if (xlo > xhi || ylo > yhi || zlo > zhi) continue;
+            for (Index x = xlo - domain.xlo; x <= xhi - domain.xlo; ++x) {
+                for (Index y = ylo - domain.ylo; y <= yhi - domain.ylo; ++y) {
+                    auto start = flags.begin() + ((x * ny + y) * nz + (zlo - domain.zlo));
+                    std::fill(start, start + (zhi - zlo + 1), 0);
+                }
+            }
+        }
+        // Match the original x/y/z traversal and merge only equal full rows.
+        // Never extend a box across a missing x slice, even if its key recurs.
+        using RowSpan = std::array<int, 4>;
+        std::map<RowSpan, std::size_t> previous, current;
+        std::vector<MotionBox> boxes;
+        for (Index x = 0; x < nx; ++x) {
+            current.clear();
+            Index y = 0;
+            while (y < ny) {
+                const unsigned char* row = flags.data() + (x * ny + y) * nz;
+                Index after = y + 1;
+                while (after < ny &&
+                       std::memcmp(row, flags.data() + (x * ny + after) * nz, nz) == 0)
+                    ++after;
+                Index z = 0;
+                while (z < nz) {
+                    while (z < nz && !row[z]) ++z;
+                    if (z == nz) break;
+                    const Index first = z;
+                    while (z < nz && row[z]) ++z;
+                    const RowSpan key = {
+                        int(domain.ylo + y), int(domain.ylo + after - 1),
+                        int(domain.zlo + first), int(domain.zlo + z - 1)
+                    };
+                    const auto found = previous.find(key);
+                    std::size_t index;
+                    if (found == previous.end()) {
+                        index = boxes.size();
+                        boxes.push_back({
+                            int(domain.xlo + x), int(domain.xlo + x),
+                            key[0], key[1], key[2], key[3]
+                        });
+                    } else {
+                        index = found->second;
+                        boxes[index].xhi = int(domain.xlo + x);
+                    }
+                    current.emplace(key, index);
+                }
+                y = after;
+            }
+            previous.swap(current);
+        }
+        return boxes;
+    }
     struct MotionEdge { int source, move, target, guard, action; };
     struct MotionEndpoint { Index cell; int state, action; };
     struct Policy {
@@ -1379,6 +1453,8 @@ cdef extern from *:
         int motion
     cdef cppclass MotionBox "flab_geometry::MotionBox":
         int xlo, xhi, ylo, yhi, zlo, zhi
+    vector[MotionBox] subtract_motion_boxes "flab_geometry::free_motion_boxes"(
+        const MotionBox&, const vector[MotionBox]&) except + nogil
     cdef cppclass MotionEdge "flab_geometry::MotionEdge":
         int source, move, target, guard, action
     cdef cppclass MotionEndpoint "flab_geometry::MotionEndpoint":
@@ -1411,6 +1487,27 @@ cdef extern from *:
                                    const vector[vector[Move]]&, const vector[Index]&, const vector[Index]&,
                                    const vector[Extra]&, Index, double, const double*, bint, PyObject*, bint,
                                    const Policy&) except + nogil
+
+def free_motion_boxes(domain, forbidden):
+    """Subtract inclusive boxes, preserving deterministic row coalescing order."""
+    if not forbidden:
+        return (domain,)
+    cdef MotionBox bounds
+    cdef MotionBox box
+    cdef vector[MotionBox] obstacles
+    cdef vector[MotionBox] result
+    bounds.xlo, bounds.xhi, bounds.ylo, bounds.yhi, bounds.zlo, bounds.zhi = domain
+    obstacles.reserve(len(forbidden))
+    for row in forbidden:
+        box.xlo, box.xhi, box.ylo, box.yhi, box.zlo, box.zhi = row
+        obstacles.push_back(box)
+    with nogil:
+        result = subtract_motion_boxes(bounds, obstacles)
+    return tuple(
+        (box.xlo, box.xhi, box.ylo, box.yhi, box.zlo, box.zhi)
+        for box in result
+    )
+
 
 def search_intervals(const unsigned char[::1] flags, history, double pressure,
                      int nx, int ny, int nz, transitions, starts, goals, extra_edges,

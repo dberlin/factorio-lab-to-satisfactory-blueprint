@@ -32,7 +32,8 @@ Distances are centimetres and the axes are Unreal's, left-handed, with ``+Z`` up
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from bisect import bisect_left
+from collections.abc import Iterable, Sequence
 
 from flab2bp.sfy.geometry import snap_zeros
 from flab2bp.sfy.templates import straight_spline
@@ -52,6 +53,7 @@ __all__ = [
     "spline_length",
     "straight",
     "tangent_at_distance",
+    "tangents_at_distances",
     "yaw_quaternion",
 ]
 
@@ -246,6 +248,69 @@ def _tangent_within(
         walked += span
         previous = current
     return hermite_tangent(p0, t0, p1, t1, 1.0)
+
+
+def tangents_at_distances(
+    points: Sequence[SplinePoint],
+    distances: Iterable[float],
+    *,
+    samples: int = DISTANCE_SAMPLES,
+) -> tuple[Vector, ...]:
+    """Sample many distances with exactly the scalar walk's reparameterisation.
+
+    Each sampled segment's chord table is local to this call and built once.
+    Segment selection still uses quadrature lengths and successive subtraction,
+    NOT cumulative chord lengths: those differ on curves and at segment seams.
+    Store each original chord span as well as its cumulative end to preserve
+    the scalar interpolation arithmetic, even when cumulative sums round.
+    Requests may repeat or arrive in any order.
+    """
+    if len(points) < 2:
+        raise ValueError("a spline needs at least two points to have a tangent")
+    lengths = [
+        segment_length(points[i][0], points[i][2], points[i + 1][0], points[i + 1][1])
+        for i in range(len(points) - 1)
+    ]
+    tables: dict[int, tuple[list[float], list[float]]] = {}
+    tangents: list[Vector] = []
+    last = len(lengths) - 1
+    for distance in distances:
+        remaining = max(0.0, distance)
+        for index, length in enumerate(lengths):
+            if remaining > length and index < last:
+                remaining -= length
+                continue
+            p0, _, leave = points[index]
+            p1, arrive, _ = points[index + 1]
+            if remaining <= 0.0:
+                tangent = hermite_tangent(p0, leave, p1, arrive, 0.0)
+            else:
+                table = tables.get(index)
+                if table is None:
+                    ends: list[float] = []
+                    spans: list[float] = []
+                    walked = 0.0
+                    previous = hermite(p0, leave, p1, arrive, 0.0)
+                    for chord in range(1, samples + 1):
+                        current = hermite(p0, leave, p1, arrive, chord / samples)
+                        span = math.dist(previous, current)
+                        walked += span
+                        ends.append(walked)
+                        spans.append(span)
+                        previous = current
+                    table = tables[index] = (ends, spans)
+                ends, spans = table
+                chord = bisect_left(ends, remaining)
+                if chord == len(ends):
+                    tangent = hermite_tangent(p0, leave, p1, arrive, 1.0)
+                else:
+                    walked = ends[chord - 1] if chord else 0.0
+                    span = spans[chord]
+                    fraction = 0.0 if span == 0.0 else (remaining - walked) / span
+                    tangent = hermite_tangent(p0, leave, p1, arrive, (chord + fraction) / samples)
+            tangents.append(tangent)
+            break
+    return tuple(tangents)
 
 
 def straight(start: Vector, direction: Vector, length: float) -> tuple[SplinePoint, ...]:

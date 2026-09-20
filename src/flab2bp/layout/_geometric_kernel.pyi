@@ -8,10 +8,13 @@ motion exhaustion, not a physical component. Other statuses carry no component.
 from array import array
 from collections.abc import Callable, Mapping, Sequence
 
-from .geometric_motion import MotionPolicy, MotionWitness
+from .geometric_motion import MotionBox, MotionPolicy, MotionWitness
 from .geometric_router import GeometricMetrics
 from .geometric_world import GeometricTransition
 
+def free_motion_boxes(
+    domain: MotionBox, forbidden: Sequence[MotionBox]
+) -> tuple[MotionBox, ...]: ...
 def search_intervals(
     flags: bytearray,
     history: array[float] | list[float] | None,

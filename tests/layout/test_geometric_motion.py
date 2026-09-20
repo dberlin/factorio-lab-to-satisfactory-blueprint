@@ -6,11 +6,14 @@ import heapq
 import math
 from array import array
 from dataclasses import replace
+from itertools import product
 from random import Random
 
 import pytest
 
+from flab2bp.layout._geometric_kernel import free_motion_boxes
 from flab2bp.layout.geometric_motion import (
+    MotionBox,
     MotionEdge,
     MotionEndpoint,
     MotionGuard,
@@ -18,6 +21,86 @@ from flab2bp.layout.geometric_motion import (
 )
 from flab2bp.layout.geometric_router import GeometricQuery, GeometricResult, route
 from flab2bp.layout.geometric_world import GeometricWorld
+
+
+def _box_cells(box: MotionBox) -> set[tuple[int, int, int]]:
+    return set(product(*(range(box[axis], box[axis + 1] + 1) for axis in (0, 2, 4))))
+
+
+@pytest.mark.parametrize(
+    "domain,forbidden",
+    (
+        ((-2, 2, 3, 5, -1, 1), ()),
+        ((0, -1, 0, 2, 0, 2), ()),
+        ((0, 2, 1, 0, 0, 2), ((0, 2, 0, 2, 0, 2),)),
+        ((0, 2, 0, 2, 1, 0), ((0, 2, 0, 2, 0, 2),)),
+        ((1, 1, 2, 2, 3, 3), ((1, 1, 2, 2, 3, 3),)),
+        ((-2, 2, 3, 5, -1, 1), ((-9, 9, -9, 9, -9, 9),)),
+        (
+            (-2, 2, 3, 5, -1, 1),
+            (
+                (-4, 0, 2, 4, -2, 0),
+                (-1, 1, 4, 6, 0, 2),
+                (2, 2, 3, 5, -1, 1),
+                (3, 4, 3, 5, -1, 1),
+                (0, -1, 3, 5, -1, 1),
+            ),
+        ),
+    ),
+    ids=("free", "empty-x", "empty-y", "empty-z", "single-cell", "full", "overlap-and-clip"),
+)
+def test_free_motion_boxes_cover_exactly_the_inclusive_domain_difference(
+    domain: MotionBox, forbidden: tuple[MotionBox, ...]
+) -> None:
+    expected = _box_cells(domain)
+    for box in forbidden:
+        expected.difference_update(_box_cells(box))
+    actual: set[tuple[int, int, int]] = set()
+    boxes = free_motion_boxes(domain, forbidden)
+    for box in boxes:
+        cells = _box_cells(box)
+        assert actual.isdisjoint(cells)
+        actual.update(cells)
+    assert actual == expected
+    assert free_motion_boxes(domain, (*reversed(forbidden), *forbidden)) == boxes
+
+
+def test_free_motion_boxes_do_not_join_matching_rows_across_a_blocked_slice() -> None:
+    domain = (0, 4, 0, 2, 0, 4)
+    forbidden = ((0, 4, 0, 2, 2, 2), (2, 2, 0, 2, 0, 4))
+    assert free_motion_boxes(domain, forbidden) == (
+        (0, 1, 0, 2, 0, 1),
+        (0, 1, 0, 2, 3, 4),
+        (3, 4, 0, 2, 0, 1),
+        (3, 4, 0, 2, 3, 4),
+    )
+
+
+def test_free_motion_boxes_match_a_small_cell_oracle() -> None:
+    rng = Random(173)
+    domain = (-2, 3, 1, 4, -1, 2)
+    cells = _box_cells(domain)
+    for _ in range(60):
+        forbidden: list[MotionBox] = []
+        for _ in range(rng.randrange(1, 12)):
+            x0, x1 = sorted((rng.randrange(-3, 5), rng.randrange(-3, 5)))
+            y0, y1 = sorted((rng.randrange(0, 6), rng.randrange(0, 6)))
+            z0, z1 = sorted((rng.randrange(-2, 4), rng.randrange(-2, 4)))
+            forbidden.append((x0, x1, y0, y1, z0, z1))
+        expected = {
+            cell
+            for cell in cells
+            if not any(
+                all(box[2 * axis] <= cell[axis] <= box[2 * axis + 1] for axis in range(3))
+                for box in forbidden
+            )
+        }
+        actual: set[tuple[int, int, int]] = set()
+        for box in free_motion_boxes(domain, forbidden):
+            covered = _box_cells(box)
+            assert actual.isdisjoint(covered)
+            actual.update(covered)
+        assert actual == expected
 
 
 def _allowed(policy: MotionPolicy, edge: MotionEdge, cell: tuple[int, int, int]) -> bool:

@@ -711,6 +711,7 @@ def test_tap_cut_preserves_parent_turn_room_and_restores_its_witnesses() -> None
         tuple((net.id, *ends) for ends in attempt.columns),
         tuple(run.physical.items()),
         0.0,
+        tuple(run.admitted.items()),
     )
     run.release(net.id)
     assert net.id not in run.proofs
@@ -747,7 +748,7 @@ def test_restore_keeps_transverse_shadow_of_an_off_grid_tap_stub() -> None:
     beside_stub = (10, 11, GROUND_LEVEL)
     assert not run.occupancy.free(beside_stub)
 
-    _restore(run, _Played((tree,), (), (), (), (), 0.0))
+    _restore(run, _Played((tree,), (), (), (), (), 0.0, ()))
 
     assert not run.occupancy.free(beside_stub)
     assert run.occupancy.snapshot() == before
@@ -879,11 +880,54 @@ def test_lift_checks_foreign_physical_objects_after_rip_up_and_restore(
         columns=tuple((net.id, *ends) for ends in attempt.columns),
         physical=tuple(run.physical.items()),
         length_cm=0.0,
+        admitted=tuple(run.admitted.items()),
     )
     run.release(net.id)
     assert _column_blocked(run, candidate) == ()
     _restore(run, best)
     assert _column_blocked(run, candidate) == expected
+
+
+def test_crossing_ramps_are_rejected_until_foreign_geometry_is_released() -> None:
+    """Opposite ramps can cross between nodes without sharing a lattice cell."""
+    run = _loop(_occupancy())
+
+    def branch(level: int, slope: int) -> _Branch:
+        path = (
+            *_line((3, 16, level), (10, 16, level)),
+            *((10 + i, 16, level + (i // 2) * slope) for i in range(1, 13)),
+            *_line((22, 16, level + 6 * slope), (29, 16, level + 6 * slope))[1:],
+        )
+        source = Terminal(path[0], run.lattice.world(path[0]), (1.0, 0.0, 0.0), None, "wall")
+        sink = Terminal(path[-1], run.lattice.world(path[-1]), (-1.0, 0.0, 0.0), None, "wall")
+        return _Branch(path, source, sink, Fraction(1, 4), None, False)
+
+    rising, falling = branch(3, 1), branch(8, -1)
+    assert set(rising.path).isdisjoint(falling.path)
+    assert rising.source is not None and rising.sink is not None
+    assert falling.source is not None and falling.sink is not None
+    first = _net(1, (rising.source,), (rising.sink,), (rising.pinned,))
+    second = _net(2, (falling.source,), (falling.sink,), (falling.pinned,))
+    run.stake(first.id, rising.path)
+    admitted = _build(run, first, (rising,), None)
+    assert admitted.tree is not None
+    snapshot = _Played(
+        trees=(admitted.tree,),
+        stranded=(),
+        realised=admitted.realised,
+        columns=(),
+        physical=tuple(run.physical.items()),
+        length_cm=0.0,
+        admitted=tuple(run.admitted.items()),
+    )
+    rejected = _build(run, second, (falling,), None)
+    assert rejected.tree is None
+    assert rejected.failure == "realise"
+    run.release(first.id)
+    assert _build(run, second, (falling,), None).tree is not None
+    run.release(second.id)
+    _restore(run, snapshot)
+    assert _build(run, second, (falling,), None).tree is None
 
 
 def test_lift_rejects_unknown_foreign_occupancy_even_behind_known_shadow() -> None:
