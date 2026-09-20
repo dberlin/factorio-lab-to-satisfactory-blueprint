@@ -134,7 +134,10 @@ def test_external_inputs_are_the_flows_mined_items() -> None:
     assert spec.surplus_outputs == {}
 
 
-def test_input_objectives_do_not_replace_flow_inputs_or_selected_recipes() -> None:
+@pytest.mark.parametrize("objective_type", [ObjectiveType.Input, ObjectiveType.Limit])
+def test_constraints_do_not_replace_flow_inputs_or_selected_recipes(
+    objective_type: ObjectiveType,
+) -> None:
     name = "copper-ingot-alloy-480"
     request = parse_url(_url(name))
     request = replace(
@@ -145,14 +148,14 @@ def test_input_objectives_do_not_replace_flow_inputs_or_selected_recipes() -> No
                 target_id="iron-ore",
                 value=Fraction(10),
                 unit=ObjectiveUnit.Belts,
-                type=ObjectiveType.Input,
+                type=objective_type,
             ),
             *request.objectives,
             Objective(
                 id="unused-supply",
                 target_id="iron-plate",
                 value=Fraction(100),
-                type=ObjectiveType.Input,
+                type=objective_type,
             ),
         ),
     )
@@ -173,22 +176,28 @@ def test_input_objectives_do_not_replace_flow_inputs_or_selected_recipes() -> No
     assert group.last_clock == Fraction(4, 5)
 
 
-@pytest.mark.parametrize("objective_type", [ObjectiveType.Maximize, ObjectiveType.Limit])
-def test_other_non_output_objectives_remain_unsupported(objective_type: ObjectiveType) -> None:
-    name = "iron-plate-60"
+def test_maximize_exports_achieved_net_rate_not_objective_weight() -> None:
+    name = "wire-120-cable-60"
     request = parse_url(_url(name))
     request = replace(
         request,
-        objectives=(replace(request.objectives[0], type=objective_type),),
+        objectives=tuple(
+            replace(objective, type=ObjectiveType.Maximize, value=Fraction(7))
+            if objective.target_id == "wire"
+            else objective
+            for objective in request.objectives
+        ),
     )
-    with pytest.raises(RatesRefusal):
-        spec_from_flow(
-            load_vendored(Game.SFY),
-            request,
-            load_flow(FLOWS / f"{name}.csv", url=_url(name)),
-            load_registry(),
-            load_lab_map(),
-        )
+    spec = spec_from_flow(
+        load_vendored(Game.SFY),
+        request,
+        load_flow(FLOWS / f"{name}.csv", url=_url(name)),
+        load_registry(),
+        load_lab_map(),
+    )
+    # The flow makes 240 wire/min: 120 feeds cable and 120 is exported.
+    assert spec.outputs == {"wire": Fraction(2), "cable": Fraction(1)}
+    assert _group(spec, "wire").row_outputs == {"wire": Fraction(4)}
 
 
 def test_objective_used_by_another_recipe_exports_only_its_net_flow() -> None:

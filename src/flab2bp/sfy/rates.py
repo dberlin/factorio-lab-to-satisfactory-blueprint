@@ -462,15 +462,10 @@ def spec_from_flow(
 
     outputs: dict[str, Fraction] = {}
     for objective in request.objectives:
-        # Inputs constrain FactorioLab's solve, not the blueprint's exports.
-        # Physical input rates still come from the solved flow above.
-        if objective.type is ObjectiveType.Input:
+        # Inputs and limits constrain FactorioLab's solve, not the blueprint's
+        # exports. Physical input rates still come from the solved flow above.
+        if objective.type in (ObjectiveType.Input, ObjectiveType.Limit):
             continue
-        if objective.type is not ObjectiveType.Output:
-            raise RatesRefusal(
-                "only output objectives are supported",
-                f"objective {objective.target_id!r} is {objective.type.name}",
-            )
         if objective.unit is not ObjectiveUnit.Items:
             raise RatesRefusal(
                 "only item objectives are supported",
@@ -484,6 +479,7 @@ def spec_from_flow(
             )
         # CSV Items includes material consumed by downstream recipes; Surplus
         # is separate. Only the unconsumed objective rate crosses the boundary.
+        # For Maximize, this is the achieved rate, not the objective's weight.
         exported = _per_second(target.items, request.display_rate) - consumed.get(
             objective.target_id, Fraction()
         )
