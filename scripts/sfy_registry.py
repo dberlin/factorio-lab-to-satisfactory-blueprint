@@ -359,6 +359,11 @@ GOVERNED_BY: dict[str, str] = {
     "lift_min_cm": "lift.height_range",
     "lift_max_cm": "lift.height_range",
     "lift_min_vertical_cm": "lift.height_range",
+    "lift_snap_normal_dot": "lift.connection_snap",
+    "lift_snap_axial_gap_cm": "lift.connection_snap",
+    "lift_snap_lateral_cm": "lift.connection_snap",
+    "lift_snap_grid_cm": "lift.connection_snap",
+    "lift_snap_grid_tolerance_cm": "lift.connection_snap",
     "pipe_max_spline_cm": "pipe.max_length",
     "pipe_min_bend_radius_cm": "pipe.curvature",
     "hologram_grid_cm": "buildable.grid_snap",
@@ -847,6 +852,27 @@ def _fill_native_connection_links(
     }
 
 
+def _fill_connector_clearances(buildables: dict[str, Any]) -> dict[str, Any]:
+    """Complete cooked/inherited factory connector overrides from native stores."""
+    raw = json.loads((DATA / "hologram_rules.json").read_text(encoding="utf-8"))
+    rule = next(entry for entry in raw["rules"] if entry["id"] == "lift.connection_snap")
+    defaults = rule["connector_clearance_defaults"]
+    for buildable in buildables.values():
+        conveyor = buildable["native_class"] in {
+            "FGBuildableConveyorBelt",
+            "FGBuildableConveyorLift",
+        }
+        for port in buildable["ports"]:
+            if port["kind"] == "belt" and port.get("clearance") is None:
+                port["clearance"] = defaults["conveyor_cm" if conveyor else "factory_cm"]
+    return {
+        **defaults,
+        "rule": "lift.connection_snap",
+        "note": "Cooked mConnectorClearance overrides include the component archetype chain; "
+        "native defaults fill only silent factory connection components.",
+    }
+
+
 def _check_rules(entries: Mapping[str, Any]) -> None:
     """Hold the governance the registry is about to claim to the rules themselves.
 
@@ -916,6 +942,13 @@ def _limits(
         "assets",
     )
     provenance.update(subsystem_provenance)
+    raw_rules = json.loads((DATA / "hologram_rules.json").read_text(encoding="utf-8"))
+    snap = next(rule for rule in raw_rules["rules"] if rule["id"] == "lift.connection_snap")
+    snap_parameters = snap["snap_parameters"]
+    _fill(
+        limits, sources, {key: entry["value"] for key, entry in snap_parameters.items()}, "binary"
+    )
+    provenance.update(snap_parameters)
     _fill(limits, sources, from_binary, "binary")
     for key, note in BINARY_NOTES.items():
         provenance[key] = {"note": note, "is_a_proven_minimum": False}
@@ -1320,6 +1353,7 @@ def main(out: Path | None = None) -> int:
     lift_geometry = _attach_lift_geometry(rules, docs["buildables"])
     mesh_bounds = _attach_mesh_bounds(assets.get("mesh_bounds", {}), docs["buildables"])
     connection_links = _fill_native_connection_links(docs["buildables"], native)
+    connector_clearances = _fill_connector_clearances(docs["buildables"])
     direction_counts = _shipped_direction_counts(docs["buildables"])
     item_paths = _asset_paths(assets["class_paths"], _item_classes(docs), "item descriptor")
     recipe_paths = _asset_paths(assets["class_paths"], set(docs["recipes"]), "recipe")
@@ -1337,6 +1371,7 @@ def main(out: Path | None = None) -> int:
             "mesh_bounds": mesh_bounds,
             "grid_snap": grid_snap,
             "max_connections": connection_links,
+            "connector_clearances": connector_clearances,
             "limits": limit_provenance,
             "port_directions": {
                 "sources": list(PORT_DIRECTION_SOURCES),

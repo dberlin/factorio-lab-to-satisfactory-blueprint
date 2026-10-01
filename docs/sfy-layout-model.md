@@ -70,6 +70,45 @@ in both transverse axes. `compact_solids.py` uses genuine machine lifts, one
 merger per floor and connected export headers, keeping conveyor mesh clear of
 the casing. Both outputs have separate downward continuations.
 
+The four-blender mixed-input family instead uses one staggered opposing-column
+floor. Fluid manifolds move outward above the full native casing, leaving the
+central corridor for stepped descending solid input lifts. Genuine splitter
+interfaces receive the routed solid input on a deck above those fluid manifolds.
+Source-level output pumps turn toward the module's centre; a flat collector
+junction snaps directly to a pitched export junction whose native ports coincide.
+The output lane remains intact when the input boundary builder adds its lanes.
+Machine feet and boundary slabs share the native base/roof phase before deriving
+lift heights. The verified 120 m³/min Nitric Acid Mk2 module uses four 100%
+blenders, consumes 480 m³/min Nitrogen Gas, 120 m³/min Water and 40/min Iron Plates,
+and has a 37 m repeat pitch with a 4 m manual seam.
+
+Compact conveyor lifts use native paired component snaps, not a saved compact
+flag or a globally reduced height minimum. Two proven endpoints allow short
+signed heights (including 100 cm), retaining the native maximum. Free-ended
+lifts retain the ordinary 400 cm minimum and height quantization.
+Generic solid sections choose shorter raised-input decks when the outgoing belt
+can clear the native casing; otherwise they retain their legal escape.
+The four-blender input heads snap directly splitter → lift → blender with no
+spacer belts. Its verified Nitric Acid module now has 14 belts rather than 24.
+The six-blender solid-output heads likewise snap directly to their source
+machines when the upper belt clears the casing. These are recessed native
+connections: only a valid snapped lift ignores its connected device's body.
+Foreign actors, conveyors and pipes remain collision obstacles. Shared direct
+splitter feeds count their supply once and retain each lift's throughput limit.
+Short height and recessed head overlap remain separate behaviors; no Nitric
+Acid machine lift is shortened below 400 cm merely to label it compact.
+
+The layout preserves per-end `LiftMeshDisplayMode` (`AUTO`, `BELLOW`, `EMPTY`)
+and `belt_uses_input_rotation` through binary round-trips. Horizontal generated
+heads use native `AUTO`; `EMPTY` removes terminal meshes and is not a recessed
+horizontal snap mode. See [the native rules](sfy-hologram-rules.md#conveyor-lifts--hologramfgconveyorlifthologramh)
+for the second-point snap and connector-clearance evidence.
+
+Boundary shaft reservations subdivide diagonal frame beams into conservative
+native-cross-section segments. This preserves every occupied beam volume without
+claiming the empty corners of a long diagonal beam's enclosing AABB. The emitted
+frame and final validator retain the actual unsplit native beams.
+
 Machine supports cover each complete transformed hard footprint, including
 rotation tails, with real native slabs. Aligned roof/base holes and a native
 manual lift seam determine the repeat pitch. The verified 600 m³/min Rocket Fuel

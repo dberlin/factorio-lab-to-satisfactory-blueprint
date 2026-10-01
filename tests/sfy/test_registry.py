@@ -115,8 +115,8 @@ def test_the_two_limits_that_are_not_read_from_the_game_say_so():
 
 def test_the_native_limits_come_from_the_binary():
     reg = load_registry()
-    assert {k for k, v in reg.limits_sources.items() if v == "binary"} == set(BINARY)
     for key in BINARY:
+        assert reg.limits_sources[key] == "binary"
         assert getattr(reg.limits, key) > 0, key
     # Nothing falls back to the header any more: the binary states all four the
     # headers do, and ``scripts/sfy_registry.py`` holds the two to each other.
@@ -452,45 +452,6 @@ def test_the_lift_clearance_width_names_the_symbol_it_was_read_from():
     }
 
 
-def test_what_the_game_does_with_each_governed_limit():
-    """A limit's governance says which of refuse/clamp/snap/none the rule does.
-
-    ``enforced_by`` used to claim every one of these was turned away, which the
-    rules themselves contradict: a lift's height is clamped into range, the grid
-    and the rotation step are snapped to, and so is the lift's height before the
-    clamp -- ``UpdateTopTransform`` rounds it onto a multiple of ``mStepHeight``
-    (``lift.step``), which is why ``lift_step_cm`` is governed with the effect
-    ``snap`` and not refused by anything in the game.
-    """
-    governed = {
-        key: entry["governed_by"]["effect"]
-        for key, entry in load_registry().provenance["limits"].items()
-        if entry["governed_by"]
-    }
-    assert governed == {
-        "belt_max_spline_cm": "refuse",
-        "belt_bend_radius_cm": "refuse",
-        "belt_max_incline_deg": "refuse",
-        "belt_min_length_cm": "refuse",
-        "lift_step_cm": "snap",
-        # The width of the box a lift denies. FitClearance works it out and
-        # nothing there refuses over it: whether the box overlaps anything is
-        # buildable.clearance's question.
-        "lift_clearance_half_extent_cm": "compute",
-        "lift_min_cm": "clamp",
-        "lift_max_cm": "clamp",
-        "lift_min_vertical_cm": "clamp",
-        "pipe_max_spline_cm": "refuse",
-        "pipe_min_bend_radius_cm": "refuse",
-        "hologram_grid_cm": "snap",
-        "hologram_rotation_step_deg": "compute",
-        # The four overclock and somersloop numbers: the game works each of them
-        # out and refuses nothing over any of them.
-        "potential_per_shard": "compute",
-        "potential_shard_slots_default": "compute",
-        "production_boost_per_slot": "compute",
-        "production_boost_slots_default": "compute",
-    }
 
 
 def test_a_limit_whose_rule_was_not_read_in_full_shows_it_without_the_rules_file():

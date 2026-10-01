@@ -691,7 +691,7 @@ object Port(string name, List<UObject> chain, string? nativeSuper)
         direction_source = source,
         translation = new[] { location.X, location.Y, location.Z },
         rotation = new[] { rotation.Pitch, rotation.Yaw, rotation.Roll },
-        clearance = Number(template, "mConnectorClearance"),
+        clearance = chain.Select(t => Number(t, "mConnectorClearance")).FirstOrDefault(v => v is not null),
         max_connections = links,
         max_connections_source = linksSource,
     };

@@ -272,6 +272,37 @@ and then *clamps* it between the minimum — the vertical-connection one when th
 lift meets a passthrough, the ordinary one otherwise — and `mMaximumHeight`.
 There is no disqualifier for either, because neither refuses anything.
 
+Successful second-point component snaps take a separate path. At `0xa88981`,
+`SetHologramLocationAndRotation` calls `CanConnectToConnection`; success writes
+the exact signed endpoint height clamped only to `0..mMaximumHeight`
+(`0xa88a45..0xa88a6b`), bypassing the ordinary minimum and step rounding.
+`lift.connection_snap` records the native predicate: opposing normals with dot
+product at most `-0.995`, clearance-adjusted axial gap at most 25 cm, horizontal
+transverse gap at most 1 cm, and a vertical remainder within 10 cm of a 100 cm
+grid step. The saved endpoint must also match its target's actual world height.
+Both endpoints need unique, live, correctly directed links; a free, dangling,
+duplicated, boundary-open or misaligned end earns no short-lift permission.
+The project still rejects zero-height lifts. Signed 100 cm witnesses have passed
+complete physical validation and native binary round-trips.
+
+`UFGFactoryConnectionComponent` defaults to 100 cm connector clearance
+(`0x7b6004`); `AFGBuildableConveyorBase` overrides that to zero. Cooked lift Mk1
+overrides both ends to 200 cm, inherited by Mk2–Mk6. Extraction walks component
+archetypes rather than mistaking an omitted inherited override for zero.
+Device snaps may be coincident/recessed or offset within the native predicate:
+they need no separate conveyor lead or invented 120 cm head offset.
+`GetIgnoredClearanceActors` (`0xa7b109..0xa7b164`) excludes the actual snapped
+endpoint owners. Validation grants that whole-owner exemption only to a proven
+direct snap; foreign devices and transport remain obstacles.
+
+There is no separate saved compact-mode flag. Per-end SaveGame enum properties
+`mInputMeshDisplayMode` and `mOutputMeshDisplayMode` preserve `MDM_Auto`,
+`MDM_Bellow` or `MDM_Empty`; `mIsBeltUsingInputRotation` preserves the item-rotation
+choice. `Empty` replaces terminal/bellows meshes with shaft meshes, not a recessed
+horizontal housing. Generated horizontal snaps retain `Auto`; the emitter never
+inherits a fixture's non-default head modes or item-rotation setting.
+
+
 `mMinimumHeight` itself is not always the `BeginPlay` value while that call
 runs. When the connection the top snapped to has a **vertical normal**, the
 function overwrites it with 2.5 or 3.5 times `mStepHeight` — 250 or 350 cm

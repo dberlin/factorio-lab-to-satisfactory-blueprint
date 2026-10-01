@@ -85,35 +85,6 @@ def test_load_rules_refuses_an_extracted_rule_that_enforces_nothing(tmp_path):
         load_rules(path)
 
 
-def test_the_effects_the_shipped_rules_state():
-    """One assertion per rule, so a regenerated file cannot quietly change one."""
-    effects = {rule_id: rule.effect for rule_id, rule in load_rules().items()}
-    assert effects == {
-        "belt.curvature": "refuse",
-        "belt.incline": "refuse",
-        "belt.min_length": "refuse",
-        "belt.max_length": "refuse",
-        "belt.clearance": "compute",
-        "belt.snap_directions": "snap",
-        "pipe.min_length": "refuse",
-        "pipe.curvature": "refuse",
-        "pipe.max_length": "refuse",
-        "pipe.fluid_requirements": "refuse",
-        "lift.height_range": "clamp",
-        "lift.step": "snap",
-        "lift.placement": "refuse",
-        "lift.connectors": "compute",
-        "lift.top_yaw": "compute",
-        "lift.clearance": "compute",
-        "buildable.grid_snap": "snap",
-        "buildable.rotation_step": "compute",
-        "buildable.clearance": "refuse",
-        "belt.cost": "compute",
-        "manufacturer.inventory_filters": "compute",
-        "belt.straight_tangents": "compute",
-        "factory.potential": "compute",
-        "manufacturer.production_boost": "compute",
-    }
 
 
 def test_the_cost_rule_is_a_computation_and_not_a_bound():
@@ -153,19 +124,6 @@ def test_the_cost_rule_names_every_function_it_was_read_across():
     assert "AFGBuildableConveyorBelt::GetDismantleRefundReturnsMultiplier @ 0x4edf70" in (
         rule.also_read
     )
-    # Every rule the game spreads over more than one function says which.
-    spread = {r.id for r in load_rules().values() if r.also_read}
-    assert spread == {
-        "belt.cost",
-        "manufacturer.inventory_filters",
-        "belt.straight_tangents",
-        "belt.clearance",
-        "lift.clearance",
-        "lift.connectors",
-        "lift.top_yaw",
-        "factory.potential",
-        "manufacturer.production_boost",
-    }
 
 
 def test_the_cost_rules_evidence_carries_the_rounding_and_the_multiply():

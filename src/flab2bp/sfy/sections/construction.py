@@ -180,6 +180,8 @@ class _Construction:
         heading: float,
         item: str,
         rate: Fraction,
+        *,
+        snapped: bool = False,
     ) -> tuple[Connection, Connection]:
         tier = self.tier(item, rate)
         belt = self.registry.buildables[machine_class(self.lab_map, tier.item_id)]
@@ -197,7 +199,11 @@ class _Construction:
             raise SectionError(f"no lift matches conveyor {belt.class_name}", cause="unsupported")
         height = end_z - start_z
         low, high = self.registry.limits.lift_min_cm, self.registry.limits.lift_max_cm
-        if low is None or high is None or not low <= abs(height) <= high:
+        if snapped:
+            # The native second-end snap bypasses the free-end minimum.
+            # Final validation requires both actual connected end geometries.
+            low = 0.0
+        if low is None or high is None or height == 0 or not low <= abs(height) <= high:
             raise SectionError(
                 f"section lift height {abs(height):.0f} cm is outside {low}..{high} cm",
                 cause="height",
@@ -221,28 +227,24 @@ class _Construction:
 
 
 def _snap_lift_clear(machine: Buildable, port: Port, top_z: float, width: float) -> bool:
-    """A snapped lift may share its port's box, never another part of a machine.
+    """The unattached belt at a snapped lift's upper head must clear the machine.
 
-    Foundry upper machinery covers one input column; its lift must stand outside.
-    Assembler/manufacturer inputs occupy lower projecting trays, so snapping there
-    avoids spending another conveyor-length of central aisle for every ingredient.
+    Native lift snapping ignores its actual connected device's clearance actor.
+    The conveyor arriving above is a different actor: it still needs real room
+    at the deck, even though the recessed lift itself may share the casing.
     """
-    x, y, z = port.translation
+    x, y, _ = port.translation
     for box in machine.clearance:
         if box.soft:
             continue
         low, high = box_bounds(box, Pose(0, 0, 0, 0).transform())
         if not (low[0] - width < x < high[0] + width and low[1] - width < y < high[1] + width):
             continue
-        contains_port = all(
-            low[i] - 0.01 <= port.translation[i] <= high[i] + 0.01 for i in range(3)
-        )
-        if contains_port:
-            # The belt arriving at the upper end is not attached to the machine,
-            # so it must actually clear even the box the lift itself may share.
-            if top_z - BELT_CLEARANCE_HALF_HEIGHT_CM <= high[2]:
-                return False
-        elif min(top_z, high[2]) > max(z, low[2]):
+        if (
+            low[2] - BELT_CLEARANCE_HALF_HEIGHT_CM
+            <= top_z
+            <= high[2] + BELT_CLEARANCE_HALF_HEIGHT_CM
+        ):
             return False
     return True
 
@@ -306,12 +308,13 @@ def build_section(
     for item, total_rate in (*group.row_inputs.items(), *group.row_outputs.items()):
         build.tier(item, total_rate)
     limits = registry.limits
-    grid, lift_min, lift_width = (
+    grid, lift_min, lift_width, step = (
         limits.hologram_grid_cm,
         limits.lift_min_cm,
         limits.lift_clearance_half_extent_cm,
+        limits.lift_step_cm,
     )
-    if grid is None or lift_min is None or lift_width is None:
+    if grid is None or lift_min is None or lift_width is None or step is None:
         raise SectionError(
             "registry lacks section grid or conveyor-lift geometry", cause="unsupported"
         )
@@ -335,15 +338,23 @@ def build_section(
         )
     )
     body_half = attachment_box_cm(registry)
-    layer = grid_ceil(max(lift_min, attachment_height + 2 * BELT_CLEARANCE_HALF_HEIGHT_CM), grid)
-    snapped = [
-        index == 0
-        or all(
-            _snap_lift_clear(machine, port, input_z + index * layer, lift_width)
-            for port in (in_ports[index], in_ports[-1 - index])
-        )
-        for index in range(len(ingredients))
-    ]
+    def direct_inputs(layer: float) -> list[bool]:
+        return [
+            index == 0
+            or all(
+                _snap_lift_clear(machine, port, input_z + index * layer, lift_width)
+                for port in (in_ports[index], in_ports[-1 - index])
+            )
+            for index in range(len(ingredients))
+        ]
+
+    deck_separation = attachment_height + 2 * BELT_CLEARANCE_HALF_HEIGHT_CM
+    layer = grid_ceil(max(step, deck_separation), grid)
+    snapped = direct_inputs(layer)
+    if not all(snapped):
+        # An exterior, unsnapped branch still needs the ordinary lift window.
+        layer = grid_ceil(max(lift_min, deck_separation), grid)
+        snapped = direct_inputs(layer)
     side_reach = max(abs(port.translation[1]) for port in split_sides)
     # Leave one whole centimetre beyond the swept clearance, not an arbitrary
     # foundation cell. Every number otherwise follows actual connector geometry.
@@ -430,7 +441,8 @@ def build_section(
                         else side * (aisle + foot_y0 - lift_width - 1)
                     )
                     entry, exit_ = build.lift(
-                        position[0], lift_y, spine_z, position[2], -side * 90, item, amount
+                        position[0], lift_y, spine_z, position[2], -side * 90, item, amount,
+                        snapped=snapped[ingredient],
                     )
                     build.belt((node, split_sides[row].name), entry, item, amount)
                     if snapped[ingredient]:

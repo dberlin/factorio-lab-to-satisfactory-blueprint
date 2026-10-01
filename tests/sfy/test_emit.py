@@ -33,12 +33,14 @@ from flab2bp.sfy.layout.emit import (
     TRANSLATION,
     EmitError,
     _lift_top,
+    _set_top_transform,
     decode,
     emit,
 )
 from flab2bp.sfy.layout.model import (
     BeltRun,
     FoundationObj,
+    LiftMeshDisplayMode,
     LiftObj,
     Link,
     MachineObj,
@@ -50,7 +52,18 @@ from flab2bp.sfy.layout.model import (
 )
 from flab2bp.sfy.layout.splines import straight, yaw_quaternion
 from flab2bp.sfy.objects import ACTOR, ObjectData, ObjectHeader, Transform
-from flab2bp.sfy.properties import Array, Float, Object, Property, Quat, Struct, Tag, Vector
+from flab2bp.sfy.properties import (
+    Array,
+    Bool,
+    Enum,
+    Float,
+    Object,
+    Property,
+    Quat,
+    Struct,
+    Tag,
+    Vector,
+)
 from flab2bp.sfy.query import connected, find, object_index
 from flab2bp.sfy.registry import Port, Registry, load_registry
 from flab2bp.sfy.spec import designer
@@ -642,6 +655,114 @@ def test_the_link_onto_a_lift_comes_back_naming_the_machine_first() -> None:
     entry, _ = belt_ends(registry, LIFT)
     placement = decode(_emit(_lift_placement()), registry)
     assert placement.links == (Link((4, "Output0"), (7, entry)),)
+
+
+def test_native_lift_head_modes_and_item_rotation_survive_layout_roundtrip() -> None:
+    registry = load_registry()
+    source = next(
+        data
+        for header, data in read_sbp_file(FIXTURES / "production-7.sbp").objects
+        if header.name == "Build_ConveyorLiftMk5_C_2147264805"
+    )
+    names = {"mInputMeshDisplayMode", "mOutputMeshDisplayMode", "mIsBeltUsingInputRotation"}
+    saved = tuple(
+        Property(prop.tag.as_modern(), prop.value)
+        for prop in source.properties if prop.tag.name in names
+    )
+    built = _emit(_lift_placement(250))
+    built = replace(
+        built,
+        objects=tuple(
+            (header, replace(data, properties=(*data.properties, *saved)))
+            if header.kind == ACTOR and header.class_name == LIFT else (header, data)
+            for header, data in built.objects
+        ),
+    )
+    placement = decode(built, registry)
+    reference = placement.lifts[0]
+    assert reference.input_mesh_display_mode == "EFGBuildableConveyorLiftMeshDisplayMode::MDM_Auto"
+    assert (
+        reference.output_mesh_display_mode == "EFGBuildableConveyorLiftMeshDisplayMode::MDM_Empty"
+    )
+    assert reference.belt_uses_input_rotation is True
+    restored = decode(_emit(placement), registry).lifts[0]
+    assert restored.input_mesh_display_mode == "EFGBuildableConveyorLiftMeshDisplayMode::MDM_Auto"
+    assert restored.output_mesh_display_mode == "EFGBuildableConveyorLiftMeshDisplayMode::MDM_Empty"
+    assert restored.belt_uses_input_rotation is True
+
+
+@pytest.mark.parametrize(
+    ("input_mode", "output_mode"),
+    (
+        (LiftMeshDisplayMode.BELLOW, LiftMeshDisplayMode.EMPTY),
+        (LiftMeshDisplayMode.EMPTY, LiftMeshDisplayMode.AUTO),
+    ),
+)
+def test_asymmetric_lift_heads_and_item_orientation_roundtrip(
+    input_mode: LiftMeshDisplayMode, output_mode: LiftMeshDisplayMode
+) -> None:
+    placement = _lift_placement()
+    lift = replace(
+        placement.lifts[0],
+        input_mesh_display_mode=input_mode,
+        output_mesh_display_mode=output_mode,
+        belt_uses_input_rotation=True,
+    )
+    authored = replace(placement, lifts=(lift,))
+    assert decode(_emit(authored), load_registry()) == authored
+
+
+def test_lift_model_defaults_clear_contaminated_template_head_state() -> None:
+    placement = _lift_placement()
+    built = _emit(placement)
+    data = next(d for h, d in built.objects if h.kind == ACTOR and h.class_name == LIFT)
+    contaminated = replace(
+        data,
+        properties=(
+            *data.properties,
+            Property(
+                Tag("mInputMeshDisplayMode", "EnumProperty", 0,
+                    enum_name="EFGBuildableConveyorLiftMeshDisplayMode").as_modern(),
+                Enum(LiftMeshDisplayMode.EMPTY.value),
+            ),
+            Property(
+                Tag("mOutputMeshDisplayMode", "EnumProperty", 0,
+                    enum_name="EFGBuildableConveyorLiftMeshDisplayMode").as_modern(),
+                Enum(LiftMeshDisplayMode.BELLOW.value),
+            ),
+            Property(Tag("mIsBeltUsingInputRotation", "BoolProperty", 0).as_modern(), Bool(True)),
+        ),
+    )
+    rebuilt = _set_top_transform(contaminated, placement.lifts[0], load_registry())
+    assert find(rebuilt.properties, "mInputMeshDisplayMode") is None
+    assert find(rebuilt.properties, "mOutputMeshDisplayMode") is None
+    assert find(rebuilt.properties, "mIsBeltUsingInputRotation") is None
+
+
+@pytest.mark.parametrize(
+    "property",
+    (
+        Property(
+            Tag("mInputMeshDisplayMode", "EnumProperty", 0,
+                enum_name="EFGBuildableConveyorLiftMeshDisplayMode").as_modern(),
+            Enum("EFGBuildableConveyorLiftMeshDisplayMode::MDM_Unknown"),
+        ),
+        Property(Tag("mOutputMeshDisplayMode", "BoolProperty", 0).as_modern(), Bool(True)),
+        Property(Tag("mIsBeltUsingInputRotation", "FloatProperty", 0).as_modern(), Float(1.0)),
+    ),
+)
+def test_decode_refuses_invalid_native_lift_state(property: Property) -> None:
+    built = _emit(_lift_placement())
+    malformed = replace(
+        built,
+        objects=tuple(
+            (header, replace(data, properties=(*data.properties, property)))
+            if header.kind == ACTOR and header.class_name == LIFT else (header, data)
+            for header, data in built.objects
+        ),
+    )
+    with pytest.raises(EmitError, match=property.tag.name):
+        decode(malformed, load_registry())
 
 
 def test_every_conveyor_lift_the_game_wrote_reads_back_as_a_height_and_a_yaw() -> None:

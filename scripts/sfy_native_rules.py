@@ -141,6 +141,11 @@ TARGETS: dict[str, tuple[str, str, str]] = {
         "UpdateTopTransform",
         "Hologram/FGConveyorLiftHologram.h:107",
     ),
+    "lift.connection_snap": (
+        "AFGConveyorLiftHologram",
+        "CanConnectToConnection",
+        "Hologram/FGConveyorLiftHologram.h",
+    ),
     "lift.placement": (
         "AFGConveyorLiftHologram",
         "CheckValidPlacement",
@@ -238,6 +243,12 @@ ALSO_READ: dict[str, tuple[str, ...]] = {
     ),
     "belt.clearance": ("AFGBuildableConveyorBelt::CreateClearanceData",),
     "lift.clearance": ("AFGBuildableConveyorLift::FitClearance",),
+    "lift.connection_snap": (
+        "AFGConveyorLiftHologram::SetHologramLocationAndRotation",
+        "AFGConveyorLiftHologram::GetIgnoredClearanceActors",
+        "UFGFactoryConnectionComponent::UFGFactoryConnectionComponent@0x7b5fd0",
+        "AFGBuildableConveyorBase::AFGBuildableConveyorBase@0x4c96b0",
+    ),
     "lift.connectors": (
         # The transform helper SetupConnections hands each connection to. The
         # PDB names it only by a templated mangling, so it is read by address.
@@ -459,6 +470,15 @@ EVIDENCE: dict[str, tuple[str, ...]] = {
         # DoMultiStepPlacement: where mFirstStepYaw is written, and the step
         # counter that makes the next call the top's.
         "0xa7289f", "0xa72f72", "0xa72f7a",
+    ),
+    "lift.connection_snap": (
+        "0xa66acd", "0xa66ad1", "0xa66ad8", "0xa66b60", "0xa66b8a",
+        "0xa66b91", "0xa66c0c", "0xa66c47", "0xa66cc8", "0xa66cde",
+        "0xa66ce7", "0xa66cee",
+        "0xa88981", "0xa889af", "0xa88a45", "0xa88a63", "0xa88a6b",
+        "0xa88abb", "0xa88ac2",
+        "0xa7b109", "0xa7b164",
+        "0x7b6004", "0x4c96e4", "0x4c9952", "0x4c9bb1",
     ),
     "lift.placement": (
         "0xa68189", "0xa681c0", "0xa681cd", "0xa681db", "0xa681e7", "0xa681f3",
@@ -1104,6 +1124,32 @@ INTERPRETATIONS: dict[str, tuple[str, str, str, str]] = {
         "this rule's: lift.height_range states the clamp UpdateTopTransform "
         "applies before the multiply.",
     ),
+    "lift.connection_snap": (
+        "extracted",
+        "compute",
+        "CanConnectToConnection requires opposing normals (dot <= -0.995), "
+        "abs(dot(delta, fromNormal)) - both connector clearances <= 25 cm, "
+        "abs(dot(delta, Up cross fromNormal)) <= 1 cm, and abs(deltaZ) modulo "
+        "100 cm <= 10 cm or >= 90 cm. The candidate's actor-relative height "
+        "must not exceed mMaximumHeight. On a successful second-point snap "
+        "(SetHologramLocationAndRotation 0xa88981), the signed exact deltaZ "
+        "overwrites mTopTransform after clamping its magnitude to 0..maximum "
+        "(0xa88a45..0xa88a6b); neither the ordinary minimum nor step is applied. "
+        "UFGFactoryConnectionComponent initializes mConnectorClearance to "
+        "100 cm (0x7b6004); ConveyorBase resets its two components to zero "
+        "(0x4c9952/0x4c9bb1). Cooked component overrides and inheritance win. "
+        "GetIgnoredClearanceActors adds the owner of each actual snapped "
+        "connection component at 0xa7b109..0xa7b164, not all actors of its class.",
+        "Use actual, uniquely connected component ends with matching flow and "
+        "native snap geometry to permit positive short and exact non-step "
+        "heights. A display mode is not snap evidence. Free or singly snapped "
+        "lifts retain their ordinary minimum and step. This predicate permits "
+        "coincident opposing component mouths as well as outward offsets; "
+        "it does not relax belt endpoint alignment or foreign-body collision. "
+        "A proven direct lift snap exempts that actual target owner's bodies; "
+        "a dangling, duplicate or geometrically invalid link proves no snap, "
+        "and unrelated actors, conveyors and pipes remain under collision checks.",
+    ),
     "lift.placement": (
         "extracted",
         "refuse",
@@ -1724,6 +1770,38 @@ def _rule(
         "evidence": [_line(by_rva[rva]) for rva in sorted(EVIDENCE[rule_id], key=_rva)],
         "header": header,
     }
+    if rule_id == "lift.connection_snap":
+        parameters = {
+            "lift_snap_normal_dot": ("0xa66ad1", "f32"),
+            "lift_snap_axial_gap_cm": ("0xa66b8a", "f32"),
+            "lift_snap_lateral_cm": ("0xa66c0c", "f32"),
+            "lift_snap_grid_cm": ("0xa66c47", "f64"),
+            "lift_snap_grid_tolerance_cm": ("0xa66cc8", "f32"),
+        }
+        rule["snap_parameters"] = {
+            key: {
+                "value": by_rva[rva]["constant"][precision],
+                "evidence": _line(by_rva[rva]),
+            }
+            for key, (rva, precision) in parameters.items()
+        }
+        # These constructor stores are immediates, not .rdata operands. Fail
+        # closed if the installed binary no longer states these defaults.
+        if "42C80000h" not in by_rva["0x7b6004"]["text"]:
+            raise SystemExit("factory connector clearance default changed")
+        if by_rva["0x4c96e4"]["text"] != "xor ebp,ebp":
+            raise SystemExit("conveyor connector clearance initializer changed")
+        for rva in ("0x4c9952", "0x4c9bb1"):
+            if "25Ch],ebp" not in by_rva[rva]["text"]:
+                raise SystemExit("conveyor connector clearance store changed")
+        rule["connector_clearance_defaults"] = {
+            "factory_cm": 100.0,
+            "conveyor_cm": 0.0,
+            "evidence": [
+                _line(by_rva[rva])
+                for rva in ("0x7b6004", "0x4c96e4", "0x4c9952", "0x4c9bb1")
+            ],
+        }
     if also:
         rule["also_read"] = [f"{symbol} @ {other['rva']}" for symbol, other in also]
     if data_reads:

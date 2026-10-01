@@ -688,6 +688,18 @@ def _compose(
         group = spec.groups[0]
         fluid_outputs = spec.fluid_items.intersection(group.row_outputs)
         solid_outputs = group.row_outputs.keys() - spec.fluid_items
+        solid_inputs = group.row_inputs.keys() - spec.fluid_items
+        if (
+            group.machine_class == "Build_Blender_C"
+            and group.count == 4
+            and len(fluid_outputs) == 1
+            and not solid_outputs
+            and len(solid_inputs) == 1
+            and len(spec.fluid_items.intersection(group.row_inputs)) == 2
+        ):
+            from flab2bp.sfy.sections.compact import mixed_input_factory
+
+            return mixed_input_factory(spec, designer, registry, lab_map, deadline)
         if (
             group.machine_class == "Build_Blender_C"
             and group.count == 6

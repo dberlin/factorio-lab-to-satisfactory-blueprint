@@ -215,8 +215,9 @@ _CAPSULE_UNREAD = (
     "UFGSplineMeshGenerationLibrary::GetNextDistanceExceedingTolerance, so the "
     "game's own segment lengths cannot be reproduced and the chain is cut at "
     "this project's own 50 cm instead. Connected-mouth corridors are project "
-    "policy informed by embedded native ports, not a full extraction of "
-    "AFGHologram::TestClearanceOverlap, which keeps buildable.clearance partial. {lift}"
+    "policy informed by embedded native ports. Direct lift snaps alone use "
+    "the native connected-owner exception (lift.connection_snap); the overlap "
+    "arithmetic remains unread, keeping buildable.clearance partial. {lift}"
 )
 _LIFT_BOX_UNREAD = (
     "A conveyor lift's box is here too, and lift.clearance is partial for a "
@@ -748,6 +749,89 @@ class Context:
         return {obj.id: obj for obj in self.placement.objects}
 
     @cached_property
+    def links_by_port(self) -> dict[tuple[int, str], list[tuple[int, str]]]:
+        """Actual model links indexed once, retaining duplicates as evidence."""
+        out: dict[tuple[int, str], list[tuple[int, str]]] = {}
+        for link in self.placement.links:
+            out.setdefault(link.a, []).append(link.b)
+            out.setdefault(link.b, []).append(link.a)
+        return out
+
+    @cached_property
+    def lift_snap_errors(self) -> dict[tuple[tuple[int, str], tuple[int, str]], tuple[str, ...]]:
+        """Native geometry for each real lift link, shared by position/height/step."""
+        out = {}
+        for side, others in self.links_by_port.items():
+            if not isinstance(self.placed.get(side[0]), LiftObj):
+                continue
+            for other in others:
+                out[side, other] = _lift_snap_errors(self, side, other)
+        return out
+
+    @cached_property
+    def valid_lift_snap_ends(self) -> dict[tuple[int, str], tuple[int, str]]:
+        """Live, unique, geometrically valid, correctly directed component snaps."""
+        object_counts = Counter(obj.id for obj in self.placement.objects)
+        directed = {(link.a, link.b) for link in self.placement.links}
+        out = {}
+        for lift in self.placement.lifts:
+            entry, exit_ = belt_ends(self.registry, lift.class_name)
+            for name, incoming, boundary in (
+                (entry, True, lift.boundary_start),
+                (exit_, False, lift.boundary_end),
+            ):
+                side = (lift.id, name)
+                others = self.links_by_port.get(side, [])
+                if boundary or len(others) != 1:
+                    continue
+                other = others[0]
+                if (
+                    other[0] == lift.id
+                    or object_counts[lift.id] != 1
+                    or object_counts[other[0]] != 1
+                    or len(self.links_by_port.get(other, [])) != 1
+                    or self.lift_snap_errors[side, other]
+                    or ((other, side) if incoming else (side, other)) not in directed
+                ):
+                    continue
+                target = self.placed[other[0]]
+                port = self.port(*other)
+                if isinstance(target, BeltRun | LiftObj):
+                    target_ends = belt_ends(self.registry, target.class_name)
+                    target_boundary = target.boundary_end if incoming else target.boundary_start
+                    matches = not target_boundary and other[1] == target_ends[1 if incoming else 0]
+                else:
+                    matches = port is not None and port.direction in (
+                        "output" if incoming else "input",
+                        "any",
+                    )
+                if matches:
+                    out[side] = other
+        return out
+
+    @cached_property
+    def paired_snapped_lifts(self) -> frozenset[int]:
+        """Only two proven component snaps bypass the ordinary minimum/step."""
+        return frozenset(
+            lift.id
+            for lift in self.placement.lifts
+            if lift.snapped_passthroughs == (None, None)
+            and all(
+                (lift.id, name) in self.valid_lift_snap_ends
+                for name in belt_ends(self.registry, lift.class_name)
+            )
+        )
+
+    @cached_property
+    def direct_lift_snap_owners(self) -> dict[int, frozenset[int]]:
+        """Native owner exception, never inferred from a belt or conveyor link."""
+        out: dict[int, set[int]] = {}
+        for side, other in self.valid_lift_snap_ends.items():
+            if not isinstance(self.placed[other[0]], BeltRun | LiftObj | PipeRun):
+                out.setdefault(side[0], set()).add(other[0])
+        return {oid: frozenset(owners) for oid, owners in out.items()}
+
+    @cached_property
     def boxes(self) -> tuple[WorldBox, ...]:
         """Every registry clearance box in the build, where it stands.
 
@@ -889,7 +973,7 @@ class Context:
         works out.
         """
         obj = self.placed.get(oid)
-        if obj is None:
+        if obj is None or self.port(oid, name) is None:
             return None
         if isinstance(obj, PipeRun):
             if self.port(oid, name) is None:
@@ -932,6 +1016,13 @@ class Context:
         connections are moved at runtime and whose top carries a yaw of its own.
         """
         obj = self.placed.get(oid)
+        if self.port(oid, name) is None:
+            return None
+        if isinstance(obj, BeltRun):
+            entry, _ = belt_ends(self.registry, obj.class_name)
+            tangent = obj.points[0][2] if name == entry else obj.points[-1][1]
+            normal = _unit(tangent)
+            return (-normal[0], -normal[1], -normal[2]) if name == entry else normal
         if isinstance(obj, PipeRun):
             start, end = pipe_ends(self.registry, obj.class_name)
             if name not in (start, end):
@@ -1117,8 +1208,8 @@ def _attachment_body(ctx: Context) -> Iterable[Finding]:
                 )
 
 
-def _mouth_contact(ctx: Context, run: BeltRun | LiftObj, segment: WorldBox, body: WorldBox) -> bool:
-    """Only the actual connected port's outward straight may enter its envelope."""
+def _mouth_contact(ctx: Context, run: BeltRun, segment: WorldBox, body: WorldBox) -> bool:
+    """Only a belt's actual connected port's outward straight may enter its envelope."""
     if body.owner not in ctx.partners.get(run.id, frozenset()):
         return False
     for link in ctx.placement.links:
@@ -1131,10 +1222,6 @@ def _mouth_contact(ctx: Context, run: BeltRun | LiftObj, segment: WorldBox, body
                 continue
             if not body.holds(point):
                 continue
-            if isinstance(run, LiftObj):
-                # A genuinely snapped lift occupies its narrow vertical shaft
-                # above/below the mouth, never another box of the same machine.
-                return math.hypot(run.pose.x - point[0], run.pose.y - point[1]) <= PORT_CM
             delta = (
                 segment.centre[0] - point[0],
                 segment.centre[1] - point[1],
@@ -1171,9 +1258,11 @@ def _capsule(ctx: Context) -> Iterable[Finding]:
     unread, so the game's own segment LENGTHS cannot be reproduced and the chain
     is cut at :data:`CAPSULE_SEGMENT_CM`, which is ours.
 
-    A connected mouth admits only a straight belt on its facing ray. No whole
-    partner actor, machine box or lift is exempted: a returning belt, a turn
-    inside a body, and another part of the connected actor remain obstacles.
+    A connected mouth admits only a straight belt on its facing ray; returning
+    belts and turns inside a body remain obstacles. A lift has the narrower
+    native exception recorded by ``lift.connection_snap``: only owners of real,
+    unique, geometrically valid direct component snaps are ignored. Other
+    actors, conveyors and pipes remain obstacles, even with the same class.
     Attachment mesh bounds are independent of native CT_Soft classification;
     older registries fall back to conservative sourced clearance envelopes.
     """
@@ -1208,8 +1297,18 @@ def _capsule(ctx: Context) -> Iterable[Finding]:
                     depth_cm=round(depth, 3),
                 )
         for box in hard:
-            tested = tuple(
-                segment for segment in chains[run.id] if not _mouth_contact(ctx, run, segment, box)
+            if isinstance(run, LiftObj) and box.owner in ctx.direct_lift_snap_owners.get(
+                run.id, frozenset()
+            ):
+                continue
+            tested = (
+                chains[run.id]
+                if isinstance(run, LiftObj)
+                else tuple(
+                    segment
+                    for segment in chains[run.id]
+                    if not _mouth_contact(ctx, run, segment, box)
+                )
             )
             clash = _worst(tested, (box,), ())
             if clash is not None:
@@ -2017,6 +2116,68 @@ def _direction(ctx: Context) -> Iterable[Finding]:
                 )
 
 
+def _lift_snap_errors(
+    ctx: Context, side: tuple[int, str], other: tuple[int, str]
+) -> tuple[str, ...]:
+    """CanConnectToConnection's predicate, not belt endpoint gap forgiveness."""
+    first, second = ctx.port(*side), ctx.port(*other)
+    here, there = ctx.world_port(*side), ctx.world_port(*other)
+    normal, opposite = ctx.port_facing(*side), ctx.port_facing(*other)
+    if (
+        first is None
+        or second is None
+        or first.kind != "belt"
+        or second.kind != "belt"
+        or here is None
+        or there is None
+        or normal is None
+        or opposite is None
+    ):
+        return ("missing live conveyor connection component",)
+    limits = ctx.registry.limits
+    dot, axial, lateral, grid, tolerance = (
+        limits.lift_snap_normal_dot,
+        limits.lift_snap_axial_gap_cm,
+        limits.lift_snap_lateral_cm,
+        limits.lift_snap_grid_cm,
+        limits.lift_snap_grid_tolerance_cm,
+    )
+    if any(value is None for value in (dot, axial, lateral, grid, tolerance)):
+        return ("native lift snap bounds are unknown",)
+    assert dot is not None and axial is not None and lateral is not None
+    assert grid is not None and tolerance is not None
+    errors = []
+    if _dot(normal, opposite) > dot:
+        errors.append("connection normals do not oppose")
+    delta = (there[0] - here[0], there[1] - here[1], there[2] - here[2])
+    if isinstance(ctx.placed.get(other[0]), BeltRun):
+        # A belt's spline end is authored at its component, not somewhere along
+        # the native device connector's clearance extension.
+        if math.dist(here, there) > PORT_CM:
+            errors.append("belt endpoint is not at the lift component")
+        if _dot(normal, opposite) > -math.cos(PORT_ANGLE_RAD):
+            errors.append("belt endpoint tangent does not oppose the lift component")
+    elif first.clearance is None or second.clearance is None:
+        errors.append("native connector clearances are unknown")
+    elif abs(_dot(delta, normal)) - first.clearance - second.clearance > axial:
+        errors.append("axial gap exceeds both clearances plus native snap tolerance")
+    if abs(_dot(delta, _cross((0.0, 0.0, 1.0), normal))) > lateral:
+        errors.append("horizontal transverse gap exceeds native snap tolerance")
+    remainder = abs(delta[2]) % grid
+    if tolerance < remainder < grid - tolerance:
+        errors.append("vertical gap is off the native snap grid")
+    # The predicate above searches a provisional endpoint. A successful snap
+    # then writes the target's exact Z into the saved top transform; a final
+    # lift left a whole grid step away is not that snapped actor.
+    if abs(delta[2]) > PORT_CM:
+        errors.append("saved lift end does not match the snapped component's world height")
+    lift = ctx.placed[side[0]]
+    assert isinstance(lift, LiftObj)
+    if limits.lift_max_cm is None or abs(there[2] - lift.pose.z) > limits.lift_max_cm:
+        errors.append("candidate height exceeds native maximum")
+    return tuple(errors)
+
+
 @check("ports.position")
 def _position(ctx: Context) -> Iterable[Finding]:
     """A belt starts and ends ON the ports it is wired to, facing the right way.
@@ -2036,18 +2197,29 @@ def _position(ctx: Context) -> Iterable[Finding]:
     belts joined to each other share a point, and their tangents are
     :func:`~flab2bp.sfy.layout.splines.concat`'s business.
 
-    A LIFT's two ends are held to the same centimetre, and where they are is
-    the game's answer rather than the registry's: ``SetupConnections`` moves
-    them to the actor and to ``mTopTransform`` (``lift.connectors``), which is
-    what :meth:`Context.lift_end` works out. Native placed blueprints confirm
-    that both lift normals point outward: an entering belt opposes the entry
-    normal and a leaving belt follows the exit normal. Snapped lift-to-machine
-    normal handling remains unread and is not inferred from belt contacts.
+    Direct lift-component snaps instead use the native opposing-normal,
+    clearance-adjusted axial gap, transverse gap and vertical grid predicate
+    (``lift.connection_snap``). This never widens a belt's endpoint tolerance.
     """
     for link in ctx.placement.links:
         for side, other in ((link.a, link.b), (link.b, link.a)):
+            if isinstance(ctx.placed.get(side[0]), LiftObj) and not isinstance(
+                ctx.placed.get(other[0]), BeltRun
+            ):
+                errors = ctx.lift_snap_errors[side, other]
+                if errors:
+                    yield ctx.finding(
+                        "ports.position",
+                        f"lift {side[0]}'s {side[1]} snap to object {other[0]}'s "
+                        f"{other[1]}: {'; '.join(errors)}",
+                        side[0],
+                        other[0],
+                    )
+        for side, other in ((link.a, link.b), (link.b, link.a)):
             run = ctx.placed.get(side[0])
             if not isinstance(run, BeltRun | LiftObj | PipeRun):
+                continue
+            if isinstance(run, LiftObj) and not isinstance(ctx.placed.get(other[0]), BeltRun):
                 continue
             here = ctx.world_port(*side)
             there = ctx.world_port(*other)
@@ -2145,10 +2317,11 @@ def _lift_height(ctx: Context) -> Iterable[Finding]:
     so either serialized end can carry the snap. The post-clamp remainder is
     added to the maximum too. ``ports.passthrough`` checks actual ownership.
 
-    Without a hole, the ordinary ``lift_min_cm`` remains conservative for
-    direct snaps to vertical connectors: their 2.5/3.5-step minimum override
-    at 0xaa4871..0xaa48c2 is not reconstructed from actor-only placement data.
-    The limit applies to the magnitude of either upward or downward travel.
+    With two actual component snaps, SetHologramLocationAndRotation writes the
+    exact signed rise clamped to 0..maximum (``lift.connection_snap``). Only
+    live, unique, directed links with native geometry earn that exception.
+    Positive nonzero travel is required; ordinary free/one-ended lifts retain
+    their minimum. Passthrough-specific rules above remain separate.
     """
     limits = ctx.registry.limits
     low, high = limits.lift_min_cm, limits.lift_max_cm
@@ -2169,8 +2342,10 @@ def _lift_height(ctx: Context) -> Iterable[Finding]:
                 continue
             low = max(hole.thickness_cm / 2 + 2 * step for hole in holes)
             high += min(int(hole.thickness_cm * 0.5 + step) % 100 for hole in holes)
+        elif lift.id in ctx.paired_snapped_lifts:
+            low = 0.0
         rise = abs(lift.height_cm)
-        if low - TOUCH_CM <= rise <= high + TOUCH_CM:
+        if rise > 0.0 and low - TOUCH_CM <= rise <= high + TOUCH_CM:
             continue
         yield ctx.finding(
             "lift.height",
@@ -2208,6 +2383,9 @@ def _lift_step(ctx: Context) -> Iterable[Finding]:
     if not step:
         return
     for lift in ctx.placement.lifts:
+        if lift.id in ctx.paired_snapped_lifts:
+            # The successful second component snap overwrites the exact rise.
+            continue
         rise = abs(lift.height_cm)
         holes = [ctx.placed.get(oid) for oid in lift.snapped_passthroughs if oid is not None]
         if len(holes) == 2 and all(isinstance(hole, PassthroughObj) for hole in holes):
@@ -2303,10 +2481,7 @@ def _lift_placement(ctx: Context) -> Iterable[Finding]:
     the FIRST click may land on an occupied port and the second is what refuses.
     A placement has both ends down, so both are judged here.
     """
-    counts: Counter[tuple[int, str]] = Counter()
-    for link in ctx.placement.links:
-        counts[link.a] += 1
-        counts[link.b] += 1
+    counts = {side: len(others) for side, others in ctx.links_by_port.items()}
     for lift in ctx.placement.lifts:
         for side, other in _lift_links(ctx, lift.id):
             taken = counts[other] - 1
@@ -2325,10 +2500,11 @@ def _lift_placement(ctx: Context) -> Iterable[Finding]:
 
 def _lift_links(ctx: Context, lift_id: int) -> Iterable[tuple[tuple[int, str], tuple[int, str]]]:
     """``(this lift's side, the connection it snapped to)`` for each of its links."""
-    for link in ctx.placement.links:
-        for side, other in ((link.a, link.b), (link.b, link.a)):
-            if side[0] == lift_id:
-                yield (side, other)
+    lift = ctx.placed[lift_id]
+    for name in belt_ends(ctx.registry, lift.class_name):
+        side = (lift_id, name)
+        for other in ctx.links_by_port.get(side, ()):
+            yield (side, other)
 
 
 # --- rates -----------------------------------------------------------------
@@ -2390,6 +2566,7 @@ def _capacity(ctx: Context) -> Iterable[Finding]:
                 capacity=str(speed),
             )
     outside: list[str] = []
+    starved_items: set[str] = set()
     carried_items = {run.item_id for run in ctx.placement.belts}
     incoming: dict[int, list[int]] = {}
     for link in ctx.placement.links:
@@ -2407,6 +2584,7 @@ def _capacity(ctx: Context) -> Iterable[Finding]:
                 outside.append(f"{machine.class_name} {machine.id} on {item!r}")
                 continue
             if supplied < wanted:
+                starved_items.add(item)
                 yield ctx.finding(
                     "flow.capacity",
                     f"{machine.class_name} {machine.id} needs {float(wanted):.4g} items/s of "
@@ -2424,6 +2602,7 @@ def _capacity(ctx: Context) -> Iterable[Finding]:
             "makes this a fragment rather than a build -- a whole build's -Y wall is held to "
             "the spec's external inputs by flow.boundary",
         )
+    yield from _direct_solid_capacity(ctx, starved_items)
 
 
 def _tier_speeds(spec: SfyBuildSpec, labmap: LabMap) -> dict[str, Fraction]:
@@ -2439,7 +2618,7 @@ def _tier_speeds(spec: SfyBuildSpec, labmap: LabMap) -> dict[str, Fraction]:
 def _supplied(
     ctx: Context, machine: MachineObj, item: str, incoming: Mapping[int, list[int]]
 ) -> Fraction:
-    """Rate on the nearest feeder belts, through any snapped one-to-one lifts."""
+    """Rate on feeder belts through directly snapped lifts and attachments."""
     total = Fraction(0)
     pending = list(incoming.get(machine.id, ()))
     visited: set[int] = set()
@@ -2452,9 +2631,169 @@ def _supplied(
         if isinstance(source, BeltRun):
             if source.item_id == item:
                 total += source.items_per_second
-        elif isinstance(source, LiftObj):
+        elif isinstance(source, LiftObj | AttachmentObj):
             pending.extend(incoming.get(object_id, ()))
+        elif isinstance(source, MachineObj):
+            group = ctx.group_for(source)
+            if group is not None:
+                total += (
+                    group.outputs_per_machine.get(item, Fraction()) * source.clock / group.clock
+                )
     return total
+
+
+def _direct_solid_capacity(ctx: Context, starved_items: set[str]) -> Iterable[Finding]:
+    """Allocate feeder rates jointly across beltless splitter/lift branches.
+
+    A belt's authored rate is counted once, even when several machines snap to
+    its downstream attachment. Every intervening lift retains its tier capacity.
+    Ordinary belt-fed fragments keep their existing nearest-feeder contract.
+    Local starvation already has a machine-specific finding; the joint check
+    supplies the otherwise missing shared-feeder/bottleneck diagnosis.
+    """
+    spec = ctx.spec
+    if spec is None:
+        return
+    graph = _transport_graph(ctx, "belt")
+    reverse: dict[tuple[int, str], set[tuple[int, str]]] = {}
+    for a, neighbours in graph.items():
+        for b in neighbours:
+            reverse.setdefault(b, set()).add(a)
+    demands: dict[str, dict[tuple[int, str], tuple[Fraction, list[tuple[int, str]]]]] = {}
+    for machine in ctx.placement.machines:
+        group = ctx.group_for(machine)
+        if group is None:
+            continue
+        for item, rate in group.inputs_per_machine.items():
+            if item in spec.fluid_items or item in starved_items:
+                continue
+            for port in ctx.registry.buildables[machine.class_name].ports:
+                if port.kind == "belt" and port.direction == "input":
+                    node = (machine.id, port.name)
+                    pending = [node]
+                    seen: set[tuple[int, str]] = set()
+                    matched = False
+                    while pending:
+                        ref = pending.pop()
+                        if ref in seen:
+                            continue
+                        seen.add(ref)
+                        upstream_obj = ctx.placed.get(ref[0])
+                        if isinstance(upstream_obj, BeltRun):
+                            matched |= upstream_obj.item_id == item
+                        elif (
+                            isinstance(upstream_obj, MachineObj)
+                            and (native := ctx.port(*ref)) is not None
+                            and native.direction == "output"
+                        ):
+                            producer_group = ctx.group_for(upstream_obj)
+                            matched |= (
+                                producer_group is not None
+                                and item in producer_group.outputs_per_machine
+                            )
+                        else:
+                            pending.extend(reverse.get(ref, ()))
+                    if matched:
+                        consumer = (machine.id, f"consume:{item}")
+                        _, ports = demands.setdefault(item, {}).setdefault(
+                            consumer, (rate * machine.clock / group.clock, [])
+                        )
+                        ports.append(node)
+    for item, sinks in demands.items():
+        demand = sum((rate for rate, _ in sinks.values()), Fraction())
+        residual: dict[tuple[int, str], dict[tuple[int, str], Fraction]] = {}
+        source, sink = (-1, "supply"), (-1, "demand")
+
+        def add(
+            a: tuple[int, str],
+            b: tuple[int, str],
+            capacity: Fraction,
+            residual: dict[tuple[int, str], dict[tuple[int, str], Fraction]] = residual,
+        ) -> None:
+            residual.setdefault(a, {})[b] = capacity
+            residual.setdefault(b, {}).setdefault(a, Fraction())
+
+        pending = []
+        for consumer, (rate, ports) in sinks.items():
+            add(consumer, sink, rate)
+            for node in ports:
+                add(node, consumer, demand)
+                pending.append(node)
+        visited: set[tuple[int, str]] = set()
+        while pending:
+            node = pending.pop()
+            if node in visited:
+                continue
+            visited.add(node)
+            obj = ctx.placed.get(node[0])
+            if isinstance(obj, BeltRun):
+                if obj.item_id == item:
+                    add(source, node, max(Fraction(), obj.items_per_second))
+                continue
+            if (
+                isinstance(obj, MachineObj)
+                and (native := ctx.port(*node)) is not None
+                and native.direction == "output"
+            ):
+                producer_group = ctx.group_for(obj)
+                if producer_group is not None:
+                    producer = (obj.id, f"produce:{item}")
+                    rate = producer_group.outputs_per_machine.get(item, Fraction())
+                    add(source, producer, rate * obj.clock / producer_group.clock)
+                    add(producer, node, demand)
+                continue
+            for predecessor in reverse.get(node, ()):
+                capacity = demand
+                if predecessor[0] == node[0] and isinstance(obj, LiftObj):
+                    speed = ctx.registry.buildables[obj.class_name].belt_speed_per_min
+                    capacity = min(demand, Fraction(str(speed)) / 120) if speed else Fraction()
+                add(predecessor, node, capacity)
+                pending.append(predecessor)
+        delivered = _deliver_flow(residual, source, sink, demand)
+        if delivered < demand:
+            yield ctx.finding(
+                "flow.capacity",
+                f"{item!r} direct conveyor branches deliver only {delivered} of {demand} items/s",
+                item=item,
+                needed=str(demand),
+                supplied=str(delivered),
+            )
+
+
+def _deliver_flow(
+    residual: dict[tuple[int, str], dict[tuple[int, str], Fraction]],
+    source: tuple[int, str],
+    sink: tuple[int, str],
+    demand: Fraction,
+) -> Fraction:
+    """Exact augmenting paths shared by solid branches and fluid networks."""
+    delivered = Fraction()
+    while delivered < demand:
+        previous: dict[tuple[int, str], tuple[int, str]] = {}
+        pending = [source]
+        for node in pending:
+            for neighbour, capacity in residual.get(node, {}).items():
+                if capacity <= 0 or neighbour == source or neighbour in previous:
+                    continue
+                previous[neighbour] = node
+                pending.append(neighbour)
+            if sink in previous:
+                break
+        if sink not in previous:
+            break
+        amount, node = demand - delivered, sink
+        while node != source:
+            parent = previous[node]
+            amount = min(amount, residual[parent][node])
+            node = parent
+        node = sink
+        while node != source:
+            parent = previous[node]
+            residual[parent][node] -= amount
+            residual[node][parent] += amount
+            node = parent
+        delivered += amount
+    return delivered
 
 
 @check("flow.balance", needs_spec=True)
@@ -2566,32 +2905,7 @@ def _fluid_network_capacity(ctx: Context) -> Iterable[Finding]:
             add(source, node, rate)
         for node, rate in sinks:
             add(node, sink, rate)
-        delivered = Fraction()
-        while delivered < demand:
-            previous: dict[tuple[int, str], tuple[int, str]] = {}
-            pending = [source]
-            for node in pending:
-                for neighbour, capacity in residual.get(node, {}).items():
-                    if capacity <= 0 or neighbour == source or neighbour in previous:
-                        continue
-                    previous[neighbour] = node
-                    pending.append(neighbour)
-                if sink in previous:
-                    break
-            if sink not in previous:
-                break
-            amount, node = demand - delivered, sink
-            while node != source:
-                parent = previous[node]
-                amount = min(amount, residual[parent][node])
-                node = parent
-            node = sink
-            while node != source:
-                parent = previous[node]
-                residual[parent][node] -= amount
-                residual[node][parent] += amount
-                node = parent
-            delivered += amount
+        delivered = _deliver_flow(residual, source, sink, demand)
         if delivered < demand:
             yield ctx.finding(
                 "flow.capacity",

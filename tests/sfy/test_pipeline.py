@@ -221,6 +221,33 @@ def test_rocket_fuel_available_inputs_build_a_real_mk2_blueprint(tmp_path: Path)
     assert read_sbpcfg(cfg.read_bytes()).description == build.placement.description
 
 
+def test_nitric_acid_mixed_inputs_build_a_real_four_blender_mk2_blueprint(
+    tmp_path: Path,
+) -> None:
+    build = pipeline.build(
+        flow_url("nitric-acid-120-inputs-v12"),
+        designer="mk2",
+        flow=FLOWS / "nitric-acid-120-inputs-v12.csv",
+        time_budget_s=60,
+    )
+    assert build.report.ok
+    assert build.blueprint is not None
+    assert build.designer.mark == "mk2"
+    assert len(build.placement.machines) == 4
+    assert all(
+        machine.class_name == "Build_Blender_C" and machine.clock == 1
+        for machine in build.placement.machines
+    )
+    lanes = {lane.item_id: lane for lane in build.placement.stack_lanes}
+    assert lanes["nitrogen-gas"].input_per_second == Fraction(8)
+    assert lanes["water"].input_per_second == Fraction(2)
+    assert lanes["iron-plate"].input_per_second == Fraction(2, 3)
+    assert lanes["nitric-acid"].output_per_second == Fraction(2)
+    sbp, cfg = pipeline.write(build, tmp_path)
+    assert decode(read_sbp_file(sbp), pipeline.registry()) == build.placement
+    assert read_sbpcfg(cfg.read_bytes()).description == build.placement.description
+
+
 def test_insufficient_input_names_the_item_and_rates_before_layout() -> None:
     text = (FLOWS / "rocket-fuel-600-inputs-v12.csv").read_text(encoding="utf-8")
     text = text.replace("nitric-acid,=1000", "nitric-acid,=59")

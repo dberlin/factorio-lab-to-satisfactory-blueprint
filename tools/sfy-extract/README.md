@@ -263,3 +263,10 @@ Discovery findings, so nobody has to repeat the search:
 | `belt_max_spline_cm`, `pipe_max_spline_cm`, `pipe_bend_radius_2d_cm`, `pipe_min_bend_radius_cm` | C++ only, but with in-class initialisers, so the headers state them outright. Transcribed into `HEADER_DEFAULTS` in `scripts/sfy_registry.py` with file and line. |
 | `wire_max_cm` | C++ only. `AFGBuildableWire::mMaxLength` has no in-class initialiser, so `Build_PowerLine_C`'s cooked class default object omits it — but Docs.json is a reflection dump of those same class defaults and gives 10000. The extractor reads it from `CommunityResources/Docs/en-US.json` for that reason. |
 | `belt_bend_radius_cm`, `belt_max_incline_deg`, the four conveyor-lift heights, `hologram_grid_cm` | **In no asset.** They are native constructor values the install does not ship, and the lift heights are not even UPROPERTYs — `AFGConveyorLiftHologram` declares them as plain members "fetched and calculated from the buildable". A `props` sweep over all 48573 cooked files finds no asset that sets any of them. Task 13's `tools/sfy-native` reads four of them out of the shipped DLL and the disassembly of `BeginPlay` gives the formula for the other three, which `scripts/sfy_registry.py` applies to Docs.json's `mMeshHeight`. Every limit in the registry now has a game-data source; `hologram_grid_cm`'s per-hologram overrides (`Holo_PowerPole_C`, `Holo_PowerTower_C`, `Holo_StreetLight_C`, all 50) stay here in `holograms` and land on the buildable as `grid_snap_cm`. |
+
+`mConnectorClearance` follows the component archetype chain, just like direction
+and maximum power links. An omitted override is not zero: lift Mk1's cooked
+200 cm end clearances are inherited by Mk2–Mk6. Registry generation fills only
+genuinely unstated values from native constructor evidence: 100 cm for factory
+connections, zero for conveyor-base connections. Re-extract assets and regenerate
+the native rules and registry together when updating the game build.

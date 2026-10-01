@@ -81,6 +81,7 @@ from flab2bp.sfy.layout.model import (
     BeamObj,
     BeltRun,
     FoundationObj,
+    LiftMeshDisplayMode,
     LiftObj,
     Link,
     MachineObj,
@@ -104,6 +105,8 @@ from flab2bp.sfy.objects import ACTOR, ObjectData, ObjectHeader, Transform
 from flab2bp.sfy.properties import (
     TAG_NATIVE_SERIALIZE,
     Array,
+    Bool,
+    Enum,
     Float,
     Object,
     Property,
@@ -130,8 +133,11 @@ from flab2bp.sfy.templates import (
 from flab2bp.sfy.trailers import PowerLineTrailer
 
 __all__ = [
+    "BELT_USES_INPUT_ROTATION",
     "FIRST_NAME_ID",
+    "INPUT_MESH_DISPLAY_MODE",
     "IS_REVERSED",
+    "OUTPUT_MESH_DISPLAY_MODE",
     "ROTATION",
     "SNAPPED_PASSTHROUGHS",
     "TOP_TRANSFORM",
@@ -178,11 +184,22 @@ step per somersloop is 1, 0.5 or 0.25 of one across the shipped classes."""
 TOP_TRANSFORM = "mTopTransform"
 SNAPPED_PASSTHROUGHS = "mSnappedPassthroughs"
 IS_REVERSED = "mIsReversed"
-"""The three ``SaveGame`` properties of a conveyor lift this module touches,
-named as ``Buildables/FGBuildableConveyorLift.h`` names them: ``mTopTransform``
-at ``:266-267`` (``UPROPERTY( SaveGame, ReplicatedUsing=OnRep_TopTransform )
-FTransform``), ``mSnappedPassthroughs`` at ``:286-287`` and ``mIsReversed`` at
-``:271-272``, which the same header marks ``DEPRECATED 2023-01-30``."""
+INPUT_MESH_DISPLAY_MODE = "mInputMeshDisplayMode"
+OUTPUT_MESH_DISPLAY_MODE = "mOutputMeshDisplayMode"
+BELT_USES_INPUT_ROTATION = "mIsBeltUsingInputRotation"
+LIFT_MESH_DISPLAY_MODE_ENUM = "EFGBuildableConveyorLiftMeshDisplayMode"
+_LIFT_MESH_TAGS = {
+    name: Tag(
+        name,
+        "EnumProperty",
+        0,
+        enum_name=LIFT_MESH_DISPLAY_MODE_ENUM,
+        type_package="/Script/FactoryGame",
+        enum_storage="ByteProperty",
+    ).as_modern()
+    for name in (INPUT_MESH_DISPLAY_MODE, OUTPUT_MESH_DISPLAY_MODE)
+}
+_LIFT_ROTATION_TAG = Tag(BELT_USES_INPUT_ROTATION, "BoolProperty", 0).as_modern()
 
 TRANSFORM_STRUCT = "Transform"
 ROTATION = "Rotation"
@@ -480,6 +497,9 @@ def decode(bp: Blueprint, registry: Registry) -> SfyPlacement:
                     height,
                     top_yaw,
                     _snapped_ids(data, ids),
+                    input_mesh_display_mode=_lift_mesh_mode(data, INPUT_MESH_DISPLAY_MODE),
+                    output_mesh_display_mode=_lift_mesh_mode(data, OUTPUT_MESH_DISPLAY_MODE),
+                    belt_uses_input_rotation=_lift_item_rotation(data),
                 )
             )
         elif native in _ATTACHMENT_NATIVE:
@@ -695,7 +715,7 @@ def _set_potential(data: ObjectData, machine: MachineObj, registry: Registry) ->
 def _set_top_transform(data: ObjectData, lift: LiftObj, registry: Registry) -> ObjectData:
     """``data`` with this lift's top written on it, and nothing of the template's.
 
-    Three properties, and the reason for each:
+    Native saved properties, and the reason for each:
 
     ``mTopTransform`` is the top end's transform in the actor's own frame
     (``Hologram/FGConveyorLiftHologram.h:102-104``).  Its translation is the
@@ -711,6 +731,9 @@ def _set_top_transform(data: ObjectData, lift: LiftObj, registry: Registry) -> O
     ``mSnappedPassthroughs`` is rebuilt separately once all actors exist. The
     native two slots reference hole actors and the holes reciprocally reference
     transport components; inherited fixture references never survive.
+
+    Each end's mesh display mode and the belt's item-rotation selector come
+    from the model, never from the template. Defaults are omitted.
 
     ``mIsReversed`` is not written at all.  The header marks it ``DEPRECATED
     2023-01-30`` with "Instead build lifts where mConnector0 is always input"
@@ -735,7 +758,12 @@ def _set_top_transform(data: ObjectData, lift: LiftObj, registry: Registry) -> O
     fields.append(Property(_TRANSFORM_FIELD_TAGS[TRANSLATION], PropertyVector(*offset, wide=wide)))
     properties = []
     for p in data.properties:
-        if p.tag.name == IS_REVERSED:
+        if p.tag.name in (
+            IS_REVERSED,
+            INPUT_MESH_DISPLAY_MODE,
+            OUTPUT_MESH_DISPLAY_MODE,
+            BELT_USES_INPUT_ROTATION,
+        ):
             continue
         value = p.value
         if p.tag.name == TOP_TRANSFORM:
@@ -743,6 +771,14 @@ def _set_top_transform(data: ObjectData, lift: LiftObj, registry: Registry) -> O
         elif p.tag.name == SNAPPED_PASSTHROUGHS:
             continue
         properties.append(Property(p.tag, value))
+    for name, mode in (
+        (INPUT_MESH_DISPLAY_MODE, lift.input_mesh_display_mode),
+        (OUTPUT_MESH_DISPLAY_MODE, lift.output_mesh_display_mode),
+    ):
+        if mode != LiftMeshDisplayMode.AUTO:
+            properties.append(Property(_LIFT_MESH_TAGS[name], Enum(mode.value)))
+    if lift.belt_uses_input_rotation:
+        properties.append(Property(_LIFT_ROTATION_TAG, Bool(True)))
     return replace(data, properties=tuple(properties))
 
 
@@ -762,6 +798,41 @@ def _transform_is_wide(class_name: str, struct: Struct) -> bool:
         f"the {class_name} template's {TOP_TRANSFORM} has no {TRANSLATION}, so the width "
         "this file stores a transform at is unknown"
     )
+
+
+def _lift_mesh_mode(data: ObjectData, name: str) -> LiftMeshDisplayMode:
+    matches = [p for p in data.properties if p.tag.name == name]
+    if not matches:
+        return LiftMeshDisplayMode.AUTO
+    if len(matches) != 1:
+        raise EmitError(f"a lift carries duplicate {name} properties")
+    prop = matches[0]
+    if (
+        prop.tag.type != "EnumProperty"
+        or prop.tag.enum_name != LIFT_MESH_DISPLAY_MODE_ENUM
+        or not isinstance(prop.value, Enum)
+    ):
+        raise EmitError(f"a lift's {name} is not a native mesh display mode enum")
+    try:
+        return LiftMeshDisplayMode(prop.value.v)
+    except ValueError:
+        raise EmitError(f"a lift's {name} has unknown mode {prop.value.v!r}") from None
+
+
+def _lift_item_rotation(data: ObjectData) -> bool:
+    matches = [p for p in data.properties if p.tag.name == BELT_USES_INPUT_ROTATION]
+    if not matches:
+        return False
+    if len(matches) != 1:
+        raise EmitError(f"a lift carries duplicate {BELT_USES_INPUT_ROTATION} properties")
+    prop = matches[0]
+    if (
+        prop.tag.type != "BoolProperty"
+        or not isinstance(prop.value, Bool)
+        or type(prop.value.v) is not bool
+    ):
+        raise EmitError(f"a lift's {BELT_USES_INPUT_ROTATION} is not a boolean")
+    return prop.value.v
 
 
 def _lift_top(registry: Registry, header: ObjectHeader, data: ObjectData) -> tuple[float, float]:

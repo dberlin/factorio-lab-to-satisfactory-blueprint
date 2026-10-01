@@ -317,6 +317,10 @@ groups can use compact opposing columns with flat, independently rated input
 manifolds. Six-blender groups with fluid ingredients and one fluid/solid output
 pair use two three-machine floors, native source-level output pumps and separate
 solid collectors; both output networks drain to the bottom.
+Four-blender groups with two fluid ingredients, one solid ingredient and one fluid
+output use a single staggered opposing-column floor. Their native solid input
+lifts descend from decks above the fluid manifolds; output pumps turn toward the
+module's centre and feed a separate downward collector.
 Exact machine clocks, fractional last machines and transport-tier ceilings
 are preserved. Each external input has an upward pass-through lane; each export
 has a separate downward collector ending at the bottom. Conveyor stack lanes use
@@ -325,6 +329,16 @@ available upgrade ceiling or the URL's selected `ibe` tier. Inter-section lifts
 are sized for the busiest routed stream. Combined flow from stacked copies must
 remain within the reported trunk capacities.
 
+Compact conveyor lifts support native short-height paired snaps, including 1 m,
+and recessed direct connections to machines, splitters and mergers without
+spacer belts. Both endpoints must be live and geometrically valid; free-ended
+lifts keep the ordinary 4 m minimum. Generated four-blender solid inputs snap
+splitter → lift → machine, and supported six-blender output heads snap directly
+to their source machines. Connected-device overlap is allowed only for a valid
+native snap; foreign collisions and transport capacities remain checked.
+Per-end native head-display modes and item rotation survive binary round-trips.
+These are offline native-rule and binary checks, not an in-game paste proof.
+
 FactorioLab **Input** and **Limit** objectives describe available supply, not
 mandatory blueprint throughput. They remain in the original URL and influence
 FactorioLab's solve. The blueprint imports only the selected recipes' actual net
@@ -332,6 +346,11 @@ demand, and refuses insufficient availability instead of changing recipes or
 clocks. For example, six 100% Rocket Fuel blenders produce 600 m³/min Rocket Fuel
 and 60/min Compacted Coal using 360 m³/min Turbofuel and 60 m³/min Nitric Acid,
 even when each Input objective makes 1000 m³/min available.
+Four 100% Nitric Acid blenders produce 120 m³/min Nitric Acid using 480 m³/min
+Nitrogen Gas, 120 m³/min Water and 40/min Iron Plates. The verified Mk2 module has
+a 37 m repeat pitch, a 4 m manual connection gap and 16 native signs. Its default
+Nitrogen Gas trunk carries 600 m³/min and its Iron Plate trunk 60/min, so neither
+can feed two full-rate copies through one shared trunk.
 
 Whole sections are composed by material dependency, keeping consumers above
 their producers while allowing independent recipe sections to share a floor.

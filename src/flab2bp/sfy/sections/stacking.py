@@ -313,10 +313,46 @@ def _physical_obstacles(
                 yield box_bounds(box, obj.pose.transform())
     for belt in placement.belts:
         yield from _belt_boxes(belt)
+    grid = registry.limits.hologram_grid_cm
+    if grid is None:
+        raise SectionError("beam reservations need the native snap grid", cause="data")
+    for beam in placement.beams:
+        world_box = beam_box(beam, registry)
+        axis = world_box.axes[0]
+        # A diagonal member's enclosing AABB fills empty floor corners. Reserve
+        # a conservative chain of its complete native cross-section instead.
+        count = (
+            math.ceil(beam.length_cm / grid)
+            if sum(abs(value) > _EPS for value in axis) > 1
+            else 1
+        )
+        length = beam.length_cm / count
+        for index in range(count):
+            offset = -beam.length_cm / 2 + (index + 0.5) * length
+            centre: Vector = (
+                world_box.centre[0] + offset * axis[0],
+                world_box.centre[1] + offset * axis[1],
+                world_box.centre[2] + offset * axis[2],
+            )
+            segment = replace(
+                world_box, centre=centre,
+                half=(length / 2, world_box.half[1], world_box.half[2]),
+            )
+            yield (
+                (
+                    centre[0] - segment.reach[0],
+                    centre[1] - segment.reach[1],
+                    centre[2] - segment.reach[2],
+                ),
+                (
+                    centre[0] + segment.reach[0],
+                    centre[1] + segment.reach[1],
+                    centre[2] + segment.reach[2],
+                ),
+            )
     dynamic_boxes = chain(
         (box for obj in placement.attachments for box in attachment_boxes(obj, registry)),
         (lift_box(lift, registry) for lift in placement.lifts),
-        (beam_box(beam, registry) for beam in placement.beams),
         (passthrough_box(hole, registry) for hole in placement.passthroughs),
         chain.from_iterable(pipe_chain(run, registry) for run in placement.pipes),
     )

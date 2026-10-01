@@ -1,0 +1,6 @@
+"https://factoriolab.github.io/sfy/list?o=nitric-acid*120&o=nitrogen-gas*1000**1&o=water*1000**1&o=iron-plate*1000**1&v=12"
+Item,Items,Inputs,Outputs,Targets,Belts,Belt,Wagons,Wagon,Recipe,Machines,Machine,Modules,Power
+nitric-acid,=120,"nitrogen-gas:0.48,water:0.12,iron-plate:0.04","nitric-acid:1","",=0.4,pipeline-mk1,=0.075,freight-car,nitric-acid,=4,blender,"4 ",=300000
+nitrogen-gas,=1000,,,"nitric-acid:0.48",=10/3,pipeline-mk1,=0.625,freight-car,,,,,
+water,=1000,,,"nitric-acid:0.12",=10/3,pipeline-mk1,=0.625,freight-car,,,,,
+iron-plate,=1000,,,"nitric-acid:0.04",=50/3,conveyor-belt-mk1,,,,,,,

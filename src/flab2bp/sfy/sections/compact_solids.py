@@ -14,9 +14,9 @@ from collections.abc import Iterator
 from dataclasses import replace
 from fractions import Fraction
 
-from flab2bp.sfy.geometry import Vector, box_bounds, port_forward
+from flab2bp.sfy.geometry import Vector, box_bounds, port_forward, world_port
 from flab2bp.sfy.labmap import LabMap, machine_class
-from flab2bp.sfy.layout.manifold import MERGER_CLASS, grid_ceil
+from flab2bp.sfy.layout.manifold import MERGER_CLASS, SPLITTER_CLASS, grid_ceil
 from flab2bp.sfy.layout.model import (
     AttachmentObj,
     BeltRun,
@@ -36,10 +36,22 @@ from flab2bp.sfy.layout.splines import (
     spline_length,
     straight,
 )
-from flab2bp.sfy.layout.validate import BELT_CLEARANCE_HALF_HEIGHT_CM
+from flab2bp.sfy.layout.validate import BELT_CLEARANCE_HALF_HEIGHT_CM, attachment_boxes
 from flab2bp.sfy.registry import Port, Registry
-from flab2bp.sfy.sections.construction import Connection, _Construction
-from flab2bp.sfy.sections.model import SectionError
+from flab2bp.sfy.sections.construction import (
+    Connection,
+    _attachment_port,
+    _Construction,
+    _snap_lift_clear,
+)
+from flab2bp.sfy.sections.fluids import _materials
+from flab2bp.sfy.sections.model import (
+    ProductionSection,
+    SectionError,
+    SectionPort,
+    placement_bounds,
+)
+from flab2bp.sfy.sections.pipe_routes import _pipe_envelope_radius
 from flab2bp.sfy.spec import FOUNDATION_CLASS, SfyBuildSpec
 
 _HOLE = "Build_FoundationPassthrough_Lift_C"
@@ -76,6 +88,123 @@ def _arc(
     a: Vector = (incoming[0] * pull, incoming[1] * pull, incoming[2] * pull)
     b: Vector = (outgoing[0] * pull, outgoing[1] * pull, outgoing[2] * pull)
     return ((start, a, a), (finish, b, b))
+
+
+def add_inputs(
+    section: ProductionSection,
+    spec: SfyBuildSpec,
+    registry: Registry,
+    lab_map: LabMap,
+    *,
+    ids: Iterator[int],
+    deadline: float,
+) -> ProductionSection:
+    """Feed one solid ingredient through native splitter-to-lift-to-machine snaps.
+
+    Decks clear both the full hard factory casing and the actual fluid junctions.
+    Both lift heads meet real opposed device mouths, without spacer conveyors.
+    """
+    group = section.group
+    materials = _materials(
+        group, registry.buildables[group.machine_class], registry, lab_map, spec.fluid_items
+    )
+    solids = [
+        (item, port)
+        for item, port, direction in materials
+        if port.kind == "belt" and direction == "input"
+    ]
+    if len(solids) != 1:
+        raise SectionError(
+            "opposing input decks require exactly one solid ingredient", cause="unsupported"
+        )
+    item, native = solids[0]
+    grid = registry.limits.hologram_grid_cm
+    step = registry.limits.lift_step_cm
+    if grid is None or step is None:
+        raise SectionError("native input deck dimensions are unavailable", cause="data")
+    build = _Construction(registry, lab_map, spec.belt_tiers, ids, deadline)
+    splitter_def = registry.buildables[SPLITTER_CLASS]
+    incoming = _attachment_port(splitter_def, "input", (-1, 0, 0))
+    outgoing = _attachment_port(splitter_def, "output", (1, 0, 0))
+    interfaces: list[SectionPort] = []
+    for machine in section.placement.machines:
+        side = -1 if machine.pose.x < 0 else 1
+        point = world_port(machine.pose.transform(), native)
+        bounds = [
+            box_bounds(box, machine.pose.transform())
+            for box in registry.buildables[machine.class_name].clearance
+            if not box.soft
+        ]
+        yaw = 0 if side < 0 else 180
+        native_boxes = attachment_boxes(
+            AttachmentObj(0, SPLITTER_CLASS, Pose(0, 0, 0, yaw)), registry
+        )
+        bottom = min(box.centre[2] - box.reach[2] for box in native_boxes)
+        highest = max(high[2] for _, high in bounds)
+        fluid_top = max(
+            (
+                box_bounds(box, node.pose.transform())[1][2]
+                for node in section.placement.pipe_attachments
+                for box in registry.buildables[node.class_name].clearance
+            ),
+            default=highest,
+        )
+        height = grid_ceil(
+            max(
+                step,
+                highest - bottom - point[2] + grid / 20,
+                fluid_top
+                + grid
+                + BELT_CLEARANCE_HALF_HEIGHT_CM
+                + max(
+                    (
+                        _pipe_envelope_radius(registry.buildables[pipe.class_name])
+                        for pipe in section.placement.pipes
+                    ),
+                    default=0,
+                )
+                - point[2],
+            ),
+            step,
+        )
+        deck = point[2] + height
+        rate = group.inputs_per_machine[item] * machine.clock / group.clock
+        entry, exit_ = build.lift(
+            point[0], point[1], deck, point[2], 180 if side < 0 else 0, item, rate,
+            snapped=True,
+        )
+        # Both heads face the splitter's output and the recipe-assigned
+        # factory input, whose outward native normals oppose the lift's.
+        assert isinstance(entry[0], LiftObj)
+        lift = replace(entry[0], top_yaw_deg=0)
+        build.lifts[-1] = lift
+        entry = (lift, entry[1])
+        exit_ = (lift, exit_[1])
+        outlet = world_port(Pose(0, 0, 0, yaw).transform(), outgoing)
+        splitter = AttachmentObj(
+            next(ids),
+            SPLITTER_CLASS,
+            Pose(point[0] - outlet[0], point[1] - outlet[1], deck - outlet[2], yaw),
+        )
+        build.attachments.append(splitter)
+        build.links.extend((
+            Link((splitter.id, outgoing.name), (lift.id, entry[1])),
+            Link((lift.id, exit_[1]), (machine.id, native.name)),
+        ))
+        interfaces.append(SectionPort(item, rate, splitter.id, incoming.name, "input", kind="belt"))
+    placement = replace(
+        section.placement,
+        attachments=(*section.placement.attachments, *build.attachments),
+        belts=(*section.placement.belts, *build.belts),
+        lifts=(*section.placement.lifts, *build.lifts),
+        links=(*section.placement.links, *build.links),
+    )
+    return replace(
+        section,
+        placement=placement,
+        inputs=(*section.inputs, *interfaces),
+        bounds=placement_bounds(placement, registry),
+    )
 
 
 def add_coal(
@@ -227,6 +356,7 @@ def add_coal(
         output_yaw: float,
         rate: Fraction,
         *,
+        snapped: bool = False,
         holes: tuple[int | None, int | None] = (None, None),
         boundary_start: bool = False,
         boundary_end: bool = False,
@@ -246,11 +376,16 @@ def add_coal(
         if not choices:
             raise SectionError("compact export has no matching native lift", cause="unsupported")
         height = end_z - z
-        minimum = registry.limits.lift_min_cm
+        minimum = 0.0 if snapped else registry.limits.lift_min_cm
         maximum = registry.limits.lift_max_cm
         if holes != (None, None):
             minimum = thickness / 2 + 2 * step
-        if minimum is None or maximum is None or not minimum <= abs(height) <= maximum:
+        if (
+            minimum is None
+            or maximum is None
+            or height == 0
+            or not minimum <= abs(height) <= maximum
+        ):
             raise SectionError("compact export lift violates its native height", cause="height")
         actor = LiftObj(
             next(ids),
@@ -300,17 +435,22 @@ def add_coal(
                     "compact factory solid output does not face its side escape",
                     cause="unsupported",
                 )
-            hard_edge = max(
-                abs(corner[0])
-                for box in registry.buildables[machine.class_name].clearance
-                if not box.soft
-                for bounds in (box_bounds(box, machine.pose.transform()),)
-                for corner in bounds
+            direct = _snap_lift_clear(
+                registry.buildables[machine.class_name], port, deck - machine.pose.z, lift_half
             )
-            distance = grid_ceil(
-                max(build.lead, hard_edge - abs(start[0]) + lift_half + 0.01), grid
-            )
-            mouth = _move(start, heading, distance)
+            mouth = start
+            if not direct:
+                hard_edge = max(
+                    abs(corner[0])
+                    for box in registry.buildables[machine.class_name].clearance
+                    if not box.soft
+                    for bounds in (box_bounds(box, machine.pose.transform()),)
+                    for corner in bounds
+                )
+                distance = grid_ceil(
+                    max(build.lead, hard_edge - abs(start[0]) + lift_half + 0.01), grid
+                )
+                mouth = _move(start, heading, distance)
             top_heading: Vector = (0, 1, 0) if index < 2 else (0, -1, 0)
             entry, exit_ = lift(
                 mouth[0],
@@ -320,8 +460,12 @@ def add_coal(
                 0 if index < 2 else 180,
                 90 if index < 2 else -90,
                 rate,
+                snapped=direct,
             )
-            build.belt((machine, port.name), entry, item, rate)
+            if direct:
+                build.links.append(Link((machine.id, port.name), (entry[0].id, entry[1])))
+            else:
+                build.belt((machine, port.name), entry, item, rate)
             at, _ = build.at(exit_)
             lead = straight(at, top_heading, flat)
             inward: Vector = (1, 0, 0) if index < 2 else (-1, 0, 0)

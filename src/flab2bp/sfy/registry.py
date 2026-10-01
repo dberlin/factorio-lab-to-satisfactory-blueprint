@@ -247,6 +247,10 @@ class Port:
     a machine's power input states nothing anywhere in its asset chain and takes
     the native constructor's **1**, which is the value the shipped game runs on
     and not a number this project chose.
+
+    ``clearance`` is effective ``mConnectorClearance``, including cooked
+    archetype inheritance and native defaults. Direct lift snaps use both
+    ends' values; ``provenance["connector_clearances"]`` quotes the native stores.
     """
 
     name: str
@@ -496,6 +500,13 @@ class Limits:
     lift_min_cm: float | None = None
     lift_max_cm: float | None = None
     lift_min_vertical_cm: float | None = None
+    # CanConnectToConnection's direct component-snap predicate; binary operands
+    # quoted by lift.connection_snap, not the belt's project port tolerance.
+    lift_snap_normal_dot: float | None = None
+    lift_snap_axial_gap_cm: float | None = None
+    lift_snap_lateral_cm: float | None = None
+    lift_snap_grid_cm: float | None = None
+    lift_snap_grid_tolerance_cm: float | None = None
     # Half the width and half the depth of the ONE clearance box
     # ``AFGBuildableConveyorLift::FitClearance`` builds along a lift -- source
     # ``binary-derived``, the same standing as the three lift heights above. It

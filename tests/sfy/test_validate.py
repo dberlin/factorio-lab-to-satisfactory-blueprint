@@ -47,7 +47,6 @@ from flab2bp.sfy.layout.validate import (
     _round_to_int,
     attachment_boxes,
     lift_box,
-    lift_half_width,
     validate,
 )
 from flab2bp.sfy.registry import Port, Registry, load_registry
@@ -481,6 +480,100 @@ def test_flow_capacity_refuses_two_items_a_second_on_a_mark_one_belt() -> None:
     run = placement.belts[0]
     overloaded = BeltRun(run.id, run.class_name, run.points, run.item_id, Fraction(2))
     assert _findings(_belt(placement, overloaded), "flow.capacity", spec) == ["flow.capacity"]
+
+
+@pytest.mark.parametrize(
+    ("feed_rate", "lift_class", "machine_rate", "valid"),
+    (
+        (Fraction(1, 3), "Build_ConveyorLiftMk1_C", Fraction(1, 6), True),
+        (Fraction(1, 6), "Build_ConveyorLiftMk1_C", Fraction(1, 6), False),
+        (Fraction(4), "Build_ConveyorLiftMk1_C", Fraction(2), False),
+        (Fraction(4), "Build_ConveyorLiftMk3_C", Fraction(2), True),
+    ),
+)
+def test_direct_splitter_lift_feeds_share_supply_and_retain_lift_capacity(
+    feed_rate: Fraction, lift_class: str, machine_rate: Fraction, valid: bool
+) -> None:
+    base = _placement()
+    feeder = replace(
+        base.belts[0], class_name="Build_ConveyorBeltMk3_C", items_per_second=feed_rate
+    )
+    _, belt_exit = belt_ends(_registry(), feeder.class_name)
+    lift_entry, lift_exit = belt_ends(_registry(), lift_class)
+    machines = tuple(replace(machine, recipe_class=SCREW) for machine in base.machines)
+    lifts = tuple(LiftObj(80 + i, lift_class, Pose(0, 0, 800, 0), -200) for i in range(2))
+    placement = replace(
+        base,
+        machines=machines,
+        belts=(feeder,),
+        lifts=lifts,
+        attachments=(AttachmentObj(50, SPLITTER, Pose(0, 0, 800, 0)),),
+        links=(
+            Link((feeder.id, belt_exit), (50, "Input1")),
+            *(Link((50, f"Output{i + 1}"), (lift.id, lift_entry)) for i, lift in enumerate(lifts)),
+            *(Link((lift.id, lift_exit), (machine.id, "Input0"))
+              for lift, machine in zip(lifts, machines, strict=True)),
+        ),
+    )
+    spec = SfyBuildSpec(
+        groups=(
+            _group("screw", SCREW, {"iron-rod": machine_rate}, {"screw": machine_rate * 4}, 2),
+        ),
+        external_inputs={"iron-rod": machine_rate * 2},
+        outputs={"screw": machine_rate * 8},
+        belt_item_id="conveyor-belt-mk3",
+        belt_items_per_second=Fraction(9, 2),
+        label="direct shared splitter feed",
+    )
+    report = validate(placement, spec, _registry(), only={"flow.capacity"})
+    assert report.ok is valid
+    if not valid:
+        assert any(f.detail.get("supplied") in {"1/6", "2"} for f in report.errors)
+
+
+def test_same_material_on_two_input_ports_counts_machine_demand_once() -> None:
+    base = _placement()
+    machine = replace(base.machines[1], class_name=ASSEMBLER, recipe_class=AI_LIMITER)
+    feeders = tuple(
+        replace(base.belts[0], id=40 + i, items_per_second=Fraction(1, 12)) for i in range(2)
+    )
+    _, exit_ = belt_ends(_registry(), BELT)
+    placement = replace(
+        base,
+        machines=(machine,),
+        belts=feeders,
+        links=tuple(Link((run.id, exit_), (machine.id, f"Input{i}"))
+                    for i, run in enumerate(feeders)),
+    )
+    group = _group("ai-limiter", AI_LIMITER, {"iron-rod": Fraction(1, 6)}, {}).model_copy(
+        update={"machine_class": ASSEMBLER, "machine_item_id": "assembler"}
+    )
+    spec = _spec().model_copy(update={"groups": (group,)})
+    assert _findings(placement, "flow.capacity", spec) == []
+    starved = replace(
+        placement, belts=(feeders[0], replace(feeders[1], items_per_second=Fraction(1, 24)))
+    )
+    assert _findings(starved, "flow.capacity", spec) == ["flow.capacity"]
+
+
+def test_direct_machine_lift_machine_feed_uses_the_producers_actual_clock() -> None:
+    base = _placement()
+    lift = LiftObj(80, "Build_ConveyorLiftMk1_C", Pose(0, 0, 100, 0), 100)
+    entry, exit_ = belt_ends(_registry(), lift.class_name)
+    placement = replace(
+        base,
+        belts=(),
+        lifts=(lift,),
+        links=(
+            Link((ROD_ID, "Output0"), (lift.id, entry)),
+            Link((lift.id, exit_), (SCREW_ID, "Input0")),
+        ),
+    )
+    assert _findings(placement, "flow.capacity", _spec()) == []
+    starved = replace(
+        placement, machines=(replace(base.machines[0], clock=Fraction(1, 2)), base.machines[1])
+    )
+    assert _findings(starved, "flow.capacity", _spec()) == ["flow.capacity"]
 
 
 def test_flow_balance_refuses_a_spec_that_does_not_fund_what_it_consumes() -> None:
@@ -1111,7 +1204,7 @@ def _lift_out_of_a_machine(height_cm: float = LIFT_HEIGHT_CM) -> SfyPlacement:
     registry = _registry()
     rod_pose = Pose(0.0, ROD_Y_CM, SLAB_TOP_CM, 0.0)
     foot = world_port(rod_pose.transform(), _port(CONSTRUCTOR, "Output0"))
-    lift = LiftObj(LIFT_ID, LIFT, Pose(foot[0], foot[1], foot[2], 90.0), height_cm)
+    lift = LiftObj(LIFT_ID, LIFT, Pose(foot[0], foot[1], foot[2], -90.0), height_cm, 180.0)
     top, facing = lift.top_end(lift_geometry(registry, LIFT))
     entry, exit_end = belt_ends(registry, LIFT)
     belt_entry, _ = belt_ends(registry, BELT)
@@ -1188,8 +1281,169 @@ def _lift_into_a_machine(height_cm: float = LIFT_HEIGHT_CM) -> SfyPlacement:
     )
 
 
-def _lift(placement: SfyPlacement, **changes: float) -> SfyPlacement:
-    return replace(placement, lifts=(replace(placement.lifts[0], **changes),))
+def _short_device_snapped_lift(height: float) -> SfyPlacement:
+    """Native second-end snaps preserve height rather than the free-end clamp."""
+    registry = _registry()
+    entry, exit_ = belt_ends(registry, LIFT)
+    return SfyPlacement(
+        designer=designer("mk3", registry),
+        lifts=(LiftObj(1, LIFT, Pose(0, 0, 800, 180), height, 180),),
+        attachments=(
+            AttachmentObj(2, SPLITTER, Pose(-100, 0, 800, 0)),
+            AttachmentObj(3, MERGER, Pose(100, 0, 800 + height, 0)),
+        ),
+        links=(
+            Link((2, "Output1"), (1, entry)),
+            Link((1, exit_), (3, "Input1")),
+        ),
+    )
+
+
+@pytest.mark.parametrize("height", [100, 200, 300, -100, -200, -300])
+def test_short_lifts_require_two_real_native_device_snaps(height: float) -> None:
+    placement = _short_device_snapped_lift(height)
+    checks = {"lift.height", "lift.step", "ports.position", "ports.direction"}
+    assert validate(placement, None, _registry(), only=checks).errors == ()
+    dangling = replace(placement, links=placement.links[:1])
+    assert _findings(dangling, "lift.height") == ["lift.height"]
+    misplaced = replace(
+        placement,
+        attachments=(
+            placement.attachments[0],
+            replace(placement.attachments[1], pose=Pose(100, 2, 800 + height, 0)),
+        ),
+    )
+    assert _findings(misplaced, "lift.height") == ["lift.height"]
+
+
+@pytest.mark.parametrize("height", [209, -209])
+def test_paired_component_snaps_preserve_exact_non_step_height(height: float) -> None:
+    placement = _short_device_snapped_lift(height)
+    assert validate(
+        placement, None, _registry(), only={"lift.height", "lift.step", "ports.position"}
+    ).errors == ()
+
+
+@pytest.mark.parametrize("offset", [0, 100, 200, 300, 325])
+@pytest.mark.parametrize("mark", [1, 6])
+def test_native_direct_lift_snap_accepts_clearance_offsets(offset: float, mark: int) -> None:
+    placement = _short_device_snapped_lift(200)
+    placement = replace(
+        placement, lifts=(replace(placement.lifts[0], class_name=f"Build_ConveyorLiftMk{mark}_C"),)
+    )
+    moved = replace(
+        placement,
+        attachments=(
+            replace(placement.attachments[0], pose=Pose(-100 - offset, 0, 800, 0)),
+            replace(placement.attachments[1], pose=Pose(100 + offset, 0, 1000, 0)),
+        ),
+    )
+    assert validate(
+        moved, None, _registry(), only={"lift.height", "ports.position"}
+    ).errors == ()
+
+
+@pytest.mark.parametrize(
+    "pose",
+    [
+        Pose(426, 0, 1000, 0),  # 326 cm axial gap: 200 + 100 + 25 is the bound.
+        Pose(100, 2, 1000, 0),  # Native transverse slack is one centimetre.
+        Pose(100, 0, 1011, 0),  # Native vertical modulo slack is ten centimetres.
+        Pose(100, 0, 1100, 0),  # Provisional modulo passes, but saved rise is wrong.
+        Pose(-100, 0, 1000, 180),  # Coincident position, wrong outward normal.
+    ],
+)
+def test_invalid_native_direct_snap_cannot_lower_lift_minimum(pose: Pose) -> None:
+    placement = _short_device_snapped_lift(200)
+    invalid = replace(
+        placement,
+        attachments=(placement.attachments[0], replace(placement.attachments[1], pose=pose)),
+    )
+    assert _findings(invalid, "lift.height") == ["lift.height"]
+    assert _findings(invalid, "ports.position") == ["ports.position"]
+
+
+@pytest.mark.parametrize(
+    "malformation", ["free", "one-sided", "duplicate", "dangling", "port", "flow"]
+)
+def test_short_lift_requires_two_unique_live_matching_links(malformation: str) -> None:
+    placement = _short_device_snapped_lift(200)
+    first, second = placement.links
+    links = {
+        "free": (),
+        "one-sided": (first,),
+        "duplicate": (first, second, second),
+        "dangling": (first, replace(second, b=(99, "Input1"))),
+        "port": (first, replace(second, a=(1, "missing"))),
+        "flow": (first, Link(second.b, second.a)),
+    }[malformation]
+    assert _findings(replace(placement, links=links), "lift.height") == ["lift.height"]
+
+
+def test_native_short_lift_may_snap_to_one_device_and_one_real_belt_end() -> None:
+    placement = _lift_out_of_a_machine(200)
+    assert validate(
+        placement,
+        None,
+        _registry(),
+        only={"lift.height", "lift.step", "ports.position", "ports.direction"},
+    ).errors == ()
+    run = placement.belts[0]
+    shifted = replace(
+        placement,
+        belts=(
+            replace(
+                run,
+                points=straight(
+                    (run.start[0] + 2, run.start[1], run.start[2]),
+                    (0, 1, 0),
+                    math.dist(run.start, run.end),
+                ),
+            ),
+        ),
+    )
+    assert _findings(shifted, "lift.height") == ["lift.height"]
+
+
+@pytest.mark.parametrize("malformation", ("boundary", "angle"))
+def test_invalid_belt_end_cannot_grant_short_lift_snap_permission(malformation: str) -> None:
+    placement = _lift_out_of_a_machine(209)
+    assert _findings(placement, "lift.height") == []
+    run = placement.belts[0]
+    if malformation == "boundary":
+        run = replace(run, boundary_start=True)
+    else:
+        angle = 0.05
+        run = replace(
+            run,
+            points=straight(
+                run.start, (math.sin(angle), math.cos(angle), 0), math.dist(run.start, run.end)
+            ),
+        )
+    invalid = replace(placement, belts=(run,))
+    assert _findings(invalid, "lift.height") == ["lift.height"]
+    assert _findings(invalid, "lift.step") == ["lift.step"]
+
+
+@pytest.mark.parametrize("height", [0, 4801, -4801])
+def test_paired_snaps_do_not_allow_zero_or_over_maximum_lifts(height: float) -> None:
+    assert _findings(_short_device_snapped_lift(height), "lift.height") == ["lift.height"]
+
+
+def _lift(
+    placement: SfyPlacement, *, height_cm: float | None = None, top_yaw_deg: float | None = None
+) -> SfyPlacement:
+    source = placement.lifts[0]
+    return replace(
+        placement,
+        lifts=(
+            replace(
+                source,
+                height_cm=source.height_cm if height_cm is None else height_cm,
+                top_yaw_deg=source.top_yaw_deg if top_yaw_deg is None else top_yaw_deg,
+            ),
+        ),
+    )
 
 
 def test_a_lift_out_of_a_port_and_one_into_a_port_both_pass_every_check() -> None:
@@ -1222,58 +1476,8 @@ def test_a_lift_box_is_the_rules_span_and_the_binarys_width() -> None:
     assert box.half == pytest.approx((height_cm / 2.0, 95.0, 95.0))
 
 
-def _capsule_note(placement: SfyPlacement, registry: Registry) -> str:
-    """What ``belt.capsule`` puts in ``skipped`` for this placement."""
-    report = validate(placement, None, registry, only={"belt.capsule"})
-    assert report.skipped == ("belt.capsule",)
-    (note,) = [
-        f.message
-        for f in report.findings
-        if f.check == "belt.capsule" and f.severity is Severity.INFO
-    ]
-    return note
 
 
-def test_the_capsule_note_says_which_lift_width_the_run_actually_used() -> None:
-    """``lift_half_width`` has two branches, so the skip note cannot be a constant.
-
-    With the registry's ``lift_clearance_half_extent_cm`` the width is the
-    game's own 95 cm. Without it -- a registry built before that limit was
-    filled -- the check falls back to half the connector clearance on the lift's
-    two ports, which is 100 cm and is this project's reading, not the game's. A
-    note that claimed the first while the second ran would be a false statement
-    about where a number came from, which is the one thing these notes exist to
-    prevent.
-    """
-    placement = _lift_out_of_a_machine()
-    registry = _registry()
-
-    read = _capsule_note(placement, registry)
-    assert "95 cm each way" in read
-    assert "lift_clearance_half_extent_cm" in read
-    assert "CLEARANCE_EXTENT_2D" in read
-    assert "M2 reading" not in read
-
-    unfilled = replace(
-        registry, limits=replace(registry.limits, lift_clearance_half_extent_cm=None)
-    )
-    assert lift_half_width(placement.lifts[0], unfilled) == 100.0
-    fallback = _capsule_note(placement, unfilled)
-    assert "100 cm each way" in fallback
-    assert "M2 reading" in fallback
-    assert "connector clearance" in fallback
-    assert "95 cm" not in fallback
-
-    # And a placement with no lift claims neither width.
-    beltless = replace(placement, lifts=(), links=())
-    none = _capsule_note(beltless, registry)
-    assert "this placement carries no lift" in none
-    assert "cm each way" not in none
-
-    # The part that is about belts is in all three, whatever the lifts did.
-    for note in (read, fallback, none):
-        assert "GetNextDistanceExceedingTolerance" in note
-        assert "TestClearanceOverlap" in note
 
 
 def test_lift_height_refuses_a_lift_shorter_or_taller_than_the_game_clamps_to() -> None:
@@ -1355,13 +1559,7 @@ def test_a_link_runs_out_of_a_lifts_exit_and_into_its_entry() -> None:
 
 
 def test_a_lifts_clearance_is_judged_against_a_hard_box_it_is_not_wired_to() -> None:
-    """The lift's own box is live, not excluded away by the two forgivenesses.
-
-    ``belt.capsule`` forgives the one box a wired port sits inside and the
-    conveyor a lift is wired to, both for the unread ``TestClearanceOverlap``.
-    A machine the lift has nothing to do with is neither, so a lift standing in
-    its clearance is reported.
-    """
+    """Native direct-snap owner forgiveness never extends to a foreign body."""
     placement = _lift_out_of_a_machine()
     assert _findings(placement, "belt.capsule") == []
     crowded = replace(
@@ -1372,6 +1570,47 @@ def test_a_lifts_clearance_is_judged_against_a_hard_box_it_is_not_wired_to() -> 
         ),
     )
     assert _findings(crowded, "belt.capsule") == ["belt.capsule"]
+
+
+def _lift_through_its_snapped_foundry() -> SfyPlacement:
+    registry = _registry()
+    _, exit_ = belt_ends(registry, LIFT)
+    return SfyPlacement(
+        designer=designer("mk3", registry),
+        machines=(MachineObj(2, "Build_FoundryMk1_C", Pose(0, 0, 100, 0), ROD),),
+        lifts=(LiftObj(1, LIFT, Pose(200, -300, 900, 90), -700, boundary_start=True),),
+        links=(Link((1, exit_), (2, "Input0")),),
+    )
+
+
+def test_real_direct_lift_snap_exempts_its_owner_upper_body_but_not_a_foreign_foundry() -> None:
+    placement = _lift_through_its_snapped_foundry()
+    assert validate(
+        placement, None, _registry(), only={"belt.capsule", "ports.position", "lift.height"}
+    ).errors == ()
+    foreign = replace(
+        placement, machines=(*placement.machines, replace(placement.machines[0], id=99))
+    )
+    findings = validate(foreign, None, _registry(), only={"belt.capsule"}).errors
+    assert findings
+    assert all(99 in finding.objects and 2 not in finding.objects for finding in findings)
+
+
+@pytest.mark.parametrize("malformation", ["unlinked", "duplicate", "wrong-normal"])
+def test_an_unproven_direct_snap_does_not_exempt_the_machine_upper_body(
+    malformation: str,
+) -> None:
+    placement = _lift_through_its_snapped_foundry()
+    if malformation == "wrong-normal":
+        placement = replace(
+            placement, lifts=(replace(placement.lifts[0], pose=Pose(200, -300, 900, -90)),)
+        )
+    else:
+        placement = replace(
+            placement, links=() if malformation == "unlinked" else placement.links * 2
+        )
+    findings = validate(placement, None, _registry(), only={"belt.capsule"}).errors
+    assert any(2 in finding.objects for finding in findings)
 
 
 def test_lift_top_yaw_refuses_a_turn_the_build_gun_cannot_make() -> None:

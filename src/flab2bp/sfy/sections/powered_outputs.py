@@ -348,12 +348,15 @@ def add_powered_outputs(
     roof_plane: float,
     stack_height_cm: float,
     stack_gap_cm: float,
+    inward_pumps: bool = False,
 ) -> SfyPlacement:
     """Join one output material through source-level pumps and a real rated stack lane.
 
     Trunk funding is evidenced by already placed native pipe classes; each source
     lead keeps its original class. This family requires opposing X-facing columns.
     Corridors derive from actual ports, occupied boxes and native support slabs.
+    Inward pumps turn toward the Y midpoint and use exterior risers with a
+    separate, natively snapped export shaft; the default preserves coal returns.
     """
     _check(deadline)
     if not source_ports or any(p.kind != "pipe" or p.direction != "output" for p in source_ports):
@@ -433,8 +436,13 @@ def add_powered_outputs(
     machine_boxes = _machine_bounds(placement, registry)
     transport_boxes = _transport_bounds(placement, registry)
     obstacles = (*machine_boxes, *transport_boxes)
-    transverse_obstacles = tuple(
-        ((low[1], low[0], low[2]), (high[1], high[0], high[2])) for low, high in obstacles
+    transverse_obstacles = (
+        tuple(
+            ((low[1], low[0], low[2]), (high[1], high[0], high[2]))
+            for low, high in obstacles
+        )
+        if not inward_pumps
+        else ()
     )
     floors = sorted({source.machine.pose.z for source in sources})
     minimum_chord = definition.mesh_length_cm / 2 + grid / 20
@@ -474,9 +482,13 @@ def add_powered_outputs(
             raise SectionError(
                 "compact outputs require two aligned opposing source columns", cause="unsupported"
             )
-        # The right collector occupies the outer service bay; its source rises
-        # inside the coal header transfer and returns outward only above it.
-        axes[side] = xs[0] + right.translation[0]
+        if inward_pumps:
+            # Exterior source risers return inward above the native hard casing.
+            axes[side] = xs[0] - side * right.translation[0]
+        else:
+            # The right collector's source rises inside the coal transfer and
+            # returns to the outer service bay only above it.
+            axes[side] = xs[0] + right.translation[0]
     builder = _Outputs(placement, registry, ids, deadline, definition, item)
     floor_feeds: dict[float, list[tuple[int, PipeAttachmentObj, Fraction]]] = {
         foot: [] for foot in floors
@@ -484,29 +496,34 @@ def add_powered_outputs(
     for source in sources:
         _check(deadline)
         level = levels[source.machine.pose.z]
-        along: Vector = (0, float(source.side), 0)
+        along_sign = (1 if source.point[1] < 0 else -1) if inward_pumps else source.side
+        along: Vector = (0, float(along_sign), 0)
         inward: Vector = (-float(source.side), 0, 0)
         upward: Vector = (0, 0, 1)
-        span = pump_out.translation[0] - pump_in.translation[0]
-        initial_y = source.point[1] + source.side * (2 * turn + span)
-        wall = any(
-            _intersects_riser(
-                box, axes[source.side], initial_y, source.point[2] + turn, level, radius
+        initial_radius = turn
+        wall = False
+        exterior_x = source.point[0]
+        if not inward_pumps:
+            span = pump_out.translation[0] - pump_in.translation[0]
+            initial_y = source.point[1] + source.side * (2 * turn + span)
+            wall = any(
+                _intersects_riser(
+                    box, axes[source.side], initial_y, source.point[2] + turn, level, radius
+                )
+                for box in machine_boxes
             )
-            for box in machine_boxes
-        )
-        exterior_x = source.side * (placement.designer.half_cm - radius)
-        initial_radius = abs(exterior_x - source.point[0]) if wall else turn
-        if initial_radius < turn:
-            raise SectionError(f"{item}: native first output bend cannot fit within designer")
+            exterior_x = source.side * (placement.designer.half_cm - radius)
+            initial_radius = abs(exterior_x - source.point[0]) if wall else turn
+            if initial_radius < turn:
+                raise SectionError(f"{item}: native first output bend cannot fit within designer")
         first = _arc(source.point, source.normal, along, initial_radius)
         inlet = first[-1][0]
-        rotation = Pose(0, 0, 0, source.side * 90).transform()
+        rotation = Pose(0, 0, 0, along_sign * 90).transform()
         offset = world_port(rotation, pump_in)
         powered = builder.node(
             _PUMP,
             Pose(
-                inlet[0] - offset[0], inlet[1] - offset[1], inlet[2] - offset[2], source.side * 90
+                inlet[0] - offset[0], inlet[1] - offset[1], inlet[2] - offset[2], along_sign * 90
             ),
         )
         input_ref, output_ref = (powered.id, pump_in.name), (powered.id, pump_out.name)
@@ -525,7 +542,7 @@ def add_powered_outputs(
         builder.leads[source.pipe.id] = replace(source.pipe, points=points)
         builder.links.append(Link((source.pipe.id, source.interface.port), input_ref))
         outlet = builder.at(output_ref)[0]
-        returning = source.side > 0 and not wall
+        returning = not inward_pumps and source.side > 0 and not wall
         riser_x = outlet[0] - 2 * turn if returning else exterior_x if wall else outlet[0]
         if returning:
             # Project the actual coal transfer ribbons inward at the original
@@ -583,13 +600,13 @@ def add_powered_outputs(
             )
         )
         y = _clear_riser_y(
-            outlet[1] + source.side * turn,
-            source.side,
+            outlet[1] + along_sign * turn,
+            along_sign,
             grid,
             obstacles,
             phases,
         )
-        distance = source.side * (y - outlet[1]) - turn
+        distance = along_sign * (y - outlet[1]) - turn
         if distance < -0.01:
             raise SectionError(f"{item}: output riser is behind its native pump outlet")
         parts: list[tuple[SplinePoint, ...]] = []
@@ -650,6 +667,7 @@ def add_powered_outputs(
         else max(left_ys) + separation
     )
     export_y = cross_y - separation
+    export_x = axes[1] + (right.translation[0] - left.translation[0] if inward_pumps else 0)
     # Derive a shaft outside every real intermediate support tile at its X axis.
     slab = registry.buildables[FOUNDATION_CLASS]
     support_bounds: list[_Bounds] = []
@@ -663,7 +681,7 @@ def add_powered_outputs(
         if base_plane < obj.pose.z < roof_plane:
             support_bounds.extend(box_bounds(box, obj.pose.transform()) for box in slab.clearance)
     for low, high in support_bounds:
-        if low[0] < axes[1] + radius and high[0] > axes[1] - radius:
+        if low[0] < export_x + radius and high[0] > export_x - radius:
             export_y = min(export_y, low[1] - max(radius, node_half_y) - grid / 5)
     if export_y - node_half_y < -placement.designer.half_cm:
         raise SectionError(f"{item}: no native output continuation shaft fits", cause="bounds")
@@ -676,12 +694,19 @@ def add_powered_outputs(
         right_node = builder.node(_JUNCTION, Pose(axes[1], cross_y, level, 0))
         local = sum((rate for _, _, rate in feeds), Fraction())
         left_rate = sum((rate for side, _, rate in feeds if side < 0), Fraction())
-        export = builder.node(_JUNCTION, Pose(axes[1], export_y, level, 0, 90))
+        if inward_pumps:
+            export_feed = builder.node(_JUNCTION, Pose(axes[1], export_y, level, 0))
+            export = builder.node(_JUNCTION, Pose(export_x, export_y, level, 90, 90))
+            # Opposing native mouths coincide: no undersized pipeline is needed.
+            builder.links.append(Link((export_feed.id, right.name), (export.id, forward.name)))
+        else:
+            export = builder.node(_JUNCTION, Pose(export_x, export_y, level, 0, 90))
+            export_feed = export
         for side, cross_node in ((-1, left_node), (1, right_node)):
             entries = [(node, rate) for s, node, rate in feeds if s == side]
             entries.append((cross_node, -left_rate if side < 0 else left_rate))
             if side > 0:
-                entries.append((export, -local))
+                entries.append((export_feed, -local))
             entries.sort(key=lambda pair: pair[0].pose.y)
             running = Fraction()
             for (node, rate), (following, _) in zip(entries, entries[1:], strict=False):
@@ -701,7 +726,7 @@ def add_powered_outputs(
         boundary_end=True,
         holes=(None, bottom_hole),
     )
-    top_start = (axes[1], export_y, roof_plane)
+    top_start = (export_x, export_y, roof_plane)
     top, _ = builder.pipe(
         straight(top_start, (0, 0, -1), roof_plane - builder.at((upper.id, right.name))[0][2]),
         capacity,
@@ -714,14 +739,14 @@ def add_powered_outputs(
         PassthroughObj(
             bottom_hole,
             _HOLE,
-            Pose(axes[1], export_y, base_plane, 0),
+            Pose(export_x, export_y, base_plane, 0),
             thickness,
             top_connection=bottom,
         ),
         PassthroughObj(
             top_hole,
             _HOLE,
-            Pose(axes[1], export_y, roof_plane, 0),
+            Pose(export_x, export_y, roof_plane, 0),
             thickness,
             bottom_connection=top,
         ),

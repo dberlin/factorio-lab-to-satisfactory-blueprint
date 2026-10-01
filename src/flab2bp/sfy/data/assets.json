@@ -2,7 +2,7 @@
   "provenance": {
     "build_version": 502094,
     "cue4parse": "1.2.2.0",
-    "extracted": "2026-09-18",
+    "extracted": "2026-10-01",
     "game_enum": "GAME_UE5_6",
     "archives": [
       "FactoryGame-Windows.pak:13576",
@@ -1946,7 +1946,7 @@
           0.0,
           0.0
         ],
-        "clearance": null,
+        "clearance": 200.0,
         "max_connections": null,
         "max_connections_source": "unknown"
       },
@@ -1965,7 +1965,7 @@
           0.0,
           0.0
         ],
-        "clearance": null,
+        "clearance": 200.0,
         "max_connections": null,
         "max_connections_source": "unknown"
       }
@@ -1986,7 +1986,7 @@
           0.0,
           0.0
         ],
-        "clearance": null,
+        "clearance": 200.0,
         "max_connections": null,
         "max_connections_source": "unknown"
       },
@@ -2005,7 +2005,7 @@
           0.0,
           0.0
         ],
-        "clearance": null,
+        "clearance": 200.0,
         "max_connections": null,
         "max_connections_source": "unknown"
       }
@@ -2026,7 +2026,7 @@
           0.0,
           0.0
         ],
-        "clearance": null,
+        "clearance": 200.0,
         "max_connections": null,
         "max_connections_source": "unknown"
       },
@@ -2045,7 +2045,7 @@
           0.0,
           0.0
         ],
-        "clearance": null,
+        "clearance": 200.0,
         "max_connections": null,
         "max_connections_source": "unknown"
       }
@@ -2066,7 +2066,7 @@
           0.0,
           0.0
         ],
-        "clearance": null,
+        "clearance": 200.0,
         "max_connections": null,
         "max_connections_source": "unknown"
       },
@@ -2085,7 +2085,7 @@
           0.0,
           0.0
         ],
-        "clearance": null,
+        "clearance": 200.0,
         "max_connections": null,
         "max_connections_source": "unknown"
       }
@@ -2106,7 +2106,7 @@
           0.0,
           0.0
         ],
-        "clearance": null,
+        "clearance": 200.0,
         "max_connections": null,
         "max_connections_source": "unknown"
       },
@@ -2125,7 +2125,7 @@
           0.0,
           0.0
         ],
-        "clearance": null,
+        "clearance": 200.0,
         "max_connections": null,
         "max_connections_source": "unknown"
       }
@@ -3458,7 +3458,7 @@
           90.00005,
           0.0
         ],
-        "clearance": null,
+        "clearance": 120.0,
         "max_connections": null,
         "max_connections_source": "unknown"
       },

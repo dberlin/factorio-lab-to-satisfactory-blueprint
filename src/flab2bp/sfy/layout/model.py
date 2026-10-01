@@ -36,6 +36,7 @@ from __future__ import annotations
 import math
 from array import array
 from dataclasses import dataclass, field
+from enum import StrEnum
 from fractions import Fraction
 from typing import Literal
 
@@ -52,6 +53,7 @@ __all__ = [
     "BeamObj",
     "BeltRun",
     "FoundationObj",
+    "LiftMeshDisplayMode",
     "LiftObj",
     "Link",
     "MachineObj",
@@ -419,6 +421,14 @@ class PassthroughObj:
         object.__setattr__(self, "thickness_cm", stored_float(self.thickness_cm))
 
 
+class LiftMeshDisplayMode(StrEnum):
+    """Native saved housing mode for one end of a conveyor lift."""
+
+    AUTO = "EFGBuildableConveyorLiftMeshDisplayMode::MDM_Auto"
+    BELLOW = "EFGBuildableConveyorLiftMeshDisplayMode::MDM_Bellow"
+    EMPTY = "EFGBuildableConveyorLiftMeshDisplayMode::MDM_Empty"
+
+
 @dataclass(frozen=True, slots=True)
 class LiftObj:
     """One conveyor lift: a vertical run between two connections.
@@ -462,6 +472,9 @@ class LiftObj:
     snapped_passthroughs: tuple[int | None, int | None] = (None, None)
     boundary_start: bool = field(default=False, compare=False)
     boundary_end: bool = field(default=False, compare=False)
+    input_mesh_display_mode: LiftMeshDisplayMode = LiftMeshDisplayMode.AUTO
+    output_mesh_display_mode: LiftMeshDisplayMode = LiftMeshDisplayMode.AUTO
+    belt_uses_input_rotation: bool = False
 
     def __post_init__(self) -> None:
         if len(self.snapped_passthroughs) != 2:

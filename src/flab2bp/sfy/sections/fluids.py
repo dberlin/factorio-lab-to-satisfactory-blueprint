@@ -195,6 +195,7 @@ def build_compact_fluid_section(
     centres: Sequence[tuple[float, float]] | None = None,
     include_solids: bool = True,
     junction_outputs: bool = True,
+    feed_offset_cm: float | None = None,
 ) -> ProductionSection:
     """Opposing columns with independently rated native local feed manifolds.
 
@@ -291,9 +292,11 @@ def build_compact_fluid_section(
         assert definition.mesh_bounds_cm is not None
         pipe_radius = max(abs(v) for bound in definition.mesh_bounds_cm for v in bound[1:])
         side = 1 if index % 2 == 0 else -1
+        base_pitch = grid_ceil(2 * pipe_radius + grid / 2, grid)
+        feed_distance = base_pitch if feed_offset_cm is None else feed_offset_cm
         feed_layouts[item] = (
             Pose(
-                side * (index // 2 + 1) * grid_ceil(2 * pipe_radius + grid / 2, grid),
+                side * (feed_distance + (index // 2) * base_pitch),
                 0, 0, side * 90,
             ),
             _pipe_port(junction, (0, 1, 0)),

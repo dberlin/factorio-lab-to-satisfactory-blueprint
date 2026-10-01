@@ -592,7 +592,7 @@
    "pipe_flow_limit_m3s": null,
    "ports": [
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -752,7 +752,7 @@
    "pipe_flow_limit_m3s": null,
    "ports": [
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -771,7 +771,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -790,7 +790,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "output",
      "direction_source": "asset",
      "kind": "belt",
@@ -2079,7 +2079,7 @@
    "pipe_flow_limit_m3s": null,
    "ports": [
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -2098,7 +2098,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -2117,7 +2117,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "output",
      "direction_source": "asset",
      "kind": "belt",
@@ -3095,7 +3095,7 @@
    "pipe_flow_limit_m3s": null,
    "ports": [
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -3114,7 +3114,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "output",
      "direction_source": "asset",
      "kind": "belt",
@@ -3264,7 +3264,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -3283,7 +3283,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -3302,7 +3302,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "output",
      "direction_source": "asset",
      "kind": "belt",
@@ -3404,7 +3404,7 @@
    "pipe_flow_limit_m3s": null,
    "ports": [
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -3423,7 +3423,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -3442,7 +3442,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -3461,7 +3461,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "output",
      "direction_source": "asset",
      "kind": "belt",
@@ -3557,7 +3557,7 @@
    "pipe_flow_limit_m3s": null,
    "ports": [
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -3576,7 +3576,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -3595,7 +3595,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -3614,7 +3614,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "output",
      "direction_source": "asset",
      "kind": "belt",
@@ -3697,7 +3697,7 @@
    "pipe_flow_limit_m3s": null,
    "ports": [
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -3716,7 +3716,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "output",
      "direction_source": "asset",
      "kind": "belt",
@@ -3735,7 +3735,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "output",
      "direction_source": "asset",
      "kind": "belt",
@@ -3754,7 +3754,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "output",
      "direction_source": "asset",
      "kind": "belt",
@@ -3837,7 +3837,7 @@
    "pipe_flow_limit_m3s": null,
    "ports": [
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -3856,7 +3856,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "output",
      "direction_source": "asset",
      "kind": "belt",
@@ -3875,7 +3875,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "output",
      "direction_source": "asset",
      "kind": "belt",
@@ -3894,7 +3894,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "output",
      "direction_source": "asset",
      "kind": "belt",
@@ -3990,7 +3990,7 @@
    "pipe_flow_limit_m3s": null,
    "ports": [
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -4009,7 +4009,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "output",
      "direction_source": "asset",
      "kind": "belt",
@@ -4028,7 +4028,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "output",
      "direction_source": "asset",
      "kind": "belt",
@@ -4047,7 +4047,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "output",
      "direction_source": "asset",
      "kind": "belt",
@@ -4119,7 +4119,7 @@
    "pipe_flow_limit_m3s": null,
    "ports": [
     {
-     "clearance": null,
+     "clearance": 0.0,
      "direction": "any",
      "direction_source": "native",
      "kind": "belt",
@@ -4138,7 +4138,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 0.0,
      "direction": "any",
      "direction_source": "native",
      "kind": "belt",
@@ -4210,7 +4210,7 @@
    "pipe_flow_limit_m3s": null,
    "ports": [
     {
-     "clearance": null,
+     "clearance": 0.0,
      "direction": "any",
      "direction_source": "native",
      "kind": "belt",
@@ -4229,7 +4229,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 0.0,
      "direction": "any",
      "direction_source": "native",
      "kind": "belt",
@@ -4301,7 +4301,7 @@
    "pipe_flow_limit_m3s": null,
    "ports": [
     {
-     "clearance": null,
+     "clearance": 0.0,
      "direction": "any",
      "direction_source": "native",
      "kind": "belt",
@@ -4320,7 +4320,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 0.0,
      "direction": "any",
      "direction_source": "native",
      "kind": "belt",
@@ -4392,7 +4392,7 @@
    "pipe_flow_limit_m3s": null,
    "ports": [
     {
-     "clearance": null,
+     "clearance": 0.0,
      "direction": "any",
      "direction_source": "native",
      "kind": "belt",
@@ -4411,7 +4411,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 0.0,
      "direction": "any",
      "direction_source": "native",
      "kind": "belt",
@@ -4483,7 +4483,7 @@
    "pipe_flow_limit_m3s": null,
    "ports": [
     {
-     "clearance": null,
+     "clearance": 0.0,
      "direction": "any",
      "direction_source": "native",
      "kind": "belt",
@@ -4502,7 +4502,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 0.0,
      "direction": "any",
      "direction_source": "native",
      "kind": "belt",
@@ -4574,7 +4574,7 @@
    "pipe_flow_limit_m3s": null,
    "ports": [
     {
-     "clearance": null,
+     "clearance": 0.0,
      "direction": "any",
      "direction_source": "native",
      "kind": "belt",
@@ -4593,7 +4593,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 0.0,
      "direction": "any",
      "direction_source": "native",
      "kind": "belt",
@@ -4895,7 +4895,7 @@
    "pipe_flow_limit_m3s": null,
    "ports": [
     {
-     "clearance": null,
+     "clearance": 200.0,
      "direction": "any",
      "direction_source": "native",
      "kind": "belt",
@@ -4914,7 +4914,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 200.0,
      "direction": "any",
      "direction_source": "native",
      "kind": "belt",
@@ -5014,7 +5014,7 @@
    "pipe_flow_limit_m3s": null,
    "ports": [
     {
-     "clearance": null,
+     "clearance": 200.0,
      "direction": "any",
      "direction_source": "native",
      "kind": "belt",
@@ -5033,7 +5033,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 200.0,
      "direction": "any",
      "direction_source": "native",
      "kind": "belt",
@@ -5133,7 +5133,7 @@
    "pipe_flow_limit_m3s": null,
    "ports": [
     {
-     "clearance": null,
+     "clearance": 200.0,
      "direction": "any",
      "direction_source": "native",
      "kind": "belt",
@@ -5152,7 +5152,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 200.0,
      "direction": "any",
      "direction_source": "native",
      "kind": "belt",
@@ -5252,7 +5252,7 @@
    "pipe_flow_limit_m3s": null,
    "ports": [
     {
-     "clearance": null,
+     "clearance": 200.0,
      "direction": "any",
      "direction_source": "native",
      "kind": "belt",
@@ -5271,7 +5271,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 200.0,
      "direction": "any",
      "direction_source": "native",
      "kind": "belt",
@@ -5371,7 +5371,7 @@
    "pipe_flow_limit_m3s": null,
    "ports": [
     {
-     "clearance": null,
+     "clearance": 200.0,
      "direction": "any",
      "direction_source": "native",
      "kind": "belt",
@@ -5390,7 +5390,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 200.0,
      "direction": "any",
      "direction_source": "native",
      "kind": "belt",
@@ -5642,7 +5642,7 @@
    "pipe_flow_limit_m3s": null,
    "ports": [
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "snap_only",
      "direction_source": "native",
      "kind": "belt",
@@ -6680,7 +6680,7 @@
    "pipe_flow_limit_m3s": null,
    "ports": [
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -6699,7 +6699,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -6718,7 +6718,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "output",
      "direction_source": "asset",
      "kind": "belt",
@@ -7333,7 +7333,7 @@
    "pipe_flow_limit_m3s": null,
    "ports": [
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -8778,7 +8778,7 @@
    "pipe_flow_limit_m3s": null,
    "ports": [
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -8797,7 +8797,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -8816,7 +8816,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "output",
      "direction_source": "asset",
      "kind": "belt",
@@ -9147,7 +9147,7 @@
    "pipe_flow_limit_m3s": null,
    "ports": [
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -9355,7 +9355,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -10067,7 +10067,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -10086,7 +10086,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "output",
      "direction_source": "asset",
      "kind": "belt",
@@ -10874,7 +10874,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -10893,7 +10893,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -10912,7 +10912,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "output",
      "direction_source": "asset",
      "kind": "belt",
@@ -14590,7 +14590,7 @@
    "pipe_flow_limit_m3s": null,
    "ports": [
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -14609,7 +14609,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -14628,7 +14628,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -14647,7 +14647,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -14666,7 +14666,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "output",
      "direction_source": "asset",
      "kind": "belt",
@@ -15146,7 +15146,7 @@
    "pipe_flow_limit_m3s": null,
    "ports": [
     {
-     "clearance": null,
+     "clearance": 120.0,
      "direction": "output",
      "direction_source": "asset-inherited",
      "kind": "belt",
@@ -15466,7 +15466,7 @@
    "pipe_flow_limit_m3s": null,
    "ports": [
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -15485,7 +15485,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "output",
      "direction_source": "asset",
      "kind": "belt",
@@ -15625,7 +15625,7 @@
    "pipe_flow_limit_m3s": null,
    "ports": [
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -15644,7 +15644,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "output",
      "direction_source": "asset",
      "kind": "belt",
@@ -17793,7 +17793,7 @@
    "pipe_flow_limit_m3s": null,
    "ports": [
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -19658,7 +19658,7 @@
    "pipe_flow_limit_m3s": null,
    "ports": [
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -19677,7 +19677,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -19696,7 +19696,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -19715,7 +19715,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "output",
      "direction_source": "asset",
      "kind": "belt",
@@ -28729,7 +28729,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -31419,7 +31419,7 @@
    "pipe_flow_limit_m3s": null,
    "ports": [
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -31438,7 +31438,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "output",
      "direction_source": "asset",
      "kind": "belt",
@@ -31874,7 +31874,7 @@
    "pipe_flow_limit_m3s": null,
    "ports": [
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -31893,7 +31893,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -31912,7 +31912,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -31931,7 +31931,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -31950,7 +31950,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -31969,7 +31969,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -34761,7 +34761,7 @@
    "pipe_flow_limit_m3s": null,
    "ports": [
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -34780,7 +34780,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "output",
      "direction_source": "asset",
      "kind": "belt",
@@ -34863,7 +34863,7 @@
    "pipe_flow_limit_m3s": null,
    "ports": [
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -34882,7 +34882,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -34901,7 +34901,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "output",
      "direction_source": "asset",
      "kind": "belt",
@@ -34920,7 +34920,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "output",
      "direction_source": "asset",
      "kind": "belt",
@@ -35608,7 +35608,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -35627,7 +35627,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -35646,7 +35646,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "output",
      "direction_source": "asset",
      "kind": "belt",
@@ -35665,7 +35665,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "output",
      "direction_source": "asset",
      "kind": "belt",
@@ -35957,7 +35957,7 @@
    "pipe_flow_limit_m3s": null,
    "ports": [
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "output",
      "direction_source": "asset",
      "kind": "belt",
@@ -36156,7 +36156,7 @@
    "pipe_flow_limit_m3s": null,
    "ports": [
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -36175,7 +36175,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -36194,7 +36194,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "input",
      "direction_source": "native",
      "kind": "belt",
@@ -36213,7 +36213,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "output",
      "direction_source": "asset",
      "kind": "belt",
@@ -36232,7 +36232,7 @@
      ]
     },
     {
-     "clearance": null,
+     "clearance": 100.0,
      "direction": "output",
      "direction_source": "asset",
      "kind": "belt",
@@ -43334,6 +43334,11 @@
   "lift_max_cm": 4800.0,
   "lift_min_cm": 400.0,
   "lift_min_vertical_cm": 150.0,
+  "lift_snap_axial_gap_cm": 25.0,
+  "lift_snap_grid_cm": 100.0,
+  "lift_snap_grid_tolerance_cm": 10.0,
+  "lift_snap_lateral_cm": 1.0,
+  "lift_snap_normal_dot": -0.995,
   "lift_step_cm": 100.0,
   "pipe_bend_radius_2d_cm": 199.0,
   "pipe_bend_radius_cm": 100.0,
@@ -43359,6 +43364,11 @@
   "lift_max_cm": "binary-derived",
   "lift_min_cm": "binary-derived",
   "lift_min_vertical_cm": "binary-derived",
+  "lift_snap_axial_gap_cm": "binary",
+  "lift_snap_grid_cm": "binary",
+  "lift_snap_grid_tolerance_cm": "binary",
+  "lift_snap_lateral_cm": "binary",
+  "lift_snap_normal_dot": "binary",
   "lift_step_cm": "binary",
   "pipe_bend_radius_2d_cm": "binary",
   "pipe_bend_radius_cm": "assets",
@@ -43378,7 +43388,7 @@
    ],
    "build_version": 502094,
    "cue4parse": "1.2.2.0",
-   "extracted": "2026-09-18",
+   "extracted": "2026-10-01",
    "game_enum": "GAME_UE5_6",
    "native_direction_defaults": {
     "component_defaults": [
@@ -43634,6 +43644,18 @@
    },
    "usmap": "FactoryGame.usmap",
    "usmap_sha256": "b0e9179d1af4663cc06e54d6cbfe2ce834f3960d50891ef28a90e936978e4b35"
+  },
+  "connector_clearances": {
+   "conveyor_cm": 0.0,
+   "evidence": [
+    "0x7b6004: mov dword ptr [rbx+25Ch],42C80000h  ; UFGFactoryConnectionComponent::mConnectorClearance @604",
+    "0x4c96e4: xor ebp,ebp",
+    "0x4c9952: mov dword ptr [rax+25Ch],ebp",
+    "0x4c9bb1: mov dword ptr [rax+25Ch],ebp"
+   ],
+   "factory_cm": 100.0,
+   "note": "Cooked mConnectorClearance overrides include the component archetype chain; native defaults fill only silent factory connection components.",
+   "rule": "lift.connection_snap"
   },
   "conveyor_flow": {
    "applied_to": [
@@ -43935,9 +43957,9 @@
    "tool": "sfy-native 0.1.0"
   },
   "inputs_sha256": {
-   "assets.json": "00c44e6aa3943274477cd6bff8104f919d71a2da73bebd61e3bbb43858b5b208",
+   "assets.json": "f59bd7da4804e3db5593b34414ab40d1f63453367a9bcec7e192a57503cd9a42",
    "docs.json": "cd4fa85efe8ebf990ff3a2cb47cb3a198a548f9920819553a4828a609d90cae4",
-   "hologram_rules.json": "9e3417f5878b32c9fc69a140d3cb609367c6ed035a2ec2735f34b4bbf9256949",
+   "hologram_rules.json": "0c185accb2164e2c6e75a284768e4252c4a08ae4f90acc3cc96ba21e42ac881c",
    "native.json": "c6b204d7a5ba3fd7c7389ae50d22b8b3f1deafe623b8c4d0a8bb5c028078a11f",
    "native_directions.json": "4c6857ad39ce0b15fae789fabea4d6ff0e917e157d9eeb57a55ccd72d62e295c"
   },
@@ -44081,6 +44103,51 @@
      "rule": "lift.height_range",
      "status": "extracted"
     }
+   },
+   "lift_snap_axial_gap_cm": {
+    "evidence": "0xa66b8a: comiss xmm0,dword ptr [131A778h]  ; const 0x131a778 f32=25.0 f64=5.303439825282112e+19",
+    "governed_by": {
+     "effect": "compute",
+     "rule": "lift.connection_snap",
+     "status": "extracted"
+    },
+    "value": 25.0
+   },
+   "lift_snap_grid_cm": {
+    "evidence": "0xa66c47: movsd xmm1,qword ptr [12B8ED0h]  ; const 0x12b8ed0 f32=0.0 f64=100.0",
+    "governed_by": {
+     "effect": "compute",
+     "rule": "lift.connection_snap",
+     "status": "extracted"
+    },
+    "value": 100.0
+   },
+   "lift_snap_grid_tolerance_cm": {
+    "evidence": "0xa66cc8: comiss xmm7,dword ptr [12B8EE4h]  ; const 0x12b8ee4 f32=10.0 f64=2097152.5087890625",
+    "governed_by": {
+     "effect": "compute",
+     "rule": "lift.connection_snap",
+     "status": "extracted"
+    },
+    "value": 10.0
+   },
+   "lift_snap_lateral_cm": {
+    "evidence": "0xa66c0c: comiss xmm0,dword ptr [0F1B344h]  ; const 0xf1b344 f32=1.0 f64=5.263544247e-315",
+    "governed_by": {
+     "effect": "compute",
+     "rule": "lift.connection_snap",
+     "status": "extracted"
+    },
+    "value": 1.0
+   },
+   "lift_snap_normal_dot": {
+    "evidence": "0xa66ad1: comiss xmm0,dword ptr [132F8A4h]  ; const 0x132f8a4 f32=-0.995 f64=-0.0078029846699064365",
+    "governed_by": {
+     "effect": "compute",
+     "rule": "lift.connection_snap",
+     "status": "extracted"
+    },
+    "value": -0.995
    },
    "lift_step_cm": {
     "governed_by": {
