@@ -32,6 +32,7 @@ from urllib.parse import unquote, urlparse
 from flab2bp.lab import params as P
 from flab2bp.lab.games import Game
 from flab2bp.lab.params import LabUrlError, ModHash
+from flab2bp.lab.schema import Dataset
 
 __all__ = [
     "BeaconSetting",
@@ -61,10 +62,10 @@ DSP_MOD_ID = Game.DSP.value
 _SUPPORTED_MOD_IDS = frozenset(game.value for game in Game)
 _SUPPORTED_MOD_IDS_TEXT = ", ".join(sorted(_SUPPORTED_MOD_IDS))
 
-#: The only URL encoding version we read.  Porting the V0-V10 migration chain
-#: (~1000 lines) would buy very little: FactorioLab rewrites the URL to V11 on
-#: every navigation, so old links are re-shared as V11 almost immediately.
-SUPPORTED_ZIP_VERSION = "11"
+#: V12 merges belt/pipe and cargo/fluid wagon selections into rank arrays.
+#: V11 uses the same codec; its transport settings are migrated below.
+SUPPORTED_ZIP_VERSION = "12"
+_SUPPORTED_ZIP_VERSIONS = frozenset(("11", SUPPORTED_ZIP_VERSION))
 
 #: Repeatable params.  ``Migration.migrate`` coerces a lone string into a list.
 _ARRAY_KEYS = ("o", "i", "r", "m", "e", "b")
@@ -207,10 +208,8 @@ class LabRequest:
     # Items section
     excluded_item_ids: set[str] | None = None
     checked_item_ids: set[str] | None = None
-    belt_id: str | None = None
-    pipe_id: str | None = None
-    cargo_wagon_id: str | None = None
-    fluid_wagon_id: str | None = None
+    belt_rank_ids: list[str] | None = None
+    wagon_rank_ids: list[str] | None = None
     flow_rate: Fraction | None = None
     stack: Fraction | None = None
 
@@ -248,6 +247,22 @@ class LabRequest:
     def game(self) -> Game:
         """Which game's dataset this request is written against."""
         return Game(self.mod_id)
+
+    def selected_belt_id(self, data: Dataset) -> str | None:
+        """First ranked solid belt; pipes in the shared rank do not compete."""
+        for item_id in self.belt_rank_ids or ():
+            item = data.get_item(item_id)
+            if item is not None and item.belt is not None:
+                return item_id
+        return None
+
+    def selected_pipe_id(self, data: Dataset) -> str | None:
+        """First ranked pipeline, independently of the solid belt selection."""
+        for item_id in self.belt_rank_ids or ():
+            item = data.get_item(item_id)
+            if item is not None and item.pipe is not None:
+                return item_id
+        return None
 
 
 # --- query-string handling ---------------------------------------------------
@@ -440,11 +455,11 @@ def _indices[T](
 
 
 def parse_url(url: str, *, mod_hash: ModHash | None = None) -> LabRequest:
-    """Parse a FactorioLab DSP URL.
+    """Parse a FactorioLab URL for a supported game.
 
     :param mod_hash: override the vendored ``hash.json`` (for tests).
-    :raises UnsupportedDatasetError: the URL is not for the DSP dataset.
-    :raises UnsupportedZipVersionError: the URL predates encoding version 11.
+    :raises UnsupportedDatasetError: the URL is not for a supported dataset.
+    :raises UnsupportedZipVersionError: the URL uses neither v11 nor v12.
     :raises LabUrlError: the URL is malformed or its payload cannot be decoded.
     """
     parsed = urlparse(url)
@@ -476,12 +491,11 @@ def parse_url(url: str, *, mod_hash: ModHash | None = None) -> LabRequest:
         params = dict(raw)
 
     version = _scalar(params, "v") or "0"
-    if version != SUPPORTED_ZIP_VERSION:
+    if version not in _SUPPORTED_ZIP_VERSIONS:
         raise UnsupportedZipVersionError(
-            f"URL uses encoding version {version!r}; only version "
-            f"{SUPPORTED_ZIP_VERSION!r} is supported. Open the link in "
-            f"FactorioLab and copy the refreshed URL, which will be v"
-            f"{SUPPORTED_ZIP_VERSION}."
+            f"URL uses encoding version {version!r}; supported versions are "
+            f"11 and {SUPPORTED_ZIP_VERSION}. Open the link in "
+            f"FactorioLab and copy the refreshed URL."
         )
 
     if is_bare:
@@ -491,6 +505,17 @@ def parse_url(url: str, *, mod_hash: ModHash | None = None) -> LabRequest:
             k: ([unquote(x) for x in v] if isinstance(v, list) else unquote(v))
             for k, v in params.items()
         }
+
+    if version == "11":
+        # Mirror Migration.migrateV11 before resolving bare or hashed ids.
+        for rank_key, legacy_key in (("ibe", "ipi"), ("icw", "ifw")):
+            rank = [
+                rank_value
+                for key in (rank_key, legacy_key)
+                if (rank_value := _scalar(params, key))
+            ]
+            if rank:
+                params[rank_key] = P.ZARRAYSEP.join(rank)
 
     for key in _ARRAY_KEYS:
         value = params.get(key)
@@ -543,10 +568,8 @@ def parse_url(url: str, *, mod_hash: ModHash | None = None) -> LabRequest:
         ),
         excluded_item_ids=sub("iex", tables.items if tables else None),
         checked_item_ids=sub("ich", tables.items if tables else None),
-        belt_id=P.parse_string(_scalar(params, "ibe"), id_hash.belts if id_hash else None),
-        pipe_id=P.parse_string(_scalar(params, "ipi"), id_hash.belts if id_hash else None),
-        cargo_wagon_id=P.parse_string(_scalar(params, "icw"), id_hash.wagons if id_hash else None),
-        fluid_wagon_id=P.parse_string(_scalar(params, "ifw"), id_hash.wagons if id_hash else None),
+        belt_rank_ids=P.parse_array(_scalar(params, "ibe"), id_hash.belts if id_hash else None),
+        wagon_rank_ids=P.parse_array(_scalar(params, "icw"), id_hash.wagons if id_hash else None),
         flow_rate=rat("ifr"),
         stack=rat("ist"),
         excluded_recipe_ids=sub("rex", tables.recipes if tables else None),

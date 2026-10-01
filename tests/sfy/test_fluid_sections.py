@@ -5,15 +5,21 @@ from dataclasses import replace
 from fractions import Fraction
 from itertools import count
 from math import inf
+from pathlib import Path
 
 import pytest
 
+from flab2bp.lab.data import load_vendored
+from flab2bp.lab.flow import load_flow
+from flab2bp.lab.url import Game, parse_url
 from flab2bp.sfy.labmap import LabMap, load_lab_map
 from flab2bp.sfy.layout.model import BeltRun, PipeRun
+from flab2bp.sfy.layout.splines import hermite_tangent
 from flab2bp.sfy.layout.validate import validate
+from flab2bp.sfy.rates import spec_from_flow
 from flab2bp.sfy.registry import Registry, load_registry
 from flab2bp.sfy.sections.compose import SectionLayout
-from flab2bp.sfy.sections.fluids import build_fluid_section
+from flab2bp.sfy.sections.fluids import build_compact_fluid_section, build_fluid_section
 from flab2bp.sfy.sections.model import ProductionSection, SectionError, endpoint
 from flab2bp.sfy.spec import PipeTier, SfyBuildSpec, SfyMachineGroup, designer
 from flab2bp.spec import BeltTier
@@ -171,6 +177,49 @@ def test_four_refineries_fit_mk2_with_connected_material_networks(
             "pipe.fluid_requirements",
             "ports.position",
             "ports.direction",
+        },
+    )
+    assert report.ok, report.errors
+
+
+def test_compact_blender_feeds_join_every_factory_without_crossing_materials(
+    resources: tuple[Registry, LabMap],
+) -> None:
+    registry, lab_map = resources
+    path = Path(__file__).resolve().parents[1] / "fixtures/sfy_flows/rocket-fuel-600-inputs-v12.csv"
+    url = path.read_text(encoding="utf-8").splitlines()[0].strip('"')
+    spec = spec_from_flow(
+        load_vendored(Game.SFY), parse_url(url), load_flow(path, url=url), registry, lab_map
+    )
+    group = spec.groups[0].model_copy(update={"count": 3})
+    section = build_compact_fluid_section(
+        group, designer("mk2", registry), registry, lab_map,
+        belt_tiers=spec.belt_tiers, pipe_tiers=spec.pipe_tiers,
+        fluid_items=spec.fluid_items, ids=count(1), deadline=inf,
+    )
+    assert {port.item_id: port.items_per_second for port in section.inputs} == group.row_inputs
+    networks = material_networks(replace(section, outputs=()))
+    machines = {actor.id for actor in section.placement.machines}
+    assert set(networks) == {"turbofuel", "nitric-acid"}
+    assert {item: {actor for actor, _ in terminals} for item, terminals in networks.items()} == {
+        "turbofuel": machines, "nitric-acid": machines,
+    }
+    assert all(len(terminals) == len(machines) for terminals in networks.values())
+    for pipe in section.placement.pipes:
+        if pipe.item_id not in group.inputs_per_machine:
+            continue
+        a, b = pipe.points[-2:]
+        chord = tuple(b[0][i] - a[0][i] for i in range(3))
+        for sample in range(21):
+            tangent = hermite_tangent(a[0], a[2], b[0], b[1], sample / 20)
+            assert sum(chord[i] * tangent[i] for i in range(3)) >= -0.001
+    report = validate(
+        section.placement, None, registry,
+        only={
+            "geom.bounds", "geom.hard_clearance", "geom.attachment_body",
+            "belt.capsule", "belt.min_length", "pipe.capsule", "pipe.min_length",
+            "pipe.max_length", "pipe.curvature", "pipe.fluid_requirements",
+            "ports.position", "ports.direction", "ports.connected_once",
         },
     )
     assert report.ok, report.errors

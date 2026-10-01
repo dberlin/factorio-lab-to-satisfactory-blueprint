@@ -2,16 +2,20 @@
 
 import itertools
 import time
+from dataclasses import replace
 from fractions import Fraction
 
 import pytest
 
 from flab2bp.layout.base import NoValidLayout
 from flab2bp.sfy.labmap import load_lab_map
+from flab2bp.sfy.layout.model import MachineObj, PipeRun, Pose, SfyPlacement
+from flab2bp.sfy.layout.splines import straight
 from flab2bp.sfy.layout.validate import validate
 from flab2bp.sfy.sections.compose import (
     SectionLayout,
     _arrange,
+    _floors,
     _partition_group,
     _production_layers,
     _section_frame,
@@ -72,6 +76,33 @@ def test_partition_preserves_fractional_last_machine_and_upgrade_inventory() -> 
     assert (
         sum(piece.count * piece.somersloops for piece in pieces) == group.count * group.somersloops
     )
+
+
+def test_rotated_factory_supports_preserve_the_real_central_pipe_gap() -> None:
+    registry = sfy_registry()
+    machines = tuple(
+        MachineObj(
+            index, "Build_Blender_C", Pose(x, y, 2025, yaw),
+            "Recipe_RocketFuel_C", Fraction(1),
+        )
+        for index, (x, y, yaw) in enumerate(
+            ((-900, -1100, 90), (900, -1100, -90), (-900, 1100, 90), (900, 1100, -90)),
+            start=1,
+        )
+    )
+    pipe = PipeRun(
+        5, "Build_Pipeline_NoIndicator_C", straight((0, -1700, 1300), (0, 0, 1), 2000),
+        "water", Fraction(1),
+    )
+    placement = SfyPlacement(
+        designer=designer("mk2", registry), machines=machines, pipes=(pipe,),
+    )
+    foundations = _floors(placement, registry, itertools.count(6))
+    report = validate(
+        replace(placement, foundations=foundations), None, registry,
+        only={"geom.bounds", "pipe.capsule"},
+    )
+    assert report.ok, report.errors
 
 
 def test_cycle_is_refused_instead_of_inventing_production_order() -> None:

@@ -1210,7 +1210,7 @@ def _one_belt_of(request: LabRequest, *, type_: ObjectiveType) -> LabRequest:
         unit=ObjectiveUnit.Belts,
         type=type_,
     )
-    return replace(request, belt_id="conveyor-belt-3", objectives=(objective,))
+    return replace(request, belt_rank_ids=["conveyor-belt-3"], objectives=(objective,))
 
 
 @pytest.mark.parametrize(

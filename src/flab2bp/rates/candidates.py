@@ -219,7 +219,7 @@ def _to_build_spec(
         if item_id not in solution.outputs
     }
 
-    belt_id = request.belt_id or "conveyor-belt-1"
+    belt_id = request.selected_belt_id(data) or "conveyor-belt-1"
     tiers = logistics_tiers_for_request(request, data)
     belt_upgrades = tuple(
         BeltTier(item_id=item_id, items_per_second=data.belt_speed(item_id))

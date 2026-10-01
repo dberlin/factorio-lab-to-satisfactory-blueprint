@@ -168,6 +168,7 @@ class _Lane:
     consumed_branches: tuple[Fraction, ...]
     produced_branches: tuple[Fraction, ...]
     branch_centres: tuple[float, ...]
+    pipe_takeoffs: tuple[tuple[float, SectionPort], ...] = ()
 
 
 class _Builder:
@@ -497,6 +498,35 @@ def _choose_lanes(
                 junction_rise = _port(registry, _JUNCTION, (1, 0, 0)).translation[0]
                 level = math.floor((lowest_output - junction_rise) / grid) * grid
         consumed_branches = _branch_rates(consumed, peers, "input")
+        pipe_takeoffs: tuple[tuple[float, SectionPort], ...] = ()
+        if kind == "pipe" and consumed and len(peers) > 1:
+            # Put the real pump below every section takeoff, not between a
+            # side branch and its source. Reserve each actual native junction.
+            pump_in = _port(registry, _PUMP, (-1, 0, 0), "input").translation[0]
+            pump_out = _port(registry, _PUMP, (1, 0, 0), "output").translation[0]
+            junction_rise = _port(registry, _JUNCTION, (1, 0, 0)).translation[0]
+            minimum = max(
+                definition.mesh_length_cm / 2 for definition in pipe_definitions
+                if definition.mesh_length_cm is not None
+            )
+            first_gap = 2 * junction_rise + pump_out - pump_in + minimum + _EPS
+            level = max(600.0, math.floor((min(p[2] for p in points) - first_gap) / grid) * grid)
+            first_takeoff = level + first_gap
+            pipe_takeoffs = tuple(
+                (
+                    _ceil(
+                        max(
+                            first_takeoff,
+                            point[2] + registry.limits.pipe_min_bend_radius_cm * 1.1 + _EPS,
+                        ),
+                        grid,
+                    ),
+                    port,
+                )
+                for port, point in sorted(
+                    zip(peers, points, strict=True), key=lambda pair: pair[1][2]
+                )
+            )
         produced_branches = _branch_rates(produced, peers, "output")
         branch_count = max(len(consumed_branches), len(produced_branches))
         branch_centres = tuple(
@@ -571,6 +601,9 @@ def _choose_lanes(
                     )
         else:
             body_poses = [(_JUNCTION, Pose(0, 0, level, 0, 90))]
+            body_poses.extend(
+                (_JUNCTION, Pose(0, 0, height, 0, 90)) for height, _ in pipe_takeoffs
+            )
             if consumed:
                 pump_z = (
                     level
@@ -592,6 +625,11 @@ def _choose_lanes(
                     (route_half, outward, level + route_half),
                 )
             )
+            for height, _ in pipe_takeoffs:
+                local_parts.append((
+                    (-route_half, side_offset, height - route_half),
+                    (route_half, outward, height + route_half),
+                ))
         rotated_parts = {
             yaw: [_box(Pose(0, 0, 0, yaw), low, high) for low, high in local_parts]
             for yaw in (0.0, 90.0, 180.0, 270.0)
@@ -742,6 +780,7 @@ def _choose_lanes(
                 consumed_branches,
                 produced_branches,
                 branch_centres,
+                pipe_takeoffs,
             )
         )
     return tuple(result)
@@ -1010,16 +1049,33 @@ def _pipe_lane(
             first=True,
         )
         builder.links.append(Link((junction.id, up.name), (pump.id, pump_in.name)))
+        previous = (pump.id, pump_out.name)
+        for height, peer in lane.pipe_takeoffs:
+            takeoff = PipeAttachmentObj(
+                next(builder.ids), _JUNCTION,
+                Pose(*_point(lane.pose, (0, 0, height)), lane.pose.yaw_deg, 90),
+            )
+            builder.pipe_attachments.append(takeoff)
+            pipe(
+                builder.at(previous)[0], builder.at((takeoff.id, down.name))[0],
+                source=previous, target=(takeoff.id, down.name),
+            )
+            builder.branches.append(SectionPort(
+                lane.item, peer.items_per_second, takeoff.id, side.name, "output", "pipe",
+                peer=(peer.object_id, peer.port),
+            ))
+            previous = (takeoff.id, up.name)
         _, top_end = pipe(
-            builder.at((pump.id, pump_out.name))[0],
-            upper,
-            source=(pump.id, pump_out.name),
-            last=True,
+            builder.at(previous)[0], upper, source=previous, last=True,
         )
-        required_head = max(0.0, max(inlet[2], lane.highest_local_input_cm) - bottom) / 100
-        builder.branches.append(
-            SectionPort(lane.item, lane.consumed, junction.id, side.name, "output", "pipe")
-        )
+        required_head = max(0.0, inlet[2] - bottom) / 100
+        if not lane.pipe_takeoffs:
+            required_head = max(
+                required_head, (lane.highest_local_input_cm - bottom) / 100,
+            )
+            builder.branches.append(
+                SectionPort(lane.item, lane.consumed, junction.id, side.name, "output", "pipe")
+            )
     else:
         collector = builder.at((junction.id, side.name))[0]
         if lane.lowest_local_output_cm is None or collector[2] > lane.lowest_local_output_cm + _EPS:
@@ -1091,8 +1147,10 @@ def _frame(
     low, high = placement_bounds(placement, registry)
     boxes = [(low, high), *(lane.bounds for lane in lanes)]
     half = placement.designer.half_cm
-    x0 = -half + math.floor((min(box[0][0] for box in boxes) + half) / side) * side
-    y0 = -half + math.floor((min(box[0][1] for box in boxes) + half) / depth) * depth
+    # Match _ceil's numerical guard: a rotated native corner infinitesimally
+    # below a tile edge must not add a whole extra foundation outside the floor.
+    x0 = -half + math.floor((min(box[0][0] for box in boxes) + half + 1e-6) / side) * side
+    y0 = -half + math.floor((min(box[0][1] for box in boxes) + half + 1e-6) / depth) * depth
     x1 = -half + _ceil(max(box[1][0] for box in boxes) + half, side)
     y1 = -half + _ceil(max(box[1][1] for box in boxes) + half, depth)
     if x0 < -half - _EPS or y0 < -half - _EPS or x1 > half + _EPS or y1 > half + _EPS:

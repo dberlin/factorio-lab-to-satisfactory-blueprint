@@ -9,9 +9,9 @@ from collections import defaultdict
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, replace
 from fractions import Fraction
-from itertools import count, product
+from itertools import count, permutations, product
 
-from flab2bp.sfy.geometry import Vector, box_bounds, port_forward, quat_rotate
+from flab2bp.sfy.geometry import Vector, box_bounds, port_forward, quat_rotate, world_port
 from flab2bp.sfy.labmap import LabMap, machine_class
 from flab2bp.sfy.layout.model import Link, PipeAttachmentObj, PipeRun, Pose, SfyPlacement, pipe_ends
 from flab2bp.sfy.layout.splines import (
@@ -343,6 +343,104 @@ class _Routes:
             and self.clear(_straight_box(start, finish, self.margin), obstacles)
         ):
             return start, finish
+        if not junctions and first_heading // 2 != last_heading // 2:
+            first_axis, last_axis = first_heading // 2, last_heading // 2
+            first_run = delta[first_axis] * _HEADINGS[first_heading][first_axis]
+            last_run = delta[last_axis] * _HEADINGS[last_heading][last_axis]
+            if first_run >= self.radius and last_run >= self.radius:
+                middle_axis = 3 - first_axis - last_axis
+                corner = _shift(start, _HEADINGS[first_heading], first_run)
+                if abs(delta[middle_axis]) <= _EPS:
+                    if (
+                        self.clear(_straight_box(start, corner, self.margin), obstacles)
+                        and self.clear(_straight_box(corner, finish, self.margin), obstacles)
+                        and self.clear_bend(corner, first_heading, last_heading, obstacles)
+                    ):
+                        return start, corner, finish
+                elif abs(delta[middle_axis]) >= 2 * self.radius:
+                    middle_heading = 2 * middle_axis + (delta[middle_axis] < 0)
+                    other = _shift(corner, _HEADINGS[middle_heading], abs(delta[middle_axis]))
+                    if (
+                        self.clear(_straight_box(start, corner, self.margin), obstacles)
+                        and self.clear(_straight_box(corner, other, self.margin), obstacles)
+                        and self.clear(_straight_box(other, finish, self.margin), obstacles)
+                        and self.clear_bend(corner, first_heading, middle_heading, obstacles)
+                        and self.clear_bend(other, middle_heading, last_heading, obstacles)
+                    ):
+                        return start, corner, other, finish
+        if not junctions:
+            # Escape both real mouths before crossing a congested production
+            # floor. Obstacle faces supply the intermediate plane; the coarse
+            # routing grid alone can miss the gap below the next support slab.
+            grid = self.registry.limits.hologram_grid_cm
+            assert grid is not None  # The constructor requires the native grid.
+            lead = math.ceil(2 * self.radius / grid) * grid
+            a = _shift(start, _HEADINGS[first_heading], lead)
+            b = _shift(finish, _HEADINGS[last_heading], -lead)
+            for axis in range(3):
+                if axis in (first_heading // 2, last_heading // 2):
+                    continue
+                planes = {
+                    a[axis] - 2 * self.radius, a[axis] + 2 * self.radius,
+                    b[axis] - 2 * self.radius, b[axis] + 2 * self.radius,
+                    *self.grid[axis],
+                    *(bound[axis] + sign * (self.margin + 2 * _EPS)
+                      for _, low, high in obstacles
+                      for bound, sign in ((low, -1), (high, 1))),
+                }
+                for plane in sorted(planes, key=lambda v: abs(v-a[axis]) + abs(v-b[axis])):
+                    self.check()
+                    if (
+                        axis == 2 and self.max_unpumped_z is not None
+                        and plane > self.max_unpumped_z
+                    ):
+                        continue
+                    for order in permutations(i for i in range(3) if i != axis):
+                        waypoints = [start, a]
+                        point = list(a)
+                        point[axis] = plane
+                        waypoints.append((point[0], point[1], point[2]))
+                        for i in order:
+                            point[i] = b[i]
+                            waypoints.append((point[0], point[1], point[2]))
+                        waypoints.extend((b, finish))
+                        path = tuple(
+                            p for i, p in enumerate(waypoints)
+                            if not i or math.dist(p, waypoints[i-1]) > _EPS
+                        )
+                        if (
+                            self.max_unpumped_z is not None
+                            and any(p[2] > self.max_unpumped_z + _EPS for p in path)
+                        ):
+                            continue
+                        if any(
+                            math.dist(p, q) < self.radius - _EPS
+                            for p, q in zip(path, path[1:], strict=False)
+                        ):
+                            continue
+                        headings = [
+                            _heading((q[0]-p[0], q[1]-p[1], q[2]-p[2]))
+                            for p, q in zip(path, path[1:], strict=False)
+                        ]
+                        if any(
+                            h // 2 == headings[i+1] // 2
+                            for i, h in enumerate(headings[:-1])
+                        ):
+                            continue
+                        if any(
+                            math.dist(p, q) < (self.radius if i in (0, len(headings)-1)
+                                              else 2 * self.radius) - _EPS
+                            for i, (p, q) in enumerate(zip(path, path[1:], strict=False))
+                        ):
+                            continue
+                        if all(
+                            self.clear(_straight_box(p, q, self.margin), obstacles)
+                            for p, q in zip(path, path[1:], strict=False)
+                        ) and all(
+                            self.clear_bend(path[i+1], h, headings[i+1], obstacles)
+                            for i, h in enumerate(headings[:-1])
+                        ):
+                            return path
         radius = self.junction_radius if junctions else self.radius
         minimum_pipe = min(
             definition.mesh_length_cm / 2
@@ -402,11 +500,11 @@ class _Routes:
             node, arrival = state
             here = position(node)
             if node == end and arrival == last_heading:
-                path = [here]
+                reverse_path = [here]
                 while state in parents:
                     state = parents[state]
-                    path.append(position(state[0]))
-                return tuple(reversed(path))
+                    reverse_path.append(position(state[0]))
+                return tuple(reversed(reverse_path))
             choices = (
                 (first_heading,)
                 if arrival < 0
@@ -550,10 +648,15 @@ class _Routes:
                 self._connect_curves(source, target, item, rate, path)
                 return
             curved: Sequence[Vector] | None = None
-            # Straight rises need no fitting. Bent height changes and
-            # reversals instead prefer the game's native four-way junctions.
+            # One planar corner is already a complete native-radius route.
+            # Multi-axis climbs and reversals may still benefit from fittings.
+            planar = sum(abs(start[i] - finish[i]) > _EPS for i in range(3)) <= 2
+            corner_axes = _heading(facing) // 2 != _heading(normal) // 2
             prefer_junctions = (
-                abs(start[2] - finish[2]) > _EPS and math.dist(start[:2], finish[:2]) > _EPS
+                abs(start[2] - finish[2]) > _EPS
+                and math.dist(start[:2], finish[:2]) > _EPS
+                and not planar
+                and not corner_axes
             ) or _heading(facing) == _heading(normal)
             if not prefer_junctions:
                 try:
@@ -562,18 +665,6 @@ class _Routes:
                     if exc.cause != "routing":
                         raise
                     prefer_junctions = True
-                else:
-                    headings = [
-                        _heading((b[0] - a[0], b[1] - a[1], b[2] - a[2]))
-                        for a, b in zip(curved, curved[1:], strict=False)
-                    ]
-                    prefer_junctions = len(headings) > 1 and (
-                        any(heading // 2 == 2 for heading in headings)
-                        or any(
-                            (heading ^ 1) in headings[:index]
-                            for index, heading in enumerate(headings)
-                        )
-                    )
             if prefer_junctions:
                 try:
                     self._connect_junctions(
@@ -754,18 +845,70 @@ class _Routes:
             self.obstacles.extend(_world_box(box) for box in pipe_chain(run, self.registry))
         self.links.append(Link(previous, target))
 
-    def branch_node(self, terminal: _Ref, item: str, rate: Fraction) -> PipeAttachmentObj:
+    def branch_node(
+        self, terminal: _Ref, item: str, rate: Fraction, rotation: Pose,
+        node_ceiling: float | None = None,
+    ) -> PipeAttachmentObj:
         definition = self.registry.buildables[_JUNCTION]
         branch = _pipe_port(definition, (0, 1, 0))
-        at, _ = self.at(terminal)
+        offset = world_port(rotation.transform(), branch)
+        facing = port_forward(rotation.transform(), branch)
+        at, normal = self.at(terminal)
+        # Fittings are continuous native geometry, not conveyor lattice nodes.
+        # Include the terminal's transverse/height phases and a forward native
+        # connector span, retaining usable bays in narrow outer corridors.
+        axes = tuple(
+            tuple(sorted({
+                *self.grid[i], at[i], at[i] - offset[i],
+                at[i] + normal[i] * (self.radius + 2 * _EPS),
+                at[i] + normal[i] * (2 * self.radius + 2 * _EPS),
+                at[i] + normal[i] * (self.junction_radius + 2 * self.radius),
+                at[i] + normal[i] * (3 * self.junction_radius + 2 * self.radius),
+            }))
+            for i in range(3)
+        )
+
+        def proximity(point: Vector) -> tuple[int, float]:
+            # Prefer forward endpoint headings with one or two monotone
+            # corners, not the nearest wrong-facing mouth requiring a reversal.
+            first_axis = _heading(normal) // 2
+            last_axis = _heading(facing) // 2
+            finish = tuple(point[i] + offset[i] for i in range(3))
+            rank = 3
+            if first_axis == last_axis:
+                transverse = all(
+                    abs(finish[i] - at[i]) <= _EPS for i in range(3) if i != first_axis
+                )
+                if (
+                    transverse and normal[first_axis] * facing[first_axis] < -0.999
+                    and (finish[first_axis] - at[first_axis]) * normal[first_axis] > 0
+                ):
+                    rank = 0
+            else:
+                middle_axis = 3 - first_axis - last_axis
+                first = (finish[first_axis] - at[first_axis]) * normal[first_axis]
+                last = (at[last_axis] - finish[last_axis]) * facing[last_axis]
+                middle = abs(finish[middle_axis] - at[middle_axis])
+                if first >= self.radius and last >= self.radius:
+                    if middle <= _EPS:
+                        rank = 1
+                    elif middle >= 2 * self.radius:
+                        rank = 2
+            return rank, sum(abs(point[i] - at[i]) for i in range(3))
+
         candidates = sorted(
-            product(*self.grid), key=lambda p: sum(abs(p[i] - at[i]) for i in range(3))
+            ((x, y, z) for x, y, z in product(*axes)), key=proximity
         )
         for point in candidates:
             self.check()
-            if self.max_unpumped_z is not None and point[2] > self.max_unpumped_z + _EPS:
+            ceiling = node_ceiling if node_ceiling is not None else self.max_unpumped_z
+            if ceiling is not None and point[2] > ceiling + _EPS:
                 continue
-            node = PipeAttachmentObj(next(self.ids), _JUNCTION, Pose(*point, 0))
+            node = PipeAttachmentObj(
+                next(self.ids), _JUNCTION,
+                Pose(point[0], point[1], point[2],
+                     rotation.yaw_deg, rotation.pitch_deg, rotation.roll_deg),
+            )
             boxes = [
                 (node.id, *box_bounds(box, node.pose.transform())) for box in definition.clearance
             ]
@@ -813,16 +956,19 @@ def connect_fluid_ports(
     definition = registry.buildables[_JUNCTION]
     left, right = _pipe_port(definition, (-1, 0, 0)), _pipe_port(definition, (1, 0, 0))
     for item, ports in sorted(groups.items()):
-        producer_heights = [
-            endpoint(placement, port.object_id, port.port, registry)[0][2]
+        producer_caps = {
+            (port.object_id, port.port): endpoint(
+                placement, port.object_id, port.port, registry
+            )[0][2]
             for section in sections
             for port in section.outputs
             if port.kind == "pipe" and port.item_id == item
-        ]
-        # These joins are upstream of the boundary pump. A factory output's
-        # unknown head cannot justify an upward loop, even if both endpoints
-        # ultimately sit lower; every route centreline stays below this cap.
-        routes.max_unpumped_z = min(producer_heights) if producer_heights else None
+        }
+        # Each source can descend from its own actual outlet elevation, but
+        # the shared gravity collector stays below every producer. No factory
+        # pressure or uphill head is inferred from a lower collector.
+        collector_ceiling = min(producer_caps.values()) if producer_caps else None
+        routes.max_unpumped_z = collector_ceiling
         sources = sum((p.items_per_second for p in ports if p.direction == "output"), Fraction())
         sinks = sum((p.items_per_second for p in ports if p.direction == "input"), Fraction())
         if not sources or not sinks or sources != sinks:
@@ -832,6 +978,29 @@ def connect_fluid_ports(
             )
         if len({(p.object_id, p.port) for p in ports}) != len(ports):
             raise SectionError(f"{item}: duplicate pipe interface", cause="balance")
+        by_ref = {(port.object_id, port.port): port for port in ports}
+        paired: set[tuple[int, str]] = set()
+        for boundary in ports:
+            if boundary.peer is None:
+                continue
+            peer = by_ref.get(boundary.peer)
+            if (
+                peer is None or peer.direction == boundary.direction
+                or peer.items_per_second != boundary.items_per_second
+                or boundary.peer in paired
+            ):
+                raise SectionError(
+                    f"{item}: invalid allocated native stack takeoff", cause="balance"
+                )
+            routes.max_unpumped_z = producer_caps.get(boundary.peer)
+            routes.connect(
+                boundary.peer, (boundary.object_id, boundary.port), item,
+                boundary.items_per_second,
+            )
+            paired.update((boundary.peer, (boundary.object_id, boundary.port)))
+        ports = [port for port in ports if (port.object_id, port.port) not in paired]
+        if not ports:
+            continue
         if len(ports) == 2:
             routes.connect(
                 (ports[0].object_id, ports[0].port),
@@ -840,7 +1009,32 @@ def connect_fluid_ports(
                 sources,
             )
             continue
-        nodes = [routes.branch_node((p.object_id, p.port), item, p.items_per_second) for p in ports]
+        positions = [
+            endpoint(placement, port.object_id, port.port, registry)[0] for port in ports
+        ]
+        axis = max(
+            range(2 if producer_caps else 3),
+            key=lambda i: max(point[i] for point in positions) - min(
+                point[i] for point in positions
+            )
+        )
+        rotation = (
+            Pose(0, 0, 0, 0) if axis == 0
+            else Pose(0, 0, 0, 90) if axis == 1
+            else Pose(0, 0, 0, 0, 90)
+        )
+        ordered = sorted(zip(ports, positions, strict=True), key=lambda entry: entry[1][axis])
+        ports = [port for port, _ in ordered]
+        nodes = []
+        for port in ports:
+            routes.max_unpumped_z = producer_caps.get(
+                (port.object_id, port.port), collector_ceiling
+            )
+            nodes.append(routes.branch_node(
+                (port.object_id, port.port), item, port.items_per_second,
+                rotation, collector_ceiling,
+            ))
+        routes.max_unpumped_z = collector_ceiling
         running = Fraction()
         for index, (port, node) in enumerate(zip(ports, nodes, strict=True)):
             running += port.items_per_second * (1 if port.direction == "output" else -1)

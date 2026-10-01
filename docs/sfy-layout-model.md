@@ -36,11 +36,15 @@ reserve the minimum belt/lift escape, not a compulsory turning splitter.
 Physical transport envelopes and slab thickness determine floor separation;
 the roof clears the complete measured geometry without an extra empty aisle.
 
-`sections/fluids.py` builds separate side manifolds for supported mixed recipes.
+`sections/fluids.py` builds separate material networks for supported mixed recipes.
 Pipes carry m³/s in the model (reports use m³/min); solid belts carry items/s.
 Recipe-order port assignment retains fluid byproducts, including heavy-oil
-residue from plastic. Available ports, their facing, funded transport tiers,
-routing room and hydraulic constraints still bound support.
+residue from plastic. Wide fluid groups may use opposing columns: individual
+raised feeds enter real downward-facing junction ports on flat side-by-side
+manifolds, exposing each section's aggregate input demand. Native pipe chords,
+bend radii and funded capacities still apply to those local joins.
+Available ports, their facing, routing room and hydraulic constraints still
+bound support.
 
 Fluid rows reserve native hard footprints and actual transport connector spans,
 not an extra walking aisle between machines. Four refineries use 1000 cm pitch
@@ -56,6 +60,24 @@ Near an obstacle, curved turns use the validator's sampled native mesh envelope
 instead of treating the inflated virtual elbow's empty corners as solid.
 Terminal candidates include one-radius legs as well as two-radius interiors.
 Final collision validation is unchanged.
+
+`sections/compact.py` composes the supported six-blender mixed-output family
+as two complete three-machine floors. `powered_outputs.py` places a real native
+Mk2 pump at each fluid source elevation, then joins source-backed collectors
+above the solid conveyor decks. Native flat junctions fit below the next support
+slab; complete source elbows, risers and caps reserve occupied transport envelopes
+in both transverse axes. `compact_solids.py` uses genuine machine lifts, one
+merger per floor and connected export headers, keeping conveyor mesh clear of
+the casing. Both outputs have separate downward continuations.
+
+Machine supports cover each complete transformed hard footprint, including
+rotation tails, with real native slabs. Aligned roof/base holes and a native
+manual lift seam determine the repeat pitch. The verified 600 m³/min Rocket Fuel
+module fits Mk2 with six 100% blenders, a 39.25 m repeat pitch and 4 m manual
+connection gap; its actual inputs are 360 m³/min Turbofuel and 60 m³/min Nitric Acid,
+and its solid coproduct is 60/min Compacted Coal. Available Input/Limit stock
+does not force excess material through the module. Stacked aggregate rates still
+must fit the reported native trunk capacities.
 
 Routing prefers native four-way junctions for U-turns and bent elevation changes,
 and tries them when rounded-pipe search cannot find a route. Junctions rotate

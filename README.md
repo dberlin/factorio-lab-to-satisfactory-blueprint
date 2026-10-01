@@ -22,6 +22,13 @@ uv run flab2bp 'https://factoriolab.github.io/sfy/list?o=iron-plate*60&v=11' \
   --flow path/to/export.csv --designer mk3 -o out/plates
 ```
 
+FactorioLab URL encodings **v11 and v12** are supported, both as readable query
+parameters and compressed `z=` links. In v12, `ibe` ranks belts and pipelines
+together and `icw` ranks cargo and fluid wagons together. Belt and pipeline
+selection uses the first matching entry. V11's separate selections are migrated
+on import. Objectives, recipe exclusions and the original URL/version are
+preserved, including Input, Limit and Maximize objectives.
+
 Satisfactory defaults to `sections`, its only production planner, with one layout
 budget. The CLI and web API reject the former `best`, `manifold-rows` and
 `grid-routed` Satisfactory choices rather than translating or falling back.
@@ -304,8 +311,12 @@ designer buildable, and defaults to `mk1`.
 
 `--strategy` accepts only `sections` (the default). Solid recipe groups use
 opposing machine rows, or one longer row when opposing bodies are too deep for
-the designer. Supported mixed-material groups add separate pipe manifolds and
-retain every ingredient and product, including fluid byproducts.
+the designer. Supported mixed-material groups add independent pipe networks and
+retain every ingredient and product, including fluid byproducts. Wide fluid
+groups can use compact opposing columns with flat, independently rated input
+manifolds. Six-blender groups with fluid ingredients and one fluid/solid output
+pair use two three-machine floors, native source-level output pumps and separate
+solid collectors; both output networks drain to the bottom.
 Exact machine clocks, fractional last machines and transport-tier ceilings
 are preserved. Each external input has an upward pass-through lane; each export
 has a separate downward collector ending at the bottom. Conveyor stack lanes use
@@ -313,6 +324,14 @@ the lowest available tier carrying this module's local demand/export, not the
 available upgrade ceiling or the URL's selected `ibe` tier. Inter-section lifts
 are sized for the busiest routed stream. Combined flow from stacked copies must
 remain within the reported trunk capacities.
+
+FactorioLab **Input** and **Limit** objectives describe available supply, not
+mandatory blueprint throughput. They remain in the original URL and influence
+FactorioLab's solve. The blueprint imports only the selected recipes' actual net
+demand, and refuses insufficient availability instead of changing recipes or
+clocks. For example, six 100% Rocket Fuel blenders produce 600 m³/min Rocket Fuel
+and 60/min Compacted Coal using 360 m³/min Turbofuel and 60 m³/min Nitric Acid,
+even when each Input objective makes 1000 m³/min available.
 
 Whole sections are composed by material dependency, keeping consumers above
 their producers while allowing independent recipe sections to share a floor.
@@ -325,8 +344,10 @@ Each material lane gets native paired signs at both physical ends: an INPUT/OUTP
 header, a stable lane letter, and the material's local per-module rate (items/min
 or m³/min). Bottom signs label local input or output; upper continuation ends say PASS THROUGH
 instead of claiming an unknown stacked rate. Orange-on-black SmallWide signs
-mount on short painted beams along the front (+X) frame, above the base or hanging
-beneath the roof. Placement checks the whole text face's view toward the front,
+mount on short painted beams along the front (+X) frame. Upper pairs prefer
+hanging beneath the roof; when obstructed, they may stand above the roof rail
+if the complete signs and supports fit inside the selected designer.
+Placement checks the whole text face's view toward the front,
 so lifts cannot hide the words. Signs add Iron Plates and Quartz Crystals to the
 construction cost; their supports add Steel Beams. Missing clear mounting space
 is an explicit refusal.
@@ -362,8 +383,12 @@ FactorioLab **Input** and **Limit** objectives are accepted and skipped when ide
 blueprint outputs. They remain in the URL, so FactorioLab can use them to constrain its
 recipe selection. **Output** and **Maximize** item objectives export the achieved net
 rate from the solved flow, after internal consumption—not the Maximize objective's
-weight. Required input connections and rates also come from the solved flow, not the
-Input or Limit amounts; recipes and machine counts are not re-solved.
+weight. **Input is available supply, not mandatory throughput:** required boundary
+rates are the selected recipes' consumption plus exports, minus all production inside
+the blueprint, including coproducts. Only that net demand is imported; unused supplied
+stock stays outside and is not exported as surplus. If the CSV makes less than the
+required input available, the build refuses with the item and exact rates. Recipes,
+machine counts and clocks are not re-solved or changed to make the supply fit.
 
 Supported solid-production families include constructors, assemblers,
 manufacturers, smelters and foundries; supported mixed recipes include refinery

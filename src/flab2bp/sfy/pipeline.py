@@ -264,7 +264,7 @@ def build(
             data, request, selection, registry(), lab_map(), label=_label(request)
         )
     except RatesRefusal as exc:
-        raise SpecInfeasible(exc.cause, item=_label(request)) from exc
+        raise SpecInfeasible(str(exc), item=_label(request)) from exc
 
     mark = designer_for_mark(designer, registry())
     # Load shared data before starting the single layout deadline.

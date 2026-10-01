@@ -58,7 +58,7 @@ class TestExampleUrl:
         assert obj.fuel_id is None
 
     def test_belt(self, req: LabRequest) -> None:
-        assert req.belt_id == "conveyor-belt-2"
+        assert req.belt_rank_ids == ["conveyor-belt-2"]
 
     def test_machine_rank(self, req: LabRequest) -> None:
         assert req.machine_rank_ids == [
@@ -301,7 +301,7 @@ class TestCompressedUrls:
         assert bare.is_bare is True
         assert zipped.objectives[0].target_id == bare.objectives[0].target_id
         assert zipped.objectives[0].value == bare.objectives[0].value
-        assert zipped.belt_id == bare.belt_id
+        assert zipped.belt_rank_ids == bare.belt_rank_ids
         assert zipped.machine_rank_ids == bare.machine_rank_ids
         assert zipped.proliferator_spray_id == bare.proliferator_spray_id
 
@@ -311,7 +311,6 @@ class TestCompressedUrls:
         url = f"https://factoriolab.github.io/dsp/flow?z={P.deflate(inner)}&v=11"
         req = parse_url(url)
         assert req.objectives[0].target_id == ""
-        assert req.belt_id is None
 
     def test_hash_encoded_ids_are_resolved(self) -> None:
         """Inside `z=`, ids are base-64 indices into hash.json."""
@@ -325,7 +324,7 @@ class TestCompressedUrls:
         url = f"https://factoriolab.github.io/dsp/flow?z={P.deflate(inner)}&v=11"
         req = parse_url(url)
         assert req.objectives[0].target_id == "super-magnetic-ring"
-        assert req.belt_id == "conveyor-belt-2"
+        assert req.belt_rank_ids == ["conveyor-belt-2"]
         assert req.machine_rank_ids == ["arc-smelter", "assembling-machine-2"]
 
     def test_hash_recipe_objective_resolves_against_recipes(self) -> None:
@@ -356,6 +355,55 @@ class TestCompressedUrls:
         assert parse_url(url).objectives[0].value == Fraction(10)
 
 
+class TestV12Urls:
+    def test_rocket_fuel_url_preserves_inputs_and_recipe_exclusions(self) -> None:
+        url = (
+            "https://factoriolab.github.io/sfy/list?o=rocket-fuel*850"
+            "&o=turbofuel*1000**1&o=nitric-acid*1000**1&rex=Dr~Ds&v=12"
+        )
+        req = parse_url(url)
+        assert [(o.target_id, o.value, o.type) for o in req.objectives] == [
+            ("rocket-fuel", Fraction(850), ObjectiveType.Output),
+            ("turbofuel", Fraction(1000), ObjectiveType.Input),
+            ("nitric-acid", Fraction(1000), ObjectiveType.Input),
+        ]
+        assert req.excluded_recipe_ids == {"coal-sulfur", "iron-ore-sulfur"}
+        assert req.zip_version == "12"
+        assert req.source_url == url
+
+    @pytest.mark.parametrize("compressed", [False, True], ids=["bare", "compressed"])
+    @pytest.mark.parametrize("version", ["11", "12"])
+    def test_transport_ranks_preserve_order_across_encodings(
+        self, compressed: bool, version: str
+    ) -> None:
+        mh = P.load_mod_hash("sfy")
+        item = "iron-plate"
+        belts = ["pipeline-mk2", "conveyor-belt-mk3", "conveyor-belt-mk1"]
+        wagons = ["freight-car"]
+        if version == "11":
+            belts = ["conveyor-belt-mk3", "pipeline-mk2"]
+        if compressed:
+            item = P.n_to_id(mh.items.index(item))
+            belts = [P.n_to_id(mh.belts.index(b)) for b in belts]
+            wagons = [P.n_to_id(mh.wagons.index(w)) for w in wagons]
+        if version == "11":
+            transport = f"ibe={belts[0]}&ipi={belts[1]}&icw={wagons[0]}&ifw={wagons[0]}"
+        else:
+            transport = f"ibe={'~'.join(belts)}&icw={wagons[0]}~{wagons[0]}"
+        query = f"o={item}*60&{transport}&v={version}"
+        if compressed:
+            query = f"z={P.deflate(query)}&v={version}"
+        req = parse_url(f"https://factoriolab.github.io/sfy/list?{query}")
+        assert req.belt_rank_ids == (
+            ["conveyor-belt-mk3", "pipeline-mk2"]
+            if version == "11"
+            else ["pipeline-mk2", "conveyor-belt-mk3", "conveyor-belt-mk1"]
+        )
+        assert req.wagon_rank_ids == ["freight-car", "freight-car"]
+        assert req.objectives[0].target_id == "iron-plate"
+        assert req.zip_version == version
+
+
 class TestPercentDecoding:
     def test_bare_params_are_percent_decoded(self) -> None:
         """`Migration.migrate` decodeURIComponent's bare params."""
@@ -379,7 +427,7 @@ class TestErrors:
         assert "'0'" in str(exc.value)
 
     def test_future_version_rejected(self) -> None:
-        url = "https://factoriolab.github.io/dsp/list?o=iron-ingot*1&v=12"
+        url = "https://factoriolab.github.io/dsp/list?o=iron-ingot*1&v=13"
         with pytest.raises(UnsupportedZipVersionError):
             parse_url(url)
 
@@ -406,7 +454,7 @@ class TestImmutability:
     def test_request_is_frozen(self) -> None:
         req = parse_url(EXAMPLE)
         with pytest.raises(AttributeError):
-            req.belt_id = "conveyor-belt-3"  # type: ignore[misc]
+            req.belt_rank_ids = ["conveyor-belt-3"]  # type: ignore[misc]
 
     def test_objective_is_frozen(self) -> None:
         obj = parse_url(EXAMPLE).objectives[0]

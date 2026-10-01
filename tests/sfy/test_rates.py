@@ -176,6 +176,139 @@ def test_constraints_do_not_replace_flow_inputs_or_selected_recipes(
     assert group.last_clock == Fraction(4, 5)
 
 
+def test_available_inputs_only_fund_actual_rocket_fuel_demand() -> None:
+    spec = _spec("rocket-fuel-600-inputs-v12")
+    # Recipe: 6 turbofuel + 1 nitric acid -> 10 rocket fuel + 1 coal
+    # per 6 seconds. Six machines consume 360 and 60 per minute,
+    # not the 1000/min available for each Input.
+    assert spec.external_inputs == {
+        "turbofuel": Fraction(6),
+        "nitric-acid": Fraction(1),
+    }
+    assert spec.outputs == {"rocket-fuel": Fraction(10)}
+    assert spec.surplus_outputs == {"compacted-coal": Fraction(1)}
+    (group,) = spec.groups
+    assert group.count == 6
+    assert group.clock == 1
+    assert group.last_clock == 1
+
+
+@pytest.mark.parametrize(
+    ("item", "available", "required"),
+    [
+        ("turbofuel", Fraction(359), Fraction(6)),
+        ("nitric-acid", Fraction(59), Fraction(1)),
+    ],
+)
+def test_insufficient_available_input_refuses_without_changing_production(
+    item: str, available: Fraction, required: Fraction
+) -> None:
+    name = "rocket-fuel-600-inputs-v12"
+    flow = load_flow(FLOWS / f"{name}.csv", url=_url(name))
+    rows = tuple(replace(row, items=available) if row.item_id == item else row for row in flow.rows)
+    with pytest.raises(RatesRefusal) as caught:
+        _spec_from_rows(name, rows)
+    assert caught.value.cause == "insufficient flow input"
+    assert item in str(caught.value)
+    assert f"{required}/s" in str(caught.value)
+    assert f"{available / 60}/s" in str(caught.value)
+
+
+@pytest.mark.parametrize("spare", [None, Fraction(1000)])
+def test_unused_available_input_does_not_create_a_boundary_or_surplus(
+    spare: Fraction | None,
+) -> None:
+    name = "rocket-fuel-600-inputs-v12"
+    flow = load_flow(FLOWS / f"{name}.csv", url=_url(name))
+    spec = _spec_from_rows(
+        name,
+        (*flow.rows, FlowRow(item_id="iron-ore", items=Fraction(1000), surplus=spare)),
+    )
+    assert spec.external_inputs == {
+        "turbofuel": Fraction(6),
+        "nitric-acid": Fraction(1),
+    }
+    assert spec.surplus_outputs == {"compacted-coal": Fraction(1)}
+
+
+def test_requested_export_is_not_dropped_when_an_available_input_is_clipped() -> None:
+    name = "rocket-fuel-600-inputs-v12"
+    flow = load_flow(FLOWS / f"{name}.csv", url=_url(name))
+    request = parse_url(_url(name))
+    request = replace(
+        request,
+        objectives=(
+            *request.objectives,
+            Objective(id="ore-export", target_id="iron-ore", value=Fraction(60)),
+        ),
+    )
+    flow = replace(
+        flow, rows=(*flow.rows, FlowRow(item_id="iron-ore", items=Fraction(60)))
+    )
+    spec = spec_from_flow(
+        load_vendored(Game.SFY), request, flow, load_registry(), load_lab_map()
+    )
+    assert spec.outputs == {"rocket-fuel": Fraction(10), "iron-ore": Fraction(1)}
+    assert spec.external_inputs == {
+        "turbofuel": Fraction(6),
+        "nitric-acid": Fraction(1),
+        "iron-ore": Fraction(1),
+    }
+
+
+@pytest.mark.parametrize(
+    ("residue", "machines", "coke", "external"),
+    [
+        (Fraction(10), Fraction(1, 4), Fraction(30), {"crude-oil": Fraction(1, 2)}),
+        (
+            Fraction(15),
+            Fraction(3, 8),
+            Fraction(45),
+            {"crude-oil": Fraction(1, 2), "heavy-oil-residue": Fraction(1, 12)},
+        ),
+    ],
+)
+def test_consumed_coproduct_only_imports_its_net_deficit(
+    residue: Fraction, machines: Fraction, coke: Fraction, external: dict[str, Fraction]
+) -> None:
+    flow = load_flow(FLOWS / "plastic-20.csv", url=_url("plastic-20"))
+    rows = tuple(
+        replace(row, items=residue, surplus=None)
+        if row.item_id == "heavy-oil-residue"
+        else row
+        for row in flow.rows
+    )
+    # Plastic supplies 10 residue/min; only consumption above that is imported.
+    rows += (
+        FlowRow(
+            item_id="petroleum-coke",
+            items=Fraction(0),
+            surplus=coke,
+            recipe_id="petroleum-coke",
+            machines=machines,
+            machine_item_id="refinery",
+        ),
+    )
+    spec = _spec_from_rows("plastic-20", rows)
+    assert spec.external_inputs == external
+    assert spec.outputs == {"plastic": Fraction(1, 3)}
+    assert spec.surplus_outputs == {"petroleum-coke": coke / 60}
+
+
+def test_excess_extraction_only_imports_the_consumed_ore() -> None:
+    flow = load_flow(FLOWS / "iron-plate-60.csv", url=_url("iron-plate-60"))
+    rows = tuple(
+        replace(row, items=Fraction(120), surplus=Fraction(30))
+        if row.recipe_id == "iron-ore"
+        else row
+        for row in flow.rows
+    )
+    spec = _spec_from_rows("iron-plate-60", rows)
+    assert spec.external_inputs == {"iron-ore": Fraction(3, 2)}
+    assert spec.outputs == {"iron-plate": Fraction(1)}
+    assert spec.surplus_outputs == {}
+
+
 def test_maximize_exports_achieved_net_rate_not_objective_weight() -> None:
     name = "wire-120-cable-60"
     request = parse_url(_url(name))
@@ -273,6 +406,52 @@ def test_pipe_options_stop_at_the_dataset_ceiling() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    "rank, belt, speed, pipes",
+    [
+        (
+            "pipeline-mk2~conveyor-belt-mk3~conveyor-belt-mk1~pipeline-mk1",
+            "conveyor-belt-mk3",
+            Fraction(9, 2),
+            [("pipeline-mk2", Fraction(10))],
+        ),
+        (
+            "conveyor-belt-mk2",
+            "conveyor-belt-mk2",
+            Fraction(2),
+            [("pipeline-mk1", Fraction(5)), ("pipeline-mk2", Fraction(10))],
+        ),
+        (
+            "pipeline-mk2",
+            "conveyor-belt-mk1",
+            Fraction(1),
+            [("pipeline-mk2", Fraction(10))],
+        ),
+        (
+            "_",
+            "conveyor-belt-mk1",
+            Fraction(1),
+            [("pipeline-mk1", Fraction(5)), ("pipeline-mk2", Fraction(10))],
+        ),
+    ],
+)
+def test_v12_transport_rank_selects_each_type_independently(
+    rank: str, belt: str, speed: Fraction, pipes: list[tuple[str, Fraction]]
+) -> None:
+    url = _url("plastic-20")
+    request = parse_url(url.replace("v=11", "v=12") + f"&ibe={rank}")
+    spec = spec_from_flow(
+        load_vendored(Game.SFY),
+        request,
+        load_flow(FLOWS / "plastic-20.csv", url=url),
+        load_registry(),
+        load_lab_map(),
+    )
+    assert spec.belt_item_id == belt
+    assert spec.belt_items_per_second == speed
+    assert [(t.item_id, t.cubic_metres_per_second) for t in spec.pipe_tiers] == pipes
+
+
 def _spec_from_rows(name: str, rows: tuple[FlowRow, ...]) -> SfyBuildSpec:
     """Build a spec from a fixture flow with its rows edited.
 
@@ -309,12 +488,13 @@ def test_a_miners_spare_ore_is_not_something_the_build_has_to_belt_out() -> None
     spec = _spec_from_rows("iron-plate-60", rows)
     assert spec.surplus_outputs == {}
 
-    # A byproduct row inside the build IS carried out, so the cut above is
-    # about extraction and not about surpluses in general.  This is the shape
-    # `heavy-oil-residue` really has in the plastic-10 fixture: an item nothing
-    # draws on, with no recipe of its own.
+    # A reported product with neither a producer nor an available source must
+    # not be fabricated by boundary reconciliation.
     byproduct = (*flow.rows, FlowRow(item_id="screw", items=Fraction(0), surplus=Fraction(30)))
-    assert _spec_from_rows("iron-plate-60", byproduct).surplus_outputs == {"screw": Fraction(1, 2)}
+    with pytest.raises(RatesRefusal) as caught:
+        _spec_from_rows("iron-plate-60", byproduct)
+    assert caught.value.cause == "insufficient flow input"
+    assert "screw" in str(caught.value)
 
 
 def test_an_item_the_dataset_does_not_carry_is_refused() -> None:

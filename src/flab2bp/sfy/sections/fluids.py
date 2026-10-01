@@ -13,7 +13,7 @@ from dataclasses import replace
 from fractions import Fraction
 from typing import Literal
 
-from flab2bp.sfy.geometry import Vector, port_forward, world_port
+from flab2bp.sfy.geometry import Vector, box_bounds, port_forward, world_port
 from flab2bp.sfy.labmap import LabMap, item_class, machine_class
 from flab2bp.sfy.layout.corridors import attachment_box_cm
 from flab2bp.sfy.layout.manifold import (
@@ -25,11 +25,14 @@ from flab2bp.sfy.layout.manifold import (
 )
 from flab2bp.sfy.layout.model import (
     AttachmentObj,
+    BeltRun,
+    LiftObj,
     Link,
     MachineObj,
     PipeAttachmentObj,
     PipeRun,
     Pose,
+    belt_ends,
 )
 from flab2bp.sfy.layout.splines import (
     QUARTER_TURN_TANGENT,
@@ -40,7 +43,7 @@ from flab2bp.sfy.layout.splines import (
 )
 from flab2bp.sfy.layout.validate import attachment_boxes
 from flab2bp.sfy.registry import Buildable, Port, Registry
-from flab2bp.sfy.sections.construction import _attachment_port, _Construction
+from flab2bp.sfy.sections.construction import Connection, _attachment_port, _Construction
 from flab2bp.sfy.sections.model import (
     ProductionSection,
     SectionError,
@@ -176,6 +179,500 @@ def _raised_branch(
     if remaining > 0.01:
         pieces.append(straight(d, heading, remaining))
     return concat(*pieces)
+
+
+def build_compact_fluid_section(
+    group: SfyMachineGroup,
+    designer: Designer,
+    registry: Registry,
+    lab_map: LabMap,
+    *,
+    belt_tiers: Sequence[BeltTier],
+    pipe_tiers: Sequence[PipeTier],
+    fluid_items: Set[str],
+    ids: Iterator[int],
+    deadline: float,
+    centres: Sequence[tuple[float, float]] | None = None,
+    include_solids: bool = True,
+    junction_outputs: bool = True,
+) -> ProductionSection:
+    """Opposing columns with independently rated native local feed manifolds.
+
+    Raised input branches join separate flat manifolds above the lower machine
+    bodies. Only their aggregate interfaces are handed to the section router.
+    """
+    if centres is not None and len(centres) != group.count:
+        raise SectionError("compact centres must match the actual machine count", cause="data")
+    build = _Construction(registry, lab_map, belt_tiers, ids, deadline)
+    build.check_deadline()
+    machine = registry.buildables[group.machine_class]
+    materials = _materials(group, machine, registry, lab_map, fluid_items)
+    bodies = tuple(
+        box_bounds(box, Pose(0, 0, 0, 0).transform())
+        for box in machine.clearance
+        if not box.soft
+    )
+    grid = registry.limits.hologram_grid_cm
+    if grid is None:
+        raise SectionError("registry lacks compact section snap geometry", cause="data")
+    x0, y0, x1, y1 = hard_footprint_cm(machine)
+    # Opposing columns leave a pipe-width corridor; shared junctions can rise
+    # above the wider lower machine bodies. Use an even grid pitch so both
+    # column anchors keep the same snap phase at the designer's walls.
+    column_pitch = grid_ceil((y1 - y0 + 2 * grid) / 2, grid) * 2
+    row_pitch = grid_ceil(x1 - x0 + 2 * grid, grid)
+    rows = (group.count + 1) // 2
+    stand = slab_top_cm(registry)
+    pipes: list[PipeRun] = []
+    nodes: list[PipeAttachmentObj] = []
+    feeds: dict[str, list[tuple[PipeAttachmentObj, Fraction]]] = {}
+    inputs: list[SectionPort] = []
+    outputs: list[SectionPort] = []
+    definitions: dict[str, Buildable] = {}
+    lead = 0.0
+    tiers = sorted(pipe_tiers, key=lambda tier: tier.cubic_metres_per_second)
+    for item, port, direction in materials:
+        if port.kind != "pipe":
+            continue
+        required = (
+            group.row_inputs[item]
+            if direction == "input"
+            else group.outputs_per_machine[item]
+        )
+        tier = next(
+            (
+                tier
+                for tier in tiers
+                if tier.cubic_metres_per_second >= required
+            ),
+            None,
+        )
+        if tier is None:
+            raise SectionError(f"{item}: no pipe carries the section demand", cause="capacity")
+        base = machine_class(lab_map, tier.item_id)
+        cls = _NO_INDICATOR.get(base)
+        if cls is None or cls not in registry.buildables:
+            raise SectionError(
+                f"unsupported no-indicator pipeline family {base}", cause="unsupported"
+            )
+        definition = registry.buildables[cls]
+        if definition.mesh_length_cm is None or definition.mesh_bounds_cm is None:
+            raise SectionError(f"{cls}: missing native pipe geometry", cause="data")
+        capacity = definition.pipe_flow_limit_m3s
+        if capacity is None:
+            raise SectionError(f"{cls}: missing native hydraulic capacity", cause="data")
+        if required > Fraction(str(capacity)):
+            raise SectionError(f"{item}: section exceeds {cls} capacity", cause="capacity")
+        definitions[item] = definition
+        # Leave a small native-grid fraction beyond the minimum mesh chord:
+        # a following curved mesh needs real room beside the factory face.
+        lead = max(lead, definition.mesh_length_cm / 2 + grid / 5)
+    # A factory output supplies no assumed head. Keep its lead high enough to
+    # descend into the existing stack collector's first legal pump inlet.
+    junction = registry.buildables[_JUNCTION]
+    left, right = _pipe_port(junction, (-1, 0, 0)), _pipe_port(junction, (1, 0, 0))
+    first_inlet = grid_ceil(stand / 2 + lead + right.translation[0] - left.translation[0], grid)
+    for _, port, direction in materials:
+        if port.kind == "pipe" and direction == "output":
+            # Support slabs are authored at the machine's actual foot plane;
+            # only the pump inlet needs the logistics grid phase. Rounding the
+            # stand again would add empty height without buying hydraulic head.
+            stand = max(stand, first_inlet - port.translation[2])
+    feed_materials = [
+        item for item, port, direction in materials
+        if port.kind == "pipe" and direction == "input"
+    ]
+    # Side-by-side flat manifolds keep every factory riser in the central
+    # corridor. Layered manifolds instead cross the other material's risers.
+    feed_layouts: dict[str, tuple[Pose, Port, Port, Port]] = {}
+    feed_planes: dict[str, float] = {}
+    for index, item in enumerate(feed_materials):
+        definition = definitions[item]
+        assert definition.mesh_bounds_cm is not None
+        pipe_radius = max(abs(v) for bound in definition.mesh_bounds_cm for v in bound[1:])
+        side = 1 if index % 2 == 0 else -1
+        feed_layouts[item] = (
+            Pose(
+                side * (index // 2 + 1) * grid_ceil(2 * pipe_radius + grid / 2, grid),
+                0, 0, side * 90,
+            ),
+            _pipe_port(junction, (0, 1, 0)),
+            _pipe_port(junction, (-side, 0, 0)),
+            _pipe_port(junction, (side, 0, 0)),
+        )
+        pose = feed_layouts[item][0]
+        node_boxes = [box_bounds(box, pose.transform()) for box in junction.clearance]
+        x_low = min(low[0] for low, _ in node_boxes)
+        x_high = max(high[0] for _, high in node_boxes)
+        under = [
+            high[2]
+            for column in (-1, 1)
+            for box in machine.clearance if not box.soft
+            for low, high in (box_bounds(
+                box, Pose(column * column_pitch / 2, 0, stand, -column * 90).transform()
+            ),)
+            if low[0] < x_high and high[0] > x_low
+        ]
+        bottom = min(low[2] for low, _ in node_boxes)
+        feed_planes[item] = grid_ceil(max(under, default=stand) - bottom + 1e-6, grid)
+    for index in range(group.count):
+        row, column = divmod(index, 2)
+        x, y = (
+            centres[index] if centres is not None else (
+                (-1 if column == 0 else 1) * column_pitch / 2,
+                (row - (rows - 1) / 2) * row_pitch,
+            )
+        )
+        actor = MachineObj(
+            next(ids),
+            group.machine_class,
+            Pose(
+                x,
+                y,
+                stand,
+                90 if column == 0 else -90,
+            ),
+            group.recipe_class,
+            group.clock if index < group.count - 1 else group.last_clock,
+            group.somersloops,
+        )
+        build.machines.append(actor)
+        for item, port, direction in materials:
+            if port.kind == "belt" and not include_solids:
+                continue
+            rate = (
+                group.inputs_per_machine if direction == "input" else group.outputs_per_machine
+            )[item] * actor.clock / group.clock
+            object_id, name = actor.id, port.name
+            position, normal = _at(actor, port)
+            lower_top = max(
+                (
+                    high[2]
+                    for low, high in bodies
+                    if all(low[i] <= port.translation[i] <= high[i] for i in range(3))
+                ),
+                default=port.translation[2],
+            )
+            if port.kind == "pipe":
+                definition = definitions[item]
+                assert definition.mesh_length_cm is not None
+                points = straight(position, normal, lead)
+                if direction == "input":
+                    # Bring the feed up through the clear central corridor
+                    # before asking the shared router to place a junction. A
+                    # junction body cannot fit between the lower factory boxes.
+                    radius = registry.limits.pipe_min_bend_radius_cm * 1.1
+                    vertical: Vector = (0, 0, 1)
+                    start = _shift(position, normal, lead)
+                    finish = _shift(_shift(start, normal, radius), vertical, radius)
+                    pull = radius * QUARTER_TURN_TANGENT
+                    arc = (
+                        (start, normal, _shift((0, 0, 0), normal, pull)),
+                        (finish, _shift((0, 0, 0), vertical, pull), vertical),
+                    )
+                    top = max(
+                        feed_planes[item],
+                        grid_ceil(finish[2] + definition.mesh_length_cm / 2 + radius, grid),
+                    )
+                    feed_pose, inlet, _, _ = feed_layouts[item]
+                    # Rise in the central gap, then enter the flat manifold.
+                    heading = (math.copysign(1, feed_pose.x), 0.0, 0.0)
+                    end = (
+                        world_port(feed_pose.transform(), inlet)[0],
+                        finish[1],
+                        top,
+                    )
+                    turn_start = (finish[0], finish[1], end[2] - radius)
+                    turn_finish = _shift(turn_start, heading, radius)
+                    turn_finish = (turn_finish[0], turn_finish[1], end[2])
+                    turn = (
+                        (turn_start, vertical, _shift((0, 0, 0), vertical, pull)),
+                        (turn_finish, _shift((0, 0, 0), heading, pull), heading),
+                    )
+                    # The standalone straight builder clamps to a 50cm
+                    # tangent. This short internal lead must not turn back.
+                    flat_tangent = _shift((0, 0, 0), heading, math.dist(turn_finish, end) / 2)
+                    points = concat(
+                        points, arc,
+                        straight(finish, vertical, turn_start[2] - finish[2]),
+                        turn,
+                        (
+                            (turn_finish, heading, flat_tangent),
+                            (end, flat_tangent, heading),
+                        ),
+                    )
+                pipe = PipeRun(
+                    next(ids), definition.class_name, points, item, rate
+                )
+                pipes.append(pipe)
+                build.links.append(Link((actor.id, port.name), (pipe.id, _PIPE_START)))
+                object_id, name = pipe.id, _PIPE_END
+                if direction == "input":
+                    end = points[-1][0]
+                    feed_pose, inlet, _, _ = feed_layouts[item]
+                    offset = world_port(
+                        Pose(
+                            0, 0, 0, feed_pose.yaw_deg, feed_pose.pitch_deg, feed_pose.roll_deg
+                        ).transform(),
+                        inlet,
+                    )
+                    node = PipeAttachmentObj(
+                        next(ids), _JUNCTION,
+                        Pose(
+                            end[0] - offset[0], end[1] - offset[1], end[2] - offset[2],
+                            feed_pose.yaw_deg, feed_pose.pitch_deg, feed_pose.roll_deg,
+                        ),
+                    )
+                    nodes.append(node)
+                    feeds.setdefault(item, []).append((node, rate))
+                    build.links.append(Link((pipe.id, _PIPE_END), (node.id, inlet.name)))
+                    continue
+                if not junction_outputs:
+                    outputs.append(SectionPort(item, rate, object_id, name, direction, kind="pipe"))
+                    continue
+                # Complete section interfaces end on genuine unused junction
+                # ports, not disconnected internal pipeline ends.
+                node_pose = Pose(0, 0, 0, 90)
+                inlet = next(
+                    p for p in junction.ports
+                    if sum(port_forward(node_pose.transform(), p)[i] * normal[i] for i in range(3))
+                    < -0.999
+                )
+                offset = world_port(node_pose.transform(), inlet)
+                end = points[-1][0]
+                node = PipeAttachmentObj(
+                    next(ids), _JUNCTION,
+                    Pose(end[0] - offset[0], end[1] - offset[1], end[2] - offset[2], 90),
+                )
+                nodes.append(node)
+                build.links.append(Link((pipe.id, _PIPE_END), (node.id, inlet.name)))
+                public = _pipe_port(junction, (1 if position[1] < 0 else -1, 0, 0))
+                object_id, name = node.id, public.name
+            else:
+                lift_min = registry.limits.lift_min_cm
+                lift_half = registry.limits.lift_clearance_half_extent_cm
+                if lift_min is None or lift_half is None:
+                    raise SectionError(
+                        "compact belt interfaces lack native lift geometry", cause="data"
+                    )
+                # Keep lift heights on the native step. A gentle collector
+                # spline reconciles its factory phase with the routing lattice.
+                distance = grid_ceil(
+                    max(
+                        build.lead,
+                        (y1 if normal[0] > 0 else -y0)
+                        - abs(port.translation[1])
+                        + lift_half,
+                    ),
+                    grid,
+                )
+                mouth = _shift(position, normal, distance)
+                lift_step = registry.limits.lift_step_cm
+                if lift_step is None:
+                    raise SectionError(
+                        "compact belt interfaces lack native lift step", cause="data"
+                    )
+                cls = MERGER_CLASS if direction == "output" else SPLITTER_CLASS
+                half_height = max(
+                    box.reach[2]
+                    for box in attachment_boxes(AttachmentObj(0, cls, Pose(0, 0, 0, 0)), registry)
+                )
+                height = max(lift_min, stand + lower_top + half_height - position[2])
+                deck = position[2] + grid_ceil(height, lift_step)
+                plane = grid_ceil(deck, grid)
+                belt_yaw = math.degrees(math.atan2(normal[1], normal[0]))
+                terminal_heading = 90 if position[1] < 0 else -90
+                entry, exit_ = build.lift(
+                    mouth[0],
+                    mouth[1],
+                    position[2] if direction == "output" else deck,
+                    deck if direction == "output" else position[2],
+                    belt_yaw + 180 if direction == "output" else terminal_heading,
+                    item,
+                    rate,
+                )
+                assert isinstance(entry[0], LiftObj)
+                lift = replace(
+                    entry[0],
+                    top_yaw_deg=(
+                        terminal_heading if direction == "output" else belt_yaw + 180
+                    ) - entry[0].pose.yaw_deg,
+                )
+                build.lifts[-1] = lift
+                entry, exit_ = (lift, entry[1]), (lift, exit_[1])
+                if direction == "output":
+                    build.belt((actor, port.name), entry, item, rate)
+                    fixture = exit_
+                else:
+                    build.belt(exit_, (actor, port.name), item, rate)
+                    fixture = entry
+                at, facing = build.at(fixture)
+                run = max(6 * grid, build.lead)
+                finish = _shift(at, facing, run)
+                finish = (finish[0], finish[1], plane)
+                definition = registry.buildables[cls]
+                through_in = _attachment_port(definition, "input", (-1, 0, 0))
+                through_out = _attachment_port(definition, "output", (1, 0, 0))
+                collector_heading = terminal_heading + (180 if direction == "input" else 0)
+                attached = through_in if direction == "output" else through_out
+                rotation = Pose(0, 0, 0, collector_heading).transform()
+                offset = world_port(rotation, attached)
+                # The lift stays outside the lower machine body; the wider
+                # collector sits inward above it. Reserve its actual rotated
+                # native bounds, not a nominal 200cm attachment half-width.
+                native = attachment_boxes(
+                    AttachmentObj(0, cls, Pose(0, 0, 0, collector_heading)), registry
+                )
+                half_width = max(abs(corner[0]) for box in native for corner in box.corners())
+                edge = math.floor((designer.half_cm - half_width) / grid) * grid
+                finish = (
+                    math.copysign(min(abs(finish[0]), edge), finish[0]),
+                    finish[1],
+                    finish[2],
+                )
+                collector_xy = (finish[0] - offset[0], finish[1] - offset[1])
+                # The upper casing has narrower bounds, but native side
+                # machinery can remain under the collector. Clear every
+                # actual hard box overlapping its full mesh-instance body.
+                support_top = max(
+                    (
+                        high[2]
+                        for box in machine.clearance if not box.soft
+                        for low, high in (box_bounds(box, actor.pose.transform()),)
+                        if any(
+                            all(
+                                body.centre[i] - body.reach[i] + collector_xy[i] < high[i]
+                                and body.centre[i] + body.reach[i] + collector_xy[i] > low[i]
+                                for i in (0, 1)
+                            )
+                            for body in native
+                        )
+                    ),
+                    default=stand,
+                )
+                body_bottom = min(body.centre[2] - body.reach[2] for body in native)
+                needed_plane = grid_ceil(support_top - body_bottom + offset[2] + 1e-6, grid)
+                if needed_plane > plane:
+                    rise = grid_ceil(max(0, needed_plane - grid + 1e-6 - at[2]), lift_step)
+                    height = lift.height_cm + (rise if direction == "output" else -rise)
+                    if (
+                        registry.limits.lift_max_cm is None
+                        or abs(height) > registry.limits.lift_max_cm
+                    ):
+                        raise SectionError(
+                            "compact collector exceeds native lift height", cause="height"
+                        )
+                    lift = replace(
+                        lift,
+                        pose=(
+                            lift.pose if direction == "output"
+                            else replace(lift.pose, z=lift.pose.z + rise)
+                        ),
+                        height_cm=height,
+                    )
+                    build.lifts[-1] = lift
+                    fixture = (lift, fixture[1])
+                    at, facing = build.at(fixture)
+                    plane = grid_ceil(at[2], grid)
+                    finish = (finish[0], finish[1], plane)
+                collector = AttachmentObj(
+                    next(ids), cls,
+                    Pose(
+                        finish[0] - offset[0], finish[1] - offset[1], finish[2] - offset[2],
+                        collector_heading,
+                    ),
+                )
+                build.attachments.append(collector)
+                belt_tier = build.tier(item, rate)
+                belt_definition = registry.buildables[machine_class(lab_map, belt_tier.item_id)]
+                if belt_definition.mesh_bounds_cm is None:
+                    raise SectionError("compact collector lacks native belt mesh", cause="data")
+                belt_half = max(abs(bound[1]) for bound in belt_definition.mesh_bounds_cm)
+                first_flat = grid_ceil(lift_half + belt_half + 1e-6, grid)
+                last_flat = grid_ceil(half_width - abs(offset[1]) + belt_half + 1e-6, grid)
+                middle = run - first_flat - last_flat
+                if middle <= 0:
+                    raise SectionError(
+                        "compact collector has no clear transition chord", cause="bounds"
+                    )
+                start_curve = _shift(at, facing, first_flat)
+                end_curve = _shift(finish, facing, -last_flat)
+                tangent = _shift((0, 0, 0), facing, middle)
+                points = concat(
+                    straight(at, facing, first_flat),
+                    ((start_curve, tangent, tangent), (end_curve, tangent, tangent)),
+                    straight(end_curve, facing, last_flat),
+                )
+                source: Connection
+                target: Connection
+                if direction == "output":
+                    source, target = fixture, (collector, through_in.name)
+                    public = through_out
+                else:
+                    points = tuple(
+                        (point, (-leave[0], -leave[1], -leave[2]),
+                         (-arrive[0], -arrive[1], -arrive[2]))
+                        for point, arrive, leave in reversed(points)
+                    )
+                    source, target = (collector, through_out.name), fixture
+                    public = through_in
+                belt = BeltRun(
+                    next(ids), machine_class(lab_map, belt_tier.item_id), points, item, rate
+                )
+                build.belts.append(belt)
+                first, last = belt_ends(registry, belt.class_name)
+                build.links.extend(
+                    (
+                        Link((source[0].id, source[1]), (belt.id, first)),
+                        Link((belt.id, last), (target[0].id, target[1])),
+                    )
+                )
+                object_id, name = collector.id, public.name
+            (inputs if direction == "input" else outputs).append(
+                SectionPort(
+                    item, rate, object_id, name, direction,
+                    kind="pipe" if port.kind == "pipe" else "belt",
+                )
+            )
+    for item, branches in feeds.items():
+        branches.sort(key=lambda entry: entry[0].pose.y)
+        total = sum((rate for _, rate in branches), Fraction())
+        remaining = total
+        _, _, back, forward = feed_layouts[item]
+        for (node, rate), (following, _) in zip(branches, branches[1:], strict=False):
+            remaining -= rate
+            start, heading = _at(node, forward)
+            finish, _ = _at(following, back)
+            run = finish[1] - start[1]
+            mesh_length = definitions[item].mesh_length_cm
+            assert mesh_length is not None
+            if run <= mesh_length / 2:
+                raise SectionError(f"{item}: compact feed spacing is below native pipe length")
+            tangent = _shift((0, 0, 0), heading, run)
+            pipe = PipeRun(
+                next(ids), definitions[item].class_name,
+                ((start, tangent, tangent), (finish, tangent, tangent)), item, remaining,
+            )
+            pipes.append(pipe)
+            build.links.extend((
+                Link((node.id, forward.name), (pipe.id, _PIPE_START)),
+                Link((pipe.id, _PIPE_END), (following.id, back.name)),
+            ))
+        inputs.append(SectionPort(item, total, branches[0][0].id, back.name, "input", kind="pipe"))
+    placement = replace(
+        build.placement(designer), pipes=tuple(pipes), pipe_attachments=tuple(nodes)
+    )
+    low, high = placement_bounds(placement, registry)
+    if any(high[axis] - low[axis] > 2 * designer.half_cm for axis in (0, 1)):
+        raise SectionError(
+            f"{group.recipe_id}: compact opposing columns exceed the {designer.mark} floor",
+            cause="bounds",
+        )
+    if high[2] > designer.height_cm:
+        raise SectionError(
+            f"{group.recipe_id}: compact section exceeds designer height", cause="height"
+        )
+    return ProductionSection(group, placement, tuple(inputs), tuple(outputs), (low, high))
 
 
 def build_fluid_section(

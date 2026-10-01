@@ -300,7 +300,7 @@ def _belts(data: Dataset, request: LabRequest) -> tuple[str, Fraction, tuple[Bel
     for the generated layout. The ceiling remains ``defaults.maxBelt``,
     which for sfy is Mk5 even though Mk6 exists.
     """
-    selected_id = request.belt_id or data.defaults.min_belt
+    selected_id = request.selected_belt_id(data) or data.defaults.min_belt
     if selected_id is None:
         raise RatesRefusal("the dataset names no belt", "neither the URL nor defaults.minBelt")
     selected_speed = data.belt_speed(selected_id)
@@ -325,7 +325,7 @@ def _pipes(data: Dataset, request: LabRequest) -> tuple[PipeTier, ...]:
     The URL selects a pipe floor and the dataset supplies the ceiling.
     ``pipe_tiers`` includes the floor itself.
     """
-    floor_id = request.pipe_id or data.defaults.min_pipe
+    floor_id = request.selected_pipe_id(data) or data.defaults.min_pipe
     if floor_id is None:
         return ()
     floor_speed = data.pipe_speed(floor_id)
@@ -450,20 +450,23 @@ def spec_from_flow(
             continue
         groups.append(_group_from_row(row, data, request, registry, labmap))
 
-    external_inputs = {
+    available_inputs = {
         item_id: _per_second(rate, request.display_rate)
         for item_id, rate in flow.external_items(data).items()
     }
 
     consumed: dict[str, Fraction] = {}
+    produced: dict[str, Fraction] = {}
     for group in groups:
         for item, rate in group.row_inputs.items():
             consumed[item] = consumed.get(item, Fraction()) + rate
+        for item, rate in group.row_outputs.items():
+            produced[item] = produced.get(item, Fraction()) + rate
 
     outputs: dict[str, Fraction] = {}
     for objective in request.objectives:
         # Inputs and limits constrain FactorioLab's solve, not the blueprint's
-        # exports. Physical input rates still come from the solved flow above.
+        # exports. Their available supply is reconciled with the groups below.
         if objective.type in (ObjectiveType.Input, ObjectiveType.Limit):
             continue
         if objective.unit is not ObjectiveUnit.Items:
@@ -498,12 +501,43 @@ def spec_from_flow(
         and row.surplus > 0
         and not _is_extraction(data, row)
     }
+    # Stock left over outside the designer is not a coproduct to export.
+    # Extraction already follows that rule above; recipeless Input rows must
+    # do so too. A real coproduct still has a producer in the selected groups.
+    surplus_outputs = {
+        item: rate
+        for item, rate in surplus_outputs.items()
+        if item not in available_inputs or item in produced
+    }
 
-    crossing = dict(external_inputs) | outputs | surplus_outputs
+    crossing = dict(available_inputs) | outputs | surplus_outputs
     for group in groups:
         crossing |= group.inputs_per_machine
         crossing |= group.outputs_per_machine
     fluids = _fluids(data, crossing)
+
+    # CSV Input Items describes available stock, not a mandatory throughput.
+    # Only the net deficit of the unchanged production groups and their exports
+    # crosses the boundary. Include exports here so clipping cannot drop a
+    # requested output, and subtract every recipe output, including coproducts,
+    # so a recipeless intermediate row is not imported a second time.
+    demand = dict(consumed)
+    for rates in (outputs, surplus_outputs):
+        for item, rate in rates.items():
+            demand[item] = demand.get(item, Fraction()) + rate
+    external_inputs: dict[str, Fraction] = {}
+    for item, rate in demand.items():
+        required = rate - produced.get(item, Fraction())
+        if required <= 0:
+            continue
+        available = available_inputs.get(item, Fraction())
+        if required > available:
+            raise RatesRefusal(
+                "insufficient flow input",
+                f"{item!r} requires {required}/s at the boundary but the flow "
+                f"makes only {available}/s available",
+            )
+        external_inputs[item] = required
 
     belt_item_id, belt_speed, alternatives = _belts(data, request)
     return SfyBuildSpec(

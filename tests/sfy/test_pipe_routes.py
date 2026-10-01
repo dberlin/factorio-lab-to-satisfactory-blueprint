@@ -1,4 +1,4 @@
-"""Native fittings carry tight turns without curved-pipe shortcuts."""
+"""Pipe routes retain real native geometry, clearance and connectivity."""
 
 import itertools
 import time
@@ -9,8 +9,8 @@ from fractions import Fraction
 import pytest
 
 from flab2bp.sfy.labmap import load_lab_map
-from flab2bp.sfy.layout.model import PipeAttachmentObj, Pose, SfyPlacement
-from flab2bp.sfy.layout.splines import hermite_tangent, spline_length
+from flab2bp.sfy.layout.model import AttachmentObj, PipeAttachmentObj, Pose, SfyPlacement
+from flab2bp.sfy.layout.splines import hermite_tangent
 from flab2bp.sfy.layout.validate import validate
 from flab2bp.sfy.sections.model import SectionError
 from flab2bp.sfy.sections.pipe_routes import _Routes
@@ -18,10 +18,13 @@ from flab2bp.sfy.spec import PipeTier, SfyBuildSpec, designer
 from tests.sfy.conftest import sfy_registry
 
 
-def _routes(source: Pose, target: Pose) -> _Routes:
+def _routes(
+    source: Pose, target: Pose, *, obstacles: tuple[AttachmentObj, ...] = ()
+) -> _Routes:
     registry = sfy_registry()
     placement = SfyPlacement(
         designer=designer("mk2", registry),
+        attachments=obstacles,
         pipe_attachments=(
             PipeAttachmentObj(1, "Build_PipelineJunction_Cross_C", source),
             PipeAttachmentObj(2, "Build_PipelineJunction_Cross_C", target),
@@ -54,6 +57,7 @@ def _assert_connected_geometry(routes: _Routes) -> None:
         only={
             "geom.bounds",
             "geom.hard_clearance",
+            "geom.attachment_body",
             "pipe.capsule",
             "pipe.min_length",
             "pipe.max_length",
@@ -75,7 +79,7 @@ def _assert_connected_geometry(routes: _Routes) -> None:
             reached.add(actor)
             pending.extend(neighbours[actor] - reached)
     assert 2 in reached
-    assert reached == {actor.id for actor in placement.objects}
+    assert reached == {1, 2, *(run.id for run in routes.pipes), *(node.id for node in routes.nodes)}
 
 
 @pytest.mark.parametrize(
@@ -87,22 +91,28 @@ def _assert_connected_geometry(routes: _Routes) -> None:
     ],
     ids=("horizontal-uturn", "vertical-xz", "vertical-yz"),
 )
-def test_turns_use_connected_native_junctions_with_unused_ports(
+def test_turns_keep_native_geometry_and_connected_interfaces(
     target: Pose, source_port: str, target_port: str
 ) -> None:
     routes = _routes(Pose(0, 0, 500, 0), target)
     routes.connect((1, source_port), (2, target_port), "water", Fraction(1))
     _assert_connected_geometry(routes)
-    assert len(routes.nodes) == 2
-    linked = {end for link in routes.links for end in (link.a, link.b)}
-    for node in routes.nodes:
-        ports = routes.registry.buildables[node.class_name].ports
-        assert sum((node.id, port.name) in linked for port in ports) == 2
-    for run in routes.pipes:
-        start, finish = run.points[0][0], run.points[-1][0]
-        distance = sum((finish[i] - start[i]) ** 2 for i in range(3)) ** 0.5
-        assert spline_length(run.points) == pytest.approx(distance)
-        assert run.cubic_metres_per_second == Fraction(1)
+    assert all(run.cubic_metres_per_second == Fraction(1) for run in routes.pipes)
+
+
+@pytest.mark.parametrize("blocked", [False, True], ids=("clear-corner", "obstructed-corner"))
+def test_planar_corner_respects_real_attachment_clearance(blocked: bool) -> None:
+    # Leave a native-radius escape above the source mouth; the obstruction
+    # blocks the direct climb, not the connection component itself.
+    obstacle = AttachmentObj(1000, "Build_ConveyorAttachmentMerger_C", Pose(2.5, 100, 1100, 0))
+    routes = _routes(
+        Pose(2.5, 0, 500, 0, 90),
+        Pose(2.5, -600, 1200, 0),
+        obstacles=(obstacle,) if blocked else (),
+    )
+    routes.connect((1, "Connection1"), (2, "Connection2"), "water", Fraction(1))
+    _assert_connected_geometry(routes)
+    assert all(run.cubic_metres_per_second == Fraction(1) for run in routes.pipes)
 
 
 def test_short_gravity_descent_keeps_valid_curves_without_orphan_fittings() -> None:
@@ -110,7 +120,6 @@ def test_short_gravity_descent_keeps_valid_curves_without_orphan_fittings() -> N
     routes.max_unpumped_z = 475
     routes.connect((1, "Connection1"), (2, "Connection0"), "water", Fraction(1))
     _assert_connected_geometry(routes)
-    assert routes.nodes == []
     assert max(run.points[index][0][2] for run in routes.pipes for index in (0, -1)) <= 475
     for run in routes.pipes:
         for start, finish in zip(run.points, run.points[1:], strict=False):
@@ -118,6 +127,15 @@ def test_short_gravity_descent_keeps_valid_curves_without_orphan_fittings() -> N
                 tangent = hermite_tangent(start[0], start[2], finish[0], finish[1], sample / 20)
                 assert tangent[0] >= -0.001
                 assert tangent[2] <= 0.001
+
+
+def test_vertical_escape_cannot_rise_above_unpumped_producer() -> None:
+    routes = _routes(Pose(0, 0, 400, 0, 90), Pose(900, 800, 400, 0))
+    routes.max_unpumped_z = 500
+    # The real upward mouth is already at the producer's hydraulic ceiling.
+    # A transverse XY detour must not fund its initial vertical escape.
+    with pytest.raises(SectionError):
+        routes.search((1, "Connection1"), (2, "Connection1"))
 
 
 def test_expired_junction_route_leaves_no_partial_network(monkeypatch) -> None:

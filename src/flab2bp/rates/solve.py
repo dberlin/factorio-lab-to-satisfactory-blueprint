@@ -279,7 +279,7 @@ def target_rates(data: Dataset, request: LabRequest) -> dict[str, Fraction]:
             rate = objective.value / period
             item_id = objective.target_id
         elif objective.unit is ObjectiveUnit.Belts:
-            belt_id = request.belt_id or "conveyor-belt-1"
+            belt_id = request.selected_belt_id(data) or "conveyor-belt-1"
             # A belt's speed is CARGO per second; each cargo carries `ist`
             # items.  At `ist=1` (design rule 1) this is the old arithmetic
             # unchanged.
@@ -336,7 +336,7 @@ def supplied_rates(data: Dataset, request: LabRequest) -> dict[str, Fraction]:
             # player's bus while the Output branch above counted it in full.
             rate = (
                 objective.value
-                * data.belt_speed(request.belt_id or "conveyor-belt-1")
+                * data.belt_speed(request.selected_belt_id(data) or "conveyor-belt-1")
                 * cargo_stack(request)
             )
         else:

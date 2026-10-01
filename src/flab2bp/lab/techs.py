@@ -120,7 +120,7 @@ def logistics_tiers_for_request(request: LabRequest, dataset: Dataset) -> catalo
     researched = request.researched_technology_ids
     unlocked = _unlocked_recipe_ids(request, technology_items)
 
-    floor_id = request.belt_id or "conveyor-belt-1"
+    floor_id = request.selected_belt_id(dataset) or "conveyor-belt-1"
     floor_speed = dataset.belt_speed(floor_id)
     belts = set()
     for item in belt_candidates:

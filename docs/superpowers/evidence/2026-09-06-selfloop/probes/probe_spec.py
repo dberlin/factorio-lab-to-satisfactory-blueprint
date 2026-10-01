@@ -29,7 +29,7 @@ def main() -> None:
     request = parse_url(URL)
     print("== LabRequest ==")
     print("objectives:", request.objectives)
-    print("belt_id:", request.belt_id)
+    print("belt_id:", request.selected_belt_id(data))
     print("proliferator/items:", {k: v for k, v in request.items.items()})
     print("recipes pinned:", list(request.recipes)[:20])
     print()

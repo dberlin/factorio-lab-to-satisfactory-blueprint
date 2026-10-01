@@ -100,7 +100,8 @@ def _mount_pair(
 
     The reference's front sign faces local +Y at yaw -90. Labels belong on
     the frame, not at the nearest free point behind a transport connection.
-    Lower pairs stand on the base rail; upper pairs hang from the roof rail.
+    Lower pairs stand on the base rail. Upper pairs prefer hanging below the
+    roof, but may stand above it when all downward mounts are obstructed.
     """
     definition = registry.buildables[_SIGN]
     local_bounds = [box_bounds(box, Pose(0, 0, 0, 0).transform()) for box in definition.clearance]
@@ -121,25 +122,28 @@ def _mount_pair(
         raise SectionError(f"{label} {header}: no front frame rail for signs", cause="bounds")
     front = max(rail.centre[0] for rail in rails)
     rails = [rail for rail in rails if abs(rail.centre[0] - front) < 1.0]
-    candidates: list[tuple[float, float, float, float, float]] = []
+    candidates: list[tuple[int, float, float, float, float, float]] = []
     for rail in rails:
         _check(deadline)
         # Keep the sign outside its support without leaving the designer.
         face_x = min(rail.centre[0] + rail.reach[0] + 2 * half_depth, placement.designer.half_cm)
         sign_x = face_x - half_depth
         support_x = face_x - 2 * half_depth - beam_size / 2
-        surface = rail.centre[2] + (-rail.reach[2] if upper else rail.reach[2])
         low = math.ceil((rail.centre[1] - rail.reach[1] + beam_size / 2) / grid)
         high = math.floor((rail.centre[1] + rail.reach[1] - beam_size / 2) / grid)
-        for step in range(low, high + 1):
-            y = step * grid
-            candidates.append((abs(y - point[1]), y, sign_x, support_x, surface))
-    for _, y, sign_x, support_x, surface in sorted(candidates):
+        for hanging in ((True, False) if upper else (False,)):
+            surface = rail.centre[2] + (-rail.reach[2] if hanging else rail.reach[2])
+            order = int(upper and not hanging)
+            for step in range(low, high + 1):
+                y = step * grid
+                candidates.append((order, abs(y - point[1]), y, sign_x, support_x, surface))
+    for order, _, y, sign_x, support_x, surface in sorted(candidates):
+        hanging = upper and order == 0
         _check(deadline)
         support = BeamObj(
-            -1, _BEAM, Pose(support_x, y, surface, -90, -90 if upper else 90), pair_height
+            -1, _BEAM, Pose(support_x, y, surface, -90, -90 if hanging else 90), pair_height
         )
-        header_z = surface - half_height if upper else surface + 3 * half_height
+        header_z = surface - half_height if hanging else surface + 3 * half_height
         pair = (
             SignObj(-2, _SIGN, Pose(sign_x, y, header_z, -90), header, label, "BPW_Sign4x1_5"),
             SignObj(

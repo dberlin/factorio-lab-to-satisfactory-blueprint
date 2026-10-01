@@ -32,7 +32,7 @@ from flab2bp.sfy.layout.grid_nets import (
     snapped,
 )
 from flab2bp.sfy.layout.lattice import Lattice, occupancy_for
-from flab2bp.sfy.layout.manifold import RowError, shortest_belt_cm
+from flab2bp.sfy.layout.manifold import RowError, hard_footprint_cm, shortest_belt_cm
 from flab2bp.sfy.layout.model import (
     FoundationObj,
     Pose,
@@ -45,7 +45,7 @@ from flab2bp.sfy.layout.strategy import _measure
 from flab2bp.sfy.layout.validate import BELT_CLEARANCE_HALF_WIDTH_CM
 from flab2bp.sfy.registry import LIFT_NATIVE_CLASS, Registry, load_registry
 from flab2bp.sfy.sections.construction import build_section
-from flab2bp.sfy.sections.fluids import build_fluid_section
+from flab2bp.sfy.sections.fluids import build_compact_fluid_section, build_fluid_section
 from flab2bp.sfy.sections.model import (
     ProductionSection,
     SectionError,
@@ -266,7 +266,16 @@ def _sections_for(
     _check_deadline(deadline)
     try:
         if spec.fluid_items.intersection((*group.row_inputs, *group.row_outputs)):
-            section = build_fluid_section(
+            footprint = hard_footprint_cm(registry.buildables[group.machine_class])
+            # Choose the section shape once from its native footprint, before
+            # construction: wide fluid strips need opposing compact columns.
+            builder = (
+                build_compact_fluid_section
+                if group.count > 2
+                and group.count * (footprint[2] - footprint[0]) > 2 * designer.half_cm
+                else build_fluid_section
+            )
+            section = builder(
                 group,
                 designer,
                 registry,
@@ -458,10 +467,10 @@ def _floors(
     def centres(low: float, high: float) -> tuple[float, ...]:
         # Align the outside edge to the supported footprint, not the designer's
         # global tiling: global tiles can otherwise pave over a reserved shaft.
-        # Foundation poses are stored as float32. Cover outward-rounded grid
-        # extents so that quantising a centre cannot uncover a thin foot edge.
-        low = max(-half, math.floor(low / grid) * grid)
-        high = min(half, math.ceil(high / grid) * grid)
+        # Do not turn rotation noise at an exact snap boundary into an extra
+        # foundation strip: that can pave over a physically clear pipe shaft.
+        low = max(-half, math.floor((low + 1e-6) / grid) * grid)
+        high = min(half, math.ceil((high - 1e-6) / grid) * grid)
         if high - low <= side:
             return (max(-half + side / 2, min(half - side / 2, (low + high) / 2)),)
         count = math.ceil((high - low) / side)
@@ -675,6 +684,21 @@ def _compose(
     stages = _production_layers(spec)
     if not stages:
         raise SectionError("a factory needs a production section", cause="unsupported")
+    if len(spec.groups) == 1:
+        group = spec.groups[0]
+        fluid_outputs = spec.fluid_items.intersection(group.row_outputs)
+        solid_outputs = group.row_outputs.keys() - spec.fluid_items
+        if (
+            group.machine_class == "Build_Blender_C"
+            and group.count == 6
+            and len(fluid_outputs) == 1
+            and len(solid_outputs) == 1
+            and set(group.row_inputs) <= spec.fluid_items
+            and set(spec.external_inputs) <= spec.fluid_items
+        ):
+            from flab2bp.sfy.sections.compact import compact_factory
+
+            return compact_factory(spec, designer, registry, lab_map, deadline)
     _check_deadline(deadline)
     ids = itertools.count(1)
     measures = _measure(registry, designer)

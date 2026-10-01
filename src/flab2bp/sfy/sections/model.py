@@ -61,6 +61,8 @@ class SectionPort:
     port: str
     direction: Literal["input", "output"]
     kind: Literal["belt", "pipe"] = "belt"
+    #: A native stack takeoff allocated to this exact production interface.
+    peer: tuple[int, str] | None = None
 
 
 @dataclass(frozen=True, slots=True)

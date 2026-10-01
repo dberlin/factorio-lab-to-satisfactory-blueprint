@@ -1217,7 +1217,7 @@ def _with_belt(
     original = pipeline.parse_url  # type: ignore[attr-defined]
 
     def patched(url: str, **kwargs: object):  # type: ignore[no-untyped-def]
-        replacements: dict[str, object] = {"belt_id": belt_id}
+        replacements: dict[str, object] = {"belt_rank_ids": [belt_id]}
         if researched is not None:
             replacements["researched_technology_ids"] = set(researched)
         if stack is not None:

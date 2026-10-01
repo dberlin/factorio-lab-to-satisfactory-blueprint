@@ -1,0 +1,6 @@
+"https://factoriolab.github.io/sfy/list?o=rocket-fuel*600&o=turbofuel*1000**1&o=nitric-acid*1000**1&rex=Dr~Ds&v=12"
+Item,Items,Surplus,Inputs,Outputs,Targets,Belts,Belt,Wagons,Wagon,Recipe,Machines,Machine,Modules,Power
+rocket-fuel,=600,,"turbofuel:0.36,nitric-acid:0.06","rocket-fuel:1,compacted-coal:1","",=2,pipeline-mk1,=0.375,freight-car,rocket-fuel,=6,blender,"4 ",=450000
+turbofuel,=1000,,,,"rocket-fuel:0.36",=10/3,pipeline-mk1,=0.625,freight-car,,,,,
+nitric-acid,=1000,,,,"rocket-fuel:0.06",=10/3,pipeline-mk1,=0.625,freight-car,,,,,
+compacted-coal,=0,=60,,,,=1,conveyor-belt-mk1,,,,,,,

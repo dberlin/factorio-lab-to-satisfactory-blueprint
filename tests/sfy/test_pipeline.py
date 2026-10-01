@@ -199,6 +199,40 @@ def test_copper_alloy_keeps_full_flow_when_a_later_net_needs_routing_priority(
     assert read_sbpcfg(cfg.read_bytes()).description == build.placement.description
 
 
+def test_rocket_fuel_available_inputs_build_a_real_mk2_blueprint(tmp_path: Path) -> None:
+    build = pipeline.build(
+        flow_url("rocket-fuel-600-inputs-v12"),
+        designer="mk2",
+        flow=FLOWS / "rocket-fuel-600-inputs-v12.csv",
+        time_budget_s=60,
+    )
+    assert build.report.ok
+    assert build.blueprint is not None
+    assert build.designer.mark == "mk2"
+    assert len(build.placement.machines) == 6
+    assert all(machine.clock == 1 for machine in build.placement.machines)
+    lanes = {lane.item_id: lane for lane in build.placement.stack_lanes}
+    assert lanes["turbofuel"].input_per_second == Fraction(6)
+    assert lanes["nitric-acid"].input_per_second == Fraction(1)
+    assert lanes["rocket-fuel"].output_per_second == Fraction(10)
+    assert lanes["compacted-coal"].output_per_second == Fraction(1)
+    sbp, cfg = pipeline.write(build, tmp_path)
+    assert decode(read_sbp_file(sbp), pipeline.registry()) == build.placement
+    assert read_sbpcfg(cfg.read_bytes()).description == build.placement.description
+
+
+def test_insufficient_input_names_the_item_and_rates_before_layout() -> None:
+    text = (FLOWS / "rocket-fuel-600-inputs-v12.csv").read_text(encoding="utf-8")
+    text = text.replace("nitric-acid,=1000", "nitric-acid,=59")
+    with pytest.raises(NoValidLayout) as caught:
+        pipeline.build(
+            flow_url("rocket-fuel-600-inputs-v12"), designer="mk2", flow_text=text
+        )
+    assert "nitric-acid" in caught.value.reason
+    assert "1/s" in caught.value.reason
+    assert "59/60/s" in caught.value.reason
+
+
 def test_a_build_without_a_flow_refuses_and_names_both_ways_to_supply_one() -> None:
     """R1: FactorioLab's chosen flow is authoritative, so there is no build without one."""
     with pytest.raises(ValueError, match="--flow") as caught:

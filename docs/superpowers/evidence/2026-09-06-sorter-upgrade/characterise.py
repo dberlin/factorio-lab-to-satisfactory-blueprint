@@ -28,7 +28,7 @@ def main() -> int:
     researched = request.researched_technology_ids
     tiers = logistics_tiers_for_request(request, data)
     print("=== save ===")
-    print("belt_id:", request.belt_id)
+    print("belt_id:", request.selected_belt_id(data))
     print("researched set size:", None if researched is None else len(researched))
     print("sorter_item_ids:", tiers.sorter_item_ids)
     print("sorter_pick_stacks:", tiers.sorter_pick_stacks)
